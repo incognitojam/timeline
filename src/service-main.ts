@@ -237,6 +237,34 @@ export async function runService(
     }
   };
 
+  // Initialise the database before anything else can write to it.
+  //
+  // initDb() rebuilds derived tables when they are missing or empty —
+  // conversation_summaries today — in a single transaction that reads every
+  // event. Left inside the API import below, that runs with the scheduler worker
+  // already live, so a sync committing mid-rebuild either loses the race for the
+  // write lock or invalidates the rebuild's read snapshot, and the rebuild
+  // aborts. Doing it here means there is no concurrent writer to race.
+  //
+  // Cold reads against a large timeline.db make this slow; log around it so the
+  // wait isn't mistaken for a hang, the way the API used to for its own init.
+  {
+    const { getDb, initDb } = await import("./db/schema");
+    console.log("Initialising database...");
+    const startedAt = performance.now();
+    const db = getDb();
+    try {
+      initDb(db);
+    } finally {
+      db.close();
+    }
+    console.log(`Database ready (${((performance.now() - startedAt) / 1000).toFixed(1)}s)`);
+    // Tell the API import below that the schema is already current, so it does
+    // not repeat the work on its own connection once the worker is live and
+    // syncing — which is the race this ordering exists to avoid.
+    process.env.TIMELINE_DB_INITIALIZED = "1";
+  }
+
   // Start scheduler worker (handles sync scheduler + inbox watcher)
   if (config.scheduler.enabled || config.inbox.watch_enabled) {
     try {

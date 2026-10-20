@@ -179,7 +179,8 @@ import {
 if (process.env.NODE_ENV !== "test") {
   assertApiAuthConfigured();
   // Database init below can take a while (cold reads against a large
-  // timeline.db); log before it so a slow start isn't mistaken for a hang.
+  // timeline.db) when this process owns it; log before it so a slow start isn't
+  // mistaken for a hang. Under the service, init already happened.
   console.log("Starting Timeline API...");
 }
 
@@ -190,7 +191,12 @@ if (process.env.NODE_ENV !== "test") {
 configureBunSqliteForSqliteVec();
 
 const db = getDb();
-initDb(db);
+// The service initialises the database before starting the scheduler worker and
+// sets this, so repeating it here would run schema work while syncs are already
+// writing. Standalone runs (no flag) still initialise normally.
+if (!process.env.TIMELINE_DB_INITIALIZED) {
+  initDb(db);
+}
 // This bounded summary-table read stays on the main connection so it cannot
 // queue behind unrelated long-running reads in the shared worker pool.
 const dateActivityDb = wrapDatabase(db);
