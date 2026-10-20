@@ -26,6 +26,8 @@ const chartViews = ["month", "week", "year"];
 
 export default defineConfig({
   testDir: "./e2e",
+  // README screenshot generation lives in its own config (playwright.showcase.config.ts).
+  testIgnore: "showcase.spec.ts",
   outputDir: "./test-results",
   ignoreSnapshots,
   snapshotPathTemplate: "{testDir}/__screenshots__/{testFilePath}/{arg}{ext}",
