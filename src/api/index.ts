@@ -29,6 +29,7 @@ import { jobsRoutes } from "./jobs";
 import { evalRoutes } from "./eval";
 import { createSettingsRoutes } from "./settings";
 import { createSyncSourceRoutes } from "./sync-sources";
+import { isDatabaseInitializedByService } from "./service-control";
 import { AsyncTtlCache } from "./async-ttl-cache";
 import {
   addDiscordForwardTargets,
@@ -179,7 +180,8 @@ import {
 if (process.env.NODE_ENV !== "test") {
   assertApiAuthConfigured();
   // Database init below can take a while (cold reads against a large
-  // timeline.db); log before it so a slow start isn't mistaken for a hang.
+  // timeline.db) when this process owns it; log before it so a slow start isn't
+  // mistaken for a hang. Under the service, init already happened.
   console.log("Starting Timeline API...");
 }
 
@@ -190,7 +192,11 @@ if (process.env.NODE_ENV !== "test") {
 configureBunSqliteForSqliteVec();
 
 const db = getDb();
-initDb(db);
+// Standalone API runs own the database; under the service it is already
+// initialised (see markDatabaseInitializedByService).
+if (!isDatabaseInitializedByService()) {
+  initDb(db);
+}
 // This bounded summary-table read stays on the main connection so it cannot
 // queue behind unrelated long-running reads in the shared worker pool.
 const dateActivityDb = wrapDatabase(db);

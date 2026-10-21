@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -72,8 +73,9 @@ watch_enabled = false
   expect(existsSync(join(workDir, "app-state.db"))).toBe(false);
 });
 
-test("service exits before serving when worker init fails", async () => {
-  workDir = mkdtempSync(join(tmpdir(), "timeline-service-worker-init-"));
+/** Boots the service with an inbox source the worker cannot watch, so worker init fails. */
+async function runServiceWithFailingWorker(prefix: string) {
+  workDir = mkdtempSync(join(tmpdir(), prefix));
   const configPath = join(workDir, "config.toml");
   const dbPath = join(workDir, "timeline.db");
   const blocker = join(workDir, "not-a-dir");
@@ -129,5 +131,33 @@ path = ${JSON.stringify(join(workDir, "media"))}
   expect(proc.exitCode).not.toBe(0);
   expect(stderr).toContain("Failed to start scheduler worker");
   expect(stderr).toContain("Worker initialization failed");
+
+  return { dbPath, stdout };
+}
+
+test("service exits before serving when worker init fails", async () => {
+  const { stdout } = await runServiceWithFailingWorker("timeline-service-worker-init-");
   expect(stdout).not.toContain("Timeline service is running");
+});
+
+test("database is initialised even when the scheduler worker fails to start", async () => {
+  // The worker cannot start, so the service exits before ever importing the
+  // API. initDb() must therefore already have run: nothing else creates the
+  // schema. The derived-table rebuilds inside it read every event in one
+  // transaction, which a sync committing mid-rebuild would abort.
+  const { dbPath, stdout } = await runServiceWithFailingWorker("timeline-service-db-first-");
+  expect(stdout).not.toContain("Starting Timeline API");
+  expect(stdout).toContain("Database ready");
+
+  // Assert the schema, not the file: opening a database creates the file, so
+  // file existence alone would pass even if initDb() never ran.
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('events', 'conversation_summaries')")
+      .all() as Array<{ name: string }>;
+    expect(tables.map((t) => t.name).sort()).toEqual(["conversation_summaries", "events"]);
+  } finally {
+    db.close();
+  }
 });

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { conversationEventEligibilityClause, conversationTypeClause } from "./conversation-types";
-import { initDb } from "./schema";
+import { getDb, initDb } from "./schema";
 
 function schemaSql(db: Database, type: "index" | "trigger", name: string): string {
   const row = db
@@ -408,5 +408,34 @@ describe("conversation summary schema", () => {
     });
 
     existing.close();
+  });
+});
+
+describe("connection pragmas", () => {
+  const recursiveTriggers = (db: Database) =>
+    (db.prepare("PRAGMA recursive_triggers").get() as { recursive_triggers: number }).recursive_triggers;
+
+  it("getDb() enables recursive triggers, which derived tables depend on for REPLACE", () => {
+    // Under the service the API's connection skips initDb(), so getDb() is the
+    // only thing setting it there. REPLACE resolves conflicts as DELETE + INSERT,
+    // and without recursive triggers the DELETE side never fires, leaving derived
+    // tables and FTS unbalanced.
+    const db = getDb();
+    try {
+      expect(recursiveTriggers(db)).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("initDb() enables them for callers that opened their own connection", () => {
+    const db = new Database(":memory:");
+    try {
+      expect(recursiveTriggers(db)).toBe(0);
+      initDb(db);
+      expect(recursiveTriggers(db)).toBe(1);
+    } finally {
+      db.close();
+    }
   });
 });

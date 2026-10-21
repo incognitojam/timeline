@@ -9,11 +9,12 @@
 
 import { Worker } from "worker_threads";
 import { assertApiAuthConfigured } from "./api/auth";
-import { setSyncConfigChangedNotifier } from "./api/service-control";
+import { markDatabaseInitializedByService, setSyncConfigChangedNotifier } from "./api/service-control";
 import { setServiceComponents } from "./api/status";
 import type { ServiceConfig } from "./config";
 import { normalizeStoredPackagedSyncPaths } from "./config/packaged-sync-paths";
 import { getAppStateDb } from "./db/app-state";
+import { getDb, initDb } from "./db/schema";
 import { failAllRunningJobs, reclaimExpiredLeases } from "./jobs/store";
 import { buildMediaStore } from "./media/storage";
 import { getPackagedResourceRoot, getSchedulerWorkerPath } from "./runtime-paths";
@@ -236,6 +237,30 @@ export async function runService(
       throw error;
     }
   };
+
+  // Initialise the database before anything else can write to it.
+  //
+  // initDb() rebuilds derived tables when they are missing or empty —
+  // conversation_summaries today — in a single transaction that reads every
+  // event. Left inside the API import below, that runs with the scheduler worker
+  // already live, so a sync committing mid-rebuild either loses the race for the
+  // write lock or invalidates the rebuild's read snapshot, and the rebuild
+  // aborts. Doing it here means the worker cannot race it.
+  //
+  // Cold reads against a large timeline.db make this slow; log around it so the
+  // wait isn't mistaken for a hang, the way the API used to for its own init.
+  {
+    console.log("Initialising database...");
+    const startedAt = performance.now();
+    const db = getDb();
+    try {
+      initDb(db);
+    } finally {
+      db.close();
+    }
+    console.log(`Database ready (${((performance.now() - startedAt) / 1000).toFixed(1)}s)`);
+    markDatabaseInitializedByService();
+  }
 
   // Start scheduler worker (handles sync scheduler + inbox watcher)
   if (config.scheduler.enabled || config.inbox.watch_enabled) {
