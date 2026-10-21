@@ -73,8 +73,9 @@ watch_enabled = false
   expect(existsSync(join(workDir, "app-state.db"))).toBe(false);
 });
 
-test("service exits before serving when worker init fails", async () => {
-  workDir = mkdtempSync(join(tmpdir(), "timeline-service-worker-init-"));
+/** Boots the service with an inbox source the worker cannot watch, so worker init fails. */
+async function runServiceWithFailingWorker(prefix: string) {
+  workDir = mkdtempSync(join(tmpdir(), prefix));
   const configPath = join(workDir, "config.toml");
   const dbPath = join(workDir, "timeline.db");
   const blocker = join(workDir, "not-a-dir");
@@ -130,70 +131,21 @@ path = ${JSON.stringify(join(workDir, "media"))}
   expect(proc.exitCode).not.toBe(0);
   expect(stderr).toContain("Failed to start scheduler worker");
   expect(stderr).toContain("Worker initialization failed");
+
+  return { dbPath, stdout };
+}
+
+test("service exits before serving when worker init fails", async () => {
+  const { stdout } = await runServiceWithFailingWorker("timeline-service-worker-init-");
   expect(stdout).not.toContain("Timeline service is running");
 });
 
-test("database is initialised before the scheduler worker starts", async () => {
-  workDir = mkdtempSync(join(tmpdir(), "timeline-service-db-first-"));
-  const configPath = join(workDir, "config.toml");
-  const dbPath = join(workDir, "timeline.db");
-  const blocker = join(workDir, "not-a-dir");
-  writeFileSync(blocker, "x");
-
-  // Same shape as the worker-init failure above: the worker cannot start, so the
-  // service exits before ever importing the API. initDb() must therefore already
-  // have run — it is the only thing that could have created the database.
-  //
-  // This is the ordering the derived-table rebuilds inside initDb() depend on.
-  // They rebuild in one transaction that reads every event, so a sync committing
-  // mid-rebuild would either lose the race for the write lock or invalidate the
-  // read snapshot and abort the rebuild.
-  writeFileSync(
-    configPath,
-    `[server]
-host = "127.0.0.1"
-port = 0
-
-[database]
-path = ${JSON.stringify(dbPath)}
-
-[scheduler]
-enabled = true
-default_interval = "1h"
-stagger = false
-
-[inbox]
-watch_enabled = true
-base_path = ${JSON.stringify(workDir)}
-
-[inbox.sources.bad]
-type = "local"
-local = ${JSON.stringify(join(blocker, "google"))}
-parser = "noop"
-
-[media]
-path = ${JSON.stringify(join(workDir, "media"))}
-`
-  );
-
-  const proc = Bun.spawn([process.execPath, "run", "src/service.ts"], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      TIMELINE_CONFIG: configPath,
-      TIMELINE_DB_PATH: dbPath,
-      TIMELINE_ENV_FILE: join(workDir, "missing.env"),
-      NODE_ENV: "development",
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const exited = await waitForExit(proc, 5000);
-  const stdout = await new Response(proc.stdout).text();
-
-  expect(exited).toBe(true);
-  // The API never started, so nothing after the worker could have built this.
+test("database is initialised even when the scheduler worker fails to start", async () => {
+  // The worker cannot start, so the service exits before ever importing the
+  // API. initDb() must therefore already have run: nothing else creates the
+  // schema. The derived-table rebuilds inside it read every event in one
+  // transaction, which a sync committing mid-rebuild would abort.
+  const { dbPath, stdout } = await runServiceWithFailingWorker("timeline-service-db-first-");
   expect(stdout).not.toContain("Starting Timeline API");
   expect(stdout).toContain("Database ready");
 

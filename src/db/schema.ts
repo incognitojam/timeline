@@ -90,7 +90,9 @@ const dbPathInfo = getDbPathInfo(DB_PATH);
 assertNoLocalDbMarker(dbPathInfo, dbPathInfo.resolvedDbPath, "database");
 
 /**
- * Connection-scoped settings, as opposed to the schema itself.
+ * Settings every writable connection needs, as opposed to the schema itself.
+ * journal_mode = WAL persists in the database file once set; the others are
+ * per connection.
  *
  * recursive_triggers matters for correctness, not just performance: REPLACE
  * resolves uniqueness conflicts through an implicit DELETE + INSERT, and SQLite
@@ -98,7 +100,7 @@ assertNoLocalDbMarker(dbPathInfo, dbPathInfo.resolvedDbPath, "database");
  * and FTS need to balance the removed row. Every connection that writes must set
  * it, so both getDb() and initDb() (whose callers open their own connections) do.
  */
-export function applyConnectionPragmas(db: Database): void {
+function applyConnectionPragmas(db: Database): void {
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA busy_timeout = 30000");
   db.exec("PRAGMA recursive_triggers = ON");

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { conversationEventEligibilityClause, conversationTypeClause } from "./conversation-types";
-import { applyConnectionPragmas, initDb } from "./schema";
+import { getDb, initDb } from "./schema";
 
 function schemaSql(db: Database, type: "index" | "trigger", name: string): string {
   const row = db
@@ -411,27 +411,29 @@ describe("conversation summary schema", () => {
   });
 });
 
-describe("applyConnectionPragmas", () => {
-  it("enables recursive triggers, which derived tables depend on for REPLACE", () => {
-    // The service skips initDb() on the API's connection once it has already
-    // initialised the schema, so this is the only thing setting it there. REPLACE
-    // resolves conflicts as DELETE + INSERT, and without recursive triggers the
-    // DELETE side never fires, leaving derived tables and FTS unbalanced.
-    const db = new Database(":memory:");
+describe("connection pragmas", () => {
+  const recursiveTriggers = (db: Database) =>
+    (db.prepare("PRAGMA recursive_triggers").get() as { recursive_triggers: number }).recursive_triggers;
+
+  it("getDb() enables recursive triggers, which derived tables depend on for REPLACE", () => {
+    // Under the service the API's connection skips initDb(), so getDb() is the
+    // only thing setting it there. REPLACE resolves conflicts as DELETE + INSERT,
+    // and without recursive triggers the DELETE side never fires, leaving derived
+    // tables and FTS unbalanced.
+    const db = getDb();
     try {
-      expect((db.prepare("PRAGMA recursive_triggers").get() as { recursive_triggers: number }).recursive_triggers).toBe(0);
-      applyConnectionPragmas(db);
-      expect((db.prepare("PRAGMA recursive_triggers").get() as { recursive_triggers: number }).recursive_triggers).toBe(1);
+      expect(recursiveTriggers(db)).toBe(1);
     } finally {
       db.close();
     }
   });
 
-  it("is applied by initDb, for callers that opened their own connection", () => {
+  it("initDb() enables them for callers that opened their own connection", () => {
     const db = new Database(":memory:");
     try {
+      expect(recursiveTriggers(db)).toBe(0);
       initDb(db);
-      expect((db.prepare("PRAGMA recursive_triggers").get() as { recursive_triggers: number }).recursive_triggers).toBe(1);
+      expect(recursiveTriggers(db)).toBe(1);
     } finally {
       db.close();
     }
