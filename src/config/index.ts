@@ -400,7 +400,7 @@ export async function loadConfig(): Promise<ServiceConfig> {
     legacyEmbeddingWarningLogged = true;
     console.warn(
       `[config] ${legacyEmbeddingVars.join(", ")} ${legacyEmbeddingVars.length === 1 ? "is" : "are"} no longer read; ` +
-        "configure embeddings under [embeddings] in config.toml (see docs/embeddings.md)",
+        "configure embeddings under [embeddings] in config.toml (see docs/user/embeddings.md)",
     );
   }
 

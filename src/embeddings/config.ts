@@ -19,7 +19,7 @@ const DEFAULT_TIMEOUT_SECONDS = 60;
 export function notConfiguredMessage(): string {
   const legacy = legacyEmbeddingEnvVarsSet();
   const legacyNote = legacy.length > 0 ? ` ${legacy.join(", ")} ${legacy.length === 1 ? "is" : "are"} no longer read.` : "";
-  return `Semantic search is not configured: add an [embeddings] section to config.toml (see docs/embeddings.md).${legacyNote}`;
+  return `Semantic search is not configured: add an [embeddings] section to config.toml (see docs/user/embeddings.md).${legacyNote}`;
 }
 
 export function resolveEmbeddingProfile(config: EmbeddingsConfig | undefined): EmbeddingProfileConfig {

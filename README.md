@@ -232,6 +232,6 @@ This project uses scoped commits:
 ## Documentation
 
 See `AGENTS.md` for detailed setup instructions, parser commands, API reference, and deployment guide.
-Running the service on a macOS host: `docs/macos-host.md`.
+Running the service on a macOS host: `docs/user/macos-host.md`.
 Contributing: `CONTRIBUTING.md`. Reporting security issues: `SECURITY.md`.
-Embeddings & vector search: `docs/embeddings.md`.
+Embeddings & vector search: `docs/user/embeddings.md`.

@@ -201,7 +201,7 @@ interval = "5m"
 
 [sync.recall]
 # Imports MacBook screen captures from the local recall capture daemon. Path is
-# the root containing webp+json pairs (see docs/source-setup.md "MacBook screen
+# the root containing webp+json pairs (see docs/user/source-setup.md "MacBook screen
 # recall").
 path = "/Users/your-user/.local/share/timeline/recall"
 interval = "5m"

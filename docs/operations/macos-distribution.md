@@ -31,11 +31,11 @@ PR CI builds and smoke-tests an ad-hoc-signed app on a hosted Mac without signin
 
 ## Installing
 
-For a first installation, drag the app to `/Applications`, then configure the service using [macOS host setup](macos-host.md). While the service is down, the menu bar shows why it can't start, such as a missing `AUTH_PASSWORD` and the env file to add it to. Existing `~/Applications/Timeline.app` users should replace that copy instead of creating a second installation. The menu warns when both Applications folders contain a copy. Follow the maintenance hold procedure in the host guide before manually replacing a running installation.
+For a first installation, drag the app to `/Applications`, then configure the service using [macOS host setup](../user/macos-host.md). While the service is down, the menu bar shows why it can't start, such as a missing `AUTH_PASSWORD` and the env file to add it to. Existing `~/Applications/Timeline.app` users should replace that copy instead of creating a second installation. The menu warns when both Applications folders contain a copy. Follow the maintenance hold procedure in the host guide before manually replacing a running installation.
 
 The app supports both Applications locations. Bundled LaunchAgents use `BundleProgram` and a small native launcher that resolves scripts relative to the running bundle and opens logs in the current user's home directory. The signed bundle contains no build-user LaunchAgent paths and requires no plist edits after signing.
 
-The DMG includes the service, web UI, Bun, and native service libraries. Existing source setup, config and authentication requirements still apply. Recall capture runs inside the app and requires Screen Recording permission for Timeline plus the external `cwebp` encoder; see [Recall setup](recall-setup.md). Tailscale remains an optional external installation. Neither external tool is silently downloaded by the DMG.
+The DMG includes the service, web UI, Bun, and native service libraries. Existing source setup, config and authentication requirements still apply. Recall capture runs inside the app and requires Screen Recording permission for Timeline plus the external `cwebp` encoder; see [Recall setup](../user/recall-setup.md). Tailscale remains an optional external installation. Neither external tool is silently downloaded by the DMG.
 
 ## Native updates
 

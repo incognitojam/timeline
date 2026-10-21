@@ -10,7 +10,7 @@ separate Go binary: libgm is AGPL and has no TypeScript port. Timeline runs
 It never sends messages or changes anything on the account. The phone must be
 online — everything is proxied through the Messages app on it.
 
-Sync setup for Timeline is in [docs/source-setup.md](../../docs/source-setup.md);
+Sync setup for Timeline is in [docs/user/source-setup.md](../../docs/user/source-setup.md);
 the rest of this file covers building, pairing, and the CLI.
 
 ## Build

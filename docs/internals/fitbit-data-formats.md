@@ -137,4 +137,4 @@ Events are tagged to distinguish formats:
 - Parser: `src/parsers/fitbit.ts`
 - Inbox detection: `src/inbox/zip.ts` (`detectTakeoutServices`)
 - Inbox handler: `src/inbox/zip-handlers.ts` (`case "fitbit":`)
-- This doc: `docs/fitbit-data-formats.md`
+- This doc: `docs/internals/fitbit-data-formats.md`

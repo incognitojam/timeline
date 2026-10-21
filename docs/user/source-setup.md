@@ -348,7 +348,7 @@ Live SMS, MMS and RCS text sync from the Google Messages app on your phone, usin
    cd tools/timeline-gmessages && go build -o timeline-gmessages .
    mkdir -p ~/.local/share/timeline-gmessages && cp timeline-gmessages ~/.local/share/timeline-gmessages/
    ```
-2. Pair from the state directory, following [tools/timeline-gmessages/README.md](../tools/timeline-gmessages/README.md) for cookie extraction:
+2. Pair from the state directory, following [tools/timeline-gmessages/README.md](../../tools/timeline-gmessages/README.md) for cookie extraction:
    ```bash
    cd ~/.local/share/timeline-gmessages && ./timeline-gmessages pair
    ```
