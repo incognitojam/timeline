@@ -27,23 +27,22 @@ jobs:
       - run: bun install --frozen-lockfile
       - id: mode
         uses: changesets/action/select-mode@v2.1.1
+      - name: Read the proposed version
+        if: steps.mode.outputs.mode == 'version'
+        id: next
+        run: |
+          status="$RUNNER_TEMP/changeset-status.json"
+          bunx changeset status --output="$status"
+          version="$(jq -er --arg name "$(jq -r .name package.json)" '.releases[] | select(.name == $name) | .newVersion' "$status")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Create or update the version PR
         if: steps.mode.outputs.mode == 'version'
-        id: version-pr
         uses: changesets/action/version@v2.1.1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: bun run release:version
           commit-message: "release: version packages"
-          pr-title: "release: version packages"
-      - name: Include the proposed version in the PR title
-        if: steps.mode.outputs.mode == 'version'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_PR_NUMBER: ${{ steps.version-pr.outputs.pr-number }}
-        run: |
-          version="$(bun run scripts/print-product-version.ts)"
-          gh pr edit "$RELEASE_PR_NUMBER" --repo "$GITHUB_REPOSITORY" --title "release: v$version"
+          pr-title: "release: v${{ steps.next.outputs.version }}"
 
   test:
     name: test (${{ matrix.suite }})
