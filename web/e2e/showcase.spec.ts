@@ -149,10 +149,112 @@ function spotifyTrack(timestamp: string, track: string, artist: string, album: s
 }
 
 // ---------------------------------------------------------------------------
-// The day: Friday 7 March 2025
+// The hiking group chat (the day view shows Friday's messages)
 // ---------------------------------------------------------------------------
 
 const HIKE_CONVERSATION_ID = "dc-weekend-hike";
+
+interface ChatMessage {
+  timestamp: string;
+  person: { id: string; name: string };
+  content: string;
+  extra?: EventOverrides;
+}
+
+function reactions(emoji: string, ...users: string[]): EventOverrides {
+  return { raw_data: { reactions: [{ emoji: { name: emoji }, count: users.length, users: users.map((name) => ({ name })) }] } };
+}
+
+// Thursday evening + Friday, oldest first: the conversation's newest page.
+// Friday's messages fill the conversation shot, so its sticky date header
+// sits above a whole message (the shot asserts this).
+const HIKE_CHAT: ChatMessage[] = [
+  { timestamp: "2025-03-06T19:41:22.000Z", person: PEOPLE.rowan, content: "weather finally looks decent saturday — who's in?" },
+  {
+    timestamp: "2025-03-06T19:44:31.000Z",
+    person: PEOPLE.me,
+    content: "in. shall we finally do Greywater Ridge?",
+    extra: reactions("👍", "Rowan", "Sam", "Priya"),
+  },
+  {
+    timestamp: "2025-03-06T19:48:12.000Z",
+    person: PEOPLE.sam,
+    content: "depends. is the pub in Lowmere part of the route",
+    extra: reactions("😂", "Priya", "Alex"),
+  },
+  {
+    timestamp: "2025-03-07T08:52:19.000Z",
+    person: PEOPLE.rowan,
+    content: "right, forecast says sunny until 3pm — are we doing Greywater Ridge or the easy one?",
+  },
+  {
+    timestamp: "2025-03-07T08:54:02.000Z",
+    person: PEOPLE.me,
+    content: "the ridge. we always say the easy one and then feel cheated",
+    extra: reactions("💯", "Rowan", "Priya"),
+  },
+  {
+    timestamp: "2025-03-07T09:01:36.000Z",
+    person: PEOPLE.priya,
+    content: "I can drive, picking up at 8:30. bring actual boots this time Sam",
+  },
+  {
+    timestamp: "2025-03-07T09:14:50.000Z",
+    person: PEOPLE.sam,
+    content: "one (1) time",
+    extra: {
+      replied_to: {
+        author_name: "Priya",
+        content: "I can drive, picking up at 8:30. bring actual boots this time Sam",
+        has_attachment: false,
+      },
+    },
+  },
+  {
+    timestamp: "2025-03-07T09:16:33.000Z",
+    person: PEOPLE.rowan,
+    content: "I'll sort sandwiches. cheese and pickle non-negotiable",
+    extra: reactions("🧀", "Sam"),
+  },
+  {
+    timestamp: "2025-03-07T17:20:41.000Z",
+    person: PEOPLE.me,
+    content: "route saved offline + headtorch packed in case we're slow off the plateau",
+  },
+  { timestamp: "2025-03-07T17:22:05.000Z", person: PEOPLE.sam, content: "boots are by the door. both of them" },
+  {
+    timestamp: "2025-03-07T17:24:58.000Z",
+    person: PEOPLE.priya,
+    content: "see everyone at 8:30 sharp ⛰️",
+    extra: reactions("⛰️", "Rowan", "Sam", "Alex"),
+  },
+];
+
+// An older page behind a cursor: the chat reads as long-running (matching the
+// sidebar stats). The scroller pulls it while the top is in view, and its null
+// cursor ends the pagination.
+const HIKE_CHAT_OLDER: ChatMessage[] = [
+  {
+    timestamp: "2025-03-05T21:03:12.000Z",
+    person: PEOPLE.priya,
+    content: "found my map from last time, it has a suspicious tea stain on the summit",
+  },
+  { timestamp: "2025-03-05T21:07:44.000Z", person: PEOPLE.rowan, content: "that's how you know it's been used" },
+];
+
+function hikeMessage(message: ChatMessage): ShowcaseEvent {
+  return event("discord", "message:group", message.timestamp, {
+    title: "weekend hike 🥾",
+    content: message.content,
+    people: [message.person.id],
+    conversation_id: HIKE_CONVERSATION_ID,
+    ...message.extra,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// The day: Friday 7 March 2025
+// ---------------------------------------------------------------------------
 
 function buildDayEvents(): DayContextData {
   nextEventId = 1;
@@ -172,30 +274,7 @@ function buildDayEvents(): DayContextData {
     event("google-search", "google:search", t("08:25:03"), { title: "best flask for day hikes" }),
 
     // Group chat planning the weekend
-    event("discord", "message:group", t("08:52:19"), {
-      title: "weekend hike 🥾",
-      content: "right, forecast says sunny until 3pm — are we doing Greywater Ridge or the easy one?",
-      people: [PEOPLE.rowan.id],
-      conversation_id: HIKE_CONVERSATION_ID,
-    }),
-    event("discord", "message:group", t("08:54:02"), {
-      title: "weekend hike 🥾",
-      content: "the ridge. we always say the easy one and then feel cheated",
-      people: [PEOPLE.me.id],
-      conversation_id: HIKE_CONVERSATION_ID,
-    }),
-    event("discord", "message:group", t("09:01:36"), {
-      title: "weekend hike 🥾",
-      content: "I can drive, picking up at 8:30. bring actual boots this time Sam",
-      people: [PEOPLE.priya.id],
-      conversation_id: HIKE_CONVERSATION_ID,
-    }),
-    event("discord", "message:group", t("09:14:50"), {
-      title: "weekend hike 🥾",
-      content: "one (1) time",
-      people: [PEOPLE.sam.id],
-      conversation_id: HIKE_CONVERSATION_ID,
-    }),
+    ...HIKE_CHAT.filter((message) => message.timestamp.startsWith(DAY)).map(hikeMessage),
 
     // Deep work
     event("wakatime", "code:session", t("09:05:00"), {
@@ -282,7 +361,7 @@ function buildDayEvents(): DayContextData {
       content: "At least 30cm of loose, stone-free soil — short, round varieties cope with less.",
       conversation_id: "cl-garden",
     }),
-  ];
+  ].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
   const bySourceCounts = new Map<string, number>();
   for (const e of events) bySourceCounts.set(e.source, (bySourceCounts.get(e.source) ?? 0) + 1);
@@ -357,92 +436,27 @@ function buildDateIndex(todayCount: number): DateActivityResponse {
 
 function buildConversation() {
   nextEventId = 500;
-  const msg = (
-    time: string,
-    person: { id: string; name: string },
-    content: string,
-    extra: EventOverrides = {},
-  ) =>
-    event("discord", "message:group", time, {
-      title: "weekend hike 🥾",
-      content,
-      people: [person.id],
-      conversation_id: HIKE_CONVERSATION_ID,
-      ...extra,
-    });
-
-  // Thursday evening + Friday, ascending; the shot is anchored at the newest
-  // message with "End of conversation" visible.
-  const events = [
-    msg("2025-03-06T19:41:22.000Z", PEOPLE.rowan, "weather finally looks decent saturday — who's in?"),
-    msg("2025-03-06T19:44:31.000Z", PEOPLE.me, "in. shall we finally do Greywater Ridge?", {
-      raw_data: {
-        reactions: [{ emoji: { name: "👍" }, count: 3, users: [{ name: "Rowan" }, { name: "Sam" }, { name: "Priya" }] }],
-      },
-    }),
-    msg("2025-03-06T19:48:12.000Z", PEOPLE.sam, "depends. is the pub in Lowmere part of the route", {
-      raw_data: { reactions: [{ emoji: { name: "😂" }, count: 2, users: [{ name: "Priya" }, { name: "Alex" }] }] },
-    }),
-    msg("2025-03-07T08:52:19.000Z", PEOPLE.rowan, "right, forecast says sunny until 3pm — are we doing Greywater Ridge or the easy one?"),
-    msg("2025-03-07T08:54:02.000Z", PEOPLE.me, "the ridge. we always say the easy one and then feel cheated", {
-      raw_data: { reactions: [{ emoji: { name: "💯" }, count: 2, users: [{ name: "Rowan" }, { name: "Priya" }] }] },
-    }),
-    msg("2025-03-07T09:01:36.000Z", PEOPLE.priya, "I can drive, picking up at 8:30. bring actual boots this time Sam"),
-    msg("2025-03-07T09:14:50.000Z", PEOPLE.sam, "one (1) time", {
-      replied_to: {
-        author_name: "Priya",
-        content: "I can drive, picking up at 8:30. bring actual boots this time Sam",
-        has_attachment: false,
-      },
-    }),
-    msg("2025-03-07T09:16:33.000Z", PEOPLE.rowan, "I'll sort sandwiches. cheese and pickle non-negotiable"),
-    msg("2025-03-07T17:20:41.000Z", PEOPLE.me, "route saved offline + headtorch packed in case we're slow off the plateau"),
-    msg("2025-03-07T17:24:58.000Z", PEOPLE.priya, "see everyone at 8:30 sharp ⛰️", {
-      raw_data: {
-        reactions: [{ emoji: { name: "⛰️" }, count: 3, users: [{ name: "Rowan" }, { name: "Sam" }, { name: "Alex" }] }],
-      },
-    }),
-  ];
-
-  // An older page behind a cursor: the chat reads as long-running (matching
-  // the sidebar stats). The scroller pulls it while the top is in view, and
-  // its null cursor ends the pagination.
-  const olderEvents = [
-    msg("2025-03-05T21:03:12.000Z", PEOPLE.priya, "found my map from last time, it has a suspicious tea stain on the summit"),
-    msg("2025-03-05T21:07:44.000Z", PEOPLE.rowan, "that's how you know it's been used"),
-  ];
+  const events = HIKE_CHAT.map(hikeMessage);
+  const olderEvents = HIKE_CHAT_OLDER.map(hikeMessage);
 
   const participants: Record<string, EventParticipant> = Object.fromEntries(
     CAST.map((p) => [p.id, { name: p.name, contactId: p.contactId, avatarUrl: null, isSelf: p.isSelf }]),
   );
+  const conversationPage = (pageEvents: TimelineEvent[], nextCursor: string | null): ConversationResponse => ({
+    title: "weekend hike 🥾",
+    // Pages arrive newest-first; the client reverses them.
+    events: [...pageEvents].reverse(),
+    attachments: {},
+    nextCursor,
+    participants,
+    server: { source: "discord", id: "9000001", name: "Ridge Crew" },
+  });
 
   return {
-    page: {
-      title: "weekend hike 🥾",
-      // The initial conversation load expects newest-first; the client reverses.
-      events: [...events].reverse(),
-      attachments: {},
-      nextCursor: "older-page-1",
-      participants,
-      server: { source: "discord", id: "9000001", name: "Ridge Crew" },
-    } satisfies ConversationResponse,
-    olderPage: {
-      title: "weekend hike 🥾",
-      events: [...olderEvents].reverse(),
-      attachments: {},
-      nextCursor: null,
-      participants,
-      server: { source: "discord", id: "9000001", name: "Ridge Crew" },
-    } satisfies ConversationResponse,
+    page: conversationPage(events, "older-page-1"),
+    olderPage: conversationPage(olderEvents, null),
     // Polling for newer messages finds nothing past the newest message.
-    newerPage: {
-      title: "weekend hike 🥾",
-      events: [],
-      attachments: {},
-      nextCursor: null,
-      participants,
-      server: { source: "discord", id: "9000001", name: "Ridge Crew" },
-    } satisfies ConversationResponse,
+    newerPage: conversationPage([], null),
     stats: {
       totalMessages: 1_284,
       firstMessage: "2024-04-02T18:12:00.000Z",
@@ -987,9 +1001,28 @@ test("conversation", async ({ page }) => {
   await expect(page.getByText("End of conversation")).toBeVisible();
   await expect(page.getByText("1,284")).toBeVisible();
   // The older page loads on open; wait for it so the prepend doesn't land mid-shot.
-  await expect(page.getByText("12 messages loaded")).toBeVisible();
+  await expect(page.getByText(`${HIKE_CHAT.length + HIKE_CHAT_OLDER.length} messages loaded`)).toBeVisible();
   await expect(page.getByText("Loading older messages...")).toHaveCount(0);
   await settle(page, problems);
+  // The topmost date header sticks over the transcript; it may cover a
+  // message's top padding but none of its text.
+  const coveredPx = await page.evaluate(() => {
+    const messages = [...document.querySelectorAll("[id^='event-']")];
+    const viewport = messages[0]?.closest(".overflow-auto");
+    if (!viewport) throw new Error("Conversation transcript not found");
+    const viewportTop = viewport.getBoundingClientRect().top;
+    const headerBottom = Math.min(
+      ...[...viewport.querySelectorAll(".sticky")]
+        .map((header) => header.getBoundingClientRect())
+        .filter((rect) => rect.bottom > viewportTop)
+        .map((rect) => rect.bottom),
+    );
+    const message = messages.find((el) => el.getBoundingClientRect().bottom > headerBottom);
+    if (!message) throw new Error("No message below the date header");
+    const textTop = message.getBoundingClientRect().top + Number.parseFloat(getComputedStyle(message).paddingTop);
+    return headerBottom - textTop;
+  });
+  expect(coveredPx).toBeLessThanOrEqual(0);
 
   await capture(page, problems, "conversation.png");
 });
