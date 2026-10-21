@@ -14,6 +14,25 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { EventParticipant } from "@shared/types";
+import type {
+  AuthStatus,
+  BiomarkerData,
+  ConversationResponse,
+  ConversationStats,
+  DayContextData,
+  DayHealthStats,
+  HealthStats,
+  MusicRankingsOverview,
+  MusicRecentResponse,
+  SearchResult,
+  SpotifyFriendLatestListen,
+  StatsData,
+  TrackedPlaylist,
+} from "../src/lib/api";
+import type { DateActivityResponse } from "../src/lib/dateActivityQueries";
+import type { ResolvedIdentity } from "../src/lib/identities";
+import type { ContactWithStats, TimelineEvent } from "../src/lib/types";
 
 const OUTPUT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../../docs/screenshots");
 mkdirSync(OUTPUT_DIR, { recursive: true });
@@ -55,51 +74,46 @@ const ART = {
 // ---------------------------------------------------------------------------
 
 const PEOPLE = {
-  me: { id: "discord:1000", name: "Alex" },
-  rowan: { id: "discord:1001", name: "Rowan" },
-  priya: { id: "discord:1002", name: "Priya" },
-  sam: { id: "discord:1003", name: "Sam" },
+  me: { id: "discord:1000", spotify: "spotify:alex-demo", name: "Alex" },
+  rowan: { id: "discord:1001", spotify: "spotify:rowan-demo", name: "Rowan" },
+  priya: { id: "discord:1002", spotify: "spotify:priya-demo", name: "Priya" },
+  sam: { id: "discord:1003", spotify: "spotify:sam-demo", name: "Sam" },
 };
 
-const RESOLVED_IDENTITIES: Record<
-  string,
-  { name: string; username: string | null; contactId: number | null; avatarUrl: string | null }
-> = Object.fromEntries(
-  Object.values(PEOPLE).map((p, i) => [
-    p.id,
-    { name: p.name, username: p.name.toLowerCase(), contactId: i + 1, avatarUrl: null },
-  ]),
+// Contact ids follow PEOPLE order; Alex is the self contact.
+const CAST = Object.values(PEOPLE).map((person, i) => ({
+  ...person,
+  contactId: i + 1,
+  isSelf: person === PEOPLE.me,
+}));
+
+// Each contact has a Discord and a Spotify identity.
+const RESOLVED_IDENTITIES: Record<string, ResolvedIdentity> = Object.fromEntries(
+  CAST.flatMap((p) =>
+    [p.id, p.spotify].map((identifier) => [
+      identifier,
+      { name: p.name, username: p.name.toLowerCase(), contactId: p.contactId, avatarUrl: null, isSelf: p.isSelf },
+    ]),
+  ),
 );
 
 // ---------------------------------------------------------------------------
 // Event helpers
 // ---------------------------------------------------------------------------
 
-interface EventOverrides {
-  end_timestamp?: string | null;
-  duration_ms?: number | null;
-  title?: string | null;
-  content?: string | null;
-  latitude?: number | null;
-  longitude?: number | null;
-  location_name?: string | null;
-  people?: string[] | null;
-  tags?: string[] | null;
+/** Event fields, with the JSON-encoded columns given as values. */
+type EventOverrides = Partial<Omit<TimelineEvent, "people" | "tags" | "raw_data">> & {
+  people?: string[];
+  tags?: string[];
   raw_data?: unknown;
-  conversation_id?: string | null;
-  source_account?: string | null;
-  replied_to?: {
-    event_id?: number;
-    conversation_id?: string;
-    author_name: string | null;
-    content: string | null;
-    has_attachment: boolean;
-  };
-}
+};
 
 let nextEventId = 1;
 
-function event(source: string, type: string, timestamp: string, overrides: EventOverrides = {}) {
+/** Fixture timestamps are always ISO strings. */
+type ShowcaseEvent = TimelineEvent & { timestamp: string };
+
+function event(source: string, type: string, timestamp: string, overrides: EventOverrides = {}): ShowcaseEvent {
   const id = nextEventId++;
   return {
     id,
@@ -140,7 +154,7 @@ function spotifyTrack(timestamp: string, track: string, artist: string, album: s
 
 const HIKE_CONVERSATION_ID = "dc-weekend-hike";
 
-function buildDayEvents() {
+function buildDayEvents(): DayContextData {
   nextEventId = 1;
   const t = (time: string) => `${DAY}T${time}.000Z`;
 
@@ -312,11 +326,11 @@ const dayHealth = {
   },
   outOfRangeCount: 0,
   totalMetricCount: 5,
-};
+} satisfies DayHealthStats;
 
 // Complete date index for the sidebar: two years of deterministic activity,
 // newest first, with quiet gaps (today's count matches the day fixture).
-function buildDateIndex(todayCount: number) {
+function buildDateIndex(todayCount: number): DateActivityResponse {
   let seed = 7;
   const rand = () => {
     seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
@@ -398,8 +412,8 @@ function buildConversation() {
     msg("2025-03-05T21:07:44.000Z", PEOPLE.rowan, "that's how you know it's been used"),
   ];
 
-  const participants = Object.fromEntries(
-    Object.values(PEOPLE).map((p, i) => [p.id, { name: p.name, contactId: i + 1, avatarUrl: null }]),
+  const participants: Record<string, EventParticipant> = Object.fromEntries(
+    CAST.map((p) => [p.id, { name: p.name, contactId: p.contactId, avatarUrl: null, isSelf: p.isSelf }]),
   );
 
   return {
@@ -411,7 +425,7 @@ function buildConversation() {
       nextCursor: "older-page-1",
       participants,
       server: { source: "discord", id: "9000001", name: "Ridge Crew" },
-    },
+    } satisfies ConversationResponse,
     olderPage: {
       title: "weekend hike 🥾",
       events: [...olderEvents].reverse(),
@@ -419,7 +433,7 @@ function buildConversation() {
       nextCursor: null,
       participants,
       server: { source: "discord", id: "9000001", name: "Ridge Crew" },
-    },
+    } satisfies ConversationResponse,
     // Polling for newer messages finds nothing past the newest message.
     newerPage: {
       title: "weekend hike 🥾",
@@ -428,17 +442,18 @@ function buildConversation() {
       nextCursor: null,
       participants,
       server: { source: "discord", id: "9000001", name: "Ridge Crew" },
-    },
+    } satisfies ConversationResponse,
     stats: {
       totalMessages: 1_284,
       firstMessage: "2024-04-02T18:12:00.000Z",
       lastMessage: events[events.length - 1].timestamp,
       firstEventId: 1,
       lastEventId: events[events.length - 1].id,
-      participants: Object.values(PEOPLE).map((p, i) => ({
+      participants: CAST.map((p, i) => ({
         identifier: p.id,
         name: p.name,
-        contactId: i + 1,
+        contactId: p.contactId,
+        avatarUrl: null,
         count: [412, 386, 341, 145][i] ?? 100,
       })),
       attachmentCount: 87,
@@ -454,11 +469,11 @@ function buildConversation() {
         { month: "2024-12", count: 130 },
         { month: "2025-01", count: 118 },
         { month: "2025-02", count: 149 },
-        { month: "2025-03", count: 109 },
+        { month: "2025-03", count: 110 },
       ],
       titles: [],
       tokenUsage: null,
-    },
+    } satisfies ConversationStats,
   };
 }
 
@@ -466,7 +481,7 @@ function buildConversation() {
 // Health month (February 2025 — complete, deterministic pseudo-random)
 // ---------------------------------------------------------------------------
 
-function buildHealthStats() {
+function buildHealthStats(): HealthStats {
   // Small deterministic LCG so the charts look organic but never change.
   let seed = 42;
   const rand = () => {
@@ -599,7 +614,7 @@ function buildMusic() {
       createdDate: "2024-06-08",
       series: monthlySeries(2024, 7, 64, [1, 3, 2, 5, -1, 7, 3, 6]),
     },
-  ].map((p) => ({
+  ].map((p): TrackedPlaylist => ({
     playlistId: p.playlistId,
     name: p.name,
     imageUrl: p.imageUrl,
@@ -611,10 +626,10 @@ function buildMusic() {
     series: p.series,
   }));
 
-  const friends = [
+  const friends: SpotifyFriendLatestListen[] = [
     {
       eventId: 9001,
-      person: PEOPLE.rowan.id,
+      person: PEOPLE.rowan.spotify,
       spotifyId: "rowan-demo",
       contactId: 2,
       name: "Rowan",
@@ -627,7 +642,7 @@ function buildMusic() {
     },
     {
       eventId: 9002,
-      person: PEOPLE.priya.id,
+      person: PEOPLE.priya.spotify,
       spotifyId: "priya-demo",
       contactId: 3,
       name: "Priya",
@@ -640,7 +655,7 @@ function buildMusic() {
     },
     {
       eventId: 9003,
-      person: PEOPLE.sam.id,
+      person: PEOPLE.sam.spotify,
       spotifyId: "sam-demo",
       contactId: 4,
       name: "Sam",
@@ -701,7 +716,7 @@ function buildMusic() {
     }));
 
   const totalPlays = 487;
-  const rankings = {
+  const rankings: MusicRankingsOverview = {
     period: "4w",
     periodStart: "2025-02-07T21:30:00.000Z",
     totalPlays,
@@ -727,7 +742,7 @@ function buildMusic() {
     ["2025-03-06T19:05:11.000Z", 1],
     ["2025-03-06T18:59:47.000Z", 0],
   ];
-  const recent = recentPlays.map(([timestamp, index], i) => ({
+  const recent: MusicRecentResponse["recent"] = recentPlays.map(([timestamp, index], i) => ({
     eventId: 9200 + i,
     timestamp,
     trackName: catalogue[index].track,
@@ -749,7 +764,7 @@ function buildMusic() {
 // Search: "aurora" across sources
 // ---------------------------------------------------------------------------
 
-function buildSearchResults() {
+function buildSearchResults(): SearchResult {
   nextEventId = 700;
   const events = [
     event("discord", "message:group", "2025-02-27T22:41:09.000Z", {
@@ -784,22 +799,28 @@ function buildSearchResults() {
       latitude: 47.594,
       longitude: -31.517,
     }),
-  ];
-  return { events, count: 61, nextCursor: null };
+  ].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  // Search returns newest first, counting the page it returns.
+  return { events, count: events.length, nextCursor: null };
 }
 
 // ---------------------------------------------------------------------------
 // Shared API scaffolding
 // ---------------------------------------------------------------------------
 
-const stats = {
-  total_events: 1_847_203,
-  sources: [
-    { source: "wakatime", type: "code:session", count: 812_400 },
-    { source: "facebook", type: "message", count: 704_120 },
-    { source: "spotify", type: "listen:track", count: 207_331 },
-    { source: "discord", type: "message:group", count: 54_209 },
-  ],
+const statsSources: StatsData["sources"] = [
+  { source: "wakatime", type: "code:session", count: 812_400 },
+  { source: "facebook", type: "message", count: 704_120 },
+  { source: "spotify", type: "listen:track", count: 207_331 },
+  { source: "discord", type: "message:group", count: 54_209 },
+  { source: "chrome", type: "browse", count: 46_870 },
+  { source: "google-search", type: "google:search", count: 13_204 },
+  { source: "monzo", type: "transaction", count: 9_069 },
+];
+
+const stats: StatsData = {
+  total_events: statsSources.reduce((total, row) => total + row.count, 0),
+  sources: statsSources,
   date_range: { earliest: "2009-06-14T09:00:00.000Z", latest: "2025-03-07T21:29:00.000Z" },
 };
 
@@ -807,13 +828,13 @@ function baseResponses(): Record<string, unknown> {
   const music = buildMusic();
   const day = buildDayEvents();
   return {
-    "/api/auth/status": { authenticated: true, authEnabled: true },
+    "/api/auth/status": { authenticated: true, authEnabled: true } satisfies AuthStatus,
     "/api/stats": stats,
     "/api/day": day,
     [`/api/day/${DAY}/health`]: dayHealth,
     "/api/timeline/date-index": buildDateIndex(day.summary.totalEvents),
     "/api/health/stats": buildHealthStats(),
-    "/api/health/biomarkers": { biomarkers: [] },
+    "/api/health/biomarkers": { biomarkers: [] as BiomarkerData[] },
     "/api/playlists": music.playlists,
     "/api/music/friends/latest": music.friends,
     "/api/music/rankings": music.rankings,
@@ -821,13 +842,13 @@ function baseResponses(): Record<string, unknown> {
     "/api/search": buildSearchResults(),
     "/api/conversations/sources": { sources: ["discord", "claude", "facebook", "phone"] },
     "/api/contacts": {
-      contacts: Object.values(PEOPLE).map((p, i) => ({
-        id: i + 1,
+      contacts: CAST.map((p, i): ContactWithStats => ({
+        id: p.contactId,
         display_name: p.name,
         notes: null,
         date_of_birth: null,
         hidden: 0,
-        is_self: p === PEOPLE.me ? 1 : 0,
+        is_self: p.isSelf ? 1 : 0,
         created_at: "2024-01-01T09:00:00.000Z",
         updated_at: "2025-03-01T09:00:00.000Z",
         identityCount: 2,
@@ -849,10 +870,10 @@ async function mockApi(page: Page): Promise<string[]> {
 
     if (request.method() === "POST" && pathname === "/api/identities/resolve") {
       const body = request.postDataJSON() as { identifiers: string[] };
-      const resolved = Object.fromEntries(
+      const resolved: Record<string, ResolvedIdentity> = Object.fromEntries(
         body.identifiers.map((id) => [
           id,
-          RESOLVED_IDENTITIES[id] ?? { name: null, username: null, contactId: null, avatarUrl: null },
+          RESOLVED_IDENTITIES[id] ?? { name: null, username: null, contactId: null, avatarUrl: null, isSelf: false },
         ]),
       );
       await route.fulfill({ json: { resolved } });
