@@ -61,7 +61,7 @@ background-item record. This can happen with a self-signed app; the app leaves
 the already-loaded bundled job running and will try to reconcile again later.
 
 If you need a starter config, copy
-[`deploy/macos/config.toml.example`](../deploy/macos/config.toml.example) to
+[`deploy/macos/config.toml.example`](../../deploy/macos/config.toml.example) to
 `~/.config/timeline/config.toml` before enabling syncs.
 
 ## Enable syncing
@@ -215,7 +215,7 @@ through SMAppService, and manual bootstrap fails with EIO.
 ## Updating
 
 Updates replace `Timeline.app`; the running service never pulls or builds a git
-checkout. For signed downloads, follow [macOS distribution](macos-distribution.md).
+checkout. For signed downloads, follow [macOS distribution](../operations/macos-distribution.md).
 For a source installation, rebuild and install from an updated checkout:
 
 ```bash
@@ -226,7 +226,7 @@ bun install --frozen-lockfile
 ```
 
 The product version comes from the root `package.json` and is advanced through
-the release process documented in [releases.md](releases.md). Local builds use
+the release process documented in [releases.md](../operations/releases.md). Local builds use
 `CFBundleVersion` from `tools/timeline-app/Info.plist`; packaging CI can set the
 monotonic numeric `TIMELINE_BUILD_NUMBER` override. Development rebuilds remain
 distinguishable by the source commit shown in the web app's **Settings → Version & build**.

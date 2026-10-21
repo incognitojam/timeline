@@ -21,7 +21,7 @@ When reasoning about SolidJS reactivity (signals, resources, Suspense/transition
 
 ## Service Deployment
 
-Timeline self-hosts on a **macOS** host. The menu bar app runs recall capture in-process and owns the service and Tailscale LaunchAgents; the service runs under launchd from the packaged runtime inside `~/Applications/Timeline.app` — see [docs/macos-host.md](docs/macos-host.md).
+Timeline self-hosts on a **macOS** host. The menu bar app runs recall capture in-process and owns the service and Tailscale LaunchAgents; the service runs under launchd from the packaged runtime inside `~/Applications/Timeline.app` — see [docs/user/macos-host.md](docs/user/macos-host.md).
 
 **Architecture**:
 ```
@@ -52,11 +52,11 @@ launchctl kickstart -k gui/$(id -u)/dev.incognitojam.timeline-service # restart
 curl -s http://127.0.0.1:3001/api/health                              # API is localhost-only
 ```
 
-> **Stopping the service (backfills/maintenance)**: `touch ~/.local/share/timeline/service.hold` *before* `launchctl bootout` — Timeline.app self-heals a bare bootout within ~30s. Remove the hold to restore (see [docs/macos-host.md](docs/macos-host.md), "Stopping the service for maintenance").
+> **Stopping the service (backfills/maintenance)**: `touch ~/.local/share/timeline/service.hold` *before* `launchctl bootout` — Timeline.app self-heals a bare bootout within ~30s. Remove the hold to restore (see [docs/user/macos-host.md](docs/user/macos-host.md), "Stopping the service for maintenance").
 
-Install: `cd tools/timeline-app && ./build.sh --install && open ~/Applications/Timeline.app` (macOS app-owned LaunchAgents — see [docs/macos-host.md](docs/macos-host.md)).
+Install: `cd tools/timeline-app && ./build.sh --install && open ~/Applications/Timeline.app` (macOS app-owned LaunchAgents — see [docs/user/macos-host.md](docs/user/macos-host.md)).
 
-**Authentication**: `AUTH_PASSWORD` is required outside development/test. Protects `/status`, `/status.md`, and all `/api/*` routes except `/api/health` and `/api/auth/*`; MCP endpoints use token auth (`MCP_TOKENS`). Uses Basic Auth (`curl -u ':password' URL`). Cookie set automatically on success. For local development authentication, see [Quick Start](README.md#quick-start).
+**Authentication**: `AUTH_PASSWORD` is required outside development/test. Protects `/status`, `/status.md`, and all `/api/*` routes except `/api/health` and `/api/auth/*`; MCP endpoints use token auth (`MCP_TOKENS`). Uses Basic Auth (`curl -u ':password' URL`). Cookie set automatically on success. For local development authentication, see [Running locally](docs/operations/development.md#running-locally).
 
 **Status page**: `/status` shows service health, sync stats, and scheduler state. Use `/status.md` (or `Accept: text/markdown` header) for markdown output suitable for LLMs/agents.
 
@@ -64,7 +64,7 @@ Install: `cd tools/timeline-app && ./build.sh --install && open ~/Applications/T
 
 ## Development Workflow
 
-Development happens locally. The **macOS host** runs the service packaged inside `Timeline.app`, so apply source changes with `cd tools/timeline-app && ./build.sh --install` (see [docs/macos-host.md](docs/macos-host.md)).
+Development happens locally. The **macOS host** runs the service packaged inside `Timeline.app`, so apply source changes with `cd tools/timeline-app && ./build.sh --install` (see [docs/user/macos-host.md](docs/user/macos-host.md)).
 
 **Worktree/clone setup**: `bun run setup` (`scripts/setup.sh`) installs root + `web/` dependencies, copies the gitignored files listed in `.worktreeinclude` from the main clone, links `./imports`, and prepares a sample `./timeline.db`. Agent harnesses run it on worktree creation; re-run it by hand any time.
 
@@ -116,7 +116,7 @@ The `.no-local-db` marker file (in the repo root) prevents accidental writes whe
 bun install
 
 # Parsers: bun run src/parsers/<name>.ts [args...]
-# Args vary by parser; check the CLI block near bottom of each file. Setup: docs/source-setup.md
+# Args vary by parser; check the CLI block near bottom of each file. Setup: docs/user/source-setup.md
 
 # Run the web app (uses T3 workspace ports when available, otherwise free ports)
 bun run dev
@@ -129,7 +129,7 @@ API_HOST=https://timeline bun run dev
 bun run mcp
 
 # Embeddings / vector search (experimental — needs sqlite-vec + an embeddings
-# endpoint; see docs/embeddings.md for required env vars)
+# endpoint; see docs/user/embeddings.md for required env vars)
 bun run embeddings index --limit 100
 bun run embeddings search --limit 10 "query text"
 
@@ -161,7 +161,7 @@ sqlite3 ./timeline.db "SELECT * FROM events WHERE id IN (SELECT rowid FROM event
 
 ## Recall Tooling
 
-Mac screen recall runs inside `tools/timeline-app`, which also owns the service and Tailscale LaunchAgents. Build with `./build.sh`; refresh the installed copy with `./build.sh --install`. The **Record Screen** menu toggle requests permission for Timeline and controls `~/.local/share/timeline/recall.pause`. Quitting the app stops capture; enable **Launch at Login** to resume after signing in. See `docs/recall-setup.md` for setup and migration from the retired Recall LaunchAgent.
+Mac screen recall runs inside `tools/timeline-app`, which also owns the service and Tailscale LaunchAgents. Build with `./build.sh`; refresh the installed copy with `./build.sh --install`. The **Record Screen** menu toggle requests permission for Timeline and controls `~/.local/share/timeline/recall.pause`. Quitting the app stops capture; enable **Launch at Login** to resume after signing in. See `docs/user/recall-setup.md` for setup and migration from the retired Recall LaunchAgent.
 
 `tools/timeline-recall` retains a standalone diagnostic capture tool sharing the app's capture engine. It is not required for normal recording. Its `create-signing-identity.sh` also supplies the stable identity used by local app builds.
 
@@ -262,7 +262,7 @@ bun run lint                          # Run Biome linter
 
 ### Release notes
 
-Before opening or updating a pull request, follow [docs/releases.md](docs/releases.md). Every pull request must commit either a release changeset from `bun changeset` for a user- or operator-visible change, or an empty changeset from `bun changeset --empty` when the change should not appear in the changelog.
+Before opening or updating a pull request, follow [docs/operations/releases.md](docs/operations/releases.md). Every pull request must commit either a release changeset from `bun changeset` for a user- or operator-visible change, or an empty changeset from `bun changeset --empty` when the change should not appear in the changelog.
 
 Treat the changeset as release metadata, not as a feature. Pull-request summaries and changeset text should describe the actual observable change.
 
@@ -388,7 +388,7 @@ See `.claude/skills/` for detailed patterns and examples.
 
 ## Source Setup
 
-See `docs/source-setup.md` for credentials and setup instructions for API-based sources (Monzo, Thriva, Google Health, Spotify, Trakt, GitHub, WakaTime).
+See `docs/user/source-setup.md` for credentials and setup instructions for API-based sources (Monzo, Thriva, Google Health, Spotify, Trakt, GitHub, WakaTime).
 
 ## API Integration Best Practices
 

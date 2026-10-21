@@ -1297,7 +1297,7 @@ Tips:
     "semantic_search",
     `Search timeline events by *meaning* using vector embeddings, complementing query_events (which does keyword/FTS matching). Reach for this on conceptual queries where the exact words may not appear in the events — e.g. "times I felt burned out", "planning a trip abroad", "conversations about moving house". Results are ranked by similarity, closest first.
 
-Requires embeddings to be configured and an index to be built (see docs/embeddings.md). When embeddings aren't configured this returns a short setup message instead of results.
+Requires embeddings to be configured and an index to be built (see docs/user/embeddings.md). When embeddings aren't configured this returns a short setup message instead of results.
 
 ${idHint}`,
     {

@@ -57,7 +57,7 @@ The app owns and surfaces the Timeline service and recall capture jobs:
 
 Recall runs inside Timeline.app; **quitting the app stops recording**. Enable
 **Launch at Login** to resume after signing in. Setup and migration are described
-in [Recall setup](../../docs/recall-setup.md).
+in [Recall setup](../../docs/user/recall-setup.md).
 
 - **Record Screen** requests Screen Recording permission for Timeline and toggles
   the existing pause flag. The menu opens the permission settings when needed.
@@ -106,5 +106,5 @@ against synthetic input (the config parser also needs the Foundation-only
 
 ## Signed DMG releases
 
-See [macOS distribution](../../docs/macos-distribution.md) for CI signing secrets,
+See [macOS distribution](../../docs/operations/macos-distribution.md) for CI signing secrets,
 notarization, installation, and the remaining external-tool requirements.

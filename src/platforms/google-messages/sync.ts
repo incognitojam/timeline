@@ -6,7 +6,7 @@
  * Google session (`session.json` in the state directory); this source only
  * tracks cursors — one per conversation, persisted as each conversation
  * completes, so an interrupted run (network, sleep, restart) resumes where it
- * stopped instead of starting over. See docs/source-setup.md.
+ * stopped instead of starting over. See docs/user/source-setup.md.
  */
 import { spawn } from "node:child_process";
 import { accessSync, constants, existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";

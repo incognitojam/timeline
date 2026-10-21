@@ -50,7 +50,7 @@ a hosted API — on this machine or another one:
 `TIMELINE_EMBEDDING_BATCH_SIZE` (env) sets how many pending documents `index`
 and background indexing send in each embeddings request; it defaults to `64`. A request also closes
 once its documents reach
-[`MAX_BATCH_BYTES`](../src/embeddings/indexer.ts), so a run of long documents
+[`MAX_BATCH_BYTES`](../../src/embeddings/indexer.ts), so a run of long documents
 travels in smaller requests that each finish within `timeout_seconds`.
 
 > **`dimensions` must equal the model's true output width.** A mismatch is a
@@ -96,7 +96,7 @@ query_prefix = "task: search result | query: "
 ### Running llama-server on the Mac host
 
 Timeline does not start the embeddings server. The versioned
-[LaunchAgent template](../deploy/macos/llama-embeddings.plist) runs
+[LaunchAgent template](../../deploy/macos/llama-embeddings.plist) runs
 [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` on a Mac and
 unloads the model when idle.
 
@@ -159,7 +159,7 @@ processes in parallel (llama-server's `--parallel` slots).
 
 `index` uses the declared embedding corpus by default; its allowlist and
 type-level denylist live in
-[`EVENT_CORPUS_POLICY`](../src/embeddings/corpus.ts). The allowlist keeps
+[`EVENT_CORPUS_POLICY`](../../src/embeddings/corpus.ts). The allowlist keeps
 sources excluded until they are explicitly added, avoiding unreviewed corpus
 expansion. It always applies the policy denylist.
 
@@ -186,7 +186,7 @@ documents are skipped, so interrupted or failed runs recover on re-run.
 given `YYYY-MM-DD` date or ISO timestamp with a `Z` or offset timezone.
 
 Each event is rendered as one document of at most 8,000 UTF-8 bytes
-([`MAX_RENDERED_BYTES`](../src/embeddings/content.ts)); a longer event keeps its
+([`MAX_RENDERED_BYTES`](../../src/embeddings/content.ts)); a longer event keeps its
 kind, title, and location and loses the end of its content. That keeps every
 document within an 8K-token model window. With llama-server, each request must
 also fit one slot: keep `--ubatch-size` at 8192 or more and `--ctx-size` at least
@@ -239,14 +239,14 @@ llama-server started with `--mmproj`; without it the run fails with a message
 saying so.
 
 - Photos are the stored JPEG, PNG, WebP and GIF attachments
-  ([`EMBEDDABLE_IMAGE_TYPES`](../src/embeddings/images.ts)) of the corpus policy's
+  ([`EMBEDDABLE_IMAGE_TYPES`](../../src/embeddings/images.ts)) of the corpus policy's
   sources, newest first. Each distinct image is embedded once and linked to
   every event that carries it.
 - An image the local media cache lacks is fetched from remote media storage
   without being added to the cache, so a catch-up does not evict the cache's
   working set.
 - Each image is downscaled to fit
-  [`IMAGE_MAX_SIDE`](../src/embeddings/images.ts) before embedding.
+  [`IMAGE_MAX_SIDE`](../../src/embeddings/images.ts) before embedding.
 - An image that is missing from media storage or cannot be decoded is recorded
   in the `embedding_failures` table and skipped by later runs; delete its row to
   retry it.
