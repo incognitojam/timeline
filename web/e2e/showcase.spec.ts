@@ -896,11 +896,7 @@ interface ShotProblems {
   browserErrors: string[];
 }
 
-async function openApp(
-  page: Page,
-  path: string,
-  options?: { runningClock?: boolean },
-): Promise<ShotProblems> {
+async function openApp(page: Page, path: string): Promise<ShotProblems> {
   const unexpectedRequests = await mockApi(page);
   const browserErrors: string[] = [];
   page.on("pageerror", (error) => browserErrors.push(error.message));
@@ -918,12 +914,7 @@ async function openApp(
       await route.abort();
     },
   );
-  if (options?.runningClock) {
-    // Chart entrance animations need a running clock.
-    await page.clock.setSystemTime(NOW);
-  } else {
-    await page.clock.setFixedTime(NOW);
-  }
+  await page.clock.setFixedTime(NOW);
   await page.goto(path);
   return { unexpectedRequests, browserErrors };
 }
@@ -983,14 +974,10 @@ test("conversation", async ({ page }) => {
 });
 
 test("health dashboard", async ({ page }) => {
-  const problems = await openApp(page, "/health?view=month&mode=calendar&anchor=2025-02-01", {
-    runningClock: true,
-  });
+  const problems = await openApp(page, "/health?view=month&mode=calendar&anchor=2025-02-01");
 
   await expect(page.getByRole("heading", { name: "Health Dashboard", level: 1 })).toBeVisible();
   await expect(page.locator("canvas").first()).toBeVisible();
-  // Let chart entrance animations finish before shooting.
-  await page.waitForTimeout(1_500);
   await settle(page, problems);
 
   await capture(page, problems, "health.png");
