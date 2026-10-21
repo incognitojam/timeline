@@ -1,5 +1,19 @@
 # Timeline
 
+## 0.13.0
+
+### Minor Changes
+
+- cf04388: Keep steps, activity, active zone minutes, and weight updating from Google Health after the Fitbit Web API shuts down. On dates Google Health covers, the health dashboard and day panel use its values; earlier Fitbit records are kept. Google Health step counts combine the watch with phone step counting, so they can be higher than Fitbit's on days the watch was not worn all day. VO2 max is not available from Google Health.
+
+### Patch Changes
+
+- 0e7aede: The service now prepares its database before syncing starts. Previously, when a derived table such as conversation summaries needed rebuilding (a fresh install, a restored backup, or a copied database), a sync could collide with the rebuild, so the service failed with "database is locked" and kept restarting. Startup logs how long database preparation took.
+- cf04388: Remove the Fitbit Web API sync source. Google Health now supplies the same displayed metrics except VO2 max, which is no longer collected. Existing Fitbit history and Google Takeout imports remain available.
+- cf04388: Provide a reusable macOS embedding-server LaunchAgent template that avoids slow model wake-ups causing background indexing to time out.
+- cf04388: Speed up release validation by running test suites and browser shards in parallel while requiring every check to pass before publishing.
+- cf04388: Remove the Google Location Sharing and Steam Friends sync sources, along with the Steam activity panel on contact pages. Existing events from both sources stay in the database and appear on the timeline as individual events. Saved settings for either source are ignored with a startup warning.
+
 ## 0.12.0
 
 ### Minor Changes
