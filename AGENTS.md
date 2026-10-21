@@ -56,7 +56,7 @@ curl -s http://127.0.0.1:3001/api/health                              # API is l
 
 Install: `cd tools/timeline-app && ./build.sh --install && open ~/Applications/Timeline.app` (macOS app-owned LaunchAgents — see [docs/user/macos-host.md](docs/user/macos-host.md)).
 
-**Authentication**: `AUTH_PASSWORD` is required outside development/test. Protects `/status`, `/status.md`, and all `/api/*` routes except `/api/health` and `/api/auth/*`; MCP endpoints use token auth (`MCP_TOKENS`). Uses Basic Auth (`curl -u ':password' URL`). Cookie set automatically on success. For local development authentication, see [Quick Start](README.md#quick-start).
+**Authentication**: `AUTH_PASSWORD` is required outside development/test. Protects `/status`, `/status.md`, and all `/api/*` routes except `/api/health` and `/api/auth/*`; MCP endpoints use token auth (`MCP_TOKENS`). Uses Basic Auth (`curl -u ':password' URL`). Cookie set automatically on success. For local development authentication, see [Running locally](docs/operations/development.md#running-locally).
 
 **Status page**: `/status` shows service health, sync stats, and scheduler state. Use `/status.md` (or `Accept: text/markdown` header) for markdown output suitable for LLMs/agents.
 

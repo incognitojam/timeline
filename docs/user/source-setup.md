@@ -1,4 +1,45 @@
-# Source Setup
+# Data sources
+
+| Source | Data | Import |
+|--------|------|--------|
+| Facebook | Messages, posts | File export |
+| Instagram | Messages | File export |
+| Discord | DMs, group chats, servers | API sync |
+| Skype | Messages | File export |
+| LinkedIn | Messages, connections | File export |
+| Google Chat | Messages | Takeout |
+| Google Messages | SMS, MMS, RCS | Live sync |
+| SMS/Calls | Texts, call logs | SMS Backup & Restore app |
+| Reddit | Posts, comments, messages | File export |
+| Spotify | Listening history | File export + API sync |
+| Spotify Friends | Friends' activity | API sync (unofficial) |
+| Trakt | Watch history | API sync |
+| YouTube | Watch history, likes, searches | Takeout |
+| Steam | Games, playtime, achievements | API sync |
+| Google Search | Search history | Takeout |
+| Chrome | Browsing history | Takeout |
+| Google Play Store | App installs | Takeout |
+| Google Calendar | Events | Takeout |
+| Google Keep | Notes | Takeout |
+| Google Location | Place visits, transit | Takeout / Timeline.json |
+| Swarm | Check-ins | API sync |
+| Google Fit | Activity | Takeout |
+| Fitbit | Sleep, readiness, stress, HRV | Takeout |
+| Google Health | Sleep, HRV, heart rate, SpO2, activity, weight | API sync |
+| Thriva | Blood test biomarkers | API sync |
+| Monzo | Transactions | API sync |
+| Amex | Transactions | CSV export |
+| GitHub | Issues, PRs, comments, reviews | API sync |
+| WakaTime | Coding sessions | API sync / export |
+| Claude, ChatGPT | Chat history | File export |
+| Claude Code, Codex, OpenCode, Conductor, T3 Code | Agent sessions | Local files |
+| Amp | Agent sessions | API sync |
+| Minecraft | Chat, joins, advancements | Server logs |
+| MacBook screen recall | OCR'd screen captures | Timeline.app |
+
+File exports are imported by dropping them into an inbox directory configured under `[inbox.sources.*]` in `config.toml` (see [`deploy/macos/config.toml.example`](../../deploy/macos/config.toml.example)), or by running a parser directly from a checkout: `bun run src/parsers/<name>.ts`. API and local-file sources sync on the schedule set on the web app's **Sync** page. The sections below cover sources that need credentials or extra setup.
+
+## Credentials and settings
 
 Most API source credentials live in `~/.config/timeline/`. Exceptions: WakaTime uses `~/.wakatime.cfg`, Trakt supports env vars. All OAuth2 sources use redirect URI `http://127.0.0.1:8742/callback`.
 
