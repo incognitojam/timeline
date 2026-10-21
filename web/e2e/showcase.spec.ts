@@ -420,6 +420,15 @@ function buildConversation() {
       participants,
       server: { source: "discord", id: "9000001", name: "Ridge Crew" },
     },
+    // Polling for newer messages finds nothing past the newest message.
+    newerPage: {
+      title: "weekend hike 🥾",
+      events: [],
+      attachments: {},
+      nextCursor: null,
+      participants,
+      server: { source: "discord", id: "9000001", name: "Ridge Crew" },
+    },
     stats: {
       totalMessages: 1_284,
       firstMessage: "2024-04-02T18:12:00.000Z",
@@ -851,8 +860,15 @@ async function mockApi(page: Page): Promise<string[]> {
     }
 
     if (request.method() === "GET" && pathname === "/api/conversation") {
-      const hasCursor = new URL(request.url()).searchParams.has("cursor");
-      await route.fulfill({ json: hasCursor ? conversation.olderPage : conversation.page });
+      const params = new URL(request.url()).searchParams;
+      // Older pages are requested newest-first ("desc"), newer ones oldest-first
+      // ("asc"); the view polls for newer messages while it is open.
+      const page = !params.has("cursor")
+        ? conversation.page
+        : params.get("order") === "asc"
+          ? conversation.newerPage
+          : conversation.olderPage;
+      await route.fulfill({ json: page });
       return;
     }
     if (request.method() === "GET" && pathname === "/api/conversation/stats") {
@@ -892,8 +908,11 @@ async function openApp(
     if (message.type() === "error") browserErrors.push(message.text());
   });
   // Shots must be reproducible offline: anything leaving the preview server fails.
+  const { baseURL } = test.info().project.use;
+  if (!baseURL) throw new Error("The showcase config must set use.baseURL");
+  const previewOrigin = new URL(baseURL).origin;
   await page.route(
-    (url) => url.hostname !== "127.0.0.1",
+    (url) => url.origin !== previewOrigin,
     async (route) => {
       unexpectedRequests.push(`${route.request().method()} ${route.request().url()}`);
       await route.abort();
@@ -909,7 +928,10 @@ async function openApp(
   return { unexpectedRequests, browserErrors };
 }
 
+// Panels that load independently and have no aria-busy state get a content
+// assertion in their shot; the sidebar's event total appears in every shot.
 async function settle(page: Page, problems: ShotProblems): Promise<void> {
+  await expect(page.getByText(`${stats.total_events.toLocaleString("en-GB")} events`, { exact: true })).toBeVisible();
   await expect(page.locator("[aria-busy='true']")).toHaveCount(0);
   await page.evaluate(async () => {
     await document.fonts.ready;
@@ -918,8 +940,11 @@ async function settle(page: Page, problems: ShotProblems): Promise<void> {
   expect(problems.browserErrors).toEqual([]);
 }
 
-function shot(name: string): { path: string } {
-  return { path: resolve(OUTPUT_DIR, name) };
+/** Saves the README image, then fails on anything that went wrong while capturing. */
+async function capture(page: Page, problems: ShotProblems, name: string): Promise<void> {
+  await page.screenshot({ path: resolve(OUTPUT_DIR, name) });
+  expect(problems.unexpectedRequests).toEqual([]);
+  expect(problems.browserErrors).toEqual([]);
 }
 
 // ---------------------------------------------------------------------------
@@ -930,11 +955,14 @@ test("day timeline", async ({ page }) => {
   const problems = await openApp(page, `/?date=${DAY}`);
 
   await expect(page.getByRole("heading", { name: "Friday, 7 March 2025", level: 1 })).toBeVisible();
-  await expect(page.getByText("Vitals", { exact: true })).toBeVisible();
+  await expect(page.getByText(dayHealth.activity.steps.toLocaleString("en-GB"))).toBeVisible();
   await expect(page.getByText("weekend hike 🥾").first()).toBeVisible();
+  await expect(
+    page.getByRole("complementary", { name: "Date navigation" }).getByText("February 2025", { exact: true }),
+  ).toBeVisible();
   await settle(page, problems);
 
-  await page.screenshot(shot("timeline-day.png"));
+  await capture(page, problems, "timeline-day.png");
 });
 
 test("conversation", async ({ page }) => {
@@ -945,9 +973,13 @@ test("conversation", async ({ page }) => {
 
   await expect(page.getByText("see everyone at 8:30 sharp ⛰️")).toBeVisible();
   await expect(page.getByText("End of conversation")).toBeVisible();
+  await expect(page.getByText("1,284")).toBeVisible();
+  // The older page loads on open; wait for it so the prepend doesn't land mid-shot.
+  await expect(page.getByText("12 messages loaded")).toBeVisible();
+  await expect(page.getByText("Loading older messages...")).toHaveCount(0);
   await settle(page, problems);
 
-  await page.screenshot(shot("conversation.png"));
+  await capture(page, problems, "conversation.png");
 });
 
 test("health dashboard", async ({ page }) => {
@@ -961,7 +993,7 @@ test("health dashboard", async ({ page }) => {
   await page.waitForTimeout(1_500);
   await settle(page, problems);
 
-  await page.screenshot(shot("health.png"));
+  await capture(page, problems, "health.png");
 });
 
 test("music", async ({ page }) => {
@@ -969,9 +1001,12 @@ test("music", async ({ page }) => {
 
   await expect(page.getByRole("heading", { name: "Music", level: 1 })).toBeVisible();
   await expect(page.getByRole("link", { name: /slow orbit/ })).toBeVisible();
+  await expect(page.getByText("487", { exact: true })).toBeVisible(); // rankings
+  await expect(page.getByText("Afterglow", { exact: true })).toBeVisible(); // recent plays
+  await expect(page.getByText("Rowan", { exact: true })).toBeVisible(); // friends
   await settle(page, problems);
 
-  await page.screenshot(shot("music.png"));
+  await capture(page, problems, "music.png");
 });
 
 test("search", async ({ page }) => {
@@ -980,5 +1015,5 @@ test("search", async ({ page }) => {
   await expect(page.getByText("aurora spotting 🌌")).toBeVisible();
   await settle(page, problems);
 
-  await page.screenshot(shot("search.png"));
+  await capture(page, problems, "search.png");
 });
