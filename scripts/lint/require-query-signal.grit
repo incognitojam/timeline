@@ -1,0 +1,7 @@
+`queryFn: $function` as $property where {
+  not $function <: contains `signal`,
+  register_diagnostic(
+    span = $property,
+    message = "TanStack query functions must consume and forward their AbortSignal"
+  )
+}

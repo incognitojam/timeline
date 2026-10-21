@@ -1,0 +1,6 @@
+[agents]
+max_depth = 2
+
+[mcp_servers.timeline]
+command = "bun"
+args = ["run", "mcp"]

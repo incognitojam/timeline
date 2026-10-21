@@ -1,0 +1,97 @@
+name: macOS DMG
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      commit:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag (vX.Y.Z)
+        required: true
+        type: string
+      commit:
+        description: Full commit SHA the release tag must resolve to
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: macos-dmg-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  dmg:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    environment: release
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Verify release source
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          EXPECTED_COMMIT: ${{ inputs.commit }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+          git merge-base --is-ancestor HEAD origin/main
+          test "$RELEASE_TAG" = "v$(bun run scripts/print-product-version.ts)"
+          gh release view "$RELEASE_TAG" --json tagName --jq .tagName
+      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile
+        working-directory: web
+      - name: Build app
+        working-directory: tools/timeline-app
+        env:
+          TIMELINE_CODESIGN_IDENTITY: '-'
+          VITE_MAPTILER_API_KEY: ${{ secrets.VITE_MAPTILER_API_KEY }}
+          TIMELINE_UPDATE_FEED_URL: ${{ vars.TIMELINE_UPDATE_FEED_URL }}
+          TIMELINE_UPDATE_PUBLIC_KEY: ${{ vars.TIMELINE_UPDATE_PUBLIC_KEY }}
+        run: TIMELINE_BUILD_NUMBER="$(../../scripts/print-build-number.sh)" ./build.sh
+      - name: Sign, notarize, and package DMG
+        working-directory: tools/timeline-app
+        env:
+          APPLE_SIGNING_CERTIFICATE_BASE64: ${{ secrets.APPLE_SIGNING_CERTIFICATE_BASE64 }}
+          APPLE_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_SIGNING_CERTIFICATE_PASSWORD }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: ./package-dmg.sh
+      - name: Generate signed update feed
+        working-directory: tools/timeline-app
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: ./generate-appcast.sh
+      - name: Attach DMG to release
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          EXPECTED_COMMIT: ${{ inputs.commit }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          test "$(gh api "repos/$GH_REPO/commits/refs%2Ftags%2F$RELEASE_TAG" --jq .sha)" = "$EXPECTED_COMMIT"
+          if [ -f dist/macos/appcast.xml ]; then
+            test "$(gh repo view "$GH_REPO" --json visibility --jq .visibility)" = PUBLIC
+          fi
+          gh release upload "$RELEASE_TAG" dist/macos/*.dmg dist/macos/*.sha256
+          if [ -f dist/macos/appcast.xml ]; then
+            gh release upload "$RELEASE_TAG" dist/macos/appcast.xml
+          fi

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -c 'if (.tool_input.model == \"haiku\") or (.tool_input.subagent_type == \"Explore\" and (.tool_input.model // \"\") == \"\") then {hookSpecificOutput:{hookEventName:\"PreToolUse\",updatedInput:(.tool_input + {model:\"sonnet\"})}} else empty end'"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+# Secrets and spike output — never commit.
+cookies.txt
+session.json
+media/
+*.jsonl
+timeline-gmessages

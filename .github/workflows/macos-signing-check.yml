@@ -1,0 +1,63 @@
+name: macOS signing check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-signing-check
+  cancel-in-progress: false
+
+jobs:
+  signing-check:
+    if: github.ref == 'refs/heads/main'
+    environment: release
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile
+        working-directory: web
+      - name: Build app
+        working-directory: tools/timeline-app
+        env:
+          TIMELINE_CODESIGN_IDENTITY: '-'
+          VITE_MAPTILER_API_KEY: ${{ secrets.VITE_MAPTILER_API_KEY }}
+          TIMELINE_UPDATE_FEED_URL: ${{ vars.TIMELINE_UPDATE_FEED_URL }}
+          TIMELINE_UPDATE_PUBLIC_KEY: ${{ vars.TIMELINE_UPDATE_PUBLIC_KEY }}
+        run: TIMELINE_BUILD_NUMBER="$(../../scripts/print-build-number.sh)" ./build.sh
+      - name: Sign, notarize, and package DMG
+        working-directory: tools/timeline-app
+        env:
+          APPLE_SIGNING_CERTIFICATE_BASE64: ${{ secrets.APPLE_SIGNING_CERTIFICATE_BASE64 }}
+          APPLE_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_SIGNING_CERTIFICATE_PASSWORD }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: ./package-dmg.sh
+      - name: Generate signed update feed
+        working-directory: tools/timeline-app
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          GH_REPO: ${{ github.repository }}
+        run: RELEASE_TAG="v$(bun run ../../scripts/print-product-version.ts)" ./generate-appcast.sh
+      - name: Save signed DMG
+        uses: actions/upload-artifact@v5
+        with:
+          name: macos-signing-check-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/macos/*.dmg
+            dist/macos/*.sha256
+            dist/macos/*.xml
+          if-no-files-found: error
+          retention-days: 7

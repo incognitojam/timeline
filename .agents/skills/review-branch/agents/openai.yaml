@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Branch"
+  short_description: "Delegate a full repository code review"
+  default_prompt: "Use $review-branch to review the current branch against origin/main and run the repository review checks."

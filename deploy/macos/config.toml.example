@@ -1,0 +1,283 @@
+# Timeline service configuration - macOS local-first host.
+#
+# Copy to ~/.config/timeline/config.toml for safe, quiet defaults: bound to
+# localhost, with the scheduler and inbox watcher OFF, so a fresh install does
+# not sync, watch, or reach out to anything until you have configured it.
+#
+# To start pulling data: keep the bootstrap [sync.<source>] examples you want
+# for the first service startup, keep any [inbox.sources.<name>] sections you
+# need, put credentials in ~/.config/timeline/env, flip the toggles below to
+# true, then restart:
+# launchctl kickstart -k gui/$(id -u)/dev.incognitojam.timeline-service
+
+[server]
+# Local-only. Set 0.0.0.0 or a LAN IP to expose the password-protected API on
+# your network. Production service startup requires AUTH_PASSWORD in the env file.
+host = "127.0.0.1"
+port = 3001
+# Public URL the timeline web app is reachable at - used to embed clickable
+# event links (https://<public_url>/event/<id>) in MCP tool descriptions so
+# agents can hand the user a deep link to the highlighted event.
+# Override with TIMELINE_PUBLIC_URL env var.
+# public_url = "https://timeline.example.ts.net"
+
+[database]
+# Path to timeline database (supports ~/)
+path = "~/.local/share/timeline/timeline.db"
+
+# ============================================================================
+# LLM Providers (day summaries + journal prompts)
+# ============================================================================
+# Text generation runs against configured providers. There is no default -
+# without any [llm.providers.*] entries, text generation is unavailable.
+# Add one or more providers below; the first one listed is the "default": its
+# models are addressed by bare id, others by "<provider>/<model-id>".
+#
+# [llm.providers.openrouter]
+# kind = "openrouter"
+# api_key_env = "OPENROUTER_API_KEY"
+# models = ["google/gemini-3.1-flash-lite", "openai/gpt-5.4-mini"]
+#
+# LM Studio on this machine (also serves models linked in via LM Link). Models
+# and their context windows are auto-discovered from LM Studio's native API - the
+# *loaded* context window is used (load a model at the context you want), and
+# embedding models are excluded. `models` and `context_length` are optional
+# overrides; context_length is really a fallback for OpenAI-compatible servers
+# that don't report their window (llama.cpp, vLLM).
+# [llm.providers.lmstudio]
+# kind = "openai-compatible"
+# base_url = "http://127.0.0.1:1234/v1"
+# # context_length = 24576   # fallback only; a detected loaded window overrides it
+#
+# A second LM Studio reachable directly over the network by hostname/IP.
+# [llm.providers.remote]
+# kind = "openai-compatible"
+# base_url = "http://llm-host.example:1234/v1"
+
+[media]
+# Path to media storage directory for attachments (photos, videos, etc.)
+path = "~/.local/share/timeline/media"
+# Optional: soft cap on the local media cache. The scheduled media-evict job
+# (below) drops the oldest R2-durable blobs to stay under this; read-through
+# restores them from R2 on demand. Unset = unbounded.
+# cache_limit_gib = 25
+
+# Optional: encrypt new media client-side and upload it to Cloudflare R2 for a
+# durable offsite copy. NOTE: reads are still served from local disk - R2 is
+# upload-only for now (no restore/read-through yet), so this is a backup, not a
+# substitute for keeping local media. Put R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY
+# and a MEDIA_ENCRYPTION_KEY (`openssl rand -base64 32`) in ~/.config/timeline/env,
+# then flip enabled. Back up MEDIA_ENCRYPTION_KEY to a password manager - losing
+# it makes the offsite copy unrecoverable.
+# [media.r2]
+# enabled = true
+# account_id = "your-cloudflare-account-id"
+# bucket = "timeline-media"
+
+# Optional: schedule local cache eviction to maintain [media].cache_limit_gib.
+# Add this from the web UI after first startup, or keep this block for one-time
+# bootstrap import. Needs R2 enabled + cache_limit_gib set.
+# [sync.media-evict]
+# interval = "30m"
+
+# Optional: encrypted, offsite database backups to Cloudflare R2 - the off-host
+# leg of 3-2-1 backups (live DB + local/external-volume snapshot + this). Use a
+# SEPARATE bucket from [media.r2] (independent retention) and a SEPARATE key,
+# BACKUP_ENCRYPTION_KEY (`openssl rand -base64 32`), in ~/.config/timeline/env
+# alongside R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY. Back up
+# BACKUP_ENCRYPTION_KEY to a password manager - losing it makes the offsite
+# backups unrecoverable. Schedule it from the web UI, or keep
+# [sync.backup-offsite] below for one-time bootstrap import.
+# [backup.r2]
+# enabled = true
+# account_id = "your-cloudflare-account-id"
+# bucket = "timeline-backups"
+
+[scheduler]
+# Flip to true once sync sources have been imported or added in the web UI.
+enabled = false
+# Default interval for sources without explicit interval
+default_interval = "1h"
+# Stagger initial runs to avoid all syncing at startup
+stagger = true
+
+[inbox]
+# Flip to true once you've added [inbox.sources.*].
+watch_enabled = false
+# Base directory for inbox sources
+base_path = "~/timeline-inbox"
+# Optional: archive processed files
+# archive_path = "~/timeline-archive"
+
+# ============================================================================
+# Sync Sources (one-time bootstrap only)
+#
+# On first `bun run service` startup, these [sync.*] sections are imported into
+# app-state.db's sync_sources table if that table is empty. After that, edit
+# sync sources from the web UI. Remaining [sync.*] TOML sections are ignored and
+# logged as a startup warning until you delete them.
+#
+# Each source can have an "account" and optionally an "interval"
+# Intervals: 15m, 30m, 1h, 2h, 6h, 12h, 1d
+# ============================================================================
+
+[sync.discord]
+interval = "30m"
+# enabled = true  # default
+# DISCORD_TOKEN env var must be set (user token)
+
+# Guild configs: DMs/groups sync automatically, guilds must be listed
+# [sync.discord.guilds.GUILD_ID]
+# name = "Friend Server"       # optional, for readability
+# mode = "full"                 # "full" or "sparse" (default: full)
+# skip_discovery = false        # skip thread discovery (default: false)
+
+# [sync.discord.guilds.GUILD_ID_2]
+# name = "Large Community"
+# mode = "sparse"               # only sync user's messages + context
+
+# [sync.discord.guilds.GUILD_ID_3]
+# name = "Specific Channel Only"
+# mode = "full"
+# channels = ["CHANNEL_ID"]     # only sync these channels (skip discovery)
+
+# [sync.discord.guilds.GUILD_ID_4]
+# name = "Mostly Good Server"
+# exclude_channels = ["BOT_SPAM_CHANNEL_ID"]  # sync all except these channels
+
+[sync.trakt]
+account = "your-username"
+interval = "4h"
+
+[sync.monzo]
+account = "personal"
+interval = "6h"
+
+[sync.wakatime]
+account = "your-username"
+interval = "1h"
+
+[sync.github]
+account = "your-username"
+interval = "2h"
+
+# Track the public follower/save count of specific playlists over time.
+# Reuses your Spotify API auth (run: bun run src/parsers/spotify-api.ts auth).
+# Backfill history first with src/scripts/seed-playlist-follows.ts (optional).
+# Accepts playlist IDs, spotify: URIs, or open.spotify.com URLs.
+# [sync.spotify-playlists]
+# interval = "12h"
+# playlists = ["0123456789ABCDEFGHIJKL"]
+
+[sync.claude-code]
+account = "your-name"
+interval = "15m"
+
+# T3 Code desktop app threads. Path defaults to ~/.t3/userdata/state.sqlite.
+# [sync.t3code]
+# account = "your-name"
+# interval = "15m"
+
+# Codex CLI sessions. Path defaults to ~/.codex/sessions. Sessions driven by
+# T3 Code are skipped (imported via [sync.t3code] instead).
+# [sync.codex]
+# account = "your-name"
+# interval = "15m"
+
+[sync.amp]
+account = "your-name"
+interval = "15m"
+# Default mode is "auto": use the API when an API key is available, otherwise
+# fall back to legacy JSON files at path. Use "api" to require API sync.
+mode = "api"
+# Set AMP_API_KEY in the service environment, or point at an Amp secrets.json.
+# secrets_path = "~/.local/share/timeline/amp-secrets.json"
+
+[sync.google-places]
+interval = "6h"
+
+[sync.thumbhash]
+interval = "5m"
+
+[sync.recall]
+# Imports MacBook screen captures from the local recall capture daemon. Path is
+# the root containing webp+json pairs (see docs/source-setup.md "MacBook screen
+# recall").
+path = "/Users/your-user/.local/share/timeline/recall"
+interval = "5m"
+
+[sync.backup-app-state]
+destination = "/Volumes/NAS/timeline/backups"
+keep_count = 168
+interval = "1h"
+
+[sync.backup]
+destination = "/Volumes/NAS/timeline/backups"
+keep_count = 15
+interval = "12h"
+
+# Encrypted offsite backup of app-state.db to R2 (needs [backup.r2] enabled
+# above). app-state.db is small and the one DB that can't be rebuilt from raw
+# exports, so it's protected first. keep_count is how many snapshots to retain
+# offsite (~7 days at 6h). require_unmetered skips uploads on macOS paths that
+# Network.framework reports as expensive or constrained/Low Data Mode; SSID
+# blocking is a best-effort fallback because modern macOS can redact SSIDs from
+# command-line processes.
+# [sync.backup-offsite]
+# interval = "6h"
+# keep_count = 28
+# require_unmetered = true
+# on_unknown = "proceed"
+# blocked_ssids = ["iPhone", "Android"]
+
+# Pull files from any [inbox.sources.*] entries with type = "rclone"
+# Requires rclone installed and configured (see RCLONE_CONFIG env var)
+# [sync.inbox-rclone]
+# interval = "1h"
+
+# ============================================================================
+# Inbox Sources
+# Define file drop zones for importing data exports
+# ============================================================================
+
+[inbox.sources.google-takeout]
+type = "local"
+local = "google"  # Relative to inbox.base_path
+parser = "google-takeout"
+account = "alice@example.com"
+patterns = ["*.zip"]
+
+[inbox.sources.spotify]
+type = "local"
+local = "spotify"
+parser = "auto-detect"
+account = "your-spotify-username"
+patterns = ["*.zip"]
+
+[inbox.sources.claude]
+type = "local"
+local = "claude"
+parser = "claude"
+account = "your-account-name"
+patterns = ["*.zip"]
+
+# American Express transactions. Export from americanexpress.com ->
+# Statements & Activity -> Download -> CSV, with "Include all additional
+# transaction details" ticked (this adds the Reference used for dedup).
+# Re-export the current year periodically and drop it in; overlapping
+# exports are idempotent.
+[inbox.sources.amex]
+type = "local"
+local = "amex"
+parser = "amex"
+account = "personal"
+patterns = ["*.csv"]
+
+# Example: rclone source for cloud sync
+# [inbox.sources.sms-backup]
+# type = "rclone"
+# remote = "gdrive:SMS Backup"
+# local = "sms"
+# parser = "sms-backup-restore"
+# account = "personal"
+# patterns = ["*.xml"]

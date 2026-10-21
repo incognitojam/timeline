@@ -1,0 +1,47 @@
+name: Trusted CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      NO_COLOR: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - run: ./test.sh static && ./test.sh unit
+
+  browser:
+    uses: ./.github/workflows/browser-tests.yml
+
+  # Exercise the macOS local-first host: the service boots directly, the menu
+  # bar app compiles, and its bundled service runs without the checkout.
+  # CI must not register the SMAppService agent or touch the runner user's live
+  # launchd/Login Items state. Uses only throwaway local credentials; macOS-only.
+  macos-service:
+    runs-on: macos-15
+    env:
+      NO_COLOR: "1"
+      VITE_MAPTILER_API_KEY: ${{ secrets.VITE_MAPTILER_API_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: (cd web && bun install --frozen-lockfile)
+      - name: Smoke-test the service boots
+        run: ./scripts/smoke-service.sh
+      - name: Build and smoke-test the relocatable service
+        run: ./scripts/smoke-service-artifact.sh
+      - name: Build the Timeline menu bar app
+        env:
+          TIMELINE_CODESIGN_IDENTITY: "-"
+        run: (cd tools/timeline-app && ./build.sh)
+      - name: Smoke-test the Timeline app bundle
+        run: (cd tools/timeline-app && ./smoke.sh)

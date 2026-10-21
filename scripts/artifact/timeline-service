@@ -1,0 +1,20 @@
+#!/bin/bash
+set -euo pipefail
+
+bin_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+resource_root=$(cd -- "$bin_dir/../Resources" && pwd)
+
+# shellcheck disable=SC1091
+source "$bin_dir/timeline-environment"
+export TIMELINE_RESOURCE_ROOT="$resource_root"
+
+runtime_dir="$HOME/.local/share/timeline"
+mkdir -p "$runtime_dir"
+cd "$runtime_dir"
+
+if [ "${1:-}" = "monzo" ]; then
+  shift
+  set -- --monzo -- "$@"
+fi
+
+exec "$bin_dir/bun" --no-env-file "$resource_root/runtime/service.js" "$@"

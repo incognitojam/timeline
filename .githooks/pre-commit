@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+snapshot=$(mktemp -d "${TMPDIR:-/tmp}/timeline-pre-commit.XXXXXX")
+checks_succeeded=false
+
+# Freeze one tree so every check sees the same commit candidate.
+live_index=$(git rev-parse --path-format=absolute --git-path index)
+checked_tree=$(git write-tree)
+GIT_INDEX_FILE="$snapshot/index" git read-tree "$checked_tree"
+export GIT_INDEX_FILE="$snapshot/index"
+
+verify_index_unchanged() {
+  local live_tree
+  live_tree=$(GIT_INDEX_FILE="$live_index" git write-tree)
+  if [ "$live_tree" != "$checked_tree" ]; then
+    echo "The Git index changed while pre-commit checks were running; retry the commit." >&2
+    return 1
+  fi
+}
+
+cleanup() {
+  local status=$?
+  if [ -d "$snapshot" ]; then
+    rm -rf -- "$snapshot" || status=1
+  fi
+  if [ "$checks_succeeded" != true ]; then
+    if [ "$status" -eq 0 ]; then
+      status=1
+    fi
+  elif ! verify_index_unchanged; then
+    status=1
+  fi
+  trap - EXIT
+  exit "$status"
+}
+trap cleanup EXIT
+
+bun run src/scripts/check-public-release-safety.ts --staged
+
+biome_config_paths=(biome.json scripts/lint)
+oxlint_config_paths=(.oxlintrc.json)
+lint_config_paths=("${biome_config_paths[@]}" "${oxlint_config_paths[@]}")
+product_version_paths=(
+  package.json
+  scripts/check-product-version.ts
+  src/product-version.ts
+  tools/timeline-app/Info.plist
+  web/package.json
+)
+
+lint_paths=()
+while IFS= read -r -d '' path; do
+  case "$path" in
+    src/*.js | src/*.jsx | src/*.mjs | src/*.cjs | src/*.ts | src/*.tsx | src/*.mts | src/*.cts | web/src/*.js | web/src/*.jsx | web/src/*.mjs | web/src/*.cjs | web/src/*.ts | web/src/*.tsx | web/src/*.mts | web/src/*.cts)
+      lint_paths+=("$path")
+      ;;
+  esac
+done < <(git diff --cached --name-only --diff-filter=ACMRT --no-renames -z)
+
+check_product_version=false
+if ! git diff --cached --quiet -- "${product_version_paths[@]}"; then
+  check_product_version=true
+fi
+
+check_biome_config=false
+if ! git diff --cached --quiet -- "${biome_config_paths[@]}"; then
+  check_biome_config=true
+fi
+
+check_lint_config=false
+if [ "$check_biome_config" = true ] || ! git diff --cached --quiet -- "${oxlint_config_paths[@]}"; then
+  check_lint_config=true
+fi
+
+if [ "${#lint_paths[@]}" -eq 0 ] && [ "$check_lint_config" = false ] && [ "$check_product_version" = false ]; then
+  checks_succeeded=true
+  exit 0
+fi
+
+snapshot_paths=()
+if [ "${#lint_paths[@]}" -gt 0 ] || [ "$check_lint_config" = true ]; then
+  snapshot_paths+=("${lint_config_paths[@]}" src web/src)
+fi
+if [ "$check_product_version" = true ]; then
+  snapshot_paths+=("${product_version_paths[@]}")
+fi
+
+mkdir "$snapshot/tree"
+git checkout-index --ignore-skip-worktree-bits --stdin -z --prefix="$snapshot/tree/" < <(git ls-files -z -- "${snapshot_paths[@]}")
+
+while IFS= read -r -d '' entry; do
+  mode=${entry%% *}
+  if [ "$mode" != "120000" ]; then
+    continue
+  fi
+  staged_path=${entry#*$'\t'}
+  rm -f -- "$snapshot/tree/$staged_path"
+done < <(git ls-files --stage -z -- "${snapshot_paths[@]}")
+
+filtered_lint_paths=()
+for path in ${lint_paths[@]+"${lint_paths[@]}"}; do
+  if [ ! -e "$snapshot/tree/$path" ]; then
+    echo "Skipping lint for staged symlink: $path" >&2
+    continue
+  fi
+  filtered_lint_paths+=("$path")
+done
+lint_paths=(${filtered_lint_paths[@]+"${filtered_lint_paths[@]}"})
+
+if [ "${#lint_paths[@]}" -gt 0 ] || [ "$check_lint_config" = true ]; then
+  (
+    cd "$snapshot/tree"
+    if [ "$check_biome_config" = true ]; then
+      if ! "$repo_root/node_modules/.bin/biome" lint --vcs-enabled=false src/ web/src/ >"$snapshot/biome.log" 2>&1; then
+        cat "$snapshot/biome.log"
+        exit 1
+      fi
+    elif [ "${#lint_paths[@]}" -gt 0 ]; then
+      "$repo_root/node_modules/.bin/biome" lint --vcs-enabled=false --no-errors-on-unmatched "${lint_paths[@]}"
+    fi
+    if [ "${#lint_paths[@]}" -gt 0 ]; then
+      "$repo_root/node_modules/.bin/oxlint" "${lint_paths[@]}"
+    fi
+    if ! "$repo_root/node_modules/.bin/oxlint" --silent src/ web/src/; then
+      echo "Oxlint failed for the complete staged tree; run 'bun run lint' for full diagnostics." >&2
+      exit 1
+    fi
+  )
+fi
+
+if [ "$check_product_version" = true ]; then
+  (cd "$snapshot/tree" && bun run scripts/check-product-version.ts)
+fi
+
+checks_succeeded=true

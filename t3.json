@@ -1,0 +1,21 @@
+{
+  "$schema": "https://t3.codes/schema/t3.json",
+  "scripts": [
+    {
+      "name": "Setup Worktree",
+      "command": "./scripts/setup.sh",
+      "icon": "configure",
+      "runOnWorktreeCreate": true
+    },
+    {
+      "name": "Dev Server",
+      "command": "bun run dev -- --open",
+      "icon": "play"
+    },
+    {
+      "name": "Test",
+      "command": "./test.sh",
+      "icon": "test"
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+name: Browser tests
+
+on:
+  workflow_call:
+    inputs:
+      chart-sweep:
+        description: Chart width coverage (smoke or full)
+        type: string
+        default: full
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    name: browser (${{ matrix.project }} ${{ matrix.dpr || matrix.shard }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [chart-month, chart-week, chart-year]
+        dpr: ${{ fromJSON(inputs.chart-sweep == 'smoke' && '["both"]' || '[1,2]') }}
+        include:
+          - project: workflows
+            shard: 1
+          - project: workflows
+            shard: 2
+          - project: workflows
+            shard: 3
+    env:
+      NO_COLOR: "1"
+      PLAYWRIGHT_CHART_SWEEP: ${{ inputs.chart-sweep }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - name: Install frontend dependencies
+        if: matrix.project != 'workflows'
+        working-directory: web
+        run: bun install --frozen-lockfile
+      - name: Install Chromium and system dependencies
+        if: matrix.project != 'workflows'
+        working-directory: web
+        run: bunx playwright install --with-deps chromium
+      - name: Run chart sweep
+        if: matrix.project != 'workflows'
+        working-directory: web
+        run: |
+          args=(--project="${{ matrix.project }}")
+          if [ "${{ matrix.dpr }}" != both ]; then
+            args+=(--grep="DPR ${{ matrix.dpr }}")
+          fi
+          bun run test:e2e "${args[@]}"
+      - name: Run browser workflow shard
+        if: matrix.project == 'workflows'
+        run: ./test.sh browser --project=workflows --shard="${{ matrix.shard }}/3"
+      - name: Upload browser test report
+        if: ${{ !cancelled() && hashFiles('web/playwright-report/**') != '' }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-report-${{ matrix.project }}-${{ matrix.dpr || matrix.shard }}
+          path: web/playwright-report/
+          retention-days: 14

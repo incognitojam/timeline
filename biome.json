@@ -1,0 +1,35 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.3/schema.json",
+  "plugins": ["./scripts/lint/require-query-signal.grit"],
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "files": { "includes": ["src/**", "web/src/**"], "ignoreUnknown": true },
+  "css": { "parser": { "cssModules": true }, "linter": { "enabled": false } },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": false,
+      "style": { "noNonNullAssertion": "error" },
+      "suspicious": { "noExplicitAny": "warn" }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["src/parsers/chatgpt.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": { "noExplicitAny": "error" }
+        }
+      }
+    },
+    {
+      "includes": ["**/*.test.ts", "**/*.test.tsx"],
+      "linter": {
+        "rules": {
+          "style": { "noNonNullAssertion": "off" },
+          "suspicious": { "noExplicitAny": "off" }
+        }
+      }
+    }
+  ],
+  "formatter": { "enabled": false }
+}

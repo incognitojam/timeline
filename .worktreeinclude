@@ -1,0 +1,4 @@
+# Gitignored files copied into new worktrees by scripts/setup.sh
+# (and by Claude Code's built-in worktree isolation).
+.env
+web/.env

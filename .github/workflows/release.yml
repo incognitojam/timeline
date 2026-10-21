@@ -1,0 +1,120 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
+    env:
+      NO_COLOR: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - id: mode
+        uses: changesets/action/select-mode@v2.1.1
+      - name: Create or update the version PR
+        if: steps.mode.outputs.mode == 'version'
+        id: version-pr
+        uses: changesets/action/version@v2.1.1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: bun run release:version
+          commit-message: "release: version packages"
+          pr-title: "release: version packages"
+      - name: Include the proposed version in the PR title
+        if: steps.mode.outputs.mode == 'version'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_PR_NUMBER: ${{ steps.version-pr.outputs.pr-number }}
+        run: |
+          version="$(bun run scripts/print-product-version.ts)"
+          gh pr edit "$RELEASE_PR_NUMBER" --repo "$GITHUB_REPOSITORY" --title "release: v$version"
+
+  test:
+    name: test (${{ matrix.suite }})
+    needs: prepare
+    if: needs.prepare.outputs.mode == 'publish'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [static, backend, frontend]
+    env:
+      NO_COLOR: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - name: Run ${{ matrix.suite }} test suite
+        run: ./test.sh "${{ matrix.suite }}"
+
+  browser:
+    needs: prepare
+    if: needs.prepare.outputs.mode == 'publish'
+    uses: ./.github/workflows/browser-tests.yml
+
+  release:
+    needs: [prepare, test, browser]
+    if: needs.prepare.outputs.mode == 'publish'
+    runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.publish.outputs.published }}
+      tag: ${{ steps.version.outputs.tag }}
+    env:
+      NO_COLOR: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Read release version
+        id: version
+        run: echo "tag=v$(bun run scripts/print-product-version.ts)" >> "$GITHUB_OUTPUT"
+      - name: Select the release tag
+        id: publish
+        uses: changesets/action/publish@v2.1.1
+        with:
+          script: bun changeset git-tag
+          # The action ignores a failed tag push and then creates the release at the head of main.
+          create-github-releases: false
+          push-git-tags: false
+      - name: Tag the tested commit and publish the GitHub release
+        if: steps.publish.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA" > /dev/null
+          notes="$RUNNER_TEMP/release-notes.md"
+          awk -v heading="## ${TAG#v}" '$0 == heading { found = 1; next } found && /^## / { exit } found' CHANGELOG.md > "$notes"
+          grep -q . "$notes"
+          prerelease=()
+          if [[ "$TAG" == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$notes" "${prerelease[@]}"
+
+  macos-dmg:
+    needs: release
+    if: needs.release.outputs.published == 'true'
+    uses: ./.github/workflows/macos-dmg.yml
+    # Enables called-job environment secrets: https://github.com/actions/runner/issues/4453
+    secrets: inherit
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+      commit: ${{ github.sha }}

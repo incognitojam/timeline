@@ -1,0 +1,31 @@
+#!/bin/bash
+
+# Restore the environment that the source-backed launchd wrapper supplied.
+# This file is sourced by timeline-service so assignments such as
+# TIMELINE_DB_PATH="$HOME/..." keep normal shell expansion semantics.
+
+: "${NODE_ENV:=production}"
+export NODE_ENV
+
+env_file="${TIMELINE_ENV_FILE:-$HOME/.config/timeline/env}"
+case "$env_file" in
+  \~/*) env_file="$HOME/${env_file#\~/}" ;;
+  /*) ;;
+  *)
+    echo "TIMELINE_ENV_FILE must be an absolute path for the packaged service: $env_file" >&2
+    return 1
+    ;;
+esac
+if [ -f "$env_file" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$env_file"
+  set +a
+fi
+
+# Prevent the TypeScript bootstrap from parsing the shell file a second time.
+export TIMELINE_ENV_FILE_LOADED=1
+
+# launchd and GUI processes start with a minimal PATH. Preserve anything the
+# env file supplied after the standard Bun, Homebrew, and system locations.
+export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}"

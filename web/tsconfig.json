@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
+    "strict": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "types": ["vite/client", "@testing-library/jest-dom", "unplugin-icons/types/solid"],
+    "paths": {
+      "@/*": ["./src/*"],
+      "@shared/*": ["../src/shared/*"]
+    }
+  },
+  "include": ["src/**/*"]
+}

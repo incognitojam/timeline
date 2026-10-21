@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.example.llama-embeddings</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/path/to/llama-server</string>
+    <string>--model</string><string>/path/to/embeddinggemma-2-Q8_0.gguf</string>
+    <string>--mmproj</string><string>/path/to/mmproj-embeddinggemma-2-BF16.gguf</string>
+    <string>--embeddings</string>
+    <string>--host</string><string>127.0.0.1</string>
+    <string>--port</string><string>18089</string>
+    <string>--parallel</string><string>4</string>
+    <string>--ctx-size</string><string>32768</string>
+    <string>--ubatch-size</string><string>8192</string>
+    <string>--batch-size</string><string>8192</string>
+    <string>--no-cache-prompt</string>
+    <string>--cache-ram</string><string>0</string>
+    <string>--slot-prompt-similarity</string><string>0</string>
+    <string>--fit</string><string>off</string>
+    <string>--sleep-idle-seconds</string><string>300</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>/Users/your-user/Library/Logs/llama-embeddings.log</string>
+  <key>StandardErrorPath</key><string>/Users/your-user/Library/Logs/llama-embeddings.log</string>
+</dict>
+</plist>

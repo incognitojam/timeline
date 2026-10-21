@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "timeline": {
+      "command": "bun",
+      "args": ["run", "mcp"]
+    }
+  }
+}

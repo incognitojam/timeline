@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changeset:
+    name: changeset
+    if: ${{ !startsWith(github.head_ref, 'changeset-release/') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Require a release decision
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          found=0
+          while IFS= read -r path; do
+            case "$path" in
+              .changeset/*.md)
+                if [ "$path" != ".changeset/README.md" ]; then
+                  found=1
+                fi
+                ;;
+            esac
+          done < <(git diff --name-only --diff-filter=AM "$BASE_SHA...$HEAD_SHA" -- .changeset)
+          if [ "$found" -ne 1 ]; then
+            echo "Add a release note with 'bun changeset' or record no release impact with 'bun changeset --empty'." >&2
+            exit 1
+          fi
+      - name: Validate changesets
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: bun changeset status --since "$BASE_SHA"
+
+  test:
+    name: test (${{ matrix.suite }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [static, backend, frontend]
+    env:
+      NO_COLOR: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - name: Run ${{ matrix.suite }} test suite
+        run: ./test.sh "${{ matrix.suite }}"
+
+  browser:
+    uses: ./.github/workflows/browser-tests.yml
+    with:
+      chart-sweep: smoke
+
+  macos-app:
+    name: macOS app bundle
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile
+        working-directory: web
+      - name: Build and smoke-test app
+        working-directory: tools/timeline-app
+        env:
+          TIMELINE_CODESIGN_IDENTITY: '-'
+          VITE_MAPTILER_API_KEY: 'ci-test'
+        run: ./build.sh && ./smoke.sh
