@@ -29,6 +29,7 @@ import { jobsRoutes } from "./jobs";
 import { evalRoutes } from "./eval";
 import { createSettingsRoutes } from "./settings";
 import { createSyncSourceRoutes } from "./sync-sources";
+import { isDatabaseInitializedByService } from "./service-control";
 import { AsyncTtlCache } from "./async-ttl-cache";
 import {
   addDiscordForwardTargets,
@@ -191,10 +192,9 @@ if (process.env.NODE_ENV !== "test") {
 configureBunSqliteForSqliteVec();
 
 const db = getDb();
-// The service initialises the database before starting the scheduler worker and
-// sets this, so repeating it here would run schema work while syncs are already
-// writing. Standalone runs (no flag) still initialise normally.
-if (!process.env.TIMELINE_DB_INITIALIZED) {
+// Standalone API runs own the database; under the service it is already
+// initialised (see markDatabaseInitializedByService).
+if (!isDatabaseInitializedByService()) {
   initDb(db);
 }
 // This bounded summary-table read stays on the main connection so it cannot
