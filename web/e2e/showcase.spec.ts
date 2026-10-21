@@ -243,7 +243,7 @@ function buildDayEvents() {
       content: "5.2 km · riverside loop",
     }),
     event("trakt", "trakt:watch:movie", t("19:45:00"), {
-      title: "Spirited Away (2001)",
+      title: "Paper Harbour (1998)",
       duration_ms: 7_500_000,
     }),
 
@@ -265,7 +265,7 @@ function buildDayEvents() {
     }),
     event("claude", "claude:message:assistant", t("21:06:19"), {
       title: "Raised bed planting plan",
-      content: "At least 30cm of loose, stone-free soil — shorter varieties like Paris Market cope with less.",
+      content: "At least 30cm of loose, stone-free soil — short, round varieties cope with less.",
       conversation_id: "cl-garden",
     }),
   ];
