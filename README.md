@@ -2,6 +2,15 @@
 
 A self-hosted, searchable timeline of your life. Timeline indexes exports from all your digital services into a unified SQLite database with a web interface and AI-powered querying.
 
+![Day timeline: vitals, listening sessions, conversations, coding, transactions, and check-ins on one page](docs/screenshots/timeline-day.png)
+
+| | |
+|---|---|
+| ![Conversation view](docs/screenshots/conversation.png) | ![Cross-source search](docs/screenshots/search.png) |
+| ![Health dashboard](docs/screenshots/health.png) | ![Music dashboard](docs/screenshots/music.png) |
+
+*Screenshots show demo data for a fictional person — the music, shows and places are real, the artwork is generated. Regenerate them from `web/e2e/showcase.spec.ts` with `./scripts/test-browser.sh --config=playwright.showcase.config.ts`.*
+
 ## Overview
 
 Timeline serves two purposes:

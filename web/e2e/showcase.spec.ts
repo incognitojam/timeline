@@ -1,0 +1,1153 @@
+/**
+ * Showcase screenshots for the README (docs/screenshots/).
+ *
+ * Not part of the regression suite: these tests render the app against a rich
+ * set of fixture data and save plain screenshots — no
+ * baseline comparison. Regenerate deliberately from the repository root with
+ * `./scripts/test-browser.sh --config=playwright.showcase.config.ts` whenever
+ * the UI is worth re-shooting.
+ *
+ * The person is invented: Alex, their friends, and every message and
+ * transaction below are fictional. What Alex listens to, watches, and visits
+ * is real and public (well-known music, shows, films, and places around
+ * Seattle); artwork stays generated. Nothing in this file may come from a
+ * real export.
+ */
+import { expect, test, type Page, type Route } from "@playwright/test";
+import { mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { EventParticipant } from "@shared/types";
+import type {
+  AuthStatus,
+  BiomarkerData,
+  ConversationResponse,
+  ConversationStats,
+  DayContextData,
+  DayHealthStats,
+  HealthStats,
+  MusicRankingsOverview,
+  MusicRecentResponse,
+  SearchResult,
+  SpotifyFriendLatestListen,
+  StatsData,
+  TrackedPlaylist,
+} from "../src/lib/api";
+import type { DateActivityResponse } from "../src/lib/dateActivityQueries";
+import type { ResolvedIdentity } from "../src/lib/identities";
+import type { ContactWithStats, TimelineEvent } from "../src/lib/types";
+
+const OUTPUT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../../docs/screenshots");
+mkdirSync(OUTPUT_DIR, { recursive: true });
+
+const DAY = "2025-03-07"; // A Friday; the showcase browser runs in UTC.
+const NOW = new Date("2025-03-07T22:15:00.000Z");
+
+// ---------------------------------------------------------------------------
+// Generated artwork (inline SVG data URIs so no network requests happen)
+// ---------------------------------------------------------------------------
+
+/** Album-art-like tile: diagonal gradient with a vinyl-ish ring. */
+function albumArt(from: string, to: string): string {
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'>` +
+    `<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>` +
+    `<stop offset='0' stop-color='${from}'/><stop offset='1' stop-color='${to}'/>` +
+    `</linearGradient></defs>` +
+    `<rect width='120' height='120' fill='url(#g)'/>` +
+    `<circle cx='60' cy='60' r='30' fill='none' stroke='rgba(255,255,255,0.35)' stroke-width='2'/>` +
+    `<circle cx='60' cy='60' r='6' fill='rgba(255,255,255,0.45)'/>` +
+    `</svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+const ART = {
+  ember: albumArt("#b45309", "#7c2d12"),
+  tide: albumArt("#0e7490", "#1e3a8a"),
+  moss: albumArt("#3f6212", "#14532d"),
+  dusk: albumArt("#7e22ce", "#312e81"),
+  rose: albumArt("#be185d", "#831843"),
+  slate: albumArt("#475569", "#0f172a"),
+  gold: albumArt("#ca8a04", "#78350f"),
+  mist: albumArt("#64748b", "#334155"),
+};
+
+// ---------------------------------------------------------------------------
+// Cast (all fictional)
+// ---------------------------------------------------------------------------
+
+const PEOPLE = {
+  me: { id: "discord:1000", spotify: "spotify:alex-demo", name: "Alex" },
+  rowan: { id: "discord:1001", spotify: "spotify:rowan-demo", name: "Rowan" },
+  priya: { id: "discord:1002", spotify: "spotify:priya-demo", name: "Priya" },
+  sam: { id: "discord:1003", spotify: "spotify:sam-demo", name: "Sam" },
+};
+
+// Contact ids follow PEOPLE order; Alex is the self contact.
+const CAST = Object.values(PEOPLE).map((person, i) => ({
+  ...person,
+  contactId: i + 1,
+  isSelf: person === PEOPLE.me,
+}));
+
+// Each contact has a Discord and a Spotify identity.
+const RESOLVED_IDENTITIES: Record<string, ResolvedIdentity> = Object.fromEntries(
+  CAST.flatMap((p) =>
+    [p.id, p.spotify].map((identifier) => [
+      identifier,
+      { name: p.name, username: p.name.toLowerCase(), contactId: p.contactId, avatarUrl: null, isSelf: p.isSelf },
+    ]),
+  ),
+);
+
+// ---------------------------------------------------------------------------
+// Event helpers
+// ---------------------------------------------------------------------------
+
+/** Event fields, with the JSON-encoded columns given as values. */
+type EventOverrides = Partial<Omit<TimelineEvent, "people" | "tags" | "raw_data">> & {
+  people?: string[];
+  tags?: string[];
+  raw_data?: unknown;
+};
+
+let nextEventId = 1;
+
+/** Fixture timestamps are always ISO strings. */
+type ShowcaseEvent = TimelineEvent & { timestamp: string };
+
+function event(source: string, type: string, timestamp: string, overrides: EventOverrides = {}): ShowcaseEvent {
+  const id = nextEventId++;
+  return {
+    id,
+    source,
+    source_id: `showcase-${id}`,
+    source_account: overrides.source_account ?? "demo",
+    type,
+    timestamp,
+    end_timestamp: overrides.end_timestamp ?? null,
+    duration_ms: overrides.duration_ms ?? null,
+    title: overrides.title ?? null,
+    content: overrides.content ?? null,
+    latitude: overrides.latitude ?? null,
+    longitude: overrides.longitude ?? null,
+    location_name: overrides.location_name ?? null,
+    people: overrides.people ? JSON.stringify(overrides.people) : null,
+    tags: overrides.tags ? JSON.stringify(overrides.tags) : null,
+    raw_data: JSON.stringify(overrides.raw_data ?? {}),
+    imported_at: "2025-03-07 21:00:00",
+    import_batch: "showcase",
+    conversation_id: overrides.conversation_id ?? null,
+    ...(overrides.replied_to ? { replied_to: overrides.replied_to } : {}),
+  };
+}
+
+interface Track {
+  track: string;
+  artist: string;
+  album: string;
+  art: string;
+  durationMs: number;
+}
+
+function spotifyTrack(timestamp: string, { track, artist, album, art, durationMs }: Track) {
+  return event("spotify", "listen:track", timestamp, {
+    title: track,
+    content: `${track} by ${artist} from ${album}`,
+    duration_ms: durationMs,
+    raw_data: { track: { uri: `spotify:track:demo${nextEventId}`, album: { images: [{ height: 300, url: art }] } } },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// What Alex listens to (real tracks and approximate album-version lengths)
+// ---------------------------------------------------------------------------
+
+const ALBUM_ART = {
+  rumours: ART.ember,
+  tangoInTheNight: ART.mist,
+  currents: ART.dusk,
+  slowRush: ART.moss,
+  sos: ART.slate,
+  hitMeHardAndSoft: ART.tide,
+  shortNSweet: ART.gold,
+  goodLuckBabe: ART.rose,
+  allMyDemons: ART.tide,
+};
+
+const TRACKS = {
+  dreams: { track: "Dreams", artist: "Fleetwood Mac", album: "Rumours", art: ALBUM_ART.rumours, durationMs: 257_000 },
+  goYourOwnWay: {
+    track: "Go Your Own Way",
+    artist: "Fleetwood Mac",
+    album: "Rumours",
+    art: ALBUM_ART.rumours,
+    durationMs: 218_000,
+  },
+  everywhere: {
+    track: "Everywhere",
+    artist: "Fleetwood Mac",
+    album: "Tango in the Night",
+    art: ALBUM_ART.tangoInTheNight,
+    durationMs: 228_000,
+  },
+  lessIKnow: {
+    track: "The Less I Know the Better",
+    artist: "Tame Impala",
+    album: "Currents",
+    art: ALBUM_ART.currents,
+    durationMs: 216_000,
+  },
+  borderline: {
+    track: "Borderline",
+    artist: "Tame Impala",
+    album: "The Slow Rush",
+    art: ALBUM_ART.slowRush,
+    durationMs: 237_000,
+  },
+  snooze: { track: "Snooze", artist: "SZA", album: "SOS", art: ALBUM_ART.sos, durationMs: 201_000 },
+  killBill: { track: "Kill Bill", artist: "SZA", album: "SOS", art: ALBUM_ART.sos, durationMs: 153_000 },
+  goodDays: { track: "Good Days", artist: "SZA", album: "SOS", art: ALBUM_ART.sos, durationMs: 279_000 },
+  birdsOfAFeather: {
+    track: "Birds of a Feather",
+    artist: "Billie Eilish",
+    album: "Hit Me Hard and Soft",
+    art: ALBUM_ART.hitMeHardAndSoft,
+    durationMs: 210_000,
+  },
+  espresso: {
+    track: "Espresso",
+    artist: "Sabrina Carpenter",
+    album: "Short n' Sweet",
+    art: ALBUM_ART.shortNSweet,
+    durationMs: 175_000,
+  },
+  goodLuckBabe: {
+    track: "Good Luck, Babe!",
+    artist: "Chappell Roan",
+    album: "Good Luck, Babe!",
+    art: ALBUM_ART.goodLuckBabe,
+    durationMs: 218_000,
+  },
+  runaway: {
+    track: "Runaway",
+    artist: "AURORA",
+    album: "All My Demons Greeting Me as a Friend",
+    art: ALBUM_ART.allMyDemons,
+    durationMs: 248_000,
+  },
+} satisfies Record<string, Track>;
+
+// ---------------------------------------------------------------------------
+// The hiking group chat (the day view shows Friday's messages)
+// ---------------------------------------------------------------------------
+
+const HIKE_CONVERSATION_ID = "dc-weekend-hike";
+
+interface ChatMessage {
+  timestamp: string;
+  person: { id: string; name: string };
+  content: string;
+  extra?: EventOverrides;
+}
+
+function reactions(emoji: string, ...users: string[]): EventOverrides {
+  return { raw_data: { reactions: [{ emoji: { name: emoji }, count: users.length, users: users.map((name) => ({ name })) }] } };
+}
+
+// Thursday evening + Friday, oldest first: the conversation's newest page.
+// Friday's messages fill the conversation shot, so its sticky date header
+// sits above a whole message (the shot asserts this).
+const HIKE_CHAT: ChatMessage[] = [
+  { timestamp: "2025-03-06T19:41:22.000Z", person: PEOPLE.rowan, content: "weather finally looks decent saturday — who's in?" },
+  {
+    timestamp: "2025-03-06T19:44:31.000Z",
+    person: PEOPLE.me,
+    content: "in. shall we finally do Mount Si?",
+    extra: reactions("👍", "Rowan", "Sam", "Priya"),
+  },
+  {
+    timestamp: "2025-03-06T19:48:12.000Z",
+    person: PEOPLE.sam,
+    content: "depends. is pie at Twede's in North Bend part of the route",
+    extra: reactions("😂", "Priya", "Alex"),
+  },
+  {
+    timestamp: "2025-03-07T08:52:19.000Z",
+    person: PEOPLE.rowan,
+    content: "right, forecast says sunny until 3pm — are we doing Mount Si or Little Si?",
+  },
+  {
+    timestamp: "2025-03-07T08:54:02.000Z",
+    person: PEOPLE.me,
+    content: "big Si. we always say the little one and then feel cheated",
+    extra: reactions("💯", "Rowan", "Priya"),
+  },
+  {
+    timestamp: "2025-03-07T09:01:36.000Z",
+    person: PEOPLE.priya,
+    content: "I can drive, picking up at 8:30. bring actual boots this time Sam",
+  },
+  {
+    timestamp: "2025-03-07T09:14:50.000Z",
+    person: PEOPLE.sam,
+    content: "one (1) time",
+    extra: {
+      replied_to: {
+        author_name: "Priya",
+        content: "I can drive, picking up at 8:30. bring actual boots this time Sam",
+        has_attachment: false,
+      },
+    },
+  },
+  {
+    timestamp: "2025-03-07T09:16:33.000Z",
+    person: PEOPLE.rowan,
+    content: "I'll sort sandwiches. turkey and swiss non-negotiable",
+    extra: reactions("🧀", "Sam"),
+  },
+  {
+    timestamp: "2025-03-07T17:20:41.000Z",
+    person: PEOPLE.me,
+    content: "trail map saved offline + headlamp packed in case we're slow off the Haystack",
+  },
+  { timestamp: "2025-03-07T17:22:05.000Z", person: PEOPLE.sam, content: "boots are by the door. both of them" },
+  {
+    timestamp: "2025-03-07T17:24:58.000Z",
+    person: PEOPLE.priya,
+    content: "see everyone at 8:30 sharp ⛰️",
+    extra: reactions("⛰️", "Rowan", "Sam", "Alex"),
+  },
+];
+
+// An older page behind a cursor: the chat reads as long-running (matching the
+// sidebar stats). The scroller pulls it while the top is in view, and its null
+// cursor ends the pagination.
+const HIKE_CHAT_OLDER: ChatMessage[] = [
+  {
+    timestamp: "2025-03-05T21:03:12.000Z",
+    person: PEOPLE.priya,
+    content: "found my Discover Pass from last time, it was in the glovebox the whole time",
+  },
+  { timestamp: "2025-03-05T21:07:44.000Z", person: PEOPLE.rowan, content: "that's where it lives now" },
+];
+
+function hikeMessage(message: ChatMessage): ShowcaseEvent {
+  return event("discord", "message:group", message.timestamp, {
+    title: "weekend hike 🥾",
+    content: message.content,
+    people: [message.person.id],
+    conversation_id: HIKE_CONVERSATION_ID,
+    ...message.extra,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// The day: Friday 7 March 2025
+// ---------------------------------------------------------------------------
+
+function buildDayEvents(): DayContextData {
+  nextEventId = 1;
+  const t = (time: string) => `${DAY}T${time}.000Z`;
+
+  const events = [
+    // Morning listening on the commute
+    spotifyTrack(t("07:32:04"), TRACKS.dreams),
+    spotifyTrack(t("07:36:21"), TRACKS.lessIKnow),
+    spotifyTrack(t("07:39:57"), TRACKS.goYourOwnWay),
+    spotifyTrack(t("07:43:35"), TRACKS.borderline),
+    spotifyTrack(t("07:47:32"), TRACKS.everywhere),
+
+    // Quick research burst
+    event("google-search", "google:search", t("08:20:11"), { title: "mount si trail conditions" }),
+    event("google-search", "google:search", t("08:22:47"), { title: "mount si trailhead parking discover pass" }),
+    event("google-search", "google:search", t("08:25:03"), { title: "best thermos for day hikes" }),
+
+    // Group chat planning the weekend
+    ...HIKE_CHAT.filter((message) => message.timestamp.startsWith(DAY)).map(hikeMessage),
+
+    // Deep work
+    event("wakatime", "code:session", t("09:05:00"), {
+      title: "timeline (2h 38m)",
+      end_timestamp: t("11:43:00"),
+      duration_ms: 9_480_000,
+      raw_data: { languages: { TypeScript: 74, Swift: 18, CSS: 8 }, branches: ["day-view-polish"] },
+    }),
+    event("github", "github:pr", t("11:52:26"), {
+      title: "Merged #214 — health: sleep stage charts",
+      content: "timeline",
+    }),
+
+    // Lunch out
+    event("amex", "transaction:food", t("12:34:09"), {
+      title: "Piroshky Piroshky",
+      content: "-$8.75 · Lunch",
+      source_account: "personal",
+    }),
+    event("swarm", "location:visit", t("13:02:44"), {
+      location_name: "Pike Place Market",
+      title: "Checked in at Pike Place Market",
+      content: "lunchtime wander ☀️",
+      latitude: 47.6097,
+      longitude: -122.3422,
+      tags: ["Market"],
+    }),
+
+    // Afternoon
+    event("youtube", "youtube:watch", t("14:03:12"), {
+      title: "How SQLite Works: Pages & B-Trees",
+      content: "Systems Sketchbook",
+      people: ["name:Systems Sketchbook"],
+    }),
+    event("youtube", "youtube:watch", t("14:18:40"), {
+      title: "Restoring a 1970s field camera, part 3",
+      content: "Workbench Diaries",
+      people: ["name:Workbench Diaries"],
+    }),
+    event("google-calendar", "event", t("15:30:00"), {
+      title: "Team retro",
+      end_timestamp: t("16:00:00"),
+      duration_ms: 1_800_000,
+    }),
+    spotifyTrack(t("16:41:08"), TRACKS.snooze),
+    spotifyTrack(t("16:44:29"), TRACKS.killBill),
+    spotifyTrack(t("16:47:02"), TRACKS.goodDays),
+
+    // Evening
+    event("google-fit", "activity:running", t("17:30:00"), {
+      title: "Evening run",
+      end_timestamp: t("18:04:00"),
+      duration_ms: 2_040_000,
+      content: "5.1 km · Green Lake loop",
+    }),
+    event("amex", "transaction:groceries", t("18:21:33"), {
+      title: "Trader Joe's",
+      content: "-$41.27 · Groceries",
+      source_account: "personal",
+    }),
+    event("trakt", "trakt:episode", t("18:45:00"), {
+      title: "Severance - S02E08: Sweet Vitriol",
+      content: "Severance",
+      duration_ms: 2_220_000,
+      tags: ["watch", "tv", "show:severance"],
+    }),
+    event("trakt", "trakt:movie", t("19:35:00"), {
+      title: "Spirited Away (2001)",
+      content: "IMDB: tt0245429",
+      duration_ms: 7_500_000,
+      tags: ["watch", "movie"],
+    }),
+
+    // Late-night AI chat
+    event("claude", "claude:message:user", t("21:48:11"), {
+      title: "Raised bed planting plan",
+      content: "I have a 4x8 ft raised bed in partial shade. What can I plant in March?",
+      conversation_id: "cl-garden",
+    }),
+    event("claude", "claude:message:assistant", t("21:48:38"), {
+      title: "Raised bed planting plan",
+      content: "March is a great time to start. For partial shade, direct-sow spinach, radishes, and…",
+      conversation_id: "cl-garden",
+    }),
+    event("claude", "claude:message:user", t("21:51:57"), {
+      title: "Raised bed planting plan",
+      content: "How deep does the bed need to be for carrots?",
+      conversation_id: "cl-garden",
+    }),
+    event("claude", "claude:message:assistant", t("21:52:19"), {
+      title: "Raised bed planting plan",
+      content: "At least 12 inches of loose, stone-free soil — short, round varieties cope with less.",
+      conversation_id: "cl-garden",
+    }),
+  ].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+  const bySourceCounts = new Map<string, number>();
+  for (const e of events) bySourceCounts.set(e.source, (bySourceCounts.get(e.source) ?? 0) + 1);
+
+  return {
+    date: DAY,
+    centerTimestamp: `${DAY}T12:00:00.000Z`,
+    events,
+    attachments: {},
+    summary: {
+      totalEvents: events.length,
+      bySource: [...bySourceCounts.entries()].map(([source, count]) => ({ source, count })),
+      byType: [],
+      timeRange: { earliest: events[0].timestamp, latest: events[events.length - 1].timestamp },
+    },
+  };
+}
+
+const dayHealth = {
+  date: DAY,
+  hasData: true,
+  activity: { steps: 11_247, caloriesOut: 2_610, activeMinutes: 58, floors: 14 },
+  sleep: {
+    duration: 27_720_000,
+    efficiency: 93,
+    deepMinutes: 92,
+    lightMinutes: 238,
+    remMinutes: 96,
+    score: {
+      score: 84,
+      breakdown: { duration: 88, deepSleep: 84, remSleep: 86, continuity: 90, onsetLatency: 78 },
+      hasStageData: true,
+    },
+  },
+  healthMetrics: {
+    restingHR: { value: 58, status: "in_range", personalRange: [54, 62] },
+    hrv: { value: 52, status: "in_range", personalRange: [38, 64] },
+    spo2: { value: 96.8, status: "in_range", personalRange: [95, 98] },
+    breathingRate: { value: 15.4, status: "in_range", personalRange: [14, 17] },
+    skinTempVariation: { value: 0.1, status: "in_range", personalRange: [-1, 1] },
+  },
+  outOfRangeCount: 0,
+  totalMetricCount: 5,
+} satisfies DayHealthStats;
+
+// Complete date index for the sidebar: two years of deterministic activity,
+// newest first, with quiet gaps (today's count matches the day fixture).
+function buildDateIndex(todayCount: number): DateActivityResponse {
+  let seed = 7;
+  const rand = () => {
+    seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+    return seed / 2_147_483_648;
+  };
+  const dates = [{ date: DAY, eventCount: todayCount }];
+  const cursor = new Date(`${DAY}T12:00:00.000Z`);
+  for (let i = 1; i < 730; i++) {
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+    const roll = rand();
+    if (roll < 0.06) continue;
+    const weekend = cursor.getUTCDay() % 6 === 0;
+    dates.push({
+      date: cursor.toISOString().slice(0, 10),
+      eventCount: Math.round(8 + roll * 44 + (weekend ? 10 : 0)),
+    });
+  }
+  return { dates };
+}
+
+// ---------------------------------------------------------------------------
+// Conversation: the hiking group chat, in full
+// ---------------------------------------------------------------------------
+
+function buildConversation() {
+  nextEventId = 500;
+  const events = HIKE_CHAT.map(hikeMessage);
+  const olderEvents = HIKE_CHAT_OLDER.map(hikeMessage);
+
+  const participants: Record<string, EventParticipant> = Object.fromEntries(
+    CAST.map((p) => [p.id, { name: p.name, contactId: p.contactId, avatarUrl: null, isSelf: p.isSelf }]),
+  );
+  const conversationPage = (pageEvents: TimelineEvent[], nextCursor: string | null): ConversationResponse => ({
+    title: "weekend hike 🥾",
+    // Pages arrive newest-first; the client reverses them.
+    events: [...pageEvents].reverse(),
+    attachments: {},
+    nextCursor,
+    participants,
+    server: { source: "discord", id: "9000001", name: "Cascade Crew" },
+  });
+
+  return {
+    page: conversationPage(events, "older-page-1"),
+    olderPage: conversationPage(olderEvents, null),
+    // Polling for newer messages finds nothing past the newest message.
+    newerPage: conversationPage([], null),
+    stats: {
+      totalMessages: 1_284,
+      firstMessage: "2024-04-02T18:12:00.000Z",
+      lastMessage: events[events.length - 1].timestamp,
+      firstEventId: 1,
+      lastEventId: events[events.length - 1].id,
+      participants: CAST.map((p, i) => ({
+        identifier: p.id,
+        name: p.name,
+        contactId: p.contactId,
+        avatarUrl: null,
+        count: [412, 386, 341, 145][i] ?? 100,
+      })),
+      attachmentCount: 87,
+      activityByMonth: [
+        { month: "2024-04", count: 61 },
+        { month: "2024-05", count: 84 },
+        { month: "2024-06", count: 122 },
+        { month: "2024-07", count: 96 },
+        { month: "2024-08", count: 143 },
+        { month: "2024-09", count: 78 },
+        { month: "2024-10", count: 102 },
+        { month: "2024-11", count: 91 },
+        { month: "2024-12", count: 130 },
+        { month: "2025-01", count: 118 },
+        { month: "2025-02", count: 149 },
+        { month: "2025-03", count: 110 },
+      ],
+      titles: [],
+      tokenUsage: null,
+    } satisfies ConversationStats,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Health month (February 2025 — complete, deterministic pseudo-random)
+// ---------------------------------------------------------------------------
+
+function buildHealthStats(): HealthStats {
+  // Small deterministic LCG so the charts look organic but never change.
+  let seed = 42;
+  const rand = () => {
+    seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+    return seed / 2_147_483_648;
+  };
+
+  const sleepByDay = [];
+  const heartByDay = [];
+  const hrvByDay = [];
+  const activityByDay = [];
+  const spo2ByDay = [];
+  const weightByDay = [];
+
+  for (let day = 1; day <= 28; day++) {
+    const date = `2025-02-${String(day).padStart(2, "0")}`;
+    const weekend = new Date(`${date}T12:00:00Z`).getUTCDay() % 6 === 0;
+
+    const sleepHours = 6.9 + rand() * 1.4 + (weekend ? 0.5 : 0);
+    const bedtimeMinutes = 22 * 60 + 40 + Math.floor(rand() * 70) - (weekend ? 0 : 15);
+    const start = new Date(`${date}T00:00:00Z`);
+    start.setUTCDate(start.getUTCDate() - 1);
+    start.setUTCMinutes(bedtimeMinutes);
+    const end = new Date(start.getTime() + sleepHours * 3_600_000);
+    sleepByDay.push({
+      date,
+      duration: Math.round(sleepHours * 3_600_000),
+      efficiency: Math.round(89 + rand() * 6),
+      startTime: start.toISOString(),
+      endTime: end.toISOString(),
+      score: Math.round(74 + rand() * 16),
+    });
+
+    heartByDay.push({ date, restingHR: Math.round(55 + rand() * 6) });
+    hrvByDay.push({ date, rmssd: Math.round(40 + rand() * 22) });
+    activityByDay.push({ date, steps: Math.round(4_500 + rand() * 8_000 + (weekend ? 5_000 : 0)) });
+    spo2ByDay.push({ date, value: Math.round((96 + rand() * 1.8) * 10) / 10 });
+    if (day % 2 === 1) {
+      const weight = 72.4 - day * 0.02 + rand() * 0.5;
+      weightByDay.push({ date, weight: Math.round(weight * 10) / 10 });
+    }
+  }
+
+  const avg = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+
+  return {
+    dateRange: { start: "2025-02-01", end: "2025-02-28" },
+    sleep: {
+      avgDuration: Math.round(avg(sleepByDay.map((d) => d.duration))),
+      avgEfficiency: Math.round(avg(sleepByDay.map((d) => d.efficiency))),
+      avgBedtime: 23.1,
+      avgWakeTime: 7.0,
+      avgScore: Math.round(avg(sleepByDay.map((d) => d.score))),
+      nightsTracked: sleepByDay.length,
+      byDay: sleepByDay,
+      naps: [],
+    },
+    heart: {
+      avgRestingHR: Math.round(avg(heartByDay.map((d) => d.restingHR))),
+      byDay: heartByDay,
+      rollingBaseline: [],
+    },
+    hrv: {
+      avgRmssd: Math.round(avg(hrvByDay.map((d) => d.rmssd))),
+      byDay: hrvByDay,
+      rollingBaseline: [],
+    },
+    activity: {
+      avgSteps: Math.round(avg(activityByDay.map((d) => d.steps))),
+      totalSteps: activityByDay.reduce((a, d) => a + d.steps, 0),
+      daysTracked: activityByDay.length,
+      byDay: activityByDay,
+    },
+    spo2: {
+      avgValue: Math.round(avg(spo2ByDay.map((d) => d.value)) * 10) / 10,
+      byDay: spo2ByDay,
+      rollingBaseline: [],
+    },
+    weight: {
+      latest: weightByDay[weightByDay.length - 1].weight,
+      change: -0.6,
+      measurements: weightByDay.length,
+      byDay: weightByDay,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Music
+// ---------------------------------------------------------------------------
+
+function monthlySeries(startYear: number, startMonth: number, startCount: number, monthlyGains: number[]) {
+  const series = [];
+  let count = startCount;
+  for (let i = 0; i < monthlyGains.length; i++) {
+    const d = new Date(Date.UTC(startYear, startMonth - 1 + i, 15));
+    count += monthlyGains[i];
+    series.push({ date: d.toISOString().slice(0, 10), count });
+  }
+  return series;
+}
+
+function buildMusic() {
+  const playlists = [
+    {
+      playlistId: "pl-sunday-reset",
+      name: "sunday reset",
+      imageUrl: ART.dusk,
+      createdDate: "2022-05-14",
+      series: monthlySeries(2023, 10, 310, [6, 9, 14, -3, 18, 22, 17, 25, 31, -8, 28, 35, 30, 26, 33, 41, 38]),
+    },
+    {
+      playlistId: "pl-kitchen-radio",
+      name: "kitchen radio",
+      imageUrl: ART.ember,
+      createdDate: "2023-11-02",
+      series: monthlySeries(2023, 12, 180, [4, 7, -2, 12, 9, 15, 11, 14, 19, 16, -5, 18, 25, 21, 27]),
+    },
+    {
+      playlistId: "pl-deep-focus",
+      name: "deep focus, allegedly",
+      imageUrl: ART.slate,
+      createdDate: "2024-02-20",
+      series: monthlySeries(2024, 3, 96, [2, 5, 3, 8, -4, 9, 12, 7, 11, 15, 10, 14]),
+    },
+    {
+      playlistId: "pl-trailhead-drive",
+      name: "I-90 to the trailhead",
+      imageUrl: ART.moss,
+      createdDate: "2024-06-08",
+      series: monthlySeries(2024, 7, 64, [1, 3, 2, 5, -1, 7, 3, 6]),
+    },
+  ].map((p): TrackedPlaylist => ({
+    playlistId: p.playlistId,
+    name: p.name,
+    imageUrl: p.imageUrl,
+    latestCount: p.series[p.series.length - 1].count,
+    latestDate: p.series[p.series.length - 1].date,
+    firstDate: p.series[0].date,
+    createdDate: p.createdDate,
+    observations: p.series.length,
+    series: p.series,
+  }));
+
+  const [, rowan, priya, sam] = CAST;
+  const friendListen = (
+    person: (typeof CAST)[number],
+    eventId: number,
+    timestamp: string,
+    { track, artist, album, art }: Track,
+  ): SpotifyFriendLatestListen => ({
+    eventId,
+    person: person.spotify,
+    spotifyId: person.spotify.replace("spotify:", ""),
+    contactId: person.contactId,
+    name: person.name,
+    avatarUrl: null,
+    timestamp,
+    trackName: track,
+    artistName: artist,
+    albumName: album,
+    imageUrl: art,
+  });
+  const friends = [
+    friendListen(rowan, 9001, "2025-03-07T21:12:00.000Z", TRACKS.birdsOfAFeather),
+    friendListen(priya, 9002, "2025-03-07T20:48:00.000Z", TRACKS.goodLuckBabe),
+    friendListen(sam, 9003, "2025-03-07T18:03:00.000Z", TRACKS.goYourOwnWay),
+  ];
+
+  // Four weeks of listening ending on the showcase day.
+  const catalogue = [
+    { ...TRACKS.birdsOfAFeather, plays: 34 },
+    { ...TRACKS.dreams, plays: 29 },
+    { ...TRACKS.killBill, plays: 26 },
+    { ...TRACKS.lessIKnow, plays: 23 },
+    { ...TRACKS.espresso, plays: 21 },
+    { ...TRACKS.snooze, plays: 18 },
+    { ...TRACKS.goYourOwnWay, plays: 16 },
+    { ...TRACKS.borderline, plays: 14 },
+    { ...TRACKS.goodLuckBabe, plays: 12 },
+    { ...TRACKS.goodDays, plays: 11 },
+    { ...TRACKS.everywhere, plays: 9 },
+  ];
+  const topTracks = catalogue.map((t, i) => ({
+    rank: i + 1,
+    trackName: t.track,
+    artistName: t.artist,
+    albumName: t.album,
+    trackUri: `spotify:track:showcase-${i + 1}`,
+    imageUrl: t.art,
+    playCount: t.plays,
+    listeningMs: t.plays * t.durationMs,
+    lastPlayedAt: new Date(Date.UTC(2025, 2, 7, 16, 47) - i * 9 * 3_600_000).toISOString(),
+    eventId: 9100 + i,
+  }));
+
+  const artistTotals = new Map<
+    string,
+    { plays: number; listeningMs: number; latest: (typeof catalogue)[number]; index: number }
+  >();
+  catalogue.forEach((t, index) => {
+    const current = artistTotals.get(t.artist);
+    if (current) {
+      current.plays += t.plays;
+      current.listeningMs += t.plays * t.durationMs;
+    } else artistTotals.set(t.artist, { plays: t.plays, listeningMs: t.plays * t.durationMs, latest: t, index });
+  });
+  const topArtists = [...artistTotals.entries()]
+    .sort((a, b) => b[1].plays - a[1].plays)
+    .map(([artistName, { plays, listeningMs, latest, index }], i) => ({
+      rank: i + 1,
+      artistName,
+      playCount: plays,
+      listeningMs,
+      lastPlayedAt: topTracks[index].lastPlayedAt,
+      latestTrackName: latest.track,
+      latestTrackUri: topTracks[index].trackUri,
+      imageUrl: latest.art,
+      eventId: topTracks[index].eventId,
+    }));
+
+  // Today's plays match the day view's listening sessions.
+  const recentPlays: Array<[string, Track]> = [
+    ["2025-03-07T16:47:02.000Z", TRACKS.goodDays],
+    ["2025-03-07T16:44:29.000Z", TRACKS.killBill],
+    ["2025-03-07T16:41:08.000Z", TRACKS.snooze],
+    ["2025-03-07T07:47:32.000Z", TRACKS.everywhere],
+    ["2025-03-07T07:43:35.000Z", TRACKS.borderline],
+    ["2025-03-07T07:39:57.000Z", TRACKS.goYourOwnWay],
+    ["2025-03-07T07:36:21.000Z", TRACKS.lessIKnow],
+    ["2025-03-07T07:32:04.000Z", TRACKS.dreams],
+    ["2025-03-06T22:18:40.000Z", TRACKS.goodLuckBabe],
+    ["2025-03-06T22:14:02.000Z", TRACKS.espresso],
+    ["2025-03-06T19:05:11.000Z", TRACKS.dreams],
+    ["2025-03-06T19:01:27.000Z", TRACKS.birdsOfAFeather],
+  ];
+  const trackUri = (track: Track) => {
+    const ranked = topTracks.find((t) => t.trackName === track.track);
+    if (!ranked) throw new Error(`${track.track} is not in the showcase catalogue`);
+    return ranked.trackUri;
+  };
+
+  const totalPlays = 487;
+  const rankings: MusicRankingsOverview = {
+    period: "4w",
+    periodStart: "2025-02-07T22:15:00.000Z",
+    totalPlays,
+    listeningMs: totalPlays * 214_000,
+    firstPlayedAt: "2025-02-07T22:31:00.000Z",
+    lastPlayedAt: recentPlays[0][0],
+    // The ranked list scrolls past eight rows; stop there so the shot ends cleanly.
+    topTracks: topTracks.slice(0, 8),
+    topArtists,
+  };
+
+  const recent: MusicRecentResponse["recent"] = recentPlays.map(([timestamp, track], i) => ({
+    eventId: 9200 + i,
+    timestamp,
+    trackName: track.track,
+    artistName: track.artist,
+    albumName: track.album,
+    trackUri: trackUri(track),
+    imageUrl: track.art,
+  }));
+
+  return {
+    playlists: { playlists },
+    friends: { friends },
+    rankings,
+    recent: { recent },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Search: "aurora" across sources
+// ---------------------------------------------------------------------------
+
+function buildSearchResults(): SearchResult {
+  nextEventId = 700;
+  const events = [
+    event("discord", "message:group", "2025-02-27T22:41:09.000Z", {
+      title: "weekend hike 🥾",
+      content: "did anyone else see the aurora tonight?? whole sky over the Sound went pink for a bit",
+      people: [PEOPLE.rowan.id],
+      conversation_id: HIKE_CONVERSATION_ID,
+    }),
+    event("claude", "claude:message:assistant", "2025-02-27T23:02:51.000Z", {
+      title: "Aurora photography settings",
+      content: "For aurora on a mirrorless camera: start around ISO 3200, f/2.8, 4–8s exposure, manual focus on a bright star…",
+      conversation_id: "cl-aurora",
+    }),
+    event("google-search", "google:search", "2025-02-27T22:38:02.000Z", {
+      title: "aurora forecast tonight",
+    }),
+    event("chrome", "browse", "2025-02-27T22:38:40.000Z", {
+      title: "Aurora - 30 Minute Forecast | NOAA / NWS Space Weather Prediction Center",
+      content: "https://www.swpc.noaa.gov/products/aurora-30-minute-forecast",
+    }),
+    spotifyTrack("2025-01-19T09:12:00.000Z", TRACKS.runaway),
+    event("youtube", "youtube:watch", "2024-11-02T20:15:00.000Z", {
+      title: "Chasing the aurora across a frozen lake — 4K",
+      content: "Fjord & Field",
+      people: ["name:Fjord & Field"],
+    }),
+    event("swarm", "location:visit", "2025-02-27T21:55:00.000Z", {
+      location_name: "Snoqualmie Point Park",
+      title: "Checked in at Snoqualmie Point Park",
+      content: "aurora spotting 🌌",
+      tags: ["Scenic Lookout"],
+      latitude: 47.5216,
+      longitude: -121.8287,
+    }),
+  ].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  // Search returns newest first, counting the page it returns.
+  return { events, count: events.length, nextCursor: null };
+}
+
+// ---------------------------------------------------------------------------
+// Shared API scaffolding
+// ---------------------------------------------------------------------------
+
+const statsSources: StatsData["sources"] = [
+  { source: "wakatime", type: "code:session", count: 812_400 },
+  { source: "facebook", type: "message", count: 704_120 },
+  { source: "spotify", type: "listen:track", count: 207_331 },
+  { source: "discord", type: "message:group", count: 54_209 },
+  { source: "chrome", type: "browse", count: 46_870 },
+  { source: "google-search", type: "google:search", count: 13_204 },
+  { source: "amex", type: "transaction", count: 9_069 },
+];
+
+const stats: StatsData = {
+  total_events: statsSources.reduce((total, row) => total + row.count, 0),
+  sources: statsSources,
+  date_range: { earliest: "2009-06-14T09:00:00.000Z", latest: "2025-03-07T22:14:00.000Z" },
+};
+
+function baseResponses(): Record<string, unknown> {
+  const music = buildMusic();
+  const day = buildDayEvents();
+  return {
+    "/api/auth/status": { authenticated: true, authEnabled: true } satisfies AuthStatus,
+    "/api/stats": stats,
+    "/api/day": day,
+    [`/api/day/${DAY}/health`]: dayHealth,
+    "/api/timeline/date-index": buildDateIndex(day.summary.totalEvents),
+    "/api/health/stats": buildHealthStats(),
+    "/api/health/biomarkers": { biomarkers: [] as BiomarkerData[] },
+    "/api/playlists": music.playlists,
+    "/api/music/friends/latest": music.friends,
+    "/api/music/rankings": music.rankings,
+    "/api/music/recent": music.recent,
+    "/api/search": buildSearchResults(),
+    "/api/conversations/sources": { sources: ["discord", "claude", "facebook", "phone"] },
+    "/api/contacts": {
+      contacts: CAST.map((p, i): ContactWithStats => ({
+        id: p.contactId,
+        display_name: p.name,
+        notes: null,
+        date_of_birth: null,
+        hidden: 0,
+        is_self: p.isSelf ? 1 : 0,
+        created_at: "2024-01-01T09:00:00.000Z",
+        updated_at: "2025-03-01T09:00:00.000Z",
+        identityCount: 2,
+        eventCount: [1_204, 3_411, 2_876, 1_530][i] ?? 500,
+        avatarUrl: null,
+      })),
+    },
+  };
+}
+
+async function mockApi(page: Page): Promise<string[]> {
+  const unexpectedRequests: string[] = [];
+  const responses = baseResponses();
+  const conversation = buildConversation();
+
+  await page.route((url) => url.pathname.startsWith("/api/"), async (route: Route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+
+    if (request.method() === "POST" && pathname === "/api/identities/resolve") {
+      const body = request.postDataJSON() as { identifiers: string[] };
+      const resolved: Record<string, ResolvedIdentity> = Object.fromEntries(
+        body.identifiers.map((id) => [
+          id,
+          RESOLVED_IDENTITIES[id] ?? { name: null, username: null, contactId: null, avatarUrl: null, isSelf: false },
+        ]),
+      );
+      await route.fulfill({ json: { resolved } });
+      return;
+    }
+
+    if (request.method() === "GET" && pathname === "/api/conversation") {
+      const params = new URL(request.url()).searchParams;
+      // Older pages are requested newest-first ("desc"), newer ones oldest-first
+      // ("asc"); the view polls for newer messages while it is open.
+      const page = !params.has("cursor")
+        ? conversation.page
+        : params.get("order") === "asc"
+          ? conversation.newerPage
+          : conversation.olderPage;
+      await route.fulfill({ json: page });
+      return;
+    }
+    if (request.method() === "GET" && pathname === "/api/conversation/stats") {
+      await route.fulfill({ json: conversation.stats });
+      return;
+    }
+
+    const response = responses[pathname];
+    if (request.method() !== "GET" || response === undefined) {
+      unexpectedRequests.push(`${request.method()} ${pathname}`);
+      await route.fulfill({
+        status: 500,
+        json: { error: `Unexpected showcase request: ${request.method()} ${pathname}` },
+      });
+      return;
+    }
+    await route.fulfill({ json: response });
+  });
+
+  return unexpectedRequests;
+}
+
+interface ShotProblems {
+  unexpectedRequests: string[];
+  browserErrors: string[];
+}
+
+async function openApp(page: Page, path: string): Promise<ShotProblems> {
+  const unexpectedRequests = await mockApi(page);
+  const browserErrors: string[] = [];
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") browserErrors.push(message.text());
+  });
+  // Shots must be reproducible offline: anything leaving the preview server fails.
+  const { baseURL } = test.info().project.use;
+  if (!baseURL) throw new Error("The showcase config must set use.baseURL");
+  const previewOrigin = new URL(baseURL).origin;
+  await page.route(
+    (url) => url.origin !== previewOrigin,
+    async (route) => {
+      unexpectedRequests.push(`${route.request().method()} ${route.request().url()}`);
+      await route.abort();
+    },
+  );
+  await page.clock.setFixedTime(NOW);
+  await page.goto(path);
+  return { unexpectedRequests, browserErrors };
+}
+
+// Panels that load independently and have no aria-busy state get a content
+// assertion in their shot; the sidebar's event total appears in every shot.
+async function settle(page: Page, problems: ShotProblems): Promise<void> {
+  await expect(page.getByText(`${stats.total_events.toLocaleString("en-GB")} events`, { exact: true })).toBeVisible();
+  await expect(page.locator("[aria-busy='true']")).toHaveCount(0);
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+  });
+  expect(problems.unexpectedRequests).toEqual([]);
+  expect(problems.browserErrors).toEqual([]);
+}
+
+/** Saves the README image, then fails on anything that went wrong while capturing. */
+async function capture(page: Page, problems: ShotProblems, name: string): Promise<void> {
+  await page.screenshot({ path: resolve(OUTPUT_DIR, name) });
+  expect(problems.unexpectedRequests).toEqual([]);
+  expect(problems.browserErrors).toEqual([]);
+}
+
+// ---------------------------------------------------------------------------
+// The shots
+// ---------------------------------------------------------------------------
+
+test("day timeline", async ({ page }) => {
+  const problems = await openApp(page, `/?date=${DAY}`);
+
+  await expect(page.getByRole("heading", { name: "Friday, 7 March 2025", level: 1 })).toBeVisible();
+  await expect(page.getByText(dayHealth.activity.steps.toLocaleString("en-GB"))).toBeVisible();
+  await expect(page.getByText("weekend hike 🥾").first()).toBeVisible();
+  await expect(
+    page.getByRole("complementary", { name: "Date navigation" }).getByText("February 2025", { exact: true }),
+  ).toBeVisible();
+  await settle(page, problems);
+
+  await capture(page, problems, "timeline-day.png");
+});
+
+test("conversation", async ({ page }) => {
+  const problems = await openApp(
+    page,
+    `/conversation/discord/${encodeURIComponent(HIKE_CONVERSATION_ID)}`,
+  );
+
+  await expect(page.getByText("see everyone at 8:30 sharp ⛰️")).toBeVisible();
+  await expect(page.getByText("End of conversation")).toBeVisible();
+  await expect(page.getByText("1,284")).toBeVisible();
+  // The older page loads on open; wait for it so the prepend doesn't land mid-shot.
+  await expect(page.getByText(`${HIKE_CHAT.length + HIKE_CHAT_OLDER.length} messages loaded`)).toBeVisible();
+  await expect(page.getByText("Loading older messages...")).toHaveCount(0);
+  await settle(page, problems);
+  // The topmost date header sticks over the transcript; it may cover a
+  // message's top padding but none of its text.
+  const coveredPx = await page.evaluate(() => {
+    const messages = [...document.querySelectorAll("[id^='event-']")];
+    const viewport = messages[0]?.closest(".overflow-auto");
+    if (!viewport) throw new Error("Conversation transcript not found");
+    const viewportTop = viewport.getBoundingClientRect().top;
+    const headerBottom = Math.min(
+      ...[...viewport.querySelectorAll(".sticky")]
+        .map((header) => header.getBoundingClientRect())
+        .filter((rect) => rect.bottom > viewportTop)
+        .map((rect) => rect.bottom),
+    );
+    const message = messages.find((el) => el.getBoundingClientRect().bottom > headerBottom);
+    if (!message) throw new Error("No message below the date header");
+    const textTop = message.getBoundingClientRect().top + Number.parseFloat(getComputedStyle(message).paddingTop);
+    return headerBottom - textTop;
+  });
+  expect(coveredPx).toBeLessThanOrEqual(0);
+
+  await capture(page, problems, "conversation.png");
+});
+
+test("health dashboard", async ({ page }) => {
+  const problems = await openApp(page, "/health?view=month&mode=calendar&anchor=2025-02-01");
+
+  await expect(page.getByRole("heading", { name: "Health Dashboard", level: 1 })).toBeVisible();
+  await expect(page.locator("canvas").first()).toBeVisible();
+  await settle(page, problems);
+
+  await capture(page, problems, "health.png");
+});
+
+test("music", async ({ page }) => {
+  const problems = await openApp(page, "/music");
+
+  await expect(page.getByRole("heading", { name: "Music", level: 1 })).toBeVisible();
+  await expect(page.getByRole("link", { name: /sunday reset/ })).toBeVisible();
+  await expect(page.getByText("487", { exact: true })).toBeVisible(); // rankings
+  await expect(page.getByText("Good Days", { exact: true })).toBeVisible(); // recent plays
+  await expect(page.getByText("Rowan", { exact: true })).toBeVisible(); // friends
+  await settle(page, problems);
+
+  await capture(page, problems, "music.png");
+});
+
+test("search", async ({ page }) => {
+  const problems = await openApp(page, "/search?q=aurora");
+
+  await expect(page.getByText("aurora spotting 🌌")).toBeVisible();
+  await settle(page, problems);
+
+  await capture(page, problems, "search.png");
+});

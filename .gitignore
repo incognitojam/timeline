@@ -25,6 +25,7 @@ coverage
 # Browser test output
 playwright-report/
 test-results/
+test-results-showcase/
 
 # nyc test coverage
 .nyc_output
