@@ -361,7 +361,7 @@ See `.claude/skills/` for detailed patterns and examples.
 | Monzo | transaction, transaction:topup, transaction:credit, transaction:transport, etc. |
 | Amex | transaction, transaction:payment, transaction:refund, transaction:groceries, transaction:food, etc. |
 | Chrome | browse |
-| Trakt | trakt:watch:movie, trakt:watch:episode |
+| Trakt | trakt:movie, trakt:episode |
 | Swarm | location:visit |
 | Google Play Store | playstore:install |
 | Google Calendar | event, event:all-day |
