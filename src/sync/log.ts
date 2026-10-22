@@ -53,6 +53,7 @@ export function completeSyncLog(
     SET source = ?,
         finished_at = datetime('now'),
         success = ?,
+        skipped = ?,
         events_added = ?,
         events_updated = ?,
         error = ?,
@@ -62,6 +63,7 @@ export function completeSyncLog(
   `).run(
     result.source,
     result.success ? 1 : 0,
+    result.skipped ? 1 : 0,
     result.eventsAdded,
     result.eventsUpdated,
     result.error ?? null,

@@ -3,7 +3,7 @@ import { getAppStateDb } from "../db/app-state";
 import { app } from "./index";
 
 describe("/status.md sync history", () => {
-  const sources = ["test-deferred-source"];
+  const sources = ["remote-agents", "test-deferred-source"];
 
   afterEach(() => {
     const db = getAppStateDb();
@@ -30,5 +30,27 @@ describe("/status.md sync history", () => {
     const res = await app.request("/status.md");
     expect(res.status).toBe(200);
     expect(await res.text()).toContain("| test-deferred-source | deferred: on a blocked Wi-Fi network |");
+  });
+
+  it("shows per-target details of a remote agents pull", async () => {
+    insertRun({
+      source: "remote-agents",
+      skipped: 0,
+      eventsAdded: 5,
+      metadata: {
+        host: "alice@agent-host",
+        account: "alice@agent-host",
+        targets: [
+          { target: "claude-code", eventsAdded: 3, files: 2, bytes: 2048 },
+          { target: "codex", eventsAdded: 2, files: 1, bytes: 1536 },
+        ],
+      },
+    });
+
+    const res = await app.request("/status.md");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain(
+      "| remote-agents | OK +5 events (1.5s); from alice@agent-host: claude-code +3 (2 KB mirrored), codex +2 (1.5 KB mirrored) |",
+    );
   });
 });

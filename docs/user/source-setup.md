@@ -33,6 +33,7 @@
 | WakaTime | Coding sessions | API sync / export |
 | Claude, ChatGPT | Chat history | File export |
 | Claude Code, Codex, OpenCode, Conductor, T3 Code | Agent sessions | Local files |
+| Remote agents | Claude Code and Codex sessions from another machine | SSH pull |
 | Amp | Agent sessions | API sync |
 | Minecraft | Chat, joins, advancements | Server logs |
 | MacBook screen recall | OCR'd screen captures | Timeline.app |
@@ -111,6 +112,18 @@ Amp syncs threads from the Amp server via the same authenticated API surface use
 - Workspace/project metadata when present
 
 **Incremental sync:** The source lists thread summaries, fetches changed threads, and stores thread fingerprints in `app-state.db` under the `amp` sync state key.
+
+## Remote agents Setup
+
+The **Remote agents** source pulls Claude Code (`~/.claude/projects`) and Codex (`~/.codex/sessions`) logs from another machine over SSH and imports them with the same parsers as the local sources. It uses rsync on both machines and bubblewrap (`bwrap`) on the remote one, which must be Linux.
+
+1. On the remote machine, install the forced-command wrapper: `install -m 755 tools/timeline-export/timeline-export ~/.local/bin/timeline-export`.
+2. In the web app, open **Sync → Remote Agents**, set **SSH target** (`user@host`), an **Account** such as `alice@host`, and save. The account is your usual identity plus the machine name, so its sessions stay distinct from the Timeline host's own (`alice`). Use one account per machine and keep it: it is part of each event's identity, so changing it imports everything again under the new name.
+3. Under **SSH connection**, choose **Generate key**. Timeline keeps the private key in `remote-agents/` next to `timeline.db` and shows only the line to append to the remote machine's `~/.ssh/authorized_keys`. That line restricts the key to `timeline-export`, which answers a probe and serves read-only rsync of the allow-listed targets from a sandbox that can see only the target directory.
+4. Choose **Test connection**, check the host key fingerprint against the remote machine (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`), then **Trust host and test**. Timeline pins the key in its own `known_hosts` and lists the targets the host can serve. If the remote machine's host key later changes, for example after a reinstall, runs fail until you confirm the new fingerprint the same way.
+5. Enable the source and choose an interval.
+
+Each run probes the host first. A sleeping or offline host is recorded as a deferred run until the last successful pull is older than **Max staleness (hours)** (24 by default); after that, and for any other problem such as a missing or refused key, an untrusted host key, or a missing target directory, the run fails. Mirrors live under `remote-agents/mirror/<host>/` and follow deletions on the remote machine; events already imported stay in the database.
 
 ## Monzo Setup
 

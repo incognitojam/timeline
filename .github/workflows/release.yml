@@ -61,9 +61,17 @@ jobs:
         suite: [static, backend, frontend]
     env:
       NO_COLOR: "1"
+      TIMELINE_REQUIRE_PULL_TESTS: ${{ matrix.suite == 'backend' && '1' || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5
+      # Same provisioning as ci.yml's test job, for timeline-export's sandbox tests.
+      - name: Install remote-agents pull test tools
+        if: matrix.suite == 'backend'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bubblewrap rsync
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Run ${{ matrix.suite }} test suite
         run: ./test.sh "${{ matrix.suite }}"
 

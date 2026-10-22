@@ -52,6 +52,7 @@ const EXPECTED_ICONS: Record<string, keyof typeof Icons> = {
   phone: "IconPhone",
   recall: "IconScreenshotMonitor",
   reddit: "IconReddit",
+  "remote-agents": "IconTerminal",
   "render-sweep": "IconCleaningServices",
   skype: "IconSimpleSkype",
   "sms-backup-restore": "IconPhone",

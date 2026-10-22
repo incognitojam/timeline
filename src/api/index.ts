@@ -29,6 +29,7 @@ import { statusRoutes } from "./status";
 import { jobsRoutes } from "./jobs";
 import { evalRoutes } from "./eval";
 import { createSettingsRoutes } from "./settings";
+import { createRemoteAgentsRoutes } from "./remote-agents";
 import { createSyncSourceRoutes } from "./sync-sources";
 import { isDatabaseInitializedByService } from "./service-control";
 import { AsyncTtlCache } from "./async-ttl-cache";
@@ -400,6 +401,7 @@ app.route("/", jobsRoutes);
 app.route("/", mcpRoutes);
 app.route("/", evalRoutes);
 app.route("/", createSyncSourceRoutes(apiConfig.scheduler.default_interval));
+app.route("/", createRemoteAgentsRoutes());
 app.route("/", createSettingsRoutes());
 app.route("/", createReleaseRoutes({
   repository: process.env.TIMELINE_RELEASE_REPOSITORY ?? "incognitojam/timeline",

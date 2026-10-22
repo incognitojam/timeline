@@ -134,6 +134,24 @@ function deferredReason(entry: { error: string | null; metadata: string | null }
   return entry.error;
 }
 
+/** Per-target events and mirror sizes recorded by a remote-agents pull. */
+function remotePullSummary(metadata: string | null): string | null {
+  if (!metadata) return null;
+  try {
+    const meta = JSON.parse(metadata) as {
+      host?: unknown;
+      targets?: Array<{ target?: unknown; eventsAdded?: unknown; bytes?: unknown }>;
+    };
+    if (typeof meta.host !== "string" || !Array.isArray(meta.targets)) return null;
+    const targets = meta.targets
+      .filter((entry) => typeof entry.target === "string" && typeof entry.eventsAdded === "number" && typeof entry.bytes === "number")
+      .map((entry) => `${entry.target} +${entry.eventsAdded} (${formatBytes(entry.bytes as number)} mirrored)`);
+    return `from ${meta.host}: ${targets.join(", ")}`;
+  } catch {
+    return null;
+  }
+}
+
 interface GroupedFailure {
   source: string;
   error: string | null;
@@ -712,7 +730,8 @@ export async function generateStatusMarkdown(options: StatusMarkdownOptions = {}
           const added = e.events_added > 0 ? `+${e.events_added}` : "0";
           const updated = e.events_updated > 0 ? `, ~${e.events_updated}` : "";
           const duration = e.duration_ms ? ` (${formatDuration(e.duration_ms)})` : "";
-          result = `OK ${added}${updated} events${duration}`;
+          const pulled = e.source === "remote-agents" ? remotePullSummary(e.metadata) : null;
+          result = `OK ${added}${updated} events${duration}${pulled ? `; ${sanitizeForTable(pulled)}` : ""}`;
         }
         lines.push(`| ${formatShortDateTime(e.started_at)} | ${e.source} | ${result} |`);
       } else if (row.type === "running") {

@@ -1924,6 +1924,47 @@ export async function fetchSyncSources(signal: AbortSignal): Promise<SyncSources
   return res.json();
 }
 
+export interface RemoteAgentsSshState {
+  publicKey: string | null;
+  authorizedKeysLine: string | null;
+  host: { label: string; trusted: boolean } | null;
+}
+
+export type RemoteAgentsConnectionTest =
+  | { status: "untrusted"; host: string; fingerprint: string; changed: boolean }
+  | { status: "ok"; host: string; targets: Record<string, { available: boolean; detail?: string }> }
+  | { status: "error"; host: string; error: string };
+
+const REMOTE_AGENTS_SSH = `${API_BASE}/api/sync/sources/remote-agents/ssh`;
+
+export async function fetchRemoteAgentsSsh(signal: AbortSignal): Promise<RemoteAgentsSshState> {
+  const res = await apiFetch(REMOTE_AGENTS_SSH, { signal });
+  return parseApiJson<RemoteAgentsSshState>(res, "Failed to load SSH key state");
+}
+
+export async function generateRemoteAgentsKey(replace: boolean): Promise<void> {
+  const res = await apiFetch(`${REMOTE_AGENTS_SSH}/key`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ replace }),
+  });
+  await parseApiJson<unknown>(res, "Failed to generate SSH key");
+}
+
+export async function testRemoteAgentsConnection(): Promise<RemoteAgentsConnectionTest> {
+  const res = await apiFetch(`${REMOTE_AGENTS_SSH}/test`, { method: "POST" });
+  return parseApiJson<RemoteAgentsConnectionTest>(res, "Failed to test connection");
+}
+
+export async function trustRemoteAgentsHost(fingerprint: string): Promise<RemoteAgentsConnectionTest> {
+  const res = await apiFetch(`${REMOTE_AGENTS_SSH}/trust`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fingerprint }),
+  });
+  return parseApiJson<RemoteAgentsConnectionTest>(res, "Failed to trust host");
+}
+
 const syncSourceConfigurationQueue = new Map<string, Promise<void>>();
 
 async function sendSyncSourceConfiguration(

@@ -25,6 +25,7 @@ import { mediaEvictSyncSource } from "./media-evict";
 import { monzoSyncSource } from "./monzo";
 import { opencodeSyncSource } from "./opencode";
 import { recallSyncSource } from "./recall";
+import { remoteAgentsSyncSource } from "./remote-agents";
 import { renderSweepSyncSource } from "./render-sweep";
 import { spotifySyncSource } from "./spotify";
 import { spotifyFriendsSyncSource } from "./spotify-friends";
@@ -59,6 +60,7 @@ export const SYNC_SOURCES: SyncSource[] = collectSyncSources(PLATFORMS, [
   conductorSyncSource,
   t3codeSyncSource,
   codexSyncSource,
+  remoteAgentsSyncSource, // Pull and import agent logs from other machines
   steamSyncSource,
   googlePlacesSyncSource, // Resolve place names before thumbhash/backup
   inboxRcloneSyncSource, // Pull files from cloud remotes into inbox dirs
@@ -98,6 +100,7 @@ export {
   conductorSyncSource,
   t3codeSyncSource,
   codexSyncSource,
+  remoteAgentsSyncSource,
   steamSyncSource,
   swarmSyncSource,
   thumbhashSyncSource,

@@ -94,6 +94,7 @@ const exempt = {
   "/api/summary/models": "Returns configured model metadata only.",
   "/api/settings/network": "Returns blocked Wi-Fi network names only.",
   "/api/sync/sources": "Returns sync-source configuration only.",
+  "/api/sync/sources/remote-agents/ssh": "Returns the remote-agents public key and host trust state only.",
   "/api/timeline/date-index": "Returns date/count aggregates only.",
   "/api/timeline/dates": "Returns date/source aggregates only.",
   "/api/wakatime/projects/:name": "WakaTime-specific aggregation is outside this slice.",
