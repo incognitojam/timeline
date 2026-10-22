@@ -66,7 +66,7 @@ Install: `cd tools/timeline-app && ./build.sh --install && open ~/Applications/T
 
 Development happens locally. The **macOS host** runs the service packaged inside `Timeline.app`, so apply source changes with `cd tools/timeline-app && ./build.sh --install` (see [docs/user/macos-host.md](docs/user/macos-host.md)).
 
-**Worktree/clone setup**: `bun run setup` (`scripts/setup.sh`) installs root + `web/` dependencies, copies the gitignored files listed in `.worktreeinclude` from the main clone, links `./imports`, and prepares a sample `./timeline.db`. Agent harnesses run it on worktree creation; re-run it by hand any time.
+**Worktree/clone setup**: `bun run setup` (`scripts/setup.sh`) installs the pinned toolchain with mise (see [Toolchain](docs/operations/development.md#toolchain)), installs root + `web/` dependencies, copies the gitignored files listed in `.worktreeinclude` from the main clone, links `./imports`, and prepares a sample `./timeline.db`. Agent harnesses run it on worktree creation; re-run it by hand any time.
 
 > **Note**: `prepare-sample`/`prepare-full` generate or refresh caches from the local host DB (no SSH). Existing caches can be copied to another machine and reused there without the host DB.
 

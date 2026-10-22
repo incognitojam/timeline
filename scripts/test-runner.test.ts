@@ -52,13 +52,18 @@ if (step === process.env.RUNNER_TEST_FAIL) {
 await Bun.sleep(10);
 record("end");
 `);
-    for (const command of ["bun", "bunx", "go"]) {
+    for (const command of ["bun", "bunx", "go", "actionlint"]) {
       writeFileSync(join(directory, "bin", command), [
         "#!/usr/bin/env bash",
         `exec "$RUNNER_TEST_BUN" "$RUNNER_TEST_STUB" ${command} "$@"`,
       ].join("\n"), { mode: 0o755 });
     }
     writeFileSync(join(directory, "bin", "brew"), "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
+    // Toolchain checks have their own tests; the stubbed commands report no versions.
+    writeFileSync(join(directory, "scripts", "toolchain.sh"), [
+      "require_pinned_bun() { :; }",
+      "require_tools() { :; }",
+    ].join("\n"));
     writeFileSync(join(directory, "scripts", "test-browser.sh"), [
       "#!/usr/bin/env bash",
       'exec "$RUNNER_TEST_BUN" "$RUNNER_TEST_STUB" browser "$@"',

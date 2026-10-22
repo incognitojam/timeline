@@ -3,15 +3,19 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-bun_version="$(bun -p 'require("./package.json").packageManager.split("@")[1]')"
+# shellcheck source=scripts/toolchain.sh
+source scripts/toolchain.sh
+require_pinned_bun
+bun_version="$(pinned_bun_version)"
 playwright_version="$(bun -e 'const lock = Bun.JSONC.parse(await Bun.file("web/bun.lock").text()); console.log(lock.packages["@playwright/test"][0].split("@").at(-1))')"
 image="timeline-browser:$playwright_version-bun$bun_version"
 runtime_mounts=()
 
-if [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] && [ "$(bun --version)" = "$bun_version" ]; then
-  # Hosted Linux already has the locked Bun binary; avoid pulling a second image.
+if [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ]; then
+  # Linux x64 already has the locked Bun binary; avoid pulling a second image.
+  # Mount the binary itself, since `bun` on PATH may be a version-manager shim.
   image="mcr.microsoft.com/playwright:v$playwright_version-noble"
-  runtime_mounts+=(--mount "type=bind,source=$(command -v bun),target=/usr/local/bin/bun,readonly")
+  runtime_mounts+=(--mount "type=bind,source=$(bun -p process.execPath),target=/usr/local/bin/bun,readonly")
 else
   docker build --platform linux/amd64 --tag "$image" \
     --build-arg "BUN_VERSION=$bun_version" \

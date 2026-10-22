@@ -38,7 +38,11 @@ jobs:
           ref: refs/tags/${{ inputs.tag }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: oven-sh/setup-bun@v2
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: bun
+          # Restore no cached binaries into a job holding write or signing credentials.
+          cache: false
       - uses: actions/setup-python@v7
         with:
           python-version: "3.13"

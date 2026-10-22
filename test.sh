@@ -28,6 +28,10 @@ case "${PLAYWRIGHT_IGNORE_SNAPSHOTS:-0}" in
     ;;
 esac
 
+# shellcheck source=scripts/toolchain.sh
+source scripts/toolchain.sh
+require_pinned_bun
+
 if ! git check-ignore -q .scratch; then
   printf '\n.scratch/\n' >> "$(git rev-parse --git-path info/exclude)"
 fi
@@ -147,9 +151,12 @@ run_go_sidecar_checks() {
 }
 
 run_static_suite() {
+  # actionlint checks `run:` scripts with shellcheck only when it is on PATH.
+  require_tools actionlint shellcheck
   run_step "Checking public release safety" bun run src/scripts/check-public-release-safety.ts
   run_step "Checking product version" bun run version:check
   run_step "Linting" bun run lint
+  run_step "Linting workflows" actionlint
   # The google-messages sync source depends on this binary's JSONL contract.
   if command -v go >/dev/null 2>&1; then
     run_step "Checking Go sidecar" run_go_sidecar_checks

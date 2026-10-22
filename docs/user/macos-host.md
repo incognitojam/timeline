@@ -7,8 +7,9 @@ supervised by the OS so it starts at login and restarts on crash.
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) on your `PATH` to build the app. The installed service
-  carries its own pinned Bun runtime.
+- The repository's pinned Bun on your `PATH` to build the app; see
+  [Toolchain](../operations/development.md#toolchain). The installed service
+  carries its own copy of that runtime.
 - A checkout to build from. It does not need to remain after installation.
 
 ## Install

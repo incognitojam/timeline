@@ -2,6 +2,20 @@
 
 Conventions for code, commits, and pull requests live in [AGENTS.md](../../AGENTS.md), along with the sample and full database workflows. Pull requests also need a changeset; see [Releases](releases.md).
 
+## Toolchain
+
+[mise](https://mise.jdx.dev/) installs the tools this repository pins, matching
+CI: Bun from `packageManager` in `package.json`, and the tools listed in
+`mise.toml`. Install mise and [activate it in your
+shell](https://mise.jdx.dev/getting-started.html), then run `mise install`,
+which asks once to trust the checkout's `mise.toml`. `bun run setup` trusts and
+installs too, so new worktrees get the toolchain. `setup.sh`, `test.sh`, and
+`scripts/test-browser.sh` exit with an error when the active Bun differs from
+the pinned version. To change a version, edit `packageManager` or `mise.toml`.
+
+`./test.sh static` runs `actionlint` on `.github/workflows/`, as CI does; run
+`actionlint` directly to check workflows alone.
+
 ## Running locally
 
 ```bash
@@ -30,7 +44,7 @@ API's authentication still applies.
 Run `./test.sh` before pushing. Screenshot comparisons run in the same Ubuntu
 Playwright container locally and in CI. CI runs each chart resize sweep directly
 on Ubuntu 24.04 with the locked Chromium version and its system dependencies.
-Install Bun and Docker (Docker Desktop on macOS), and start Docker before running
+Install the [toolchain](#toolchain) and Docker (Docker Desktop on macOS), and start Docker before running
 the suite. Apple Silicon Macs use the same `linux/amd64` image through emulation.
 
 The full suite runs backend tests, frontend tests, and type checks alongside the
