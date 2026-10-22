@@ -121,7 +121,7 @@ describe("no-local-db marker integration", () => {
     const dbPath = join(tempDirWithMarker, "timeline.db");
 
     // Run a subprocess that imports schema.ts
-    const proc = Bun.spawn(["bun", "-e", `import "./src/db/schema.ts"`], {
+    const proc = Bun.spawn([process.execPath, "-e", `import "./src/db/schema.ts"`], {
       cwd: process.cwd(),
       env: {
         ...process.env,
@@ -143,7 +143,7 @@ describe("no-local-db marker integration", () => {
     const dbPath = join(tempDirWithoutMarker, "timeline.db");
 
     // Run a subprocess that imports schema.ts
-    const proc = Bun.spawn(["bun", "-e", `import "./src/db/schema.ts"`], {
+    const proc = Bun.spawn([process.execPath, "-e", `import "./src/db/schema.ts"`], {
       cwd: process.cwd(),
       env: {
         ...process.env,
@@ -164,7 +164,7 @@ describe("no-local-db marker integration", () => {
     // Run a subprocess that calls getAppStateDb
     const proc = Bun.spawn(
       [
-        "bun",
+        process.execPath,
         "-e",
         `import { getAppStateDb } from "./src/db/app-state.ts"; getAppStateDb();`,
       ],
@@ -193,7 +193,7 @@ describe("no-local-db marker integration", () => {
     // Run a subprocess that calls getAppStateDb
     const proc = Bun.spawn(
       [
-        "bun",
+        process.execPath,
         "-e",
         `import { getAppStateDb } from "./src/db/app-state.ts"; getAppStateDb();`,
       ],

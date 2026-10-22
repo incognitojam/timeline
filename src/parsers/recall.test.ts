@@ -44,6 +44,7 @@ describe("importRecall", () => {
   let db: Database;
   let recallDir: string;
   let mediaDir: string;
+  let priorMediaPath: string | undefined;
   const HOST = "test-mac";
   const DATE = "2026-05-13";
 
@@ -57,12 +58,14 @@ describe("importRecall", () => {
     await mkdir(mediaDir, { recursive: true });
 
     // Point storeFile at our temp media dir
+    priorMediaPath = process.env.TIMELINE_MEDIA_PATH;
     process.env.TIMELINE_MEDIA_PATH = mediaDir;
   });
 
   afterEach(async () => {
     db.close();
-    delete process.env.TIMELINE_MEDIA_PATH;
+    if (priorMediaPath === undefined) delete process.env.TIMELINE_MEDIA_PATH;
+    else process.env.TIMELINE_MEDIA_PATH = priorMediaPath;
     await rm(recallDir, { recursive: true, force: true });
     await rm(mediaDir, { recursive: true, force: true });
   });

@@ -10,7 +10,7 @@ import { openReadonlyDbAtPath } from "./readonly";
 describe("readonly database", () => {
   test("openReadonlyDbAtPath rejects write operations at SQLite level", () => {
     // Create a temp database and open it readonly
-    const tempPath = `/tmp/timeline-test-${Date.now()}.db`;
+    const tempPath = join(tmpdir(), `timeline-test-${crypto.randomUUID()}.db`);
     const writeDb = new Database(tempPath);
     writeDb.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
     writeDb.exec("INSERT INTO test (value) VALUES ('initial')");
@@ -58,7 +58,7 @@ describe("readonly database", () => {
   });
 
   test("runReadOnlySql rejects non-SELECT queries", async () => {
-    const tempPath = `/tmp/timeline-test-${Date.now()}.db`;
+    const tempPath = join(tmpdir(), `timeline-test-${crypto.randomUUID()}.db`);
     const db = new Database(tempPath);
     db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
     const qe = wrapDatabase(db);
@@ -89,7 +89,7 @@ describe("readonly database", () => {
   });
 
   test("runReadOnlySql allows valid SELECT queries", async () => {
-    const tempPath = `/tmp/timeline-test-${Date.now()}.db`;
+    const tempPath = join(tmpdir(), `timeline-test-${crypto.randomUUID()}.db`);
     const db = new Database(tempPath);
     db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
     db.exec("INSERT INTO test (value) VALUES ('one'), ('two'), ('three')");
@@ -116,7 +116,7 @@ describe("readonly database", () => {
   });
 
   test("runReadOnlySql handles SQL errors gracefully", async () => {
-    const tempPath = `/tmp/timeline-test-${Date.now()}.db`;
+    const tempPath = join(tmpdir(), `timeline-test-${crypto.randomUUID()}.db`);
     const db = new Database(tempPath);
     db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY)");
     const qe = wrapDatabase(db);

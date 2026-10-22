@@ -752,7 +752,7 @@ const worker = new Worker(${JSON.stringify(workerPath)});
 worker.onmessage = event => { console.log(event.data); worker.terminate(); };
 worker.onerror = event => { console.error(event.message); process.exit(1); };`
       );
-      const proc = Bun.spawn(["bun", mainPath], { cwd: process.cwd(), env: process.env, stdout: "pipe", stderr: "pipe" });
+      const proc = Bun.spawn([process.execPath, mainPath], { cwd: process.cwd(), env: process.env, stdout: "pipe", stderr: "pipe" });
       await proc.exited;
       expect(await new Response(proc.stderr).text()).toBe("");
       expect(proc.exitCode).toBe(0);
@@ -786,7 +786,7 @@ await vectorPool.closeAndWait();
 await plainPool.closeAndWait();
 console.log(JSON.stringify({ version, mmap, plain }));`
       );
-      const proc = Bun.spawn(["bun", mainPath], { cwd: process.cwd(), env: process.env, stdout: "pipe", stderr: "pipe" });
+      const proc = Bun.spawn([process.execPath, mainPath], { cwd: process.cwd(), env: process.env, stdout: "pipe", stderr: "pipe" });
       await proc.exited;
       expect(await new Response(proc.stderr).text()).toBe("");
       expect(proc.exitCode).toBe(0);
@@ -803,7 +803,7 @@ console.log(JSON.stringify({ version, mmap, plain }));`
   it("fails fast when the configured custom SQLite library cannot load", async () => {
     const proc = Bun.spawn(
       [
-        "bun",
+        process.execPath,
         "-e",
         `import { getEmbeddingsDb } from "./src/embeddings/db.ts"; getEmbeddingsDb(":memory:");`,
       ],
@@ -1258,7 +1258,7 @@ describe("embeddings index CLI exit contract", () => {
     let requests = 0;
     const server = Bun.serve({ port: 0, fetch: request => options.respond(requests++, request) });
     try {
-      const args = ["bun", "src/embeddings/cli.ts", "index"];
+      const args = [process.execPath, "src/embeddings/cli.ts", "index"];
       if (!options.omitLimit) args.push("--limit", String(options.limit ?? 1));
       if (options.since) args.push("--since", options.since);
       args.push(...(options.extraArgs ?? []));
@@ -1288,7 +1288,7 @@ describe("embeddings index CLI exit contract", () => {
   async function runCli(args: string[]): Promise<{ exitCode: number; stderr: string }> {
     const dir = mkdtempSync(join(tmpdir(), "timeline-embeddings-cli-"));
     try {
-      const proc = Bun.spawn(["bun", "src/embeddings/cli.ts", ...args], {
+      const proc = Bun.spawn([process.execPath, "src/embeddings/cli.ts", ...args], {
         cwd: process.cwd(),
         env: {
           ...process.env,
@@ -1619,7 +1619,7 @@ describe("embeddings index CLI exit contract", () => {
       },
     });
 
-    const proc = Bun.spawn(["bun", "src/embeddings/cli.ts", "index", "--limit", "1"], {
+    const proc = Bun.spawn([process.execPath, "src/embeddings/cli.ts", "index", "--limit", "1"], {
       cwd: process.cwd(),
       env: {
         ...process.env,
