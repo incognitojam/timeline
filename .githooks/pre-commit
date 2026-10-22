@@ -90,6 +90,10 @@ if [ "$check_product_version" = true ]; then
 fi
 
 mkdir "$snapshot/tree"
+# Mark the tree as its own repository root. Linters apply the .gitignore and
+# exclude rules of an enclosing checkout, so a snapshot under an ignored TMPDIR
+# (such as .scratch/) would otherwise contain no lintable files.
+mkdir "$snapshot/tree/.git"
 git checkout-index --ignore-skip-worktree-bits --stdin -z --prefix="$snapshot/tree/" < <(git ls-files -z -- "${snapshot_paths[@]}")
 
 while IFS= read -r -d '' entry; do

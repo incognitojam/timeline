@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -85,6 +86,32 @@ describe("pre-commit hook", () => {
       expect(result.output).not.toContain("Invalid regex flag");
     } finally {
       rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("accepts a clean staged tree when TMPDIR is inside an ignored checkout directory", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "timeline-pre-commit-test-"));
+    // .gitignore's *.log also matches directories, and a unique name keeps
+    // concurrent runs in one checkout from removing each other's directory.
+    const ignoredTmp = join(repoRoot, `pre-commit-tmp-${randomUUID()}.log`);
+    mkdirSync(ignoredTmp);
+    try {
+      git(["check-ignore", "-q", ignoredTmp]);
+      const index = createIndex(directory);
+      addBlob(
+        index,
+        "100644",
+        "web/src/__precommit_clean.ts",
+        "export const value = 1;\n",
+      );
+
+      const result = await runHook(index, { ...process.env, TMPDIR: ignoredTmp });
+
+      expect(result.output).not.toContain("No files found to lint");
+      expect(result.exitCode).toBe(0);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+      rmSync(ignoredTmp, { recursive: true, force: true });
     }
   });
 
