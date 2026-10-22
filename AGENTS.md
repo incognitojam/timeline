@@ -311,6 +311,7 @@ Also apply the project-specific checks in `.agents/checks/` (parser/importer saf
 - **Tests must run fast** - Slow tests get skipped; keep the feedback loop tight
 - **Prefer seed data + integration tests over endless unit tests** - Test real behavior through the actual code paths
 - **Seed file-backed databases with `seed()`** (`src/testing/seed.ts`) - row-by-row autocommits each wait for an fsync
+- **Wait on events, not wall-clock deadlines** - await the promise, exit, or state change; the test timeout bounds a hang
 - **Leave paths to the preload** - `test/setup.ts` points HOME, TMPDIR, config, databases, media, and inbox at one per-run directory it removes afterwards; restore any override instead of deleting it; runs need no `TMPDIR=` prefix
 
 **Backend tests** use Bun's native test runner (`bun test`). Test files live alongside source in `src/**/*.test.ts`.

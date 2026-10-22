@@ -43,12 +43,16 @@ function pendingModel() {
   };
 }
 
+// Every job transition commits to disk, so progress takes as long as the
+// machine's fsyncs do. The test timeout bounds a stall instead of a poll budget,
+// and a poll left behind by a timed-out test stops when the test ends.
+let testGeneration = 0;
 async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let tries = 0; tries < 1000; tries++) {
-    if (predicate()) return;
+  const generation = testGeneration;
+  while (!predicate()) {
+    if (testGeneration !== generation) throw new Error("Test ended while waiting for progress");
     await Bun.sleep(2);
   }
-  throw new Error("Timed out waiting for test progress");
 }
 
 describe("scheduled inference overlap", () => {
@@ -68,6 +72,7 @@ describe("scheduled inference overlap", () => {
   });
 
   afterEach(() => {
+    testGeneration++;
     importDb.close();
     descriptionDb.close();
     rmSync(directory, { recursive: true, force: true });
