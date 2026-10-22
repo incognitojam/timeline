@@ -1,11 +1,14 @@
 /**
  * Test setup - runs before any test files are loaded.
- * Isolates config and database paths from the developer's host environment.
+ * Isolates every host path (config, secrets, databases, media, inbox, home
+ * directory, temporary files) from the developer's environment.
  */
 
+import { afterAll, mock } from "bun:test";
 import { Database } from "bun:sqlite";
-import { writeFileSync } from "fs";
-import { tmpdir } from "os";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { createRequire } from "module";
+import * as os from "os";
 import { join } from "path";
 import { createTestFetchGuard } from "../src/testing/fetch-guard";
 
@@ -15,30 +18,96 @@ import { createTestFetchGuard } from "../src/testing/fetch-guard";
 // external request before it can reach third-party infrastructure.
 globalThis.fetch = createTestFetchGuard(globalThis.fetch);
 
-// Load application modules only after the network guard is active so future
-// top-level initialization cannot accidentally make an external request.
+// Everything a run writes lives under one directory, removed when the run
+// finishes. Its name carries the owning pid so a later run can remove directories
+// left behind by a run that was killed before its cleanup ran.
+const RUN_ROOT_PREFIX = "timeline-test-run-";
+const hostTmpdir = os.tmpdir();
+for (const entry of readdirSync(hostTmpdir)) {
+  const pid = Number(entry.slice(RUN_ROOT_PREFIX.length).split("-")[0]);
+  if (!entry.startsWith(RUN_ROOT_PREFIX) || !Number.isInteger(pid) || isAlive(pid)) continue;
+  try {
+    rmSync(join(hostTmpdir, entry), { recursive: true, force: true });
+  } catch (error) {
+    // Another user's leftovers must not stop this run.
+    console.warn(`Could not remove stale test run directory ${entry}: ${error}`);
+  }
+}
+const runRoot = mkdtempSync(join(hostTmpdir, `${RUN_ROOT_PREFIX}${process.pid}-`));
+// A preload-level afterAll runs once, after every test file.
+afterAll(() => rmSync(runRoot, { recursive: true, force: true }));
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function runPath(name: string, kind: "dir" | "file" = "dir"): string {
+  const path = join(runRoot, name);
+  if (kind === "dir") mkdirSync(path);
+  else writeFileSync(path, "");
+  return path;
+}
+
+// os.tmpdir() reads TMPDIR on every call, so test temp files land in the run
+// directory.
+process.env.TMPDIR = runPath("tmp");
+
+// Parsers and sync sources resolve token files and default data paths from
+// os.homedir(), which Bun caches at startup and does not re-read from HOME.
+// mock.module covers named, namespace, and dynamic imports; require() and
+// default imports share the builtin module object, so replace it there too.
+const testHome = runPath("home");
+process.env.HOME = testHome;
+const testHomedir = () => testHome;
+for (const specifier of ["os", "node:os"]) {
+  mock.module(specifier, () => ({ ...os, homedir: testHomedir, default: { ...os, homedir: testHomedir } }));
+  createRequire(import.meta.url)(specifier).homedir = testHomedir;
+}
+
+// Bun.spawn, Bun.spawnSync, and Worker default to the environment the process
+// started with, not process.env as changed above, so give them process.env
+// unless a caller passes its own. A worker's os.homedir() still returns the real
+// home; its database, media, inbox, and config paths come from the variables below.
+type SpawnOptions = { env?: Record<string, string | undefined> } | undefined;
+const withEnv = <T extends SpawnOptions>(options: T) => (options?.env ? options : { ...options, env: process.env });
+function inheritEnv<F extends (...args: never[]) => unknown>(spawn: F): F {
+  return ((command: unknown, options?: SpawnOptions) =>
+    Array.isArray(command)
+      ? (spawn as (...args: unknown[]) => unknown)(command, withEnv(options))
+      : (spawn as (...args: unknown[]) => unknown)(withEnv(command as SpawnOptions))) as F;
+}
+Object.assign(Bun, { spawn: inheritEnv(Bun.spawn), spawnSync: inheritEnv(Bun.spawnSync) });
+const NativeWorker = globalThis.Worker;
+globalThis.Worker = class extends NativeWorker {
+  constructor(url: string | URL, options?: WorkerOptions) {
+    super(url, withEnv(options as SpawnOptions) as WorkerOptions);
+  }
+};
+
+// Empty bootstrap config and secrets resolve to built-in defaults, matching CI
+// where no host config exists. The developer's config may enable optional
+// backends like [media.r2] whose secrets aren't present in the test env.
+process.env.TIMELINE_CONFIG = runPath("config.toml", "file");
+process.env.TIMELINE_ENV_FILE = runPath("env", "file");
+process.env.TIMELINE_MEDIA_PATH = runPath("media");
+process.env.TIMELINE_INBOX_PATH = runPath("inbox");
+
+// app-state.db and embeddings.db are created alongside timeline.db.
+const testDbPath = join(runPath("data"), "timeline.db");
+process.env.TIMELINE_DB_PATH = testDbPath;
+
+// Load application modules only after the network guard and path isolation are
+// active, so top-level initialization can neither make an external request nor
+// capture a host path.
 const [{ configureBunSqliteForSqliteVec }, { initProviders }] = await Promise.all([
   import("../src/embeddings/sqlite-vec"),
   import("../src/llm"),
 ]);
-
-// Isolate tests from the developer's host config (~/.config/timeline/config.toml),
-// which may enable optional backends like [media.r2] whose secrets aren't present
-// in the test env. Point TIMELINE_CONFIG and TIMELINE_ENV_FILE at empty files so
-// loadConfig() resolves to built-in defaults - matching CI, where no host config
-// exists. Must run before any test imports the config module.
-const testConfigPath = join(tmpdir(), `timeline-test-config-${Date.now()}.toml`);
-writeFileSync(testConfigPath, "");
-process.env.TIMELINE_CONFIG = testConfigPath;
-
-const testEnvPath = join(tmpdir(), `timeline-test-env-${Date.now()}`);
-writeFileSync(testEnvPath, "");
-process.env.TIMELINE_ENV_FILE = testEnvPath;
-
-// Create a temp database for tests
-// app-state.db will be created alongside it automatically (same directory)
-const testDbPath = join(tmpdir(), `timeline-test-${Date.now()}.db`);
-process.env.TIMELINE_DB_PATH = testDbPath;
 
 // Pre-create the database so it exists when schema.ts validates
 configureBunSqliteForSqliteVec();
@@ -66,4 +135,4 @@ await initProviders(
   },
 );
 
-console.log(`Test database: ${testDbPath}`);
+console.log(`Test run directory: ${runRoot}`);

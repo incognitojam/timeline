@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -51,14 +51,17 @@ function baseChildEnv(): Record<string, string> {
   return env;
 }
 
-test("test preload ignores the developer host config", async () => {
+test("test preload isolates every host path and removes its run directory", async () => {
   workDir = mkdtempSync(join(tmpdir(), "timeline-config-test-"));
   const fakeHome = join(workDir, "home");
+  const childTmp = join(workDir, "tmp");
   const hostConfigDir = join(fakeHome, ".config", "timeline");
   const hostMediaPath = join(workDir, "host-media");
   const hostEnvMediaPath = join(workDir, "host-env-media");
+  const probePath = join(workDir, "probe.test.ts");
 
   mkdirSync(hostConfigDir, { recursive: true });
+  mkdirSync(childTmp);
   writeFileSync(
     join(hostConfigDir, "config.toml"),
     `[media]
@@ -76,55 +79,56 @@ bucket = "host-bucket"
 R2_ACCESS_KEY_ID=host-access-key
 `,
   );
+  writeFileSync(
+    probePath,
+    `
+import { test } from "bun:test";
+import { homedir, tmpdir } from "node:os";
+import { loadConfig } from ${JSON.stringify(join(process.cwd(), "src/config/index.ts"))};
 
-  const childEnv = baseChildEnv();
-
-  const proc = Bun.spawn(
-    [
-      process.execPath,
-      "--preload",
-      "./test/setup.ts",
-      "-e",
-      `
-import { loadConfig } from "./src/config/index.ts";
-
-const config = await loadConfig();
-if (config.media.path === ${JSON.stringify(hostMediaPath)}) {
-  throw new Error("loaded host media path");
-}
-if (config.media.path === ${JSON.stringify(hostEnvMediaPath)}) {
-  throw new Error("loaded host env media path");
-}
-if (config.media.r2) {
-  throw new Error("loaded host R2 config");
-}
-if (!process.env.TIMELINE_CONFIG) {
-  throw new Error("test setup did not set TIMELINE_CONFIG");
-}
-if (!process.env.TIMELINE_ENV_FILE) {
-  throw new Error("test setup did not set TIMELINE_ENV_FILE");
-}
-if (process.env.R2_ACCESS_KEY_ID) {
-  throw new Error("loaded host env secrets");
-}
-      `,
-    ],
-    {
-      cwd: process.cwd(),
-      env: {
-        ...childEnv,
-        HOME: fakeHome,
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    },
+test("probe", async () => {
+  const config = await loadConfig();
+  // Spawned with Bun's default environment, which the preload must still isolate.
+  const child = Bun.spawnSync(["sh", "-c", 'printf "%s\\n%s" "$HOME" "$TMPDIR"']).stdout.toString().split("\\n");
+  const workerUrl = URL.createObjectURL(new Blob(["postMessage([process.env.HOME, process.env.TMPDIR])"]));
+  const worker = new Worker(workerUrl);
+  const workerEnv = await new Promise<string[]>((resolve) => { worker.onmessage = (event) => resolve(event.data); });
+  worker.terminate();
+  console.log("PROBE" + JSON.stringify({
+    paths: [config.media.path, config.inbox.base_path, config.database.path, homedir(), tmpdir(),
+      require("os").homedir(), process.env.HOME, process.env.TIMELINE_CONFIG, process.env.TIMELINE_ENV_FILE,
+      ...child, ...workerEnv],
+    r2: Boolean(config.media.r2),
+    secrets: Boolean(process.env.R2_ACCESS_KEY_ID),
+  }));
+});
+`,
   );
 
-  await proc.exited;
-  const stderr = await new Response(proc.stderr).text();
+  // bun test, not bun --preload, so bunfig's preload and its lifecycle hooks run
+  // exactly as they do for the suite.
+  const proc = Bun.spawn([process.execPath, "test", probePath], {
+    cwd: process.cwd(),
+    env: { ...baseChildEnv(), HOME: fakeHome, TMPDIR: childTmp },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-  expect(proc.exitCode).toBe(0);
-  expect(stderr).toBe("");
+  const [exitCode, stdout, stderr] = await Promise.all([
+    proc.exited,
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  expect({ exitCode, stderr }).toMatchObject({ exitCode: 0 });
+
+  const line = stdout.split("\n").find((l) => l.startsWith("PROBE"));
+  if (!line) throw new Error(`probe printed no result:\n${stdout}\n${stderr}`);
+  const probe = JSON.parse(line.slice("PROBE".length)) as { paths: string[]; r2: boolean; secrets: boolean };
+  expect(probe).toMatchObject({ r2: false, secrets: false });
+  const runRoot = probe.paths[0].slice(0, probe.paths[0].indexOf("/", childTmp.length + 1));
+  expect(runRoot.startsWith(join(childTmp, "timeline-test-run-"))).toBe(true);
+  for (const path of probe.paths) expect(path.startsWith(`${runRoot}/`)).toBe(true);
+  expect(readdirSync(childTmp)).toEqual([]);
 });
 
 test("loadConfig auto-loads TIMELINE_ENV_FILE before config resolution", async () => {
