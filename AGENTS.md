@@ -334,14 +334,14 @@ The web app uses SolidJS, TanStack Solid Query, and Tailwind v4. Key gotchas:
 - Signals work inside the options function: `queryKey: ['todos', filter()]`
 
 ### Vitest + SolidJS Testing
-- See `.claude/skills/vitest-solid/SKILL.md` for testing patterns (render takes a function, no rerender, etc.)
+- See `.agents/skills/vitest-solid/SKILL.md` for testing patterns (render takes a function, no rerender, etc.)
 
 ### Tailwind v4
 - Scale shifted: `shadow-sm` → `shadow-xs`, `rounded` → `rounded-sm`
 - No more `bg-opacity-*` - use `bg-black/50` modifier syntax
 - Config is CSS-first (`@theme` directive), not `tailwind.config.js`
 
-See `.claude/skills/` for detailed patterns and examples.
+See `.agents/skills/` for detailed patterns and examples.
 
 ## Current Data Sources
 
