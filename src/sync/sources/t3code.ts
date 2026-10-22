@@ -1,7 +1,22 @@
 import { existsSync } from "node:fs";
+import { getAppStateDb, getSyncState, setSyncState } from "../../db/app-state";
 import { getDb, initDb } from "../../db/schema";
 import { importT3Code, DEFAULT_T3CODE_DB } from "../../parsers/t3code";
 import type { SyncSource, SyncOptions, SyncResult } from "../types";
+
+/**
+ * A row whose `updated_at` predates the cursor overlap in a thread nothing
+ * else changed is invisible to cursor reads; a periodic full read picks it up
+ * and writes only what differs.
+ */
+const RECONCILE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+interface T3CodeSyncState {
+  /** v2 read cursor per imported database, keyed by `account|path`. */
+  cursors?: Record<string, string>;
+  /** When each imported database last had a full read, same keys. */
+  reconciledAt?: Record<string, string>;
+}
 
 function expandPath(configPath: string | undefined): string {
   if (!configPath) return DEFAULT_T3CODE_DB;
@@ -20,14 +35,15 @@ export const t3codeSyncSource: SyncSource = {
       type: "string",
       format: "path",
       label: "Database path",
-      description: "Path to the T3 Code database",
+      description:
+        "Path to the T3 Code database: statev2.sqlite for current T3 Code and styal (e.g. ~/.styal/userdata/statev2.sqlite), state.sqlite for older T3 Code",
       default: DEFAULT_T3CODE_DB,
     },
     {
       key: "account",
       type: "string",
       label: "Account",
-      description: "Account name stored with imported threads",
+      description: "Account name stored with imported threads; use a distinct one per machine",
       required: true,
     },
   ],
@@ -63,18 +79,44 @@ export const t3codeSyncSource: SyncSource = {
         console.log(`[t3code] Account: ${accountName}`);
       }
 
+      const appDb = getAppStateDb();
+      const state = getSyncState<T3CodeSyncState>(appDb, "t3code") ?? {};
+      const cursorKey = `${accountName}|${dbPath}`;
+      const reconciledAt = state.reconciledAt?.[cursorKey];
+      const reconcile = !reconciledAt || startTime - Date.parse(reconciledAt) >= RECONCILE_INTERVAL_MS;
+
       const db = getDb();
       initDb(db);
+      let stats: Awaited<ReturnType<typeof importT3Code>>;
+      try {
+        stats = await importT3Code(db, dbPath, accountName, {
+          cursor: reconcile ? null : (state.cursors?.[cursorKey] ?? null),
+        });
+      } finally {
+        db.close();
+      }
 
-      const stats = await importT3Code(db, dbPath, accountName);
-      db.close();
+      if (stats.cursor) {
+        setSyncState(appDb, "t3code", {
+          ...state,
+          cursors: { ...state.cursors, [cursorKey]: stats.cursor },
+          reconciledAt: reconcile
+            ? { ...state.reconciledAt, [cursorKey]: new Date(startTime).toISOString() }
+            : state.reconciledAt,
+        } satisfies T3CodeSyncState);
+      }
 
       return {
         source: "t3code",
         success: true,
-        eventsAdded: stats.messages + stats.toolCalls,
-        eventsUpdated: 0,
+        eventsAdded: stats.messages + stats.toolCalls + stats.plans + stats.reasoning,
+        eventsUpdated: stats.refreshed,
         durationMs: Date.now() - startTime,
+        metadata: {
+          store: stats.store,
+          threads: stats.threads.size,
+          pendingTranscriptThreads: stats.pendingTranscriptThreads,
+        },
       };
     } catch (error) {
       return {
