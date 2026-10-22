@@ -1,6 +1,5 @@
-import { existsSync } from "node:fs";
 import { getDb, initDb } from "../../db/schema";
-import { importOpenCode } from "../../parsers/opencode";
+import { importOpenCode, resolveOpenCodeStores } from "../../parsers/opencode";
 import type { SyncSource, SyncOptions, SyncResult } from "../types";
 
 export const opencodeSyncSource: SyncSource = {
@@ -12,8 +11,8 @@ export const opencodeSyncSource: SyncSource = {
       key: "path",
       type: "string",
       format: "path",
-      label: "Sessions directory",
-      description: "Directory containing OpenCode sessions",
+      label: "Data directory",
+      description: "OpenCode data directory (usually ~/.local/share/opencode), a legacy storage/ directory, or an opencode.db file",
       required: true,
     },
     {
@@ -32,8 +31,10 @@ export const opencodeSyncSource: SyncSource = {
       return "Missing 'path' in opencode sync config";
     }
 
-    if (!existsSync(openCodeDir)) {
-      return `OpenCode storage directory not found at ${openCodeDir}`;
+    try {
+      resolveOpenCodeStores(openCodeDir);
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
     }
 
     return null;
@@ -85,7 +86,7 @@ export const opencodeSyncSource: SyncSource = {
         source: "opencode",
         success: true,
         eventsAdded: stats.messages,
-        eventsUpdated: 0,
+        eventsUpdated: stats.updated,
         durationMs: Date.now() - startTime,
       };
     } catch (error) {
