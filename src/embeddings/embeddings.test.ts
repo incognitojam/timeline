@@ -1429,14 +1429,15 @@ describe("embeddings index CLI exit contract", () => {
     let inFlight = 0;
     let maxInFlight = 0;
     // No response is sent until three requests are open, so the count does not depend on how fast
-    // the CLI sends them. If the CLI never opens three, the held requests hit the 2 s timeout.
+    // the CLI sends them. If the CLI never opens three, the held requests hit the request timeout,
+    // which only bounds that failure: a passing run never waits for it.
     const threeOpen = Promise.withResolvers<void>();
     try {
       const { exitCode, stdout, requests } = await runIndex(timelineDbPath, embeddingsDbPath, {
         limit: 6,
         batchSize: 1,
         extraArgs: ["--concurrency", "3"],
-        configExtra: "timeout_seconds = 2",
+        configExtra: "timeout_seconds = 20",
         respond: async (_requestIndex, request) => {
           inFlight++;
           maxInFlight = Math.max(maxInFlight, inFlight);
@@ -1477,10 +1478,15 @@ describe("embeddings index CLI exit contract", () => {
   cliIt("aborts when a request times out and resumes on re-run", async () => {
     const { dir, timelineDbPath, embeddingsDbPath } = seedTimeline(3);
     try {
+      // Embed event 1 in a separate run, so the timed-out run's outcome cannot
+      // depend on how quickly a loaded machine answers the other requests.
+      const first = await runIndex(timelineDbPath, embeddingsDbPath, { limit: 1, respond: ok([1, 2, 3]) });
+      expect(first.exitCode).toBe(0);
+      expect(vectorEventIds(embeddingsDbPath)).toEqual([1]);
+
       const timedOut = await runIndex(timelineDbPath, embeddingsDbPath, {
         limit: 3,
         batchSize: 1,
-        // Event 2 never responds; allow successful requests time to finish on busy runners.
         configExtra: "timeout_seconds = 1",
         respond: async (_requestIndex, request) => {
           const [input] = await readEmbeddingInputs(request);
@@ -1490,8 +1496,9 @@ describe("embeddings index CLI exit contract", () => {
         },
       });
       expect(timedOut.exitCode).not.toBe(0);
+      expect(timedOut.stdout).toContain('"skipped":1');
       expect(timedOut.stdout).toContain('"errors":1');
-      // Event 1 is written; event 3 is not, since writes stay in event order.
+      // Event 3 is not written even if answered, since writes stay in event order.
       expect(vectorEventIds(embeddingsDbPath)).toEqual([1]);
 
       const resumed = await runIndex(timelineDbPath, embeddingsDbPath, { limit: 3, respond: ok([1, 2, 3]) });

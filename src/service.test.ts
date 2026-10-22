@@ -6,28 +6,15 @@ import { join } from "node:path";
 
 let workDir: string | null = null;
 
-async function waitForExit(
-  proc: { exited: Promise<unknown>; kill: () => void },
-  timeoutMs: number
-): Promise<boolean> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const exited = await Promise.race([
-    proc.exited.then(() => true),
-    new Promise<boolean>((resolve) => {
-      timer = setTimeout(() => resolve(false), timeoutMs);
-    }),
-  ]);
-  clearTimeout(timer);
+// A spawned service still running when its test fails or times out.
+let runningService: { exited: Promise<unknown>; kill: () => void } | null = null;
 
-  if (!exited) {
-    proc.kill();
-    await proc.exited;
+afterEach(async () => {
+  if (runningService) {
+    runningService.kill();
+    await runningService.exited;
+    runningService = null;
   }
-
-  return exited;
-}
-
-afterEach(() => {
   if (workDir) {
     rmSync(workDir, { recursive: true, force: true });
     workDir = null;
@@ -122,13 +109,17 @@ path = ${JSON.stringify(join(workDir, "media"))}
     stderr: "pipe",
   });
 
-  // Cold service and worker imports share CPU with the other suite checks in CI.
-  const exited = await waitForExit(proc, 15_000);
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
+  // Cold service and worker imports take as long as a loaded machine needs, so
+  // wait for the exit itself; the test timeout bounds a service that never exits.
+  runningService = proc;
+  const [exitCode, stdout, stderr] = await Promise.all([
+    proc.exited,
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  runningService = null;
 
-  expect(exited).toBe(true);
-  expect(proc.exitCode).not.toBe(0);
+  expect(exitCode).not.toBe(0);
   expect(stderr).toContain("Failed to start scheduler worker");
   expect(stderr).toContain("Worker initialization failed");
 
