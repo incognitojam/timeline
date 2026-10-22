@@ -352,30 +352,30 @@ See `.agents/skills/` for detailed patterns and examples.
 | Source | Types |
 |--------|-------|
 | WakaTime | code:session (aggregated from heartbeats) |
-| Facebook | message, message:photo, message:share, message:gif, etc.; post, comment, reaction, group:join, event:rsvp, friend:added |
-| Google Search | google:search, google:visit |
+| Facebook | message, message:photo, message:share, message:gif, message:call, etc.; post, comment, reaction:<type>, group:join, event:response, event:invitation, friend:added |
+| Google Search | search (searches and visited results) |
 | Spotify | listen:track, listen:podcast, listen:audiobook |
 | Spotify Friends | listen:track:friend (friends' listening activity via unofficial API) |
 | Discord | message:dm, message:group, message:dm:attachment, message:group:attachment |
-| YouTube | youtube:watch, youtube:search, youtube:like, youtube:subscribe, youtube:view |
-| Skype | message:dm, message:group |
+| YouTube | youtube:watch, youtube:search, youtube:like, youtube:subscribe, youtube:subscription, youtube:view |
+| Skype | message:dm, message:group, message:call |
 | Google Fit | activity:walking, activity:running, activity:biking, etc. |
 | Google Location | location:visit, location:transit |
-| Reddit | post, comment, message, vote |
+| Reddit | post, comment, message, vote:up, vote:down, save |
 | Monzo | transaction, transaction:topup, transaction:credit, transaction:transport, etc. |
 | Amex | transaction, transaction:payment, transaction:refund, transaction:groceries, transaction:food, etc. |
 | Chrome | browse |
 | Trakt | trakt:movie, trakt:episode |
 | Swarm | location:visit |
-| Google Play Store | playstore:install |
+| Google Play Store | app:install |
 | Google Calendar | event, event:all-day |
 | LinkedIn | message, connection, job, education |
-| GitHub | github:issue, github:pr, github:comment, github:review |
+| GitHub | export: github:issue, github:pull_request, github:issue_comment, github:pr_review, github:commit_comment; API sync: github:pr, github:pr_review, github:star, github:create, etc. |
 | Google Keep | note:text, note:list |
 | Google Chat | message |
-| Instagram | instagram:message:dm |
-| Google Timeline | activity, visit (new Timeline.json format) |
-| SMS Backup & Restore | sms:sent, sms:received, mms:sent, mms:received, call:incoming, call:outgoing, call:missed |
+| Instagram | message:dm, message:dm:attachment, message:dm:share, message:dm:share:reel |
+| Google Timeline | location:visit, location:transit (new Timeline.json format, stored as source google-location) |
+| SMS Backup & Restore (source phone) | sms:sent, sms:received, mms:sent, mms:received, call:incoming, call:outgoing, call:missed |
 | Google Messages | sms:sent, sms:received, mms:sent, mms:received, rcs:sent, rcs:received (live via tools/timeline-gmessages) |
 | Minecraft | minecraft:chat, minecraft:join, minecraft:leave, minecraft:advancement, minecraft:death |
 | Claude | claude:message:user, claude:message:assistant, claude:memory |
