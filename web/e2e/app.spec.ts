@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { AttachmentListItem, SyncSourceInfo } from "../src/lib/api";
+import { MOBILE_NAV_ITEMS, NAV_ITEMS } from "../src/lib/routes";
 import type { TimelineEvent } from "../src/lib/types";
 
 test.describe.configure({ mode: "parallel" });
@@ -988,7 +989,8 @@ async function openApp(
 
 async function expectAppReady(page: Page, unexpectedRequests: string[]): Promise<void> {
   await expect(page.getByRole("link", { name: "Timeline home" })).toBeVisible();
-  await expect(page.getByRole("navigation").getByRole("link")).toHaveCount(12);
+  // Every destination in the route table is rendered, however many there are.
+  await expect(page.getByRole("navigation").getByRole("link")).toHaveCount(NAV_ITEMS.length);
   await expect(page.locator("[aria-busy='true']")).toHaveCount(0);
   await page.evaluate(async () => {
     await document.fonts.ready;
@@ -1139,7 +1141,7 @@ test("adapts Timeline navigation and date controls for a compact window", async 
   const compactNavigation = page.getByRole("navigation", { name: "Primary" });
   const moreButton = compactNavigation.getByRole("button", { name: "More destinations" });
   await expect(compactNavigation).toBeVisible();
-  await expect(compactNavigation.getByRole("link")).toHaveCount(4);
+  await expect(compactNavigation.getByRole("link")).toHaveCount(MOBILE_NAV_ITEMS.length);
   await expect(moreButton).toBeVisible();
   await expect(page.getByRole("complementary", { name: "Date navigation" })).toBeHidden();
   await expect(page.getByRole("heading", { name: "Wednesday, 15 January 2025", level: 1 })).toBeVisible();
