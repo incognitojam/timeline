@@ -28,7 +28,6 @@ function compareRunningRelease(running: VersionInfo | null, latest: string): Rel
 
 export function createReleaseRoutes(options: {
   repository: string;
-  token?: () => string | undefined;
   runningVersion: VersionInfo | null;
   fetch?: (url: string, init: RequestInit) => Promise<Response>;
   now?: () => number;
@@ -43,22 +42,20 @@ export function createReleaseRoutes(options: {
   let expiresAt = 0;
 
   async function check(): Promise<ReleaseStatus> {
-    const token = options.token?.();
     const response = await request(`https://api.github.com/repos/${options.repository}/releases/latest`, {
       headers: {
         Accept: "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       signal: AbortSignal.timeout(10_000),
       redirect: "error",
     });
     if (!response.ok) {
       if (response.status === 404) {
-        throw new ReleaseCheckError("GitHub release unavailable. Check the release repository and access permissions.");
+        throw new ReleaseCheckError("GitHub release unavailable. Check the release repository.");
       }
       if (response.status === 401 || response.status === 403) {
-        throw new ReleaseCheckError("GitHub denied the release check. Check access permissions or try again later.");
+        throw new ReleaseCheckError("GitHub denied the release check. Try again later.");
       }
       throw new ReleaseCheckError(`GitHub release check failed (HTTP ${response.status}).`);
     }
