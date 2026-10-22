@@ -8,6 +8,7 @@ import { getEmbeddingsDb, initEmbeddingsDb, insertVector } from "../../embedding
 import { IMAGE_MAX_SIDE, prepareImageForEmbedding } from "../../embeddings/images";
 import { configureBunSqliteForSqliteVec } from "../../embeddings/sqlite-vec";
 import { LocalMediaStore, setMediaStoreOverride } from "../../media/storage";
+import { seed } from "../../testing/seed";
 import type { SyncConfig } from "../config";
 import { embeddingsSyncSource, parseEmbeddingsSyncSettings } from "./embeddings";
 
@@ -63,12 +64,14 @@ describe("embeddings sync source", () => {
       const insert = db.prepare(
         "INSERT INTO events (id, source, type, timestamp, title, content) VALUES (?, ?, ?, '2026-01-01T00:00:00Z', NULL, ?)"
       );
-      return events.map(event => {
-        // Sparse ids, like the host's AUTOINCREMENT sequence.
-        nextEventId += 1000;
-        insert.run(nextEventId, event.source, event.type ?? "message", event.content);
-        return nextEventId;
-      });
+      return seed(db, () =>
+        events.map(event => {
+          // Sparse ids, like the host's AUTOINCREMENT sequence.
+          nextEventId += 1000;
+          insert.run(nextEventId, event.source, event.type ?? "message", event.content);
+          return nextEventId;
+        })
+      );
     } finally {
       db.close();
     }
