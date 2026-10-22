@@ -20,6 +20,7 @@ import {
 } from "./db";
 import { MAX_BATCH_BYTES } from "./indexer";
 import { configureBunSqliteForSqliteVec, loadSqliteVec } from "./sqlite-vec";
+import { seed } from "../testing/seed";
 
 function event(overrides = {}) {
   return {
@@ -1119,11 +1120,11 @@ describe("embeddings index CLI exit contract", () => {
     const timelineDbPath = join(dir, "timeline.db");
     const embeddingsDbPath = join(dir, "embeddings.db");
     configureBunSqliteForSqliteVec();
-    const seed = new Database(timelineDbPath);
-    seed.exec(
+    const db = new Database(timelineDbPath);
+    db.exec(
       "CREATE TABLE events (id INTEGER PRIMARY KEY, source TEXT, type TEXT, timestamp TEXT, end_timestamp TEXT, title TEXT, content TEXT, location_name TEXT)"
     );
-    const insert = seed.prepare(
+    const insert = db.prepare(
       "INSERT INTO events (id, source, type, timestamp, title, content) VALUES (?, ?, ?, ?, ?, ?)"
     );
     const events =
@@ -1140,10 +1141,12 @@ describe("embeddings index CLI exit contract", () => {
             };
           })
         : eventsOrCount;
-    for (const event of events) {
-      insert.run(event.id, event.source, event.type, event.timestamp, event.title, event.content);
-    }
-    seed.close();
+    seed(db, () => {
+      for (const event of events) {
+        insert.run(event.id, event.source, event.type, event.timestamp, event.title, event.content);
+      }
+    });
+    db.close();
     return { dir, timelineDbPath, embeddingsDbPath };
   }
 
