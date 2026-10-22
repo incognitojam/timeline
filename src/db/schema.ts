@@ -101,8 +101,9 @@ assertNoLocalDbMarker(dbPathInfo, dbPathInfo.resolvedDbPath, "database");
  * it, so both getDb() and initDb() (whose callers open their own connections) do.
  */
 function applyConnectionPragmas(db: Database): void {
-  db.exec("PRAGMA journal_mode = WAL");
+  // Set first: switching to WAL needs a lock another connection may hold.
   db.exec("PRAGMA busy_timeout = 30000");
+  db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA recursive_triggers = ON");
 }
 
