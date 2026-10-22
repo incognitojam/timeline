@@ -121,6 +121,19 @@ function sanitizeForTable(text: string): string {
   return sanitized;
 }
 
+/** Why a run was deferred: a guard's or source's skipReason, else canSync's message. */
+function deferredReason(entry: { error: string | null; metadata: string | null }): string | null {
+  if (entry.metadata) {
+    try {
+      const meta = JSON.parse(entry.metadata) as { skipReason?: unknown };
+      if (typeof meta.skipReason === "string") return meta.skipReason;
+    } catch {
+      // Unparseable metadata falls back to the stored error.
+    }
+  }
+  return entry.error;
+}
+
 interface GroupedFailure {
   source: string;
   error: string | null;
@@ -666,7 +679,9 @@ export async function generateStatusMarkdown(options: StatusMarkdownOptions = {}
     for (const row of rows) {
       if (row.type === "deferred") {
         const e = row.entry;
-        lines.push(`| ${formatShortDateTime(e.started_at)} | ${e.source} | deferred |`);
+        const reason = authenticated ? deferredReason(e) : null;
+        const result = reason ? `deferred: ${sanitizeForTable(reason)}` : "deferred";
+        lines.push(`| ${formatShortDateTime(e.started_at)} | ${e.source} | ${result} |`);
       } else if (row.type === "success") {
         const e = row.entry;
         let result: string;

@@ -35,7 +35,15 @@ export function historyStatusLabel(entry: SyncHistoryEntry): { label: string; cl
         title: entry.error,
       };
     }
-    return { label: "Deferred", className: "text-yellow-400" };
+    const metadata = parseSyncHistoryMetadata(entry.metadata);
+    const reason = metadata && typeof metadata === "object" && !Array.isArray(metadata)
+      ? (metadata as Record<string, unknown>).skipReason
+      : undefined;
+    return {
+      label: "Deferred",
+      className: "text-yellow-400",
+      ...(typeof reason === "string" ? { title: reason } : {}),
+    };
   }
   const warning = getSyncHistoryWarning(entry);
   if (warning) {

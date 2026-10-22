@@ -710,7 +710,7 @@ describe("SyncSourceDetailView configuration form", () => {
     expect(blocked).toHaveClass("text-red-400");
     expect(blocked).toHaveAttribute("title", reason);
     expect(deferred).toHaveClass("text-yellow-400");
-    expect(deferred).not.toHaveAttribute("title");
+    expect(deferred).toHaveAttribute("title", "offline");
   });
 
   it("includes blocked runs in the success-rate breakdown", () => {
