@@ -175,6 +175,12 @@ export function initDb(db: Database) {
   // connection setup as getDb() gives.
   applyConnectionPragmas(db);
 
+  // One transaction commits the whole schema at once instead of once per
+  // statement, and a failing migration leaves no partially applied schema.
+  db.transaction(() => createSchema(db)).immediate();
+}
+
+function createSchema(db: Database) {
   // Core events table - unified timeline
   db.exec(`
     CREATE TABLE IF NOT EXISTS events (
