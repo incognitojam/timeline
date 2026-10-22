@@ -7,8 +7,9 @@ export function getAppStateDb(): Database {
   if (!appStateDb) {
     const appStatePath = getAppStateDbPath(getTimelineDbPath());
     appStateDb = new Database(appStatePath);
-    appStateDb.exec("PRAGMA journal_mode = WAL");
+    // Set first: switching to WAL needs a lock another connection may hold.
     appStateDb.exec("PRAGMA busy_timeout = 30000");
+    appStateDb.exec("PRAGMA journal_mode = WAL");
     appStateDb.exec("PRAGMA foreign_keys = ON");
     initAppStateDb(appStateDb);
   }
