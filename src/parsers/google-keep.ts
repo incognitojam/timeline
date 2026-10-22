@@ -83,43 +83,49 @@ export async function importKeepData(
   let totalImported = 0;
   let totalSkipped = 0;
 
+  const notes: Array<{ file: string; note: KeepNote }> = [];
   for (const file of jsonFiles) {
-    const filePath = join(importPath, file);
-    const note: KeepNote = await Bun.file(filePath).json();
-
-    // Skip notes that are just empty
-    const content = getContent(note);
-    if (!note.title && !content) {
-      totalSkipped++;
-      continue;
-    }
-
-    // Convert microseconds to ISO timestamp
-    const timestamp = new Date(note.createdTimestampUsec / 1000).toISOString();
-    const type = getType(note);
-    const tags = getTags(note);
-
-    // Use filename as source_id (unique per note)
-    const sourceId = basename(file, ".json");
-
-    try {
-      insert.run(
-        "google-keep",
-        sourceId,
-        sourceAccount,
-        type,
-        timestamp,
-        note.title || null,
-        content || null,
-        JSON.stringify(tags),
-        JSON.stringify(note),
-        importBatch
-      );
-      totalImported++;
-    } catch (e) {
-      totalSkipped++;
-    }
+    notes.push({ file, note: await Bun.file(join(importPath, file)).json() });
   }
+
+  // One transaction for the whole export: per-row autocommit pays an fsync per note.
+  db.transaction(() => {
+    for (const { file, note } of notes) {
+
+      // Skip notes that are just empty
+      const content = getContent(note);
+      if (!note.title && !content) {
+        totalSkipped++;
+        continue;
+      }
+
+      // Convert microseconds to ISO timestamp
+      const timestamp = new Date(note.createdTimestampUsec / 1000).toISOString();
+      const type = getType(note);
+      const tags = getTags(note);
+
+      // Use filename as source_id (unique per note)
+      const sourceId = basename(file, ".json");
+
+      try {
+        insert.run(
+          "google-keep",
+          sourceId,
+          sourceAccount,
+          type,
+          timestamp,
+          note.title || null,
+          content || null,
+          JSON.stringify(tags),
+          JSON.stringify(note),
+          importBatch
+        );
+        totalImported++;
+      } catch (e) {
+        totalSkipped++;
+      }
+    }
+  })();
 
   console.log(`\nImport complete:`);
   console.log(`  Notes imported: ${totalImported}`);

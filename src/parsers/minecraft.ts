@@ -238,46 +238,49 @@ async function importMinecraftLogs(
     const lines = content.split("\n");
     let fileEvents = 0;
 
-    for (const line of lines) {
-      const parsed = parseTimestamp(line, filenameDate);
-      if (!parsed) continue;
+    // One transaction per log file: per-row autocommit pays an fsync per line.
+    db.transaction(() => {
+      for (const line of lines) {
+        const parsed = parseTimestamp(line, filenameDate);
+        if (!parsed) continue;
 
-      const event = parseLogEvent(parsed.rest);
-      if (!event) continue;
+        const event = parseLogEvent(parsed.rest);
+        if (!event) continue;
 
-      // Generate unique ID from timestamp + player + type
-      const sourceId = `${serverName}-${parsed.timestamp.getTime()}-${event.player}-${event.type}`;
+        // Generate unique ID from timestamp + player + type
+        const sourceId = `${serverName}-${parsed.timestamp.getTime()}-${event.player}-${event.type}`;
 
-      const title = serverName;
-      const tags = event.advancement ? JSON.stringify([event.advancement]) : null;
+        const title = serverName;
+        const tags = event.advancement ? JSON.stringify([event.advancement]) : null;
 
-      const result = insert.run(
-        "minecraft",
-        sourceId,
-        sourceAccount,
-        event.type,
-        parsed.timestamp.toISOString(),
-        title,
-        event.content,
-        event.player ? JSON.stringify([event.player]) : null,
-        tags,
-        JSON.stringify({ server: serverName, raw: line }),
-        importBatch
-      );
+        const result = insert.run(
+          "minecraft",
+          sourceId,
+          sourceAccount,
+          event.type,
+          parsed.timestamp.toISOString(),
+          title,
+          event.content,
+          event.player ? JSON.stringify([event.player]) : null,
+          tags,
+          JSON.stringify({ server: serverName, raw: line }),
+          importBatch
+        );
 
-      if (result.changes > 0) {
-        fileEvents++;
-        switch (event.type) {
-          case "minecraft:join": stats.joins++; break;
-          case "minecraft:leave": stats.leaves++; break;
-          case "minecraft:chat": stats.chats++; break;
-          case "minecraft:advancement": stats.advancements++; break;
-          case "minecraft:death": stats.deaths++; break;
+        if (result.changes > 0) {
+          fileEvents++;
+          switch (event.type) {
+            case "minecraft:join": stats.joins++; break;
+            case "minecraft:leave": stats.leaves++; break;
+            case "minecraft:chat": stats.chats++; break;
+            case "minecraft:advancement": stats.advancements++; break;
+            case "minecraft:death": stats.deaths++; break;
+          }
+        } else {
+          stats.skipped++;
         }
-      } else {
-        stats.skipped++;
       }
-    }
+    })();
 
     if (fileEvents > 0) {
       console.log(`  ${filename}: ${fileEvents} events`);
