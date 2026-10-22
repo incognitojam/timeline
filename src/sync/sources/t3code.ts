@@ -43,7 +43,8 @@ export const t3codeSyncSource: SyncSource = {
       key: "account",
       type: "string",
       label: "Account",
-      description: "Account name stored with imported threads; use a distinct one per machine",
+      description:
+        "Account name stored with imported threads: one per machine, matching that machine's Claude Code/Codex/OpenCode account so its threads replace their transcripts in conversation lists",
       required: true,
     },
   ],

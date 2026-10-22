@@ -1,5 +1,6 @@
 import type { QueryExecutor } from "./pool";
 import { conversationTypeClause } from "./conversations";
+import { notSupersededClause } from "./superseded-conversations";
 
 export interface CodingProject {
   name: string;
@@ -151,6 +152,7 @@ export async function getCodingProjectConversations(
         WHERE source = ?
           AND conversation_id IS NOT NULL
           AND ${conversationTypeClause()}
+          AND ${notSupersededClause("events")}
           AND title IS NOT NULL
           AND ${filter.clause}
         GROUP BY source, source_account, conversation_id
@@ -171,6 +173,7 @@ export async function getCodingProjectConversations(
         WHERE source = ?
           AND conversation_id IS NULL
           AND ${conversationTypeClause()}
+          AND ${notSupersededClause("events")}
           AND title IS NOT NULL
           AND ${filter.clause}
         GROUP BY source, source_account, title
@@ -191,6 +194,7 @@ export async function getCodingProjectConversations(
         FROM events
         WHERE source = ?
           AND ${conversationTypeClause()}
+          AND ${notSupersededClause("events")}
           AND title IS NOT NULL
           AND ${filter.clause}
         GROUP BY source, source_account, title
@@ -395,6 +399,7 @@ export async function getCodingProjects(
      AND cs.source_account_key = cac.source_account_key
      AND cs.conversation_id = cac.conversation_id
     WHERE cac.project IS NOT NULL
+      AND ${notSupersededClause("cs")}
     GROUP BY cac.project, cs.source
   `);
 

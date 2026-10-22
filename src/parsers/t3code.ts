@@ -30,6 +30,8 @@ import { readFile } from "fs/promises";
 import { dirname, extname, join } from "path";
 import { extractConversationId } from "../db/conversation-id";
 import { onImportComplete } from "../db/queries";
+import { conversationTypeClause } from "../db/conversation-types";
+import { markConversationsSuperseded } from "../db/superseded-conversations";
 import { getDb, initDb } from "../db/schema";
 import { insertStoredAttachment } from "../media/attachments";
 import { type StoreFileResult, storeFile } from "../media/storage";
@@ -52,7 +54,24 @@ import {
   t3EventTags,
   t3EventTitle,
 } from "./t3code-events";
-import { readT3CodeV2Events, T3_V2_REQUIRED_COLUMNS, type T3V2ReadStats } from "./t3code-v2";
+import {
+  readT3CodeV2Events,
+  readT3CodeV2ProviderSessions,
+  T3_V2_REQUIRED_COLUMNS,
+  type T3ProviderSession,
+  type T3V2ReadStats,
+} from "./t3code-v2";
+
+/**
+ * Timeline sources that import a provider driver's own transcripts. A T3
+ * thread supersedes those transcripts in conversation lists; drivers
+ * without a Timeline importer (antigravity, ...) need no link.
+ */
+const PROVIDER_DRIVER_SOURCES: Record<string, string> = {
+  claudeAgent: "claude-code",
+  codex: "codex",
+  opencode: "opencode",
+};
 
 export const DEFAULT_T3CODE_DB = `${process.env.HOME}/.t3/userdata/state.sqlite`;
 
@@ -179,6 +198,12 @@ export interface ImportStats {
   pendingTranscriptThreads: number;
   /** v2 only: source rows not planned as events, by reason. */
   skippedByReason: Record<string, number>;
+  /**
+   * v2 only: provider-native conversations (Claude Code, Codex, OpenCode)
+   * marked as superseded by an imported thread — or, on a dry run, linked
+   * from any thread.
+   */
+  supersededConversations: number;
 }
 
 export interface T3ImportOptions extends AiImportOptions {
@@ -633,6 +658,7 @@ export async function importT3Code(
       cursor: null,
       pendingTranscriptThreads: 0,
       skippedByReason: {},
+      supersededConversations: 0,
     };
     const v2Stats: T3V2ReadStats = { cursor: null, pendingTranscriptThreads: 0, skipped: {} };
 
@@ -654,6 +680,7 @@ export async function importT3Code(
     t3Db.run("BEGIN");
     if (db && eventWriter) db.run("BEGIN TRANSACTION");
     try {
+      const providerSessions = store === "v2" ? readT3CodeV2ProviderSessions(t3Db) : [];
       const events =
         store === "v2"
           ? readT3CodeV2Events(t3Db, { cursor: options.cursor ?? null }, v2Stats)
@@ -708,7 +735,14 @@ export async function importT3Code(
           }
         }
       }
-      if (db && eventWriter) db.run("COMMIT");
+      if (db && eventWriter) {
+        stats.supersededConversations = supersedeProviderSessions(db, sourceAccount, providerSessions);
+        db.run("COMMIT");
+      } else {
+        stats.supersededConversations = providerSessions.filter(
+          (session) => PROVIDER_DRIVER_SOURCES[session.driver]
+        ).length;
+      }
     } catch (error) {
       if (db?.inTransaction) db.run("ROLLBACK");
       throw error;
@@ -731,6 +765,45 @@ export async function importT3Code(
   } finally {
     t3Db.close();
   }
+}
+
+/**
+ * Mark the provider-native transcripts of every imported thread as
+ * superseded by it, under the same account: the claude-code/codex/opencode
+ * importers on a machine use the account its T3 database is imported with. Covers all threads, not just those read this run, so
+ * transcripts imported after their thread are still linked.
+ */
+function supersedeProviderSessions(
+  db: Database,
+  sourceAccount: string,
+  sessions: T3ProviderSession[]
+): number {
+  const mapped = sessions.flatMap((session) => {
+    const source = PROVIDER_DRIVER_SOURCES[session.driver];
+    return source ? [{ ...session, source }] : [];
+  });
+  if (mapped.length === 0) return 0;
+
+  const imported = new Set(
+    (db.prepare(`
+      SELECT DISTINCT conversation_id FROM events
+      WHERE source = 't3code' AND source_account = ? AND ${conversationTypeClause()}
+        AND conversation_id IN (SELECT value FROM json_each(?))
+    `).all(sourceAccount, JSON.stringify([...new Set(mapped.map((s) => s.threadId))])) as {
+      conversation_id: string;
+    }[]).map((row) => row.conversation_id)
+  );
+  const rows = mapped
+    .filter((session) => imported.has(session.threadId))
+    .map((session) => ({
+      source: session.source,
+      sourceAccount,
+      conversationId: session.nativeId,
+      reason: "orchestrated" as const,
+      canonical: { source: "t3code", sourceAccount, conversationId: session.threadId },
+    }));
+  markConversationsSuperseded(db, rows);
+  return rows.length;
 }
 
 function printSummary(
@@ -757,6 +830,11 @@ function printSummary(
   if (stats.pendingTranscriptThreads > 0) {
     console.warn(
       `  Pending: ${stats.pendingTranscriptThreads} migrated v1 thread(s) await T3 Code's transcript import and were skipped`
+    );
+  }
+  if (stats.store === "v2") {
+    console.log(
+      `  Provider-native conversations ${run.dryRun ? "linked" : "superseded"}: ${stats.supersededConversations.toLocaleString()}`
     );
   }
   if (stats.cursor) console.log(`  Cursor: ${stats.cursor}`);

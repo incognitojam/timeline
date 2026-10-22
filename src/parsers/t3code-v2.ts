@@ -163,7 +163,7 @@ function maxTimestamp(a: string | null, b: string | null): string | null {
   return b > a ? b : a;
 }
 
-interface T3ProviderSession {
+export interface T3ProviderSession {
   threadId: string;
   /** T3 provider driver: claudeAgent, codex, opencode, antigravity, ... */
   driver: string;
@@ -184,7 +184,7 @@ function loadInstanceDrivers(t3Db: Database): Map<string, string> {
 }
 
 /** Provider-native sessions each thread drove, from the provider thread refs. */
-function readT3CodeV2ProviderSessions(t3Db: Database): T3ProviderSession[] {
+export function readT3CodeV2ProviderSessions(t3Db: Database): T3ProviderSession[] {
   const rows = t3Db.prepare(`
     SELECT thread_id, driver, json_extract(payload_json, '$.nativeThreadRef.nativeId') AS native_id
     FROM orchestration_v2_projection_provider_threads

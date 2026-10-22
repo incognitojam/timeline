@@ -340,6 +340,24 @@ function createSchema(db: Database) {
     `CREATE INDEX idx_conversation_summary_titles_title ON conversation_summary_titles(title)`,
   );
 
+  // Conversations kept as raw data but left out of conversation lists:
+  // provider-native transcripts of an agent session that an orchestrator
+  // (T3 Code) already records as the canonical conversation, and agent
+  // sessions spawned only to generate a title. See superseded-conversations.ts.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS superseded_conversations (
+      source TEXT NOT NULL,
+      source_account TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      reason TEXT NOT NULL CHECK (reason IN ('orchestrated', 'title_generation')),
+      canonical_source TEXT,
+      canonical_source_account TEXT,
+      canonical_conversation_id TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (source, source_account, conversation_id)
+    )
+  `);
+
   ensureConversationSummaryTriggers(db);
   ensureConversationSummariesBackfilled(db);
   ensureCodingAgentConversations(db);
