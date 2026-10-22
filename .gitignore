@@ -159,6 +159,9 @@ docs/nas-backup-exploration-progress.md
 .DS_Store
 .no-local-db
 
+# `bun run dev` state and logs
+.dev/
+
 .context
 opencode.json
 .opencode

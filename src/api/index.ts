@@ -3,7 +3,7 @@ import { cors } from "hono/cors";
 import { timing, setMetric, startTime as timingStart, endTime as timingEnd } from "hono/timing";
 import { existsSync, readFileSync } from "fs";
 import { join, extname } from "path";
-import { loadConfig } from "../config";
+import { DEFAULT_SERVER_PORT, loadConfig } from "../config";
 import { getDb, initDb, type TimelineEvent, type Attachment, type DiscordEmoji } from "../db/schema";
 import { fetchEmojiOnDemand } from "../platforms/discord/emoji-downloader";
 import {
@@ -2722,7 +2722,7 @@ export async function shutdownApi(): Promise<void> {
 
 // Start server unless we're in test mode
 if (process.env.NODE_ENV !== "test") {
-  const port = Number(process.env.TIMELINE_PORT || process.env.PORT || 3001);
+  const port = Number(process.env.TIMELINE_PORT || process.env.PORT || DEFAULT_SERVER_PORT);
   const hostname = process.env.TIMELINE_HOST || "127.0.0.1";
 
   // Install configured LLM providers and discover their models (non-blocking)

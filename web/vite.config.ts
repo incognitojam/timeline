@@ -8,14 +8,30 @@ import {
   MANUAL_ATTACHMENT_DESCRIPTION_TIMEOUT_MS,
 } from "../src/shared/attachments.ts";
 
-const apiPort = process.env.TIMELINE_PORT ?? process.env.PORT ?? "3001";
-const apiTarget = process.env.TIMELINE_API_TARGET ?? process.env.API_HOST ?? `http://localhost:${apiPort}`;
+// No fallback port: guessing one would proxy to the installed service. Run
+// `bun run dev` from the repository root, which sets TIMELINE_PORT.
+const apiPort = process.env.TIMELINE_PORT ?? process.env.PORT;
+const apiTarget =
+  process.env.TIMELINE_API_TARGET ??
+  process.env.API_HOST ??
+  (apiPort === undefined ? undefined : `http://localhost:${apiPort}`);
 
 export default defineConfig({
   plugins: [
     solid(),
     tailwindcss(),
     Icons({ compiler: "solid" }),
+    {
+      name: "warn-without-api",
+      apply: "serve",
+      configureServer(server) {
+        if (apiTarget === undefined) {
+          server.config.logger.warn(
+            "No TIMELINE_PORT or API_HOST: /api is not proxied. Start the app with `bun run dev` from the repository root.",
+          );
+        }
+      },
+    },
     {
       name: "require-maptiler-key",
       apply: "build",
@@ -40,7 +56,7 @@ export default defineConfig({
     include: ["debug", "extend"],
   },
   server: {
-    proxy: {
+    proxy: apiTarget === undefined ? undefined : {
       [MANUAL_ATTACHMENT_DESCRIPTION_PATH_PATTERN]: {
         target: apiTarget,
         changeOrigin: true,
