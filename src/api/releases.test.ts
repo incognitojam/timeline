@@ -61,18 +61,16 @@ describe("release status API", () => {
     expect(data.latest.downloadUrl).toBeNull();
   });
 
-  test("keeps private repository credentials on the service", async () => {
+  test("checks the public release without credentials", async () => {
     const app = createReleaseRoutes({
-      repository, runningVersion: running, token: () => "synthetic-release-token",
+      repository, runningVersion: running,
       fetch: async (url, init) => {
         expect(url).toBe(`https://api.github.com/repos/${repository}/releases/latest`);
-        expect(new Headers(init.headers).get("Authorization")).toBe("Bearer synthetic-release-token");
+        expect(new Headers(init.headers).has("Authorization")).toBe(false);
         return Response.json(release);
       },
     });
-    const response = await app.request("/api/releases/latest");
-    expect(response.status).toBe(200);
-    expect(await response.text()).not.toContain("synthetic-release-token");
+    expect((await app.request("/api/releases/latest")).status).toBe(200);
   });
 
   for (const status of [401, 403, 404, 500]) {

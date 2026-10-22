@@ -87,7 +87,6 @@ import {
 } from "../shared/health-periods";
 import { runningVersionInfo } from "../version";
 import { createReleaseRoutes } from "./releases";
-import { loadConfig as loadGitHubConfig } from "../parsers/github-api";
 import { findWebDistPath } from "../runtime-paths";
 import {
   searchTimeline,
@@ -400,7 +399,6 @@ app.route("/", createSyncSourceRoutes(apiConfig.scheduler.default_interval));
 app.route("/", createSettingsRoutes());
 app.route("/", createReleaseRoutes({
   repository: process.env.TIMELINE_RELEASE_REPOSITORY ?? "incognitojam/timeline",
-  token: () => process.env.GITHUB_TOKEN ?? loadGitHubConfig()?.token,
   runningVersion: runningVersionInfo,
 }));
 
