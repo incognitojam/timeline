@@ -37,10 +37,32 @@ jobs:
         if: matrix.project != 'workflows'
         working-directory: web
         run: bun install --frozen-lockfile
-      - name: Install Chromium and system dependencies
+      # Cache the pinned browser and skip apt unless shared libraries are missing.
+      - name: Resolve Playwright version
+        id: playwright_version
         if: matrix.project != 'workflows'
         working-directory: web
-        run: bunx playwright install --with-deps chromium
+        run: echo "version=$(bun -p "require('playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Cache Chromium
+        id: chromium_cache
+        if: matrix.project != 'workflows'
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
+      - name: Install Chromium
+        if: matrix.project != 'workflows' && steps.chromium_cache.outputs.cache-hit != 'true'
+        working-directory: web
+        run: bunx playwright install --only-shell chromium
+      - name: Install missing Chromium system dependencies
+        if: matrix.project != 'workflows'
+        working-directory: web
+        run: |
+          browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
+          test -n "$browser"
+          if ldd "$browser" | grep '=> not found'; then
+            bunx playwright install-deps chromium
+          fi
       - name: Run chart sweep
         if: matrix.project != 'workflows'
         working-directory: web
