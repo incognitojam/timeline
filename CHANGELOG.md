@@ -1,5 +1,11 @@
 # Timeline
 
+## 0.13.1
+
+### Patch Changes
+
+- 463b3da: The Settings page's update check now queries GitHub releases without credentials. Previously it sent the GitHub sync token, so an expired token made the check fail with "GitHub denied the release check" even though the releases are public.
+
 ## 0.13.0
 
 ### Minor Changes
