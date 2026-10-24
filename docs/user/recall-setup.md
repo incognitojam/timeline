@@ -27,7 +27,7 @@ To roll back, quit Timeline and restore the previous app bundle using [macOS hos
 - **Record Screen** pauses or resumes recording. The existing `~/.local/share/timeline/recall.pause` flag is also honored, including changes made outside the app.
 - Capture skips sleeping displays, a locked session, and excluded apps. A tick does not overlap the previous tick. OCR and WebP encoding run off the menu's UI thread.
 - The menu shows the latest successful capture time and reports permission, migration, or capture errors.
-- When recording stops because of a capture error, lost Screen Recording permission, or a capture that never finishes, Timeline posts one notification until a capture succeeds again. Allow notifications when macOS asks. A stuck capture also writes a stack sample to `~/.local/share/timeline-recall/stuck-<time>.txt` and names that file in the capture log; quit and reopen Timeline to recover.
+- When recording stops because of a capture error that repeats for three captures in a row, lost Screen Recording permission, or a capture that never finishes, Timeline posts one notification and removes it once a capture succeeds again. A single failed capture is only written to the capture log. Allow notifications when macOS asks. A stuck capture also writes a stack sample to `~/.local/share/timeline-recall/stuck-<time>.txt` and names that file in the capture log; quit and reopen Timeline to recover.
 - Exclude an app by adding its name or bundle identifier to `~/.config/timeline/recall-exclude.txt`, one per line. Blank lines and `#` comments are accepted. An excluded frontmost app skips the whole tick; excluded background windows are also omitted. Changes apply on the next tick.
 
 ```bash

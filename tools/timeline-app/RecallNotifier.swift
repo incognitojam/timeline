@@ -6,6 +6,8 @@ import UserNotifications
 final class RecallNotifier: NSObject, UNUserNotificationCenterDelegate {
     static let shared = RecallNotifier()
 
+    private static let outageIdentifier = "recall-outage"
+
     func post(_ body: String) {
         let center = UNUserNotificationCenter.current()
         center.delegate = self
@@ -17,10 +19,15 @@ final class RecallNotifier: NSObject, UNUserNotificationCenterDelegate {
             let content = UNMutableNotificationContent()
             content.title = "Timeline stopped recording your screen"
             content.body = body
-            center.add(UNNotificationRequest(identifier: "recall-outage", content: content, trigger: nil)) { error in
+            center.add(UNNotificationRequest(identifier: Self.outageIdentifier, content: content, trigger: nil)) { error in
                 if let error { writeError("Timeline notification failed: \(error.localizedDescription)\n") }
             }
         }
+    }
+
+    // Recording resumed, so the outage notification no longer applies.
+    func withdraw() {
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [Self.outageIdentifier])
     }
 
     // Show the banner even while Timeline's menu is open.
