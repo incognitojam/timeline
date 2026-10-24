@@ -60,3 +60,19 @@ func captureStatus(isPaused: Bool, lastCapture: Date?, recordingSince: Date?,
     }
     return now.timeIntervalSince(baseline) >= staleAfter ? .notCapturing : .recording
 }
+
+// Consecutive failed capture ticks. A lone failure usually recovers on the next
+// tick (a window can close between listing and capture), so an error is only
+// reported once it repeats.
+struct CaptureFailureStreak {
+    static let reportAfter = 3
+    private(set) var count = 0
+
+    // Returns true when the failure should be reported.
+    mutating func recordFailure() -> Bool {
+        count += 1
+        return count >= Self.reportAfter
+    }
+
+    mutating func recordSuccess() { count = 0 }
+}

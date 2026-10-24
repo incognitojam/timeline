@@ -15,6 +15,7 @@ final class RecallController: ObservableObject {
     @Published private(set) var captureStuck = false
     // One notification per outage; a successful tick re-arms it.
     private var outageNotified = false
+    private var failures = CaptureFailureStreak()
     private var migrationComplete = false
     private var migrationInFlight = false
     private var lastCaptureAttempt: Date?
@@ -131,6 +132,8 @@ final class RecallController: ObservableObject {
                 }
                 await MainActor.run {
                     self.issue = nil
+                    self.failures.recordSuccess()
+                    if self.outageNotified { RecallNotifier.shared.withdraw() }
                     self.outageNotified = false
                 }
             } catch is CancellationError {
@@ -139,6 +142,7 @@ final class RecallController: ObservableObject {
                 do { try pipeline.appendLog(error.localizedDescription) }
                 catch { writeError("Timeline Recall logging failed: \(error)\n") }
                 await MainActor.run {
+                    guard self.failures.recordFailure() else { return }
                     self.issue = "Recall: \(error.localizedDescription)"
                     self.notifyOutage(error.localizedDescription)
                 }

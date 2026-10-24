@@ -135,8 +135,15 @@ struct RecallTests {
         }
         cancelled.cancel()
         try await cancelled.value
+        var streak = CaptureFailureStreak()
+        for _ in 1..<CaptureFailureStreak.reportAfter { precondition(!streak.recordFailure()) }
+        streak.recordSuccess()
+        for _ in 1..<CaptureFailureStreak.reportAfter { precondition(!streak.recordFailure()) }
+        precondition(streak.recordFailure())
+        precondition(streak.recordFailure())
+
         try migrationTests(home: home)
-        print("OK: Recall OCR timeout, publication, cancellation, retention, and migration.")
+        print("OK: Recall OCR timeout, failure streak, publication, cancellation, retention, and migration.")
     }
 
     static func migrationTests(home: URL) throws {
