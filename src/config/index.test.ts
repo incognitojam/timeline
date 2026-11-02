@@ -131,6 +131,40 @@ test("probe", async () => {
   expect(readdirSync(childTmp)).toEqual([]);
 });
 
+test("test preload removes only its own and dead runs' directories from TMPDIR", async () => {
+  workDir = mkdtempSync(join(tmpdir(), "timeline-config-test-"));
+  // Mirrors an agent pointing TMPDIR at the checkout's .scratch/.
+  const scratch = join(workDir, ".scratch");
+  const exited = Bun.spawn(["true"]);
+  await exited.exited;
+  const deadRun = `timeline-test-run-${exited.pid}-dead`;
+  const kept = [
+    `timeline-test-run-${process.pid}-live`,
+    "timeline-test-run-",
+    "timeline-test-run-not-a-pid",
+    "timeline-test-runner",
+    // Same length as the run prefix, so a looser match would parse a dead pid.
+    `timeline-test-old-${exited.pid}-x`,
+    "timeline-test-1",
+    "notes.md",
+    "other-task",
+  ];
+  for (const name of [deadRun, ...kept]) mkdirSync(join(scratch, name), { recursive: true });
+  const probePath = join(workDir, "probe.test.ts");
+  writeFileSync(probePath, `import { test } from "bun:test";\ntest("probe", () => {});\n`);
+
+  const proc = Bun.spawn([process.execPath, "test", probePath], {
+    cwd: process.cwd(),
+    env: { ...baseChildEnv(), TMPDIR: scratch },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exitCode, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
+
+  expect({ exitCode, stderr }).toMatchObject({ exitCode: 0 });
+  expect(readdirSync(scratch).sort()).toEqual(kept.sort());
+});
+
 test("loadConfig auto-loads TIMELINE_ENV_FILE before config resolution", async () => {
   workDir = mkdtempSync(join(tmpdir(), "timeline-config-test-"));
   const configPath = join(workDir, "config.toml");
