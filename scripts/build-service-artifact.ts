@@ -107,7 +107,7 @@ async function buildArtifact(outputPath: string): Promise<void> {
   };
   const expectedBunVersion =
     typeof packageJson.packageManager === "string"
-      ? /^bun@(.+)$/.exec(packageJson.packageManager)?.[1]
+      ? /^bun@([^+]+)/.exec(packageJson.packageManager)?.[1]
       : undefined;
   if (!expectedBunVersion) {
     throw new Error("package.json has no pinned Bun packageManager version");

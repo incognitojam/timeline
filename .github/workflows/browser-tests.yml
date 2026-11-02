@@ -32,7 +32,9 @@ jobs:
       PLAYWRIGHT_CHART_SWEEP: ${{ inputs.chart-sweep }}
     steps:
       - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: bun
       - name: Install frontend dependencies
         if: matrix.project != 'workflows'
         working-directory: web

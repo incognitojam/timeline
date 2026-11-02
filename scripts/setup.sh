@@ -4,6 +4,7 @@
 #   - copy the gitignored files listed in .worktreeinclude from the main clone
 #   - link the shared imports directory
 #   - activate the tracked Git hooks
+#   - install the pinned toolchain with mise and require the pinned Bun
 #   - install dependencies (root + web/)
 #   - prepare a local sample ./timeline.db
 #
@@ -58,6 +59,20 @@ if [ "$is_worktree" = true ]; then
     warn "no imports directory at $main_worktree/imports"
   fi
 fi
+
+step "Installing the pinned toolchain"
+if command -v mise >/dev/null 2>&1; then
+  mise trust --quiet mise.toml
+  mise install
+  # Use the pinned tools for the rest of setup, even before shell activation.
+  eval "$(mise env --shell bash)"
+else
+  warn "mise is not installed; the Bun on PATH must match the pin (see docs/operations/development.md#toolchain)"
+fi
+# shellcheck source=scripts/toolchain.sh
+source scripts/toolchain.sh
+require_pinned_bun
+echo "    bun $(bun --version)"
 
 # Guards writes until prepare-sample has produced ./timeline.db, which removes it.
 [ -f timeline.db ] || touch .no-local-db
