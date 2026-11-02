@@ -7,38 +7,17 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
-  readFileSync,
   rmSync,
   statSync,
 } from "fs";
 import { homedir } from "os";
 import { join, resolve } from "path";
-import { parse as parseTOML } from "@iarna/toml";
-import { expandPath } from "../src/config";
+import { DEFAULT_HOST_DB_PATH, getHostDbPath } from "../src/db/paths";
 
 // --- Resolve the host's production DB ---
 //
-// prepare-sample / prepare-full source from the local Timeline host. "Prod" is
-// the [database].path in the *global* host config (~/.config/timeline/config.toml),
-// read directly rather than via loadConfig() — the latter honors TIMELINE_DB_PATH
-// and a cwd-relative ./timeline.db, so inside a worktree it would resolve to that
-// worktree's own sample and the script would try to sample from itself.
-const HOST_CONFIG = join(homedir(), ".config", "timeline", "config.toml");
-const DEFAULT_PROD_DB = join(homedir(), ".local", "share", "timeline", "timeline.db");
-
-function resolveProdDb(): string {
-  if (!existsSync(HOST_CONFIG)) return DEFAULT_PROD_DB;
-  try {
-    const parsed = parseTOML(readFileSync(HOST_CONFIG, "utf8")) as { database?: { path?: unknown } };
-    const path = parsed.database?.path;
-    return typeof path === "string" ? expandPath(path) : DEFAULT_PROD_DB;
-  } catch (err) {
-    console.error(`Warning: could not read ${HOST_CONFIG}: ${(err as Error).message}`);
-    return DEFAULT_PROD_DB;
-  }
-}
-
-const PROD_DB = resolveProdDb();
+// prepare-sample / prepare-full source from the local Timeline host.
+const PROD_DB = getHostDbPath();
 
 // Local cache
 const CACHE_DIR = join(homedir(), ".local", "share", "timeline");
@@ -81,7 +60,7 @@ Generates a sample (default) or full copy of the local Timeline host database
 and writes it to ./timeline.db for development.
 
 Source: [database].path from ~/.config/timeline/config.toml
-        (default: ${DEFAULT_PROD_DB})
+        (default: ${DEFAULT_HOST_DB_PATH})
         Existing caches under ${CACHE_DIR} can be reused without a host DB.
 
 Options:
