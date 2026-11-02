@@ -4,12 +4,13 @@ import { type Component, createSignal, For, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import {
   MOBILE_MORE_ITEMS,
+  RAIL_MORE_ITEMS,
+  RAIL_UTILITY_ITEMS,
   MOBILE_NAV_ITEMS,
   type NavigationIcon,
   type NavigationItem,
   PRIMARY_NAV_ITEMS,
   isNavigationItemActive,
-  UTILITY_NAV_ITEMS,
 } from "../lib/routes";
 import {
   IconAttachFile,
@@ -58,13 +59,15 @@ interface NavigationLinkProps {
   onNavigate?: () => void;
 }
 
+const RAIL_ITEM_CLASS = "group flex min-h-12 w-full flex-col items-center justify-center gap-0.5 rounded-2xl px-2 py-1 text-[0.6875rem] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring 2xl:flex-row 2xl:justify-start 2xl:gap-3 2xl:rounded-full 2xl:px-4 2xl:text-sm";
+
 function NavigationLink(props: NavigationLinkProps) {
   const location = useLocation();
   const active = () => isNavigationItemActive(props.item, location.pathname);
 
   const linkClass = () => {
     if (props.variant === "rail") {
-      return "group flex min-h-12 w-full flex-col items-center justify-center gap-0.5 rounded-2xl px-2 py-1 text-[0.6875rem] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring 2xl:flex-row 2xl:justify-start 2xl:gap-3 2xl:rounded-full 2xl:px-4 2xl:text-sm";
+      return RAIL_ITEM_CLASS;
     }
     if (props.variant === "bar") {
       return "flex min-h-20 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-1 py-1 text-[0.6875rem] font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring";
@@ -142,6 +145,43 @@ export function TimelineBrand(props: { statsSummary: string }) {
   );
 }
 
+// Rail entry for destinations kept out of the desktop rail to fit short
+// windows, mirroring the mobile bar's More sheet.
+function RailMore() {
+  const location = useLocation();
+  const [open, setOpen] = createSignal(false);
+  const active = () => RAIL_MORE_ITEMS.some((item) => isNavigationItemActive(item, location.pathname));
+
+  return (
+    <KDialog.Root open={open()} onOpenChange={setOpen}>
+      <KDialog.Trigger
+        class={RAIL_ITEM_CLASS}
+        classList={{ "text-foreground 2xl:bg-secondary 2xl:text-secondary-foreground": active() }}
+        aria-label="More utilities"
+        aria-pressed={active()}
+      >
+        <span
+          class="flex h-8 w-14 shrink-0 items-center justify-center rounded-full transition-colors 2xl:w-6"
+          classList={{ "bg-secondary text-secondary-foreground 2xl:bg-transparent": active() }}
+        >
+          <IconMoreHoriz class="h-6 w-6" aria-hidden />
+        </span>
+        <span class="text-center 2xl:truncate 2xl:text-left">More</span>
+      </KDialog.Trigger>
+      <KDialog.Portal>
+        <KDialog.Content class="fixed bottom-2 left-[5.75rem] z-50 w-60 rounded-2xl border border-border bg-popover p-2 text-popover-foreground shadow-2xl focus:outline-none 2xl:left-[15.25rem]">
+          <KDialog.Title class="px-3 pb-1 pt-1 font-mono text-[0.625rem] uppercase tracking-[0.16em] text-muted-foreground">
+            More utilities
+          </KDialog.Title>
+          <For each={RAIL_MORE_ITEMS}>
+            {(item) => <NavigationLink item={item} variant="sheet" onNavigate={() => setOpen(false)} />}
+          </For>
+        </KDialog.Content>
+      </KDialog.Portal>
+    </KDialog.Root>
+  );
+}
+
 function DesktopNavigation(props: NavigationProps) {
   return (
     <aside
@@ -163,9 +203,10 @@ function DesktopNavigation(props: NavigationProps) {
         <span class="hidden px-4 pb-1 pt-1 font-mono text-[0.625rem] uppercase tracking-[0.16em] text-muted-foreground 2xl:block">
           Utilities
         </span>
-        <For each={UTILITY_NAV_ITEMS}>
+        <For each={RAIL_UTILITY_ITEMS}>
           {(item) => <NavigationLink item={item} variant="rail" />}
         </For>
+        <RailMore />
       </nav>
 
       <Show when={props.authEnabled}>
