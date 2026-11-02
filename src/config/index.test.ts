@@ -90,14 +90,10 @@ test("probe", async () => {
   const config = await loadConfig();
   // Spawned with Bun's default environment, which the preload must still isolate.
   const child = Bun.spawnSync(["sh", "-c", 'printf "%s\\n%s" "$HOME" "$TMPDIR"']).stdout.toString().split("\\n");
-  const workerUrl = URL.createObjectURL(new Blob(["postMessage([process.env.HOME, process.env.TMPDIR])"]));
-  const worker = new Worker(workerUrl);
-  const workerEnv = await new Promise<string[]>((resolve) => { worker.onmessage = (event) => resolve(event.data); });
-  worker.terminate();
   console.log("PROBE" + JSON.stringify({
     paths: [config.media.path, config.inbox.base_path, config.database.path, homedir(), tmpdir(),
       require("os").homedir(), process.env.HOME, process.env.TIMELINE_CONFIG, process.env.TIMELINE_ENV_FILE,
-      ...child, ...workerEnv],
+      ...child],
     r2: Boolean(config.media.r2),
     secrets: Boolean(process.env.R2_ACCESS_KEY_ID),
   }));

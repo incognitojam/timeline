@@ -69,10 +69,11 @@ for (const specifier of ["os", "node:os"]) {
   createRequire(import.meta.url)(specifier).homedir = testHomedir;
 }
 
-// Bun.spawn, Bun.spawnSync, and Worker default to the environment the process
-// started with, not process.env as changed above, so give them process.env
-// unless a caller passes its own. A worker's os.homedir() still returns the real
-// home; its database, media, inbox, and config paths come from the variables below.
+// Bun.spawn and Bun.spawnSync default to the environment the process started
+// with, not process.env as changed above, so give them process.env unless a
+// caller passes its own. Workers also start with that environment, and Bun 1.3
+// ignores a Worker's env and preload options, so in-process workers must receive
+// paths from their caller, as the database pool's do.
 type SpawnOptions = { env?: Record<string, string | undefined> } | undefined;
 const withEnv = <T extends SpawnOptions>(options: T) => (options?.env ? options : { ...options, env: process.env });
 function inheritEnv<F extends (...args: never[]) => unknown>(spawn: F): F {
@@ -82,12 +83,6 @@ function inheritEnv<F extends (...args: never[]) => unknown>(spawn: F): F {
       : (spawn as (...args: unknown[]) => unknown)(withEnv(command as SpawnOptions))) as F;
 }
 Object.assign(Bun, { spawn: inheritEnv(Bun.spawn), spawnSync: inheritEnv(Bun.spawnSync) });
-const NativeWorker = globalThis.Worker;
-globalThis.Worker = class extends NativeWorker {
-  constructor(url: string | URL, options?: WorkerOptions) {
-    super(url, withEnv(options as SpawnOptions) as WorkerOptions);
-  }
-};
 
 // Empty bootstrap config and secrets resolve to built-in defaults, matching CI
 // where no host config exists. The developer's config may enable optional
