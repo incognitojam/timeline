@@ -66,21 +66,28 @@ Install: `cd tools/timeline-app && ./build.sh --install && open ~/Applications/T
 
 Development happens locally. The **macOS host** runs the service packaged inside `Timeline.app`, so apply source changes with `cd tools/timeline-app && ./build.sh --install` (see [docs/user/macos-host.md](docs/user/macos-host.md)).
 
-**Worktree/clone setup**: `bun run setup` (`scripts/setup.sh`) installs the pinned toolchain with mise (see [Toolchain](docs/operations/development.md#toolchain)), installs root + `web/` dependencies, copies the gitignored files listed in `.worktreeinclude` from the main clone, links `./imports`, and prepares a sample `./timeline.db`. Agent harnesses run it on worktree creation; re-run it by hand any time.
+**Worktree/clone setup**: `bun run setup` (`scripts/setup.sh`) installs the pinned toolchain with mise (see [Toolchain](docs/operations/development.md#toolchain)), installs root + `web/` dependencies, copies the gitignored files listed in `.worktreeinclude` from the main clone, links `./imports`, and runs `bun run seed` when `./timeline.db` doesn't exist yet. Agent harnesses run it on worktree creation; re-run it by hand any time.
 
-> **Note**: `prepare-sample`/`prepare-full` generate or refresh caches from the local host DB (no SSH). Existing caches can be copied to another machine and reused there without the host DB.
+**Synthetic database (the default)**:
+```bash
+bun run seed                       # Rebuild ./timeline.db, ./app-state.db and ./media/ from scratch
+bun run seed -- --anchor=2026-01-31  # Pin the last day of history (default: today)
+bun run seed -- --only=discord,spotify --out=.scratch/seed-x  # Iterate on one generator
+```
 
-**Sample database for local development**:
+`src/seed/` generates three years of activity for Alex Rivera, a fictional person, by writing a synthetic export for every source and running it through that source's real importer. Event content is deterministic for a given `--anchor` (import times and sync history follow the clock), contains no personal data, and is safe to screenshot in pull requests. Re-running `bun run seed` is the reset: use it to discard schema experiments or a broken local DB, then restart `bun run dev`, which keeps the replaced database open. Seeded attachments live in `./media/`; start the app with `TIMELINE_MEDIA_PATH=./media bun run dev` to serve them. When adding a source, add a generator in `src/seed/sources/` (see `src/seed/context.ts`).
+
+**Owner's real data (opt-in)** — `prepare-sample`/`prepare-full` copy the Timeline host's database (no SSH). Existing caches can be copied to another machine and reused there without the host DB.
+
 ```bash
 bun run prepare-sample             # Reuse cached sample (any age) or generate; copy to ./timeline.db
 bun run prepare-sample -- --refresh  # Force regenerate the sample
 bun run prepare-sample -- --percent=2  # Sample 2% instead of default 1%
-bun run prepare-sample -- --no-contacts  # Omit contact/identity tables (e.g. for a shareable sample)
+bun run prepare-sample -- --no-contacts  # Omit contact/identity tables
 ```
 
-The script samples the local host DB (`[database].path` from `~/.config/timeline/config.toml`, default `~/.local/share/timeline/timeline.db`) into `~/.local/share/timeline/sample.db` and copies that to `./timeline.db`. The cache is reused regardless of age and does not require the host DB to remain available — pass `--refresh` (or `--percent`) on the Timeline host to regenerate it. It also removes `.no-local-db` so the workspace can use `./timeline.db` directly.
+The script samples the local host DB (`[database].path` from `~/.config/timeline/config.toml`, default `~/.local/share/timeline/timeline.db`) into `~/.local/share/timeline/sample.db` and copies that to `./timeline.db`. The cache is reused regardless of age and does not require the host DB to remain available — pass `--refresh` (or `--percent`) on the Timeline host to regenerate it.
 
-**Full database for local development**:
 ```bash
 bun run prepare-full              # Reuse cached full DB (any age) or clone; copy to ./timeline.db
 bun run prepare-full -- --refresh # Force re-clone from the host DB
@@ -98,13 +105,14 @@ Set `TIMELINE_DB_PATH` env var to override.
 
 ### Local Development Database
 
-For local development, `./timeline.db` is the default and doesn't require setting `TIMELINE_DB_PATH`. Agent worktrees run `bun run setup` on creation, so `./timeline.db` already exists. For standalone development, run `bun run setup` (or just `bun run prepare-sample`) first.
+For local development, `./timeline.db` is the default and doesn't require setting `TIMELINE_DB_PATH`. Agent worktrees run `bun run setup` on creation, so `./timeline.db` already exists. For standalone development, run `bun run setup` (or just `bun run seed`) first.
 
-**When to use `prepare-sample` vs `prepare-full`:**
-- **`bun run prepare-sample`** — Creates a 1% sample DB. Good for most development: UI work, API changes, parser testing, frontend iteration. Fast and small.
-- **`bun run prepare-full`** — Creates a complete copy of the host database. **Recommended before testing backfill scripts, migrations, or features that benefit from comprehensive/realistic data.** Cheap on filesystems with copy-on-write cloning. Always test with `prepare-full` before running scripts against the host DB.
+**Which database to use:**
+- **`bun run seed`** — Synthetic data covering every source. Use it for UI work, API changes, parser and migration experiments, browser testing, and anything that ends up in a screenshot or pull request.
+- **`bun run prepare-sample`** — A 1% sample of the host's real data, for reproducing something the synthetic data doesn't show. Never screenshot it.
+- **`bun run prepare-full`** — A complete copy of the host database. **Recommended before testing backfill scripts, migrations, or features that need real volume.** Cheap on filesystems with copy-on-write cloning. Always test with `prepare-full` before running scripts against the host DB.
 
-The `.no-local-db` marker file (in the repo root) prevents accidental writes when no local DB has been prepared. Both `prepare-sample` and `prepare-full` remove this marker automatically.
+The `.no-local-db` marker file (in the repo root) prevents accidental writes when no local DB has been prepared. `seed`, `prepare-sample`, and `prepare-full` all remove it.
 
 ### App State Database
 
@@ -287,7 +295,7 @@ Treat the changeset as release metadata, not as a feature. Pull-request summarie
 
 Treat everything in a pull request as public: descriptions, screenshots, recordings, and CI logs.
 
-- **Synthetic data only**: Screenshots, recordings, and examples in a pull request must show fixture or sample data, never a personal database. The e2e fixtures in `web/e2e/` are a good source.
+- **Synthetic data only**: Screenshots, recordings, and examples in a pull request must show synthetic data, never a personal database. Use the `bun run seed` database or the e2e fixtures in `web/e2e/`.
 - **Attach images, don't commit them**: Upload screenshots with `gh pr edit <number> --attach './shot.png#Alt text'` (or `gh pr create --attach`). Never push images to a branch to embed them in a pull request.
 
 ### Code Review Checklist

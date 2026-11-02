@@ -25,6 +25,7 @@
     "lint": "bunx biome lint src/ web/src/ && oxlint src/ web/src/",
     "test": "bun test",
     "test:api": "bun test src/api/",
+    "seed": "bun run src/seed/index.ts",
     "prepare-sample": "bun run scripts/prepare-sample-db.ts",
     "prepare-full": "bun run scripts/prepare-sample-db.ts --full",
     "changeset": "changeset",
