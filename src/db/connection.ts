@@ -1,4 +1,5 @@
-import type { Database } from "bun:sqlite";
+import { Database } from "bun:sqlite";
+import { assertNoLocalDbMarker, getDbPathInfo } from "./paths";
 
 /**
  * Settings every writable connection needs, as opposed to the schema itself.
@@ -16,4 +17,13 @@ export function applyConnectionPragmas(db: Database): void {
   db.exec("PRAGMA busy_timeout = 30000");
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA recursive_triggers = ON");
+}
+
+/** Open a timeline database read/write without loading the schema module. */
+export function openWritableDbAtPath(dbPath: string): Database {
+  const info = getDbPathInfo(dbPath);
+  assertNoLocalDbMarker(info, info.resolvedDbPath, "database");
+  const db = new Database(dbPath);
+  applyConnectionPragmas(db);
+  return db;
 }
