@@ -30,7 +30,7 @@ jobs:
           cache: false
       - run: bun install --frozen-lockfile
       - id: mode
-        uses: changesets/action/select-mode@v2.1.1
+        uses: changesets/action/select-mode@v2.1.2
       - name: Read the proposed version
         if: steps.mode.outputs.mode == 'version'
         id: next
@@ -41,7 +41,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Create or update the version PR
         if: steps.mode.outputs.mode == 'version'
-        uses: changesets/action/version@v2.1.1
+        uses: changesets/action/version@v2.1.2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: bun run release:version
@@ -96,7 +96,7 @@ jobs:
         run: echo "tag=v$(bun run scripts/print-product-version.ts)" >> "$GITHUB_OUTPUT"
       - name: Select the release tag
         id: publish
-        uses: changesets/action/publish@v2.1.1
+        uses: changesets/action/publish@v2.1.2
         with:
           script: bun changeset git-tag
           # The action ignores a failed tag push and then creates the release at the head of main.
