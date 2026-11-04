@@ -177,6 +177,59 @@ test("test preload removes only its own and dead runs' directories from TMPDIR",
   expect(readdirSync(scratch).sort()).toEqual(kept.sort());
 });
 
+test("test preload keeps .env variables in the working directory out of tests", async () => {
+  workDir = mkdtempSync(join(tmpdir(), "timeline-config-test-"));
+  // Bun loads .env and, under bun test, .env.test from the working directory.
+  writeFileSync(join(workDir, ".env"), "TIMELINE_DOTENV_PROBE_A=synthetic\n");
+  writeFileSync(join(workDir, ".env.test"), 'export TIMELINE_DOTENV_PROBE_B="synthetic"\n');
+  writeFileSync(
+    join(workDir, "bunfig.toml"),
+    `[test]\npreload = [${JSON.stringify(join(process.cwd(), "test/setup.ts"))}]\n`,
+  );
+  const probePath = join(workDir, "probe.test.ts");
+  // Reports variable names only, for this process and for children started with
+  // the default environment and with a minimal one.
+  writeFileSync(
+    probePath,
+    `
+import { test } from "bun:test";
+const leaked = (env: Record<string, string | undefined>) =>
+  Object.keys(env).filter((name) => name.startsWith("TIMELINE_DOTENV_PROBE") && env[name]);
+const child = (env?: Record<string, string>) =>
+  JSON.parse(Bun.spawnSync({
+    cmd: [process.execPath, "-e", 'console.log(JSON.stringify(Object.keys(process.env).filter((name) => name.startsWith("TIMELINE_DOTENV_PROBE") && process.env[name])))'],
+    ...(env && { env }),
+  }).stdout.toString());
+
+test("probe", () => {
+  console.log("PROBE" + JSON.stringify({
+    self: leaked(process.env),
+    defaultEnvChild: child(),
+    minimalEnvChild: child({ PATH: process.env.PATH ?? "" }),
+  }));
+});
+`,
+  );
+
+  // Through sh, because the preload adds --no-env-file to commands that start
+  // with process.execPath, and this run must load .env files as a developer's does.
+  const proc = Bun.spawn(["sh", "-c", 'exec "$0" test "$1"', process.execPath, probePath], {
+    cwd: workDir,
+    env: baseChildEnv(),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([
+    proc.exited,
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  expect({ exitCode, stderr }).toMatchObject({ exitCode: 0 });
+  const line = stdout.split("\n").find((l) => l.startsWith("PROBE"));
+  if (!line) throw new Error(`probe printed no result:\n${stdout}\n${stderr}`);
+  expect(JSON.parse(line.slice("PROBE".length))).toEqual({ self: [], defaultEnvChild: [], minimalEnvChild: [] });
+});
+
 test("loadConfig auto-loads TIMELINE_ENV_FILE before config resolution", async () => {
   workDir = mkdtempSync(join(tmpdir(), "timeline-config-test-"));
   const configPath = join(workDir, "config.toml");

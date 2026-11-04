@@ -6,7 +6,7 @@
 
 import { afterAll, mock } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { createRequire } from "module";
 import * as os from "os";
 import { join } from "path";
@@ -17,6 +17,15 @@ import { createTestFetchGuard } from "../src/testing/fetch-guard";
 // for integration tests that start a local server and fail every unexpected
 // external request before it can reach third-party infrastructure.
 globalThis.fetch = createTestFetchGuard(globalThis.fetch);
+
+// Bun loads .env files from the working directory before this preload runs, and
+// a checkout's may hold real credentials. Blank every variable they name; an
+// empty value also stops a child Bun started here from loading the file again.
+const DOTENV_FILE = /^\.env(\.(local|test|development|production))?$/;
+for (const file of readdirSync(process.cwd()).filter((name) => DOTENV_FILE.test(name))) {
+  const names = readFileSync(join(process.cwd(), file), "utf8").matchAll(/^\s*(?:export\s+)?([A-Za-z_][\w.-]*)\s*[=:]/gm);
+  for (const [, name] of names) process.env[name] = "";
+}
 
 // Everything a run writes lives under one directory, removed when the run
 // finishes. Its name carries the owning pid so a later run can remove directories
@@ -76,12 +85,14 @@ for (const specifier of ["os", "node:os"]) {
 // paths from their caller, as the database pool's do.
 //
 // A `bun` resolved from PATH may be a version-manager shim that reads its
-// configuration from the test HOME, so children must run process.execPath.
+// configuration from the test HOME, so children must run process.execPath. Those
+// children skip .env files too, even when the caller passes an environment
+// without the variables blanked above.
 type SpawnOptions = { cmd?: unknown[]; env?: Record<string, string | undefined> } | undefined;
 const withEnv = <T extends SpawnOptions>(options: T) => (options?.env ? options : { ...options, env: process.env });
 function childArgv(argv: unknown[]): unknown[] {
   if (argv[0] === "bun") throw new Error("Tests must spawn process.execPath, not `bun` from PATH");
-  return argv;
+  return argv[0] === process.execPath ? [argv[0], "--no-env-file", ...argv.slice(1)] : argv;
 }
 function inheritEnv<F extends (...args: never[]) => unknown>(spawn: F): F {
   return ((command: unknown, options?: SpawnOptions) => {
