@@ -10,8 +10,8 @@
  *
  * A full reimport can upsert many message rows, so every per-row AFTER UPDATE
  * trigger is dropped for the run and its table rebuilt once at the end:
- * - conversation summaries via withBulkSummaryRebuild (quadratic per-row
- *   recompute; emptied tables double as the crash marker initDb() heals);
+ * - conversation summaries via withBulkSummaryRebuild (emptied tables double
+ *   as the crash marker initDb() heals);
  * - event_people + identity event counts (cost scales with the people array,
  *   and large group threads rewrite many rows per message) rebuilt by
  *   populateEventPeople's atomic swap;

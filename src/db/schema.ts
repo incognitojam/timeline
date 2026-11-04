@@ -267,13 +267,19 @@ function createSchema(db: Database) {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_events_location ON events(latitude, longitude) WHERE latitude IS NOT NULL`);
   ensureIndex(
     db,
-    "idx_events_conversations",
-    `CREATE INDEX idx_events_conversations ON events(source, source_account, title, timestamp) WHERE ${conversationEventEligibilityClause()}`,
-  );
-  ensureIndex(
-    db,
     "idx_events_conversation_id",
     `CREATE INDEX idx_events_conversation_id ON events(source, source_account, conversation_id, timestamp) WHERE conversation_id IS NOT NULL AND ${conversationTypeClause()}`,
+  );
+  // Serves the summary triggers' per-title bound probes (one conversation, one
+  // title, ordered by timestamp), so they stay index lookups even when other
+  // conversations in the same source and account share the title. It replaces
+  // the title-keyed idx_events_conversations, which is dropped first so the new
+  // index can reuse its pages.
+  db.exec(`DROP INDEX IF EXISTS idx_events_conversations`);
+  ensureIndex(
+    db,
+    "idx_events_conversation_titles",
+    `CREATE INDEX idx_events_conversation_titles ON events(source, source_account, conversation_id, title, timestamp) WHERE ${conversationEventEligibilityClause()} AND conversation_id IS NOT NULL`,
   );
 
   ensureEventDaySources(db);
@@ -971,7 +977,7 @@ function migrateConversationSummariesToConversationIds(db: Database): void {
   })();
 }
 
-function rebuildConversationSummaries(db: Database): void {
+export function rebuildConversationSummaries(db: Database): void {
   db.transaction(() => {
     db.exec(`DROP TABLE IF EXISTS temp.conversation_summary_eligible`);
     db.exec(`
@@ -1081,35 +1087,97 @@ function ensureConversationSummariesBackfilled(db: Database): void {
   rebuildConversationSummaries(db);
 }
 
-function ensureConversationSummaryTriggers(db: Database): void {
+/**
+ * Every events column the conversation summary triggers and
+ * rebuildConversationSummaries() read. The update trigger fires only when one
+ * of these changes, so a raw_data-only rewrite costs nothing here.
+ */
+export const CONVERSATION_SUMMARY_EVENT_COLUMNS = [
+  "id",
+  "source",
+  "source_account",
+  "conversation_id",
+  "type",
+  "title",
+  "timestamp",
+] as const;
+
+type SummaryProbeScope = "conversation" | "title";
+
+// Eligible events of `ref`'s conversation (and, for a title row, `ref`'s title).
+// In the delete path `ref` is OLD, so this is the table as it stands after the
+// write, without OLD's contribution. The conversation variant probes
+// idx_events_conversation_id and the title variant
+// idx_events_conversation_titles; both are ordered by timestamp.
+function summaryRemainingEvents(scope: SummaryProbeScope, ref: string): string {
   const eventCondition = `${CONVERSATION_EVENT_CONDITION.replace(/\btype\b/g, "e.type").replace(/\btitle\b/g, "e.title")} AND e.conversation_id IS NOT NULL`;
-  const latestEventCondition = `${CONVERSATION_EVENT_CONDITION.replace(/\btype\b/g, "e2.type").replace(/\btitle\b/g, "e2.title")} AND e2.conversation_id IS NOT NULL`;
-  const insertFor = (ref: "NEW") => `
+  return `
+    FROM events e
+    WHERE ${eventCondition}
+      AND e.source = ${ref}.source
+      AND e.source_account IS ${ref}.source_account
+      AND e.conversation_id = ${ref}.conversation_id${scope === "title" ? ` AND e.title = ${ref}.title` : ""}`;
+}
+
+/**
+ * The scalar subquery the summary triggers use to re-read a first or last
+ * timestamp after removing the event that held it. Exported so tests can check
+ * its query plan stays an ordered index probe.
+ */
+export function conversationSummaryBoundTimestampSql(scope: SummaryProbeScope, direction: "ASC" | "DESC", ref = "OLD"): string {
+  return `(
+    SELECT e.timestamp ${summaryRemainingEvents(scope, ref)}
+      AND e.timestamp IS NOT NULL
+    ORDER BY e.timestamp ${direction}
+    LIMIT 1
+  )`;
+}
+
+/**
+ * The triggers maintain both summary tables incrementally: an insert adds the
+ * row's contribution, a delete removes it, and an update removes OLD then adds
+ * NEW. Removing a row only re-reads events when that row held a bound (first or
+ * last timestamp, or the latest titled event), and each re-read is an ordered
+ * index probe, so bulk renames, deletes and re-imports stay linear.
+ */
+function ensureConversationSummaryTriggers(db: Database): void {
+  const eligible = (ref: "NEW" | "OLD") => `(${conversationEventEligibilityClause(`${ref}.`)} AND ${ref}.conversation_id IS NOT NULL)`;
+  const summaryKey = (ref: "NEW" | "OLD") => `
+    source = ${ref}.source
+    AND source_account_key = ${sourceAccountKeySql(ref)}
+    AND conversation_id = ${ref}.conversation_id`;
+  const remainingEvents = (scope: SummaryProbeScope) => summaryRemainingEvents(scope, "OLD");
+  const boundTimestamp = (scope: SummaryProbeScope, direction: "ASC" | "DESC") => conversationSummaryBoundTimestampSql(scope, direction);
+  // Same ordering as rebuildConversationSummaries(): timestamp DESC (NULLs
+  // last), then id DESC.
+  const isNewerThanLatest = (current: string) => `(
+    (${current}.latest_title_timestamp IS NULL AND excluded.latest_title_timestamp IS NOT NULL)
+    OR excluded.latest_title_timestamp > ${current}.latest_title_timestamp
+    OR (excluded.latest_title_timestamp IS ${current}.latest_title_timestamp
+      AND excluded.latest_title_event_id > ${current}.latest_title_event_id)
+  )`;
+
+  const addNew = `
     INSERT INTO conversation_summaries (
       source, source_account, source_account_key, conversation_id,
       title, message_count, first_message, last_message,
       latest_title_timestamp, latest_title_event_id, updated_at
-    ) VALUES (
-      ${ref}.source,
-      ${ref}.source_account,
-      ${sourceAccountKeySql(ref)},
-      ${ref}.conversation_id,
-      ${ref}.title,
+    )
+    SELECT
+      NEW.source,
+      NEW.source_account,
+      ${sourceAccountKeySql("NEW")},
+      NEW.conversation_id,
+      NEW.title,
       1,
-      ${ref}.timestamp,
-      ${ref}.timestamp,
-      ${ref}.timestamp,
-      ${ref}.id,
+      NEW.timestamp,
+      NEW.timestamp,
+      NEW.timestamp,
+      NEW.id,
       datetime('now')
-    ) ON CONFLICT(source, source_account_key, conversation_id) DO UPDATE SET
-      title = CASE
-        WHEN conversation_summaries.latest_title_timestamp IS NULL THEN excluded.title
-        WHEN excluded.latest_title_timestamp IS NULL THEN conversation_summaries.title
-        WHEN excluded.latest_title_timestamp > conversation_summaries.latest_title_timestamp THEN excluded.title
-        WHEN excluded.latest_title_timestamp = conversation_summaries.latest_title_timestamp
-          AND excluded.latest_title_event_id > conversation_summaries.latest_title_event_id THEN excluded.title
-        ELSE conversation_summaries.title
-      END,
+    WHERE ${eligible("NEW")}
+    ON CONFLICT(source, source_account_key, conversation_id) DO UPDATE SET
+      title = CASE WHEN ${isNewerThanLatest("conversation_summaries")} THEN excluded.title ELSE conversation_summaries.title END,
       message_count = conversation_summaries.message_count + 1,
       first_message = CASE
         WHEN conversation_summaries.first_message IS NULL THEN excluded.first_message
@@ -1123,36 +1191,24 @@ function ensureConversationSummaryTriggers(db: Database): void {
         WHEN excluded.last_message > conversation_summaries.last_message THEN excluded.last_message
         ELSE conversation_summaries.last_message
       END,
-      latest_title_timestamp = CASE
-        WHEN conversation_summaries.latest_title_timestamp IS NULL THEN excluded.latest_title_timestamp
-        WHEN excluded.latest_title_timestamp IS NULL THEN conversation_summaries.latest_title_timestamp
-        WHEN excluded.latest_title_timestamp > conversation_summaries.latest_title_timestamp THEN excluded.latest_title_timestamp
-        WHEN excluded.latest_title_timestamp = conversation_summaries.latest_title_timestamp
-          AND excluded.latest_title_event_id > conversation_summaries.latest_title_event_id THEN excluded.latest_title_timestamp
-        ELSE conversation_summaries.latest_title_timestamp
-      END,
-      latest_title_event_id = CASE
-        WHEN conversation_summaries.latest_title_timestamp IS NULL THEN excluded.latest_title_event_id
-        WHEN excluded.latest_title_timestamp IS NULL THEN conversation_summaries.latest_title_event_id
-        WHEN excluded.latest_title_timestamp > conversation_summaries.latest_title_timestamp THEN excluded.latest_title_event_id
-        WHEN excluded.latest_title_timestamp = conversation_summaries.latest_title_timestamp
-          AND excluded.latest_title_event_id > conversation_summaries.latest_title_event_id THEN excluded.latest_title_event_id
-        ELSE conversation_summaries.latest_title_event_id
-      END,
+      latest_title_timestamp = CASE WHEN ${isNewerThanLatest("conversation_summaries")} THEN excluded.latest_title_timestamp ELSE conversation_summaries.latest_title_timestamp END,
+      latest_title_event_id = CASE WHEN ${isNewerThanLatest("conversation_summaries")} THEN excluded.latest_title_event_id ELSE conversation_summaries.latest_title_event_id END,
       updated_at = datetime('now');
 
     INSERT INTO conversation_summary_titles (
       source, source_account_key, conversation_id, title,
       first_seen, last_seen, message_count
-    ) VALUES (
-      ${ref}.source,
-      ${sourceAccountKeySql(ref)},
-      ${ref}.conversation_id,
-      ${ref}.title,
-      ${ref}.timestamp,
-      ${ref}.timestamp,
+    )
+    SELECT
+      NEW.source,
+      ${sourceAccountKeySql("NEW")},
+      NEW.conversation_id,
+      NEW.title,
+      NEW.timestamp,
+      NEW.timestamp,
       1
-    ) ON CONFLICT(source, source_account_key, conversation_id, title) DO UPDATE SET
+    WHERE ${eligible("NEW")}
+    ON CONFLICT(source, source_account_key, conversation_id, title) DO UPDATE SET
       first_seen = CASE
         WHEN conversation_summary_titles.first_seen IS NULL THEN excluded.first_seen
         WHEN excluded.first_seen IS NULL THEN conversation_summary_titles.first_seen
@@ -1167,76 +1223,58 @@ function ensureConversationSummaryTriggers(db: Database): void {
       END,
       message_count = conversation_summary_titles.message_count + 1;
   `;
-  const recomputeFor = (ref: "NEW" | "OLD") => `
+
+  const oldTitleKey = `${summaryKey("OLD")} AND title = OLD.title`;
+  const removeOld = `
+    UPDATE conversation_summary_titles
+    SET message_count = message_count - 1
+    WHERE ${oldTitleKey} AND ${eligible("OLD")};
+
     DELETE FROM conversation_summary_titles
-    WHERE source = ${ref}.source
-      AND source_account_key = ${sourceAccountKeySql(ref)}
-      AND conversation_id = ${ref}.conversation_id;
+    WHERE ${oldTitleKey} AND message_count <= 0;
+
+    UPDATE conversation_summary_titles
+    SET
+      first_seen = ${boundTimestamp("title", "ASC")},
+      last_seen = ${boundTimestamp("title", "DESC")}
+    WHERE ${oldTitleKey} AND ${eligible("OLD")}
+      AND (first_seen = OLD.timestamp OR last_seen = OLD.timestamp);
+
+    UPDATE conversation_summaries
+    SET message_count = message_count - 1, updated_at = datetime('now')
+    WHERE ${summaryKey("OLD")} AND ${eligible("OLD")};
 
     DELETE FROM conversation_summaries
-    WHERE source = ${ref}.source
-      AND source_account_key = ${sourceAccountKeySql(ref)}
-      AND conversation_id = ${ref}.conversation_id;
+    WHERE ${summaryKey("OLD")} AND message_count <= 0;
 
-    INSERT INTO conversation_summaries (
-      source, source_account, source_account_key, conversation_id,
-      title, message_count, first_message, last_message,
-      latest_title_timestamp, latest_title_event_id, updated_at
-    )
-    SELECT
-      g.source, g.source_account, g.source_account_key, g.conversation_id,
-      latest.title, g.message_count, g.first_message, g.last_message,
-      latest.timestamp, latest.id, datetime('now')
-    FROM (
-      SELECT
-        e.source,
-        e.source_account,
-        ${sourceAccountKeySql("e")} AS source_account_key,
-        e.conversation_id AS conversation_id,
-        COUNT(*) AS message_count,
-        MIN(e.timestamp) AS first_message,
-        MAX(e.timestamp) AS last_message
-      FROM events e
-      WHERE ${eventCondition}
-        AND e.source = ${ref}.source
-        AND e.source_account IS ${ref}.source_account
-        AND e.conversation_id = ${ref}.conversation_id
-      GROUP BY e.source, e.source_account, source_account_key, e.conversation_id
-    ) g
-    JOIN events latest ON latest.id = (
-      SELECT e2.id FROM events e2
-      WHERE ${latestEventCondition}
-        AND e2.source = g.source
-        AND e2.source_account IS g.source_account
-        AND e2.conversation_id = g.conversation_id
-      ORDER BY e2.timestamp DESC, e2.id DESC
+    UPDATE conversation_summaries
+    SET
+      first_message = ${boundTimestamp("conversation", "ASC")},
+      last_message = ${boundTimestamp("conversation", "DESC")}
+    WHERE ${summaryKey("OLD")} AND ${eligible("OLD")}
+      AND (first_message = OLD.timestamp OR last_message = OLD.timestamp);
+
+    UPDATE conversation_summaries
+    SET (title, latest_title_timestamp, latest_title_event_id) = (
+      SELECT e.title, e.timestamp, e.id ${remainingEvents("conversation")}
+      ORDER BY e.timestamp DESC, e.id DESC
       LIMIT 1
-    );
-
-    INSERT INTO conversation_summary_titles (
-      source, source_account_key, conversation_id, title,
-      first_seen, last_seen, message_count
     )
-    SELECT
-      e.source,
-      ${sourceAccountKeySql("e")} AS source_account_key,
-      e.conversation_id,
-      e.title,
-      MIN(e.timestamp),
-      MAX(e.timestamp),
-      COUNT(*)
-    FROM events e
-    WHERE ${eventCondition}
-      AND e.source = ${ref}.source
-      AND e.source_account IS ${ref}.source_account
-      AND e.conversation_id = ${ref}.conversation_id
-    GROUP BY e.source, source_account_key, e.conversation_id, e.title;
+    WHERE ${summaryKey("OLD")} AND ${eligible("OLD")}
+      AND latest_title_event_id = OLD.id;
   `;
 
-  const eligible = (ref: "NEW" | "OLD") => `${conversationEventEligibilityClause(`${ref}.`)} AND ${ref}.conversation_id IS NOT NULL`;
-  ensureTrigger(db, "conversation_summaries_ai", `CREATE TRIGGER conversation_summaries_ai AFTER INSERT ON events WHEN ${eligible("NEW")} BEGIN ${insertFor("NEW")} END`);
-  ensureTrigger(db, "conversation_summaries_ad", `CREATE TRIGGER conversation_summaries_ad AFTER DELETE ON events WHEN ${eligible("OLD")} BEGIN ${recomputeFor("OLD")} END`);
-  ensureTrigger(db, "conversation_summaries_au", `CREATE TRIGGER conversation_summaries_au AFTER UPDATE ON events WHEN ${eligible("OLD")} OR ${eligible("NEW")} BEGIN ${recomputeFor("OLD")} ${recomputeFor("NEW")} END`);
+  // The update trigger compares values rather than using `UPDATE OF <columns>`:
+  // SQLite matches that list by name, so a write through `rowid` (an alias of
+  // `id`) would skip it.
+  const summaryColumnChanged = CONVERSATION_SUMMARY_EVENT_COLUMNS.map((col) => `OLD.${col} IS NOT NEW.${col}`).join(" OR ");
+  ensureTrigger(db, "conversation_summaries_ai", `CREATE TRIGGER conversation_summaries_ai AFTER INSERT ON events WHEN ${eligible("NEW")} BEGIN ${addNew} END`);
+  ensureTrigger(db, "conversation_summaries_ad", `CREATE TRIGGER conversation_summaries_ad AFTER DELETE ON events WHEN ${eligible("OLD")} BEGIN ${removeOld} END`);
+  ensureTrigger(
+    db,
+    "conversation_summaries_au",
+    `CREATE TRIGGER conversation_summaries_au AFTER UPDATE ON events WHEN (${eligible("OLD")} OR ${eligible("NEW")}) AND (${summaryColumnChanged}) BEGIN ${removeOld} ${addNew} END`,
+  );
 }
 
 export function dropEventPeopleTriggers(db: Database): void {
