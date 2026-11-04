@@ -204,6 +204,45 @@ export async function fetchConversationSources(signal: AbortSignal): Promise<{ s
   return parseApiJson(res, "Failed to fetch conversation sources");
 }
 
+export interface CodingAgentConversationListItem extends ConversationListItem {
+  // Coding project the conversation belongs to; null when it has none.
+  project: string | null;
+}
+
+export interface CodingAgentConversationListParams {
+  search?: string;
+  source?: string;
+  project?: string;
+  unassigned?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
+export async function fetchCodingAgentConversations(
+  params: CodingAgentConversationListParams & { signal: AbortSignal },
+): Promise<{ conversations: CodingAgentConversationListItem[]; total: number }> {
+  const searchParams = new URLSearchParams();
+  if (params.search) searchParams.set("search", params.search);
+  if (params.source) searchParams.set("source", params.source);
+  if (params.project) searchParams.set("project", params.project);
+  if (params.unassigned) searchParams.set("unassigned", "1");
+  if (params.limit) searchParams.set("limit", String(params.limit));
+  if (params.offset) searchParams.set("offset", String(params.offset));
+  const res = await apiFetch(`${API_BASE}/api/coding/conversations?${searchParams}`, { signal: params.signal });
+  return parseApiJson(res, "Failed to fetch coding agent conversations");
+}
+
+export interface CodingAgentConversationFilters {
+  sources: string[];
+  projects: { name: string; count: number }[];
+  unassigned: number;
+}
+
+export async function fetchCodingAgentConversationFilters(signal: AbortSignal): Promise<CodingAgentConversationFilters> {
+  const res = await apiFetch(`${API_BASE}/api/coding/conversations/filters`, { signal });
+  return parseApiJson(res, "Failed to fetch coding agent conversation filters");
+}
+
 export interface ConversationResponse {
   title: string;
   events: TimelineEvent[];

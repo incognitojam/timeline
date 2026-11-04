@@ -8,6 +8,7 @@ import { loadReplyQuotesForEvents } from "../export/reply-quotes";
 import { countTokens } from "../export/tokens";
 import { AI_USAGE_SOURCES, estimateCostUsd, tokenUsageFromExtract, USAGE_EXTRACT_SQL } from "../lib/ai-usage";
 import { type ConversationRangeExportFormat, normalizeConversationRangeExportFormat } from "../shared/conversation-export";
+import { CODING_AGENT_SOURCES_SQL } from "./coding-agent-conversations";
 import { conversationTypeClause } from "./conversation-types";
 import { createCursor, parseCursor, transformEvent, transformEvents } from "./events";
 import { parseIdentifier, resolveIdentities } from "./identities";
@@ -390,6 +391,10 @@ export interface ConversationListItem {
   lastMessage: string | null;
 }
 
+export interface CodingAgentConversationListItem extends ConversationListItem {
+  project: string | null;
+}
+
 export interface QueryTiming {
   start: (name: string, description: string) => void;
   end: (name: string) => void;
@@ -409,10 +414,33 @@ async function withQueryTiming<T>(
   }
 }
 
-export async function listConversationSources(db: QueryExecutor): Promise<string[]> {
+/**
+ * Which conversations a list covers: `messages` is every conversation except
+ * coding-agent sessions, and `coding` is coding-agent sessions. Source
+ * membership is defined in src/shared/grouping.ts.
+ */
+export type ConversationScope = "messages" | "coding";
+
+function scopeCondition(scope: ConversationScope): string {
+  switch (scope) {
+    case "messages":
+      return `cs.source NOT IN (${CODING_AGENT_SOURCES_SQL})`;
+    case "coding":
+      return `cs.source IN (${CODING_AGENT_SOURCES_SQL})`;
+  }
+}
+
+const CODING_AGENT_CONVERSATIONS_JOIN = `
+  LEFT JOIN coding_agent_conversations cac
+    ON cac.source = cs.source
+   AND cac.source_account_key = cs.source_account_key
+   AND cac.conversation_id = cs.conversation_id`;
+
+export async function listConversationSources(db: QueryExecutor, scope: ConversationScope): Promise<string[]> {
   const rows = await db.query<{ source: string }>(`
     SELECT DISTINCT source
-    FROM conversation_summaries
+    FROM conversation_summaries cs
+    WHERE ${scopeCondition(scope)}
     ORDER BY source
   `);
   return rows.map((row) => row.source);
@@ -426,18 +454,24 @@ export interface ListConversationsOptions {
   timing?: QueryTiming;
 }
 
-/**
- * List all conversations grouped by stable `conversation_id`. The displayed
- * `title` is the most recent one for the group, so renamed Discord channels
- * collapse to a single row showing the current name.
- */
-export async function listConversations(
-  db: QueryExecutor,
-  options: ListConversationsOptions = {}
-): Promise<{ conversations: ConversationListItem[]; total: number }> {
-  const { search, source, limit = 50, offset = 0, timing } = options;
+export type CodingProjectFilter = { kind: "project"; name: string } | { kind: "unassigned" };
 
-  const conditions: string[] = [];
+export interface ListCodingAgentConversationsOptions extends ListConversationsOptions {
+  project?: CodingProjectFilter;
+}
+
+interface ConversationListQuery extends ListConversationsOptions {
+  scope: ConversationScope;
+  project?: CodingProjectFilter;
+}
+
+async function queryConversationList<T extends ConversationListItem>(
+  db: QueryExecutor,
+  options: ConversationListQuery,
+): Promise<{ conversations: T[]; total: number }> {
+  const { scope, search, source, project, limit = 50, offset = 0, timing } = options;
+
+  const conditions: string[] = [scopeCondition(scope)];
   const params: (string | number)[] = [];
   if (search) {
     conditions.push(`EXISTS (
@@ -453,19 +487,26 @@ export async function listConversations(
     conditions.push("cs.source = ?");
     params.push(source);
   }
-  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  if (project?.kind === "project") {
+    conditions.push("cac.project = ?");
+    params.push(project.name);
+  } else if (project?.kind === "unassigned") {
+    conditions.push("cac.project IS NULL");
+  }
+  const join = scope === "coding" ? CODING_AGENT_CONVERSATIONS_JOIN : "";
+  const where = `WHERE ${conditions.join(" AND ")}`;
 
   timing?.start("conversations.count", "Grouped Conversation Count");
   const countPromise = db
     .get<{ total: number }>(
-      `SELECT COUNT(*) as total FROM conversation_summaries cs ${where}`,
+      `SELECT COUNT(*) as total FROM conversation_summaries cs ${join} ${where}`,
       ...params,
     )
     .finally(() => timing?.end("conversations.count"));
 
   timing?.start("conversations.page", "Conversation Summary Page");
   const pagePromise = db
-    .query<ConversationListItem>(
+    .query<T>(
       `SELECT
         cs.source,
         cs.source_account AS sourceAccount,
@@ -474,7 +515,9 @@ export async function listConversations(
         cs.message_count AS messageCount,
         cs.first_message AS firstMessage,
         cs.last_message AS lastMessage
+        ${scope === "coding" ? ", cac.project" : ""}
       FROM conversation_summaries cs
+      ${join}
       ${where}
       ORDER BY cs.last_message DESC LIMIT ? OFFSET ?`,
       ...params,
@@ -485,6 +528,53 @@ export async function listConversations(
 
   const [countResult, conversations] = await Promise.all([countPromise, pagePromise]);
   return { conversations, total: countResult?.total ?? 0 };
+}
+
+/**
+ * List conversations grouped by stable `conversation_id`. The displayed
+ * `title` is the most recent one for the group, so renamed Discord channels
+ * collapse to a single row showing the current name. Coding-agent sessions
+ * are listed with their project by `listCodingAgentConversations()`.
+ */
+export function listConversations(
+  db: QueryExecutor,
+  options: ListConversationsOptions = {},
+): Promise<{ conversations: ConversationListItem[]; total: number }> {
+  return queryConversationList(db, { ...options, scope: "messages" });
+}
+
+/** List coding-agent conversations with their coding project (null when unassigned). */
+export function listCodingAgentConversations(
+  db: QueryExecutor,
+  options: ListCodingAgentConversationsOptions = {},
+): Promise<{ conversations: CodingAgentConversationListItem[]; total: number }> {
+  return queryConversationList(db, { ...options, scope: "coding" });
+}
+
+export interface CodingAgentProjectCount {
+  name: string;
+  count: number;
+}
+
+/** Projects with coding-agent conversations, plus the count with no project. */
+export async function listCodingAgentConversationProjects(
+  db: QueryExecutor,
+): Promise<{ projects: CodingAgentProjectCount[]; unassigned: number }> {
+  const rows = await db.query<{ name: string | null; count: number }>(`
+    SELECT cac.project AS name, COUNT(*) AS count
+    FROM conversation_summaries cs
+    ${CODING_AGENT_CONVERSATIONS_JOIN}
+    WHERE ${scopeCondition("coding")}
+    GROUP BY cac.project
+    ORDER BY count DESC, name
+  `);
+  const projects: CodingAgentProjectCount[] = [];
+  let unassigned = 0;
+  for (const row of rows) {
+    if (row.name === null) unassigned = row.count;
+    else projects.push({ name: row.name, count: row.count });
+  }
+  return { projects, unassigned };
 }
 
 export interface ConversationOptions {

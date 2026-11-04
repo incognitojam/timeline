@@ -13,6 +13,7 @@ import {
 import {
   addEvalExpectationApi,
   addEvalQueryApi,
+  type CodingAgentConversationListParams,
   type AttachmentDescriptionEntry,
   type AttachmentDetail,
   type AttachmentListItem,
@@ -41,6 +42,8 @@ import {
   fetchAttachmentDetail,
   fetchAttachmentDescriptionHistory,
   fetchBiomarkers,
+  fetchCodingAgentConversationFilters,
+  fetchCodingAgentConversations,
   fetchCodingProjectConversations,
   fetchCodingProjects,
   fetchAttachments,
@@ -168,6 +171,8 @@ export const queryKeys = {
   conversations: (params?: { search?: string; source?: string; limit?: number; offset?: number }) =>
     ["conversations", params] as const,
   conversationSources: () => ["conversationSources"] as const,
+  codingAgentConversations: (params: CodingAgentConversationListParams) => ["codingAgentConversations", params] as const,
+  codingAgentConversationFilters: () => ["codingAgentConversationFilters"] as const,
   conversationPage: (params: ConversationPageParams) =>
     ["conversation", "page", params] as const,
   conversationAround: (params: ConversationAroundQueryParams) =>
@@ -402,6 +407,19 @@ export const queryOptions = {
     defineQueryOptions({
       queryKey: queryKeys.conversationSources(),
       queryFn: ({ signal }) => fetchConversationSources(signal),
+    }),
+
+  codingAgentConversations: (params: CodingAgentConversationListParams) =>
+    defineQueryOptions({
+      queryKey: queryKeys.codingAgentConversations(params),
+      queryFn: ({ signal }) => fetchCodingAgentConversations({ ...params, signal }),
+      placeholderData: keepPreviousData,
+    }),
+
+  codingAgentConversationFilters: () =>
+    defineQueryOptions({
+      queryKey: queryKeys.codingAgentConversationFilters(),
+      queryFn: ({ signal }) => fetchCodingAgentConversationFilters(signal),
     }),
 
   conversationPage: (params: ConversationPageParams) =>
@@ -1010,6 +1028,14 @@ export function useConversations(params: () => { search?: string; source?: strin
 
 export function useConversationSources() {
   return createQuery(() => queryOptions.conversationSources());
+}
+
+export function useCodingAgentConversations(params: () => CodingAgentConversationListParams) {
+  return createQuery(() => queryOptions.codingAgentConversations(params()));
+}
+
+export function useCodingAgentConversationFilters() {
+  return createQuery(() => queryOptions.codingAgentConversationFilters());
 }
 
 export function useConversationStats(

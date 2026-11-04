@@ -183,7 +183,7 @@ describe("conversation linking by conversation_id", () => {
       VALUES ('spotify', 'sources-spotify-1', 'alice', 'listen:track', '2026-01-01T00:00:00Z', 'Not a conversation', 'track', '{}')
     `).run();
 
-    const sources = await listConversationSources(wrapDatabase(db));
+    const sources = await listConversationSources(wrapDatabase(db), "messages");
 
     expect(sources).toEqual(["discord", "facebook"]);
   });

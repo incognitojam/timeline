@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import type { AttachmentStatus } from "../shared/attachments";
 import { applyConnectionPragmas } from "./connection";
+import { CODING_AGENT_SOURCES_SQL, codingAgentProjectSql } from "./coding-agent-conversations";
 import { conversationEventEligibilityClause, conversationTypeClause } from "./conversation-types";
 import { assertNoLocalDbMarker, getDbPathInfo, getTimelineDbPath } from "./paths";
 
@@ -335,6 +336,7 @@ function createSchema(db: Database) {
 
   ensureConversationSummaryTriggers(db);
   ensureConversationSummariesBackfilled(db);
+  ensureCodingAgentConversations(db);
 
   // FTS5 for full-text search
   db.exec(`
@@ -1237,6 +1239,100 @@ function ensureConversationSummaryTriggers(db: Database): void {
   ensureTrigger(db, "conversation_summaries_ai", `CREATE TRIGGER conversation_summaries_ai AFTER INSERT ON events WHEN ${eligible("NEW")} BEGIN ${insertFor("NEW")} END`);
   ensureTrigger(db, "conversation_summaries_ad", `CREATE TRIGGER conversation_summaries_ad AFTER DELETE ON events WHEN ${eligible("OLD")} BEGIN ${recomputeFor("OLD")} END`);
   ensureTrigger(db, "conversation_summaries_au", `CREATE TRIGGER conversation_summaries_au AFTER UPDATE ON events WHEN ${eligible("OLD")} OR ${eligible("NEW")} BEGIN ${recomputeFor("OLD")} ${recomputeFor("NEW")} END`);
+}
+
+// Per-conversation metadata for coding-agent conversations, keyed like
+// conversation_summaries. `project` comes from the conversation's earliest
+// event (by timestamp, id) that carries one, recorded as `project_event_id`,
+// so listing and filtering by project never parse raw_data at read time.
+function ensureCodingAgentConversations(db: Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS coding_agent_conversations (
+      source TEXT NOT NULL,
+      source_account_key TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      project TEXT,
+      project_event_id INTEGER,
+      PRIMARY KEY (source, source_account_key, conversation_id)
+    )
+  `);
+  ensureIndex(
+    db,
+    "idx_coding_agent_conversations_project",
+    `CREATE INDEX idx_coding_agent_conversations_project ON coding_agent_conversations(project)`,
+  );
+
+  const eligible = (ref: string) =>
+    `${ref}.source IN (${CODING_AGENT_SOURCES_SQL}) AND ${conversationEventEligibilityClause(`${ref}.`)} AND ${ref}.conversation_id IS NOT NULL`;
+  const keyMatches = (ref: string, table = "coding_agent_conversations") =>
+    `${table}.source = ${ref}.source AND ${table}.source_account_key = ${sourceAccountKeySql(ref)} AND ${table}.conversation_id = ${ref}.conversation_id`;
+  // (project, event id) of the earliest event in `ref`'s conversation that
+  // carries a project; no row when none does.
+  const earliestProject = (ref: string) => `
+    SELECT project, id FROM (
+      SELECT e.id, e.timestamp, ${codingAgentProjectSql("e")} AS project
+      FROM events e
+      WHERE e.source = ${ref}.source
+        AND e.source_account IS ${ref}.source_account
+        AND e.conversation_id = ${ref}.conversation_id
+        AND ${conversationTypeClause("e.")}
+        AND e.title IS NOT NULL
+    )
+    WHERE project IS NOT NULL
+    ORDER BY timestamp, id
+    LIMIT 1`;
+  // Recompute `ref`'s conversation from its events, only when `ref` was the
+  // event its project came from; any other event cannot displace an earlier
+  // anchor by disappearing or changing.
+  const recomputeIfAnchor = (ref: "OLD") => `
+    UPDATE coding_agent_conversations
+    SET (project, project_event_id) = (${earliestProject(ref)})
+    WHERE ${keyMatches(ref)} AND project_event_id = ${ref}.id;
+  `;
+  // An event only displaces the current project when it carries one and sorts
+  // earlier, so writes cost one parse of the new event.
+  const applyEvent = (ref: "NEW", guard: string) => `
+    INSERT INTO coding_agent_conversations (source, source_account_key, conversation_id, project, project_event_id)
+    SELECT ${ref}.source, ${sourceAccountKeySql(ref)}, ${ref}.conversation_id, project, CASE WHEN project IS NOT NULL THEN ${ref}.id END
+    FROM (SELECT ${codingAgentProjectSql(ref)} AS project)
+    WHERE ${guard}
+    ON CONFLICT(source, source_account_key, conversation_id) DO UPDATE SET
+      (project, project_event_id) = (
+        SELECT excluded.project, excluded.project_event_id
+        WHERE excluded.project IS NOT NULL AND NOT EXISTS (
+          SELECT 1 FROM events current
+          WHERE current.id = coding_agent_conversations.project_event_id
+            AND (current.timestamp < ${ref}.timestamp
+              OR (current.timestamp IS ${ref}.timestamp AND current.id < ${ref}.id)
+              OR (current.timestamp IS NULL AND ${ref}.timestamp IS NOT NULL))
+        )
+        UNION ALL
+        SELECT coding_agent_conversations.project, coding_agent_conversations.project_event_id
+        LIMIT 1
+      );
+  `;
+  ensureTrigger(db, "coding_agent_conversations_ai", `CREATE TRIGGER coding_agent_conversations_ai AFTER INSERT ON events WHEN ${eligible("NEW")} BEGIN ${applyEvent("NEW", "true")} END`);
+  ensureTrigger(db, "coding_agent_conversations_au", `CREATE TRIGGER coding_agent_conversations_au AFTER UPDATE OF source, source_account, conversation_id, type, title, raw_data, timestamp ON events WHEN ${eligible("OLD")} OR ${eligible("NEW")} BEGIN
+    ${recomputeIfAnchor("OLD")}
+    ${applyEvent("NEW", eligible("NEW"))}
+  END`);
+  ensureTrigger(db, "coding_agent_conversations_ad", `CREATE TRIGGER coding_agent_conversations_ad AFTER DELETE ON events WHEN ${eligible("OLD")} BEGIN ${recomputeIfAnchor("OLD")} END`);
+
+  // Backfill any conversation without a row (a new table, or events written
+  // while these triggers were absent).
+  db.exec(`
+    INSERT OR IGNORE INTO coding_agent_conversations (source, source_account_key, conversation_id, project, project_event_id)
+    SELECT source, source_account_key, conversation_id,
+      (SELECT ${codingAgentProjectSql("pe")} FROM events pe WHERE pe.id = anchor_id),
+      anchor_id
+    FROM (
+      SELECT cs.source, cs.source_account_key, cs.conversation_id,
+        (SELECT id FROM (${earliestProject("cs")})) AS anchor_id
+      FROM conversation_summaries cs
+      WHERE cs.source IN (${CODING_AGENT_SOURCES_SQL})
+        AND NOT EXISTS (SELECT 1 FROM coding_agent_conversations cac WHERE ${keyMatches("cs", "cac")})
+    )
+  `);
 }
 
 export function dropEventPeopleTriggers(db: Database): void {

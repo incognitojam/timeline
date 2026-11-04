@@ -24,6 +24,7 @@ import {
 import { getTrackedPlaylists, getPlaylistObservations, getPlaylistMeta } from "../db/playlist-follows";
 import { getMusicRankings, getRecentMusicPlays, isMusicPeriod } from "../db/music";
 import { streamJournalQuestions, streamJournalReflection } from "../journal/questions";
+import { clampLimit, clampOffset } from "./query-params";
 import { statusRoutes } from "./status";
 import { jobsRoutes } from "./jobs";
 import { evalRoutes } from "./eval";
@@ -107,6 +108,8 @@ import {
   getConversationMedia,
   listConversations,
   listConversationSources,
+  listCodingAgentConversations,
+  listCodingAgentConversationProjects,
   listDiscordServers,
   getDiscordServer,
   createCursor,
@@ -1460,6 +1463,7 @@ function fallbackNameFromIdentifier(identifier: string): string {
   return parsed.platformId || identifier;
 }
 
+// Coding-agent sessions list with their project on /api/coding/conversations.
 app.get("/api/conversations", async (c) => {
   const query = c.req.query();
   setMetric(c, "dbpool.pending.before", readDbPool.getStats().pending, "pending query count before handler");
@@ -1482,7 +1486,7 @@ app.get("/api/conversations", async (c) => {
 });
 
 app.get("/api/conversations/sources", async (c) => {
-  const sources = await listConversationSources(readDb);
+  const sources = await listConversationSources(readDb, "messages");
   return c.json({ sources });
 });
 
@@ -2626,6 +2630,51 @@ app.get("/api/coding/projects/:name/conversations", async (c) => {
   return c.json(
     await getCodingProjectConversations(readDb, name, { limit, offset })
   );
+});
+
+// Coding-agent conversations, with their coding project.
+// `project` filters to one project; `unassigned=1` to conversations with none.
+app.get("/api/coding/conversations", async (c) => {
+  const query = c.req.query();
+  if (query.unassigned !== undefined && query.unassigned !== "1") {
+    return c.json({ error: "unassigned must be 1 when present" }, 400);
+  }
+  if (query.project && query.unassigned) {
+    return c.json({ error: "project and unassigned are mutually exclusive" }, 400);
+  }
+  setMetric(c, "dbpool.pending.before", readDbPool.getStats().pending, "pending query count before handler");
+  timingStart(c, "coding.conversations.list", "List Coding Agent Conversations");
+  try {
+    return c.json(
+      await listCodingAgentConversations(readDb, {
+        search: query.search || undefined,
+        source: query.source || undefined,
+        project: query.project
+          ? { kind: "project", name: query.project }
+          : query.unassigned
+            ? { kind: "unassigned" }
+            : undefined,
+        limit: clampLimit(query.limit, 50, 200),
+        offset: clampOffset(query.offset),
+        timing: {
+          start: (name, description) => timingStart(c, name, description),
+          end: (name) => timingEnd(c, name),
+        },
+      })
+    );
+  } finally {
+    timingEnd(c, "coding.conversations.list");
+  }
+});
+
+// Filter options for the coding-agent list: sources present, projects with
+// their conversation counts, and how many conversations have no project.
+app.get("/api/coding/conversations/filters", async (c) => {
+  const [sources, projects] = await Promise.all([
+    listConversationSources(readDb, "coding"),
+    listCodingAgentConversationProjects(readDb),
+  ]);
+  return c.json({ sources, ...projects });
 });
 
 // Markdown-first status page with content negotiation
