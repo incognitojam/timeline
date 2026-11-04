@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { CONVERSATION_SUMMARY_EVENT_COLUMNS, initDb, rebuildConversationSummaries } from "./schema";
+import { CONVERSATION_SUMMARY_EVENT_COLUMNS, conversationSummaryBoundTimestampSql, initDb, rebuildConversationSummaries } from "./schema";
 
 type Snapshot = { summaries: unknown[]; titles: unknown[] };
 
@@ -135,7 +135,7 @@ describe("conversation summary triggers", () => {
           };
           insertEvent(db, row);
           description = `insert ${JSON.stringify(row)}`;
-        } else if (op < 0.75) {
+        } else if (op < 0.7) {
           // Update a random subset of columns on one row, or on every row of a
           // conversation (the bulk rename/re-import shape).
           const assignments: Record<string, string | number | null> = {};
@@ -163,11 +163,45 @@ describe("conversation summary triggers", () => {
             db.prepare(`UPDATE OR IGNORE events SET ${setSql} WHERE id = ?`).run(...Object.values(assignments), id);
             description = `update of ${id} with ${JSON.stringify(assignments)}`;
           }
-        } else if (op < 0.82) {
+        } else if (op < 0.78) {
+          // `rowid` is an alias of `id`; a write through it must be seen too.
           const id = pick(ids);
-          db.prepare("UPDATE events SET id = (SELECT MAX(id) + 1 FROM events) WHERE id = ?").run(id);
-          description = `id change of ${id}`;
-        } else if (op < 0.95) {
+          const column = random() < 0.5 ? "id" : "rowid";
+          db.prepare(`UPDATE events SET ${column} = (SELECT MAX(id) + 1 FROM events) WHERE id = ?`).run(id);
+          description = `${column} change of ${id}`;
+        } else if (op < 0.86) {
+          // Importer write shapes on an existing unique key: REPLACE (a delete
+          // plus an insert) and an upsert that rewrites title and raw_data.
+          // Only keyed rows with an account conflict (NULLs never match).
+          const keyed = db.prepare("SELECT source, source_id, source_account FROM events WHERE source_account IS NOT NULL ORDER BY id").all() as Array<{
+            source: string;
+            source_id: string;
+            source_account: string;
+          }>;
+          if (keyed.length === 0) continue;
+          const existing = pick(keyed);
+          const row = {
+            ...existing,
+            type: pick(TYPES),
+            timestamp: maybeNull(TIMESTAMPS),
+            title: maybeNull(TITLES),
+            content: "body",
+            raw_data: JSON.stringify({ step }),
+            conversation_id: pick(CONVERSATIONS),
+          };
+          const columns = Object.keys(row);
+          const values = `VALUES (${columns.map(() => "?").join(", ")})`;
+          if (random() < 0.5) {
+            db.prepare(`INSERT OR REPLACE INTO events (${columns.join(", ")}) ${values}`).run(...Object.values(row));
+            description = `replace ${JSON.stringify(row)}`;
+          } else {
+            db.prepare(
+              `INSERT INTO events (${columns.join(", ")}) ${values}
+               ON CONFLICT (source, source_id, source_account) DO UPDATE SET title = excluded.title, raw_data = excluded.raw_data`,
+            ).run(...Object.values(row));
+            description = `upsert ${JSON.stringify(row)}`;
+          }
+        } else if (op < 0.96) {
           const id = pick(ids);
           db.prepare("DELETE FROM events WHERE id = ?").run(id);
           description = `delete of ${id}`;
@@ -272,5 +306,49 @@ describe("conversation summary triggers", () => {
     db.exec("UPDATE events SET title = 'Renamed', timestamp = '2026-02-01T00:00:00Z' WHERE source_id IN ('seed-1', 'seed-4')");
     db.exec("UPDATE events SET conversation_id = 'thread-3' WHERE source_id = 'seed-0'");
     expectMatchesRebuild(db, "updates after upgrade");
+  });
+
+  it("see id changes written through rowid", () => {
+    for (const [sourceId, title] of [["tie-1", "Alice"], ["tie-2", "Bob"]]) {
+      insertEvent(db, {
+        source: "alpha",
+        source_id: sourceId,
+        source_account: "acct-a",
+        type: "message:dm",
+        timestamp: TIMESTAMPS[0] ?? null,
+        title,
+        raw_data: "{}",
+        conversation_id: "thread-1",
+      });
+    }
+    // Equal timestamps, so the latest title follows the higher id.
+    db.exec("UPDATE events SET rowid = (SELECT MAX(id) + 1 FROM events) WHERE source_id = 'tie-1'");
+    expect(db.prepare("SELECT title FROM conversation_summaries").get()).toEqual({ title: "Alice" });
+    expectMatchesRebuild(db, "rowid change");
+  });
+
+  it("re-read bounds through ordered index probes", () => {
+    // A scan or sort here makes bulk renames quadratic again, e.g. renaming one
+    // conversation that shares its title with another in the same account.
+    const cases = [
+      ["title", "idx_events_conversation_titles"],
+      ["conversation", "idx_events_conversation_id"],
+    ] as const;
+    for (const [scope, index] of cases) {
+      for (const direction of ["ASC", "DESC"] as const) {
+        const details = (
+          db
+            .prepare(`
+              EXPLAIN QUERY PLAN
+              WITH old(source, source_account, conversation_id, title) AS (SELECT 'alpha', 'acct-a', 'thread-1', 'Alice')
+              SELECT ${conversationSummaryBoundTimestampSql(scope, direction, "old")} FROM old
+            `)
+            .all() as Array<{ detail: string }>
+        ).map((row) => row.detail);
+        const context = `${scope} ${direction}: ${JSON.stringify(details)}`;
+        expect(details.some((detail) => detail.includes(`USING INDEX ${index}`) || detail.includes(`USING COVERING INDEX ${index}`)), context).toBe(true);
+        expect(details.some((detail) => detail.includes("TEMP B-TREE")), context).toBe(false);
+      }
+    }
   });
 });

@@ -275,6 +275,14 @@ function createSchema(db: Database) {
     "idx_events_conversation_id",
     `CREATE INDEX idx_events_conversation_id ON events(source, source_account, conversation_id, timestamp) WHERE conversation_id IS NOT NULL AND ${conversationTypeClause()}`,
   );
+  // Serves the summary triggers' per-title bound probes (one conversation, one
+  // title, ordered by timestamp), so they stay index lookups even when other
+  // conversations in the same source and account share the title.
+  ensureIndex(
+    db,
+    "idx_events_conversation_titles",
+    `CREATE INDEX idx_events_conversation_titles ON events(source, source_account, conversation_id, title, timestamp) WHERE ${conversationEventEligibilityClause()} AND conversation_id IS NOT NULL`,
+  );
 
   ensureEventDaySources(db);
 
@@ -1096,6 +1104,37 @@ export const CONVERSATION_SUMMARY_EVENT_COLUMNS = [
   "timestamp",
 ] as const;
 
+type SummaryProbeScope = "conversation" | "title";
+
+// Eligible events of `ref`'s conversation (and, for a title row, `ref`'s title).
+// In the delete path `ref` is OLD, so this is the table as it stands after the
+// write, without OLD's contribution. The conversation variant probes
+// idx_events_conversation_id and the title variant
+// idx_events_conversation_titles; both are ordered by timestamp.
+function summaryRemainingEvents(scope: SummaryProbeScope, ref: string): string {
+  const eventCondition = `${CONVERSATION_EVENT_CONDITION.replace(/\btype\b/g, "e.type").replace(/\btitle\b/g, "e.title")} AND e.conversation_id IS NOT NULL`;
+  return `
+    FROM events e
+    WHERE ${eventCondition}
+      AND e.source = ${ref}.source
+      AND e.source_account IS ${ref}.source_account
+      AND e.conversation_id = ${ref}.conversation_id${scope === "title" ? ` AND e.title = ${ref}.title` : ""}`;
+}
+
+/**
+ * The scalar subquery the summary triggers use to re-read a first or last
+ * timestamp after removing the event that held it. Exported so tests can check
+ * its query plan stays an ordered index probe.
+ */
+export function conversationSummaryBoundTimestampSql(scope: SummaryProbeScope, direction: "ASC" | "DESC", ref = "OLD"): string {
+  return `(
+    SELECT e.timestamp ${summaryRemainingEvents(scope, ref)}
+      AND e.timestamp IS NOT NULL
+    ORDER BY e.timestamp ${direction}
+    LIMIT 1
+  )`;
+}
+
 /**
  * The triggers maintain both summary tables incrementally: an insert adds the
  * row's contribution, a delete removes it, and an update removes OLD then adds
@@ -1104,30 +1143,13 @@ export const CONVERSATION_SUMMARY_EVENT_COLUMNS = [
  * index probe, so bulk renames, deletes and re-imports stay linear.
  */
 function ensureConversationSummaryTriggers(db: Database): void {
-  const eventCondition = `${CONVERSATION_EVENT_CONDITION.replace(/\btype\b/g, "e.type").replace(/\btitle\b/g, "e.title")} AND e.conversation_id IS NOT NULL`;
   const eligible = (ref: "NEW" | "OLD") => `(${conversationEventEligibilityClause(`${ref}.`)} AND ${ref}.conversation_id IS NOT NULL)`;
   const summaryKey = (ref: "NEW" | "OLD") => `
     source = ${ref}.source
     AND source_account_key = ${sourceAccountKeySql(ref)}
     AND conversation_id = ${ref}.conversation_id`;
-  // Eligible events of OLD's conversation (and, for a title row, OLD's title)
-  // in the table as it stands after the write, i.e. without OLD's contribution.
-  // The title variant writes `+e.conversation_id` so SQLite probes
-  // idx_events_conversations by title rather than scanning the conversation's
-  // other titles through idx_events_conversation_id, which would make renaming
-  // a whole conversation quadratic again.
-  const remainingEvents = (scope: "conversation" | "title") => `
-    FROM events e
-    WHERE ${eventCondition}
-      AND e.source = OLD.source
-      AND e.source_account IS OLD.source_account
-      AND ${scope === "title" ? "+e.conversation_id = OLD.conversation_id AND e.title = OLD.title" : "e.conversation_id = OLD.conversation_id"}`;
-  const boundTimestamp = (scope: "conversation" | "title", direction: "ASC" | "DESC") => `(
-    SELECT e.timestamp ${remainingEvents(scope)}
-      AND e.timestamp IS NOT NULL
-    ORDER BY e.timestamp ${direction}
-    LIMIT 1
-  )`;
+  const remainingEvents = (scope: SummaryProbeScope) => summaryRemainingEvents(scope, "OLD");
+  const boundTimestamp = (scope: SummaryProbeScope, direction: "ASC" | "DESC") => conversationSummaryBoundTimestampSql(scope, direction);
   // Same ordering as rebuildConversationSummaries(): timestamp DESC (NULLs
   // last), then id DESC.
   const isNewerThanLatest = (current: string) => `(
@@ -1244,14 +1266,16 @@ function ensureConversationSummaryTriggers(db: Database): void {
       AND latest_title_event_id = OLD.id;
   `;
 
-  const updateColumns = CONVERSATION_SUMMARY_EVENT_COLUMNS.join(", ");
+  // The update trigger compares values rather than using `UPDATE OF <columns>`:
+  // SQLite matches that list by name, so a write through `rowid` (an alias of
+  // `id`) would skip it.
   const summaryColumnChanged = CONVERSATION_SUMMARY_EVENT_COLUMNS.map((col) => `OLD.${col} IS NOT NEW.${col}`).join(" OR ");
   ensureTrigger(db, "conversation_summaries_ai", `CREATE TRIGGER conversation_summaries_ai AFTER INSERT ON events WHEN ${eligible("NEW")} BEGIN ${addNew} END`);
   ensureTrigger(db, "conversation_summaries_ad", `CREATE TRIGGER conversation_summaries_ad AFTER DELETE ON events WHEN ${eligible("OLD")} BEGIN ${removeOld} END`);
   ensureTrigger(
     db,
     "conversation_summaries_au",
-    `CREATE TRIGGER conversation_summaries_au AFTER UPDATE OF ${updateColumns} ON events WHEN (${eligible("OLD")} OR ${eligible("NEW")}) AND (${summaryColumnChanged}) BEGIN ${removeOld} ${addNew} END`,
+    `CREATE TRIGGER conversation_summaries_au AFTER UPDATE ON events WHEN (${eligible("OLD")} OR ${eligible("NEW")}) AND (${summaryColumnChanged}) BEGIN ${removeOld} ${addNew} END`,
   );
 }
 
