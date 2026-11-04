@@ -29,6 +29,13 @@ export const SESSION_FILE = "session.json";
  */
 export const SYNC_OVERLAP_MS = 60 * 60 * 1000;
 /**
+ * How often a run lists every conversation instead of stopping at the last
+ * clean run. Catches what the phone's newest-first order cannot surface: a
+ * conversation with no cursor whose latest message is old, or a message
+ * delivered late with an old timestamp.
+ */
+export const FULL_LISTING_INTERVAL_MS = 24 * 60 * 60 * 1000;
+/**
  * Prefix of the per-run directory (inside the state dir) the sidecar downloads
  * media into. Files leave it as the importer stores them; the directory is
  * removed when the run ends, and any left behind by a crash is swept next run.
@@ -38,6 +45,10 @@ export const MEDIA_STAGING_PREFIX = "media-staging-";
 export interface GoogleMessagesSyncState {
   /** Conversation id → wall-clock start (Unix ms) of the run that last fully paged it. */
   conversations: Record<string, number>;
+  /** Start (Unix ms) of the last run that finished with every conversation paged. */
+  listedThrough?: number;
+  /** Start (Unix ms) of the last such run that listed every conversation. */
+  fullListingAt?: number;
 }
 
 interface ResolvedConfig {
@@ -56,7 +67,7 @@ function resolveConfig(config: Record<string, unknown> | undefined): ResolvedCon
 
 function loadState(): GoogleMessagesSyncState {
   const state = getSyncState<Partial<GoogleMessagesSyncState>>(getAppStateDb(), EVENT_SOURCE);
-  return { conversations: state?.conversations ?? {} };
+  return { ...state, conversations: state?.conversations ?? {} };
 }
 
 /** Per-conversation `since` values handed to the sidecar. */
@@ -64,6 +75,18 @@ export function cursorsFor(state: GoogleMessagesSyncState): Record<string, numbe
   return Object.fromEntries(
     Object.entries(state.conversations).map(([id, completedAt]) => [id, Math.max(0, completedAt - SYNC_OVERLAP_MS)]),
   );
+}
+
+/**
+ * The `-list-until` cutoff for a run: everything older was paged by the last
+ * clean run, and that run's own cutoff covers what came before it, back to a
+ * full listing. Undefined means list every conversation.
+ */
+export function listUntilFor(state: GoogleMessagesSyncState, now: number): number | undefined {
+  const { listedThrough, fullListingAt } = state;
+  if (listedThrough === undefined || fullListingAt === undefined) return undefined;
+  if (now - fullListingAt >= FULL_LISTING_INTERVAL_MS) return undefined;
+  return Math.max(0, listedThrough - SYNC_OVERLAP_MS);
 }
 
 function createMediaStaging(stateDir: string): string {
@@ -87,11 +110,13 @@ interface SidecarRun<T> {
 async function runSidecar<T>(
   config: ResolvedConfig,
   cursors: Record<string, number>,
+  listUntil: number | undefined,
   mediaDir: string,
   signal: AbortSignal | undefined,
   consume: (lines: AsyncIterable<string>) => Promise<T>,
 ): Promise<SidecarRun<T>> {
-  const [command, ...args] = backgroundCommand([config.binary, "dump", "-folder", "all", "-cursors", "-", "-media", mediaDir]);
+  const listUntilArgs = listUntil === undefined ? [] : ["-list-until", String(listUntil)];
+  const [command, ...args] = backgroundCommand([config.binary, "dump", "-folder", "all", "-cursors", "-", "-media", mediaDir, ...listUntilArgs]);
   const proc = spawn(command, args, {
     cwd: config.stateDir,
     stdio: ["pipe", "pipe", "pipe"],
@@ -198,13 +223,14 @@ export const googleMessagesSyncSource: SyncSource = {
     const appState = getAppStateDb();
     const state = loadState();
     const cursors = cursorsFor(state);
+    const listUntil = listUntilFor(state, startTime);
 
     const db = getDb();
     initDb(db);
     let mediaDir: string | undefined;
     try {
       mediaDir = createMediaStaging(resolved.stateDir);
-      const run = await runSidecar<ImportStats>(resolved, cursors, mediaDir, options.signal, (lines) =>
+      const run = await runSidecar<ImportStats>(resolved, cursors, listUntil, mediaDir, options.signal, (lines) =>
         importGoogleMessages(db, lines, {
           sourceAccount: resolved.account,
           importBatch: `${EVENT_SOURCE}-${resolved.account}-${startTime}`,
@@ -225,6 +251,9 @@ export const googleMessagesSyncSource: SyncSource = {
           stats,
         );
       }
+      state.listedThrough = startTime;
+      if (listUntil === undefined) state.fullListingAt = startTime;
+      setSyncState(appState, EVENT_SOURCE, state);
       return {
         source: EVENT_SOURCE,
         success: true,
