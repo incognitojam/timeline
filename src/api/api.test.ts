@@ -20,6 +20,7 @@ import {
   recordPlaylistObservation,
 } from "../db/playlist-follows";
 import { getDb } from "../db/schema";
+import { seed } from "../testing/seed";
 import { MANUAL_ATTACHMENT_DESCRIPTION_TIMEOUT_MS, type AttachmentsStats } from "../shared/attachments";
 import {
   LocalMediaStore,
@@ -3316,9 +3317,11 @@ describe("API Smoke Tests", () => {
           )
           VALUES (?, ?, '{}', 2, 'ok', 2, ?, 0, ?, datetime('now', ?))
         `);
-        for (let i = 0; i < 205; i++) {
-          insert.run(sessionId, "get_summary", i % 5 === 0 ? 1 : 0, i + 1, `-${i} seconds`);
-        }
+        seed(appDb, () => {
+          for (let i = 0; i < 205; i++) {
+            insert.run(sessionId, "get_summary", i % 5 === 0 ? 1 : 0, i + 1, `-${i} seconds`);
+          }
+        });
 
         const res = await app.request(`/api/mcp/sessions/${encodeURIComponent(sessionId)}?limit=-1`);
         expect(res.status).toBe(200);
@@ -3342,9 +3345,11 @@ describe("API Smoke Tests", () => {
           INSERT INTO mcp_sessions (id, transport, created_at, last_activity_at)
           VALUES (?, 'http', datetime('now'), datetime('now'))
         `);
-        for (let i = 0; i < 55; i++) {
-          insert.run(`${prefix}-${i}`);
-        }
+        seed(appDb, () => {
+          for (let i = 0; i < 55; i++) {
+            insert.run(`${prefix}-${i}`);
+          }
+        });
 
         const res = await app.request("/api/mcp/sessions?limit=-1");
         expect(res.status).toBe(200);

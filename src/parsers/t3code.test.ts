@@ -5,6 +5,7 @@ import { mkdir, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { initDb } from "../db/schema";
+import { seed } from "../testing/seed";
 import { computeHash } from "../media/storage";
 import { activityToBlocks, importT3Code } from "./t3code";
 
@@ -35,7 +36,7 @@ const T3_IMAGE_BYTES = Buffer.from("fixture t3 image bytes");
 
 function createT3Fixture(path: string): Database {
   const t3Db = new Database(path);
-  t3Db.run(`
+  seed(t3Db, () => t3Db.run(`
     CREATE TABLE projection_projects (
       project_id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -76,7 +77,7 @@ function createT3Fixture(path: string): Database {
       created_at TEXT NOT NULL,
       sequence INTEGER
     );
-  `);
+  `));
   return t3Db;
 }
 
@@ -167,65 +168,67 @@ describe("importT3Code", () => {
     process.env.TIMELINE_MEDIA_PATH = mediaDir;
 
     const t3Db = createT3Fixture(t3DbPath);
-    t3Db.run(
-      `INSERT INTO projection_projects VALUES ('proj-1', 'my-project', '/tmp/my-project')`
-    );
-    t3Db.run(
-      `INSERT INTO projection_threads VALUES
-        ('thread-1', 'proj-1', 'Fix the widget', 'main', NULL,
-         '{"instanceId":"claudeAgent","model":"claude-sonnet-5","options":[{"id":"effort","value":"high"}]}',
-         NULL, NULL),
-        ('thread-2', 'proj-1', 'Deleted thread', 'alice/branch', '/tmp/wt',
-         '{"instanceId":"codex","model":"gpt-5.5"}',
-         '2026-06-01T00:00:00.000Z', '2026-06-02T00:00:00.000Z')`
-    );
-    t3Db.run(
-      `INSERT INTO projection_thread_sessions VALUES
-        ('thread-1', 'claudeAgent'), ('thread-2', 'codex')`
-    );
-    t3Db.run(
-      `INSERT INTO projection_thread_messages VALUES
-        ('msg-1', 'thread-1', 'turn-1', 'user', 'Please fix the widget', 0,
-         '2026-06-10T10:00:00.000Z',
-         '[{"type":"image","id":"att-1","name":"shot.png","mimeType":"image/png","sizeBytes":${T3_IMAGE_BYTES.length}}]'),
-        ('msg-2', 'thread-1', 'turn-1', 'assistant', 'Fixed it', 0,
-         '2026-06-10T10:01:00.000Z', NULL),
-        ('msg-3', 'thread-1', 'turn-2', 'assistant', 'Still writing...', 1,
-         '2026-06-10T10:02:00.000Z', NULL),
-        ('msg-4', 'thread-2', NULL, 'user', 'Message in deleted thread', 0,
-         '2026-06-11T09:00:00.000Z', NULL),
-        ('msg-5', 'thread-2', NULL, 'assistant', '   ', 0,
-         '2026-06-11T09:01:00.000Z', NULL)`
-    );
-    const insertActivity = t3Db.prepare(
-      `INSERT INTO projection_thread_activities VALUES (?, ?, ?, 'tool', ?, ?, ?, ?, ?)`
-    );
-    insertActivity.run(
-      "act-1", "thread-1", "turn-1", "tool.completed", "Tool call",
-      claudeReadPayload, "2026-06-10T10:00:30.000Z", 1
-    );
-    insertActivity.run(
-      "act-2", "thread-1", "turn-1", "tool.completed", "Command run",
-      claudeBashErrorPayload, "2026-06-10T10:01:30.000Z", 2
-    );
-    // In-flight tool call: must not import until a tool.completed row exists.
-    insertActivity.run(
-      "act-3", "thread-1", "turn-2", "tool.started", "Tool call",
-      claudeReadPayload, "2026-06-10T10:02:00.000Z", 3
-    );
-    insertActivity.run(
-      "act-4", "thread-2", null, "tool.completed", "Command run",
-      codexCommandPayload, "2026-06-11T09:00:30.000Z", 1
-    );
-    insertActivity.run(
-      "act-5", "thread-2", null, "tool.completed", "File change",
-      codexFileChangePayload, "2026-06-11T09:00:45.000Z", 2
-    );
-    // Unrecognized payload with no data: produces no blocks, counted skipped.
-    insertActivity.run(
-      "act-6", "thread-2", null, "tool.completed", "Mystery",
-      '{"itemType":"mystery","data":{}}', "2026-06-11T09:00:50.000Z", 3
-    );
+    seed(t3Db, () => {
+      t3Db.run(
+        `INSERT INTO projection_projects VALUES ('proj-1', 'my-project', '/tmp/my-project')`
+      );
+      t3Db.run(
+        `INSERT INTO projection_threads VALUES
+          ('thread-1', 'proj-1', 'Fix the widget', 'main', NULL,
+           '{"instanceId":"claudeAgent","model":"claude-sonnet-5","options":[{"id":"effort","value":"high"}]}',
+           NULL, NULL),
+          ('thread-2', 'proj-1', 'Deleted thread', 'alice/branch', '/tmp/wt',
+           '{"instanceId":"codex","model":"gpt-5.5"}',
+           '2026-06-01T00:00:00.000Z', '2026-06-02T00:00:00.000Z')`
+      );
+      t3Db.run(
+        `INSERT INTO projection_thread_sessions VALUES
+          ('thread-1', 'claudeAgent'), ('thread-2', 'codex')`
+      );
+      t3Db.run(
+        `INSERT INTO projection_thread_messages VALUES
+          ('msg-1', 'thread-1', 'turn-1', 'user', 'Please fix the widget', 0,
+           '2026-06-10T10:00:00.000Z',
+           '[{"type":"image","id":"att-1","name":"shot.png","mimeType":"image/png","sizeBytes":${T3_IMAGE_BYTES.length}}]'),
+          ('msg-2', 'thread-1', 'turn-1', 'assistant', 'Fixed it', 0,
+           '2026-06-10T10:01:00.000Z', NULL),
+          ('msg-3', 'thread-1', 'turn-2', 'assistant', 'Still writing...', 1,
+           '2026-06-10T10:02:00.000Z', NULL),
+          ('msg-4', 'thread-2', NULL, 'user', 'Message in deleted thread', 0,
+           '2026-06-11T09:00:00.000Z', NULL),
+          ('msg-5', 'thread-2', NULL, 'assistant', '   ', 0,
+           '2026-06-11T09:01:00.000Z', NULL)`
+      );
+      const insertActivity = t3Db.prepare(
+        `INSERT INTO projection_thread_activities VALUES (?, ?, ?, 'tool', ?, ?, ?, ?, ?)`
+      );
+      insertActivity.run(
+        "act-1", "thread-1", "turn-1", "tool.completed", "Tool call",
+        claudeReadPayload, "2026-06-10T10:00:30.000Z", 1
+      );
+      insertActivity.run(
+        "act-2", "thread-1", "turn-1", "tool.completed", "Command run",
+        claudeBashErrorPayload, "2026-06-10T10:01:30.000Z", 2
+      );
+      // In-flight tool call: must not import until a tool.completed row exists.
+      insertActivity.run(
+        "act-3", "thread-1", "turn-2", "tool.started", "Tool call",
+        claudeReadPayload, "2026-06-10T10:02:00.000Z", 3
+      );
+      insertActivity.run(
+        "act-4", "thread-2", null, "tool.completed", "Command run",
+        codexCommandPayload, "2026-06-11T09:00:30.000Z", 1
+      );
+      insertActivity.run(
+        "act-5", "thread-2", null, "tool.completed", "File change",
+        codexFileChangePayload, "2026-06-11T09:00:45.000Z", 2
+      );
+      // Unrecognized payload with no data: produces no blocks, counted skipped.
+      insertActivity.run(
+        "act-6", "thread-2", null, "tool.completed", "Mystery",
+        '{"itemType":"mystery","data":{}}', "2026-06-11T09:00:50.000Z", 3
+      );
+    });
     t3Db.close();
   });
 

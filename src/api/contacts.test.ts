@@ -11,6 +11,7 @@ process.env.NODE_ENV = "test";
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { app } from "./index";
 import { getDb } from "../db/schema";
+import { seed } from "../testing/seed";
 import {
   createContact,
   upsertIdentity,
@@ -28,43 +29,47 @@ describe("Filtered contact events", () => {
 
   beforeAll(() => {
     const db = getDb();
-    contactId = createContact(db, "Alice");
-    for (const platform of ["discord", "steam", "phone"] as const) {
-      upsertIdentity(db, { platform, platformId, displayName: "Alice" });
-      linkIdentityToContact(db, platform, platformId, contactId);
-    }
-    const insert = db.prepare(`
-      INSERT INTO events (source, source_id, source_account, type, timestamp, title, content, people, raw_data, conversation_id)
-      VALUES (?, ?, 'test-account', ?, ?, ?, 'filtersearchneedle', ?, '{}', ?)
-    `);
-    const seed = (source: string, type: string, people: string[], timestamp = "2097-01-01T00:00:00Z") => {
-      const result = insert.run(
-        source, `${platformId}-${eventIds.length}`, type, timestamp,
-        "Project 100%_Done", JSON.stringify(people), platformId,
-      );
-      const id = Number(result.lastInsertRowid);
-      eventIds.push(id);
-      return id;
-    };
-    discordIds.push(seed("discord", "message:dm", [`discord:${platformId}`]));
-    discordIds.push(seed("discord", "message:dm:attachment", ["discord:bob", `discord:${platformId}`]));
-    discordIds.push(seed("discord", "message:group", [`discord:${platformId}`, "discord:bob"]));
-    phoneId = seed("phone", "call:incoming", ["phone:bob", `phone:${platformId}`]);
-    manualId = seed("manual", "note", ["contact:999999", `contact:${contactId}`]);
-    // Group membership alone must not make another sender's message a match.
-    seed("discord", "message:group", ["discord:bob", `discord:${platformId}`]);
-    // These fill the unfiltered first page and must not hide older matches.
-    for (let i = 0; i < 60; i++) {
-      seed("steam", "steam:session", [`steam:${platformId}`], "2098-01-01T00:00:00Z");
-    }
+    seed(db, () => {
+      contactId = createContact(db, "Alice");
+      for (const platform of ["discord", "steam", "phone"] as const) {
+        upsertIdentity(db, { platform, platformId, displayName: "Alice" });
+        linkIdentityToContact(db, platform, platformId, contactId);
+      }
+      const insert = db.prepare(`
+        INSERT INTO events (source, source_id, source_account, type, timestamp, title, content, people, raw_data, conversation_id)
+        VALUES (?, ?, 'test-account', ?, ?, ?, 'filtersearchneedle', ?, '{}', ?)
+      `);
+      const insertEvent = (source: string, type: string, people: string[], timestamp = "2097-01-01T00:00:00Z") => {
+        const result = insert.run(
+          source, `${platformId}-${eventIds.length}`, type, timestamp,
+          "Project 100%_Done", JSON.stringify(people), platformId,
+        );
+        const id = Number(result.lastInsertRowid);
+        eventIds.push(id);
+        return id;
+      };
+      discordIds.push(insertEvent("discord", "message:dm", [`discord:${platformId}`]));
+      discordIds.push(insertEvent("discord", "message:dm:attachment", ["discord:bob", `discord:${platformId}`]));
+      discordIds.push(insertEvent("discord", "message:group", [`discord:${platformId}`, "discord:bob"]));
+      phoneId = insertEvent("phone", "call:incoming", ["phone:bob", `phone:${platformId}`]);
+      manualId = insertEvent("manual", "note", ["contact:999999", `contact:${contactId}`]);
+      // Group membership alone must not make another sender's message a match.
+      insertEvent("discord", "message:group", ["discord:bob", `discord:${platformId}`]);
+      // These fill the unfiltered first page and must not hide older matches.
+      for (let i = 0; i < 60; i++) {
+        insertEvent("steam", "steam:session", [`steam:${platformId}`], "2098-01-01T00:00:00Z");
+      }
+    });
   });
 
   afterAll(() => {
     const db = getDb();
-    const removeEvent = db.prepare("DELETE FROM events WHERE id = ?");
-    for (const id of eventIds) removeEvent.run(id);
-    db.prepare("DELETE FROM identities WHERE contact_id = ? AND platform_id = ?").run(contactId, platformId);
-    deleteContact(db, contactId);
+    seed(db, () => {
+      const removeEvent = db.prepare("DELETE FROM events WHERE id = ?");
+      for (const id of eventIds) removeEvent.run(id);
+      db.prepare("DELETE FROM identities WHERE contact_id = ? AND platform_id = ?").run(contactId, platformId);
+      deleteContact(db, contactId);
+    });
   });
 
   async function search(params: Record<string, string>) {

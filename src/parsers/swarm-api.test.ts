@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { deleteSyncState, getAppStateDb, getSyncState } from "../db/app-state";
 import { getDb, initDb } from "../db/schema";
+import { seed } from "../testing/seed";
 import { insertSwarmEvent, SWARM_PAGE_LIMIT, syncSwarmCheckins, type SwarmCheckin } from "./swarm-api";
 
 const checkin: SwarmCheckin = {
@@ -137,9 +138,11 @@ describe("syncSwarmCheckins", () => {
       initDb(db);
       db.prepare("DELETE FROM events WHERE source = 'swarm' AND source_account = ?").run(sourceAccount);
       deleteSyncState(appDb, "swarm");
-      for (const item of firstPage) {
-        expect(insertSwarmEvent(db, item, sourceAccount, "existing-backfill")).toBe(true);
-      }
+      seed(db, () => {
+        for (const item of firstPage) {
+          expect(insertSwarmEvent(db, item, sourceAccount, "existing-backfill")).toBe(true);
+        }
+      });
 
       const requestedOffsets: number[] = [];
       const stats = await syncSwarmCheckins({
