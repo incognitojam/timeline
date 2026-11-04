@@ -20,7 +20,7 @@
 import { Database } from "bun:sqlite";
 import { parseArgs } from "util";
 import { loadConfig } from "../config";
-import { assertNoLocalDbMarker, getDbPathInfo } from "../db/paths";
+import { openWritableDbAtPath } from "../db/connection";
 import { openReadonlyDbAtPath } from "../db/readonly";
 import { markAttachmentStored } from "../media/attachments";
 import { LocalMediaStore, storeFile } from "../media/storage";
@@ -39,16 +39,6 @@ function parsePositiveInt(value: string | undefined, name: string): number | und
   const n = Number(value);
   if (!Number.isInteger(n) || n < 1) throw new Error(`--${name} must be a positive integer, got ${value}`);
   return n;
-}
-
-/** Open the timeline DB read/write (recovery updates rows), with WAL + busy_timeout. */
-function openWritableDbAtPath(dbPath: string): Database {
-  const info = getDbPathInfo(dbPath);
-  assertNoLocalDbMarker(info, info.resolvedDbPath, "database");
-  const db = new Database(dbPath);
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA busy_timeout = 30000");
-  return db;
 }
 
 function makeSink(db: Database): FacebookRecoverySink {

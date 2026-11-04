@@ -48,8 +48,9 @@ export function getEmbeddingsDbPath(timelineDbPath = getTimelineDbPath()): strin
 export function getEmbeddingsDb(path = getEmbeddingsDbPath(), options: { readonly?: boolean } = {}): Database {
   configureBunSqliteForSqliteVec();
   const db = new Database(path, options.readonly ? { readonly: true } : undefined);
-  if (!options.readonly) db.exec("PRAGMA journal_mode = WAL");
+  // Set first: switching to WAL needs a lock another connection may hold.
   db.exec("PRAGMA busy_timeout = 30000");
+  if (!options.readonly) db.exec("PRAGMA journal_mode = WAL");
   return db;
 }
 

@@ -22,7 +22,7 @@
 import { Database } from "bun:sqlite";
 import { parseArgs } from "util";
 import { loadConfig } from "../config";
-import { assertNoLocalDbMarker, getDbPathInfo } from "../db/paths";
+import { openWritableDbAtPath } from "../db/connection";
 import { openReadonlyDbAtPath } from "../db/readonly";
 import { markAttachmentStored } from "../media/attachments";
 import { LocalMediaStore, storeFile } from "../media/storage";
@@ -74,16 +74,6 @@ async function download(url: string): Promise<Buffer> {
   const res = await fetch(url);
   if (!res.ok) throw new HttpError(res.status, `download HTTP ${res.status}`, retryAfterMs(res));
   return Buffer.from(await res.arrayBuffer());
-}
-
-/** Open the timeline DB read/write (the recovery updates rows), with WAL + busy_timeout. */
-function openWritableDbAtPath(dbPath: string): Database {
-  const info = getDbPathInfo(dbPath);
-  assertNoLocalDbMarker(info, info.resolvedDbPath, "database");
-  const db = new Database(dbPath);
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA busy_timeout = 30000");
-  return db;
 }
 
 function makeSink(db: Database): BackfillSink {
