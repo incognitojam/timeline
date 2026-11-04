@@ -10,104 +10,10 @@ import {
   parseSyncSourceSettings,
   type SyncSourceRow,
   upsertSyncSourcePatch,
+  validateSettingsPatch,
 } from "../sync/config";
-import { isRecord } from "../shared/guards";
+import { isPlainJsonObject } from "../shared/guards";
 import { notifySyncConfigChanged } from "./service-control";
-
-function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
-  if (!isRecord(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-}
-
-function validateSettingsPatch(
-  settings: unknown,
-  schema: NonNullable<(typeof SYNC_SOURCES)[number]["configSchema"]>
-): { settings: Record<string, unknown | null> } | { error: string; field: string } {
-  if (!isPlainJsonObject(settings)) {
-    return { error: "settings must be a JSON object", field: "settings" };
-  }
-
-  const fields = new Map(schema.map((field) => [field.key, field]));
-  const patch: Record<string, unknown | null> = {};
-  for (const [key, value] of Object.entries(settings)) {
-    const field = fields.get(key);
-    if (!field) return { error: `Unknown settings key: ${key}`, field: `settings.${key}` };
-    if (value === null) {
-      patch[key] = null;
-      continue;
-    }
-
-    if (field.type === "string") {
-      if (typeof value !== "string" || value.trim().length === 0) {
-        return {
-          error: `settings.${key} must be a non-empty string`,
-          field: `settings.${key}`,
-        };
-      }
-      patch[key] = value.trim();
-      continue;
-    }
-    if (field.type === "boolean" && typeof value !== "boolean") {
-      return { error: `settings.${key} must be a boolean`, field: `settings.${key}` };
-    }
-    if (field.type === "string-list") {
-      if (!Array.isArray(value) || value.length === 0) {
-        return {
-          error: `settings.${key} must be a non-empty array; use null to clear the key`,
-          field: `settings.${key}`,
-        };
-      }
-      const entries = value.map((entry) => (typeof entry === "string" ? entry.trim() : entry));
-      if (entries.some((entry) => typeof entry !== "string" || entry.length === 0)) {
-        return {
-          error: `settings.${key} must be an array of non-empty strings`,
-          field: `settings.${key}`,
-        };
-      }
-      patch[key] = entries;
-      continue;
-    }
-    if (field.type === "select") {
-      if (typeof value !== "string" || !field.options.includes(value.trim())) {
-        return {
-          error: `settings.${key} must be one of: ${field.options.join(", ")}`,
-          field: `settings.${key}`,
-        };
-      }
-      patch[key] = value.trim();
-      continue;
-    }
-    if (field.type === "number") {
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        return {
-          error: `settings.${key} must be a finite number`,
-          field: `settings.${key}`,
-        };
-      }
-      if (field.integer && !Number.isSafeInteger(value)) {
-        return {
-          error: `settings.${key} must be a safe integer`,
-          field: `settings.${key}`,
-        };
-      }
-      if (field.min !== undefined && value < field.min) {
-        return {
-          error: `settings.${key} must be at least ${field.min}`,
-          field: `settings.${key}`,
-        };
-      }
-      if (field.max !== undefined && value > field.max) {
-        return {
-          error: `settings.${key} must be at most ${field.max}`,
-          field: `settings.${key}`,
-        };
-      }
-    }
-    patch[key] = value;
-  }
-  return { settings: patch };
-}
 
 function isEffectivelyEnabled(
   registered: { enabled: boolean },
