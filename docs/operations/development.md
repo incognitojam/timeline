@@ -39,6 +39,27 @@ also enables authentication. Use `AUTH_PASSWORD='' bun run dev` to explicitly
 disable it locally. When using `API_HOST` or `TIMELINE_API_TARGET`, the remote
 API's authentication still applies.
 
+### Background runs, status, and stopping
+
+```bash
+bun run dev -- --background  # start detached; returns once the web app answers
+bun run dev:status           # web/API URLs, PIDs, log (add --json); exits 1 when stopped
+bun run dev:stop             # stop it and wait until every process has exited
+```
+
+A running dev server, foreground or background, records itself in
+`.dev/state.json`; a background run logs to `.dev/dev.log`. Each worktree runs
+one dev server at a time. `dev:stop` signals only the processes recorded there,
+identified by PID and start time, so do not use `pkill -f`, which can match the
+calling shell. It also cleans up children left behind if the dev process itself
+was killed.
+
+Ports come from `T3CODE_WORKSPACE_PORT` (web) and the next port (API) in T3
+Code, otherwise from the OS, unless pinned with `--web-port`/`--api-port`. Dev
+never uses port 3001, which belongs to the installed service; read the ports
+from `dev:status` rather than guessing. Vite started on its own has no API to
+proxy to, so start the app through `bun run dev`.
+
 ## Testing
 
 Run `./test.sh` before pushing. Screenshot comparisons run in the same Ubuntu

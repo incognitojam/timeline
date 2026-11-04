@@ -31,10 +31,13 @@ const CONFIG_DIR = join(homedir(), ".config", "timeline");
 
 const DEFAULT_DATA_DIR = join(homedir(), ".local", "share", "timeline");
 
+/** Port the installed service listens on; local dev servers must avoid it. */
+export const DEFAULT_SERVER_PORT = 3001;
+
 const DEFAULT_CONFIG: ServiceConfig = {
   server: {
     host: "127.0.0.1",
-    port: 3001,
+    port: DEFAULT_SERVER_PORT,
   },
   database: {
     path: join(DEFAULT_DATA_DIR, "timeline.db"),

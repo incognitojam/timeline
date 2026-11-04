@@ -120,6 +120,10 @@ bun install
 
 # Run the web app (uses T3 workspace ports when available, otherwise free ports)
 bun run dev
+bun run dev -- --background   # detached; returns once the web app answers
+bun run dev:status            # ports/URLs of this worktree's dev server
+bun run dev:stop              # stop it; never pkill -f (it matches your own shell)
+# Details: docs/operations/development.md#background-runs-status-and-stopping
 
 # Point the frontend at the production API instead (skips the local API;
 # useful for frontend-only changes that need realistic data)

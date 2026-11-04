@@ -10,6 +10,8 @@
     "mcp": "bun run src/mcp.ts",
     "embeddings": "bun run src/embeddings/cli.ts",
     "dev": "bun run scripts/dev.ts",
+    "dev:status": "bun run scripts/dev-ctl.ts status",
+    "dev:stop": "bun run scripts/dev-ctl.ts stop",
     "inbox": "bun run src/inbox/index.ts",
     "service": "bun run src/service.ts",
     "service:verbose": "bun run src/service.ts --verbose",
