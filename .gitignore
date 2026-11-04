@@ -169,3 +169,9 @@ opencode.json
 
 # Generated during deploy
 version.json
+
+# Synthetic seed output (bun run seed)
+/media/
+/.seed-build-*/
+/.seed-new-*
+/.seed-old-media/

@@ -8,7 +8,8 @@
  *     packages/opencode/migration/*.sql applied in order.
  *   - v2: the opencode v2.0.28 binary (sst/opencode 026b106bc5d41b679ffc413264229c340871e4d3)
  *     run against an empty data directory.
- * Only the tables the importer reads are created.
+ * Only the tables the importer reads are created. The DDL is exported for the
+ * synthetic seed (src/seed/sources/opencode.ts), which writes the same stores.
  *
  * Scenario (all content synthetic):
  *   ses_alpha — Alice's garden project. In storage/, v1, and v2 (as OpenCode
@@ -22,7 +23,7 @@ import { Database } from "bun:sqlite";
 import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 
-const V1_PROJECT_DDL = `
+export const V1_PROJECT_DDL = `
 CREATE TABLE \`project\` (
 	\`id\` text PRIMARY KEY,
 	\`worktree\` text NOT NULL,
@@ -37,7 +38,7 @@ CREATE TABLE \`project\` (
 	\`commands\` text
 );`;
 
-const V1_SESSION_DDL = `
+export const V1_SESSION_DDL = `
 CREATE TABLE \`session\` (
 	\`id\` text PRIMARY KEY,
 	\`project_id\` text NOT NULL,
@@ -83,7 +84,7 @@ CREATE TABLE \`part\` (
 CREATE INDEX \`part_session_idx\` ON \`part\` (\`session_id\`);
 CREATE INDEX \`part_message_id_id_idx\` ON \`part\` (\`message_id\`,\`id\`);`;
 
-const V2_DDL = `
+export const V2_DDL = `
 CREATE TABLE IF NOT EXISTS "migration" (id TEXT PRIMARY KEY, time_completed INTEGER NOT NULL);
 CREATE TABLE \`kv\` (
   \`key\` text PRIMARY KEY,
@@ -164,7 +165,7 @@ CREATE INDEX \`session_message_session_type_seq_idx\` ON \`session_message\` (\`
 CREATE INDEX \`session_message_session_time_created_id_idx\` ON \`session_message\` (\`session_id\`,\`time_created\`,\`id\`);
 CREATE INDEX \`session_message_time_created_idx\` ON \`session_message\` (\`time_created\`);`;
 
-const LATEST_V2_MIGRATION = "20261010180456_project_time_archived";
+export const LATEST_V2_MIGRATION = "20261010180456_project_time_archived";
 
 const T0 = Date.UTC(2026, 0, 10, 9, 0, 0);
 const at = (minutes: number) => T0 + minutes * 60_000;

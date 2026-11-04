@@ -1,6 +1,6 @@
 # Development
 
-Conventions for code, commits, and pull requests live in [AGENTS.md](../../AGENTS.md), along with the sample and full database workflows. Pull requests also need a changeset; see [Releases](releases.md).
+Conventions for code, commits, and pull requests live in [AGENTS.md](../../AGENTS.md), along with the synthetic seed and host database workflows. Pull requests also need a changeset; see [Releases](releases.md).
 
 ## Toolchain
 
@@ -19,7 +19,7 @@ the pinned version. To change a version, edit `packageManager` or `mise.toml`.
 ## Running locally
 
 ```bash
-bun run setup                # install dependencies and prepare a sample ./timeline.db
+bun run setup                # install dependencies and generate a synthetic ./timeline.db
 
 # Import data from an export
 bun run src/parsers/spotify.ts ./imports/spotify my-account

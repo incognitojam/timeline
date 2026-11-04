@@ -6,7 +6,7 @@
 #   - activate the tracked Git hooks
 #   - install the pinned toolchain with mise and require the pinned Bun
 #   - install dependencies (root + web/)
-#   - prepare a local sample ./timeline.db
+#   - generate the synthetic ./timeline.db (bun run seed) unless one exists
 #
 # Idempotent — safe to re-run: `bun run setup`.
 set -euo pipefail
@@ -74,14 +74,19 @@ source scripts/toolchain.sh
 require_pinned_bun
 echo "    bun $(bun --version)"
 
-# Guards writes until prepare-sample has produced ./timeline.db, which removes it.
-[ -f timeline.db ] || touch .no-local-db
+# Guards writes until seed (or prepare-sample/full) has produced ./timeline.db, which removes it.
+if [ -f timeline.db ]; then
+  prepare_db=(echo "Kept existing ./timeline.db (bun run seed replaces it with fresh synthetic data)")
+else
+  touch .no-local-db
+  prepare_db=(bun run seed)
+fi
 
 step "Installing dependencies and preparing ./timeline.db"
 log_dir=$(mktemp -d "${TMPDIR:-/tmp}/timeline-setup.XXXXXX")
 trap 'rm -rf "$log_dir"' EXIT
 
-(bun install --frozen-lockfile && bun run prepare-sample) >"$log_dir/backend.log" 2>&1 &
+(bun install --frozen-lockfile && "${prepare_db[@]}") >"$log_dir/backend.log" 2>&1 &
 backend_pid=$!
 (cd web && bun install --frozen-lockfile) >"$log_dir/web.log" 2>&1 &
 web_pid=$!

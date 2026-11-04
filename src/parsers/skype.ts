@@ -239,151 +239,154 @@ async function importSkypeData(
   console.log(`Export Date: ${data.exportDate}`);
   console.log(`Conversations: ${data.conversations.length}`);
 
-  for (const conv of data.conversations) {
-    // Skip system conversations
-    if (shouldSkipConversation(conv.id)) {
-      continue;
-    }
-
-    // Skip spam groups (high member count)
-    if (isSpamGroup(conv)) {
-      const memberCount = conv.threadProperties?.membercount || "?";
-      console.log(`  Skipping spam group: ${conv.displayName} (${memberCount} members)`);
-      stats.spamSkipped++;
-      continue;
-    }
-
-    const isGroup = isGroupChat(conv.id);
-    const conversationTitle =
-      decodeHtmlEntities(conv.displayName) ||
-      (isGroup ? "Group Chat" : extractUsername(conv.id));
-
-    stats.conversations++;
-
-    // Extract participants from threadProperties if available (keep raw IDs for identity parsing)
-    let participantIds: string[] = [];
-    if (conv.threadProperties?.members) {
-      try {
-        participantIds = JSON.parse(conv.threadProperties.members);
-      } catch {}
-    }
-
-    // Pre-process participant identities for this conversation
-    const participantIdentifiers: string[] = [];
-    for (const pId of participantIds) {
-      const { platform, platformId } = parseSkypeUserId(pId);
-      participantIdentifiers.push(formatIdentifier(platform, platformId));
-      // Only collect identity once per conversation, not per message
-      allIdentities.push({
-        platform,
-        platformId,
-        displayName: extractUsername(pId),
-      });
-    }
-
-    for (const msg of conv.MessageList || []) {
-      const eventType = getEventType(msg, isGroup);
-      if (!eventType) {
-        stats.skipped++;
+  // One transaction for the whole export: per-row autocommit pays an fsync per message.
+  db.transaction(() => {
+    for (const conv of data.conversations) {
+      // Skip system conversations
+      if (shouldSkipConversation(conv.id)) {
         continue;
       }
 
-      const senderName =
-        decodeHtmlEntities(msg.displayName) || extractUsername(msg.from);
-      const content = extractTextContent(msg.content, msg.messagetype);
-      const duration =
-        msg.messagetype === "Event/Call"
-          ? parseCallDuration(msg.content)
-          : null;
-
-      // For calls with duration, calculate start time and set end_timestamp
-      let timestamp = msg.originalarrivaltime;
-      let endTimestamp: string | null = null;
-      if (eventType === "message:call" && duration) {
-        const endMs = new Date(msg.originalarrivaltime).getTime();
-        const startMs = endMs - duration;
-        timestamp = new Date(startMs).toISOString();
-        endTimestamp = msg.originalarrivaltime;
+      // Skip spam groups (high member count)
+      if (isSpamGroup(conv)) {
+        const memberCount = conv.threadProperties?.membercount || "?";
+        console.log(`  Skipping spam group: ${conv.displayName} (${memberCount} members)`);
+        stats.spamSkipped++;
+        continue;
       }
 
-      // Parse sender identity
-      const { platform: senderPlatform, platformId: senderPlatformId } = parseSkypeUserId(msg.from);
-      const senderIdentifier = formatIdentifier(senderPlatform, senderPlatformId);
+      const isGroup = isGroupChat(conv.id);
+      const conversationTitle =
+        decodeHtmlEntities(conv.displayName) ||
+        (isGroup ? "Group Chat" : extractUsername(conv.id));
 
-      // Collect sender identity with display name
-      allIdentities.push({
-        platform: senderPlatform,
-        platformId: senderPlatformId,
-        displayName: senderName,
-      });
+      stats.conversations++;
 
-      // Build people array with platform identifiers
-      const people = [senderIdentifier];
-      if (!isGroup && conv.id) {
-        // For DMs, parse the conversation ID as the other party
-        const { platform: otherPlatform, platformId: otherPlatformId } = parseSkypeUserId(conv.id);
-        const otherIdentifier = formatIdentifier(otherPlatform, otherPlatformId);
-        if (otherIdentifier !== senderIdentifier) {
-          people.push(otherIdentifier);
-          // Collect other party identity
-          allIdentities.push({
-            platform: otherPlatform,
-            platformId: otherPlatformId,
-            displayName: decodeHtmlEntities(conv.displayName) || extractUsername(conv.id),
-          });
+      // Extract participants from threadProperties if available (keep raw IDs for identity parsing)
+      let participantIds: string[] = [];
+      if (conv.threadProperties?.members) {
+        try {
+          participantIds = JSON.parse(conv.threadProperties.members);
+        } catch {}
+      }
+
+      // Pre-process participant identities for this conversation
+      const participantIdentifiers: string[] = [];
+      for (const pId of participantIds) {
+        const { platform, platformId } = parseSkypeUserId(pId);
+        participantIdentifiers.push(formatIdentifier(platform, platformId));
+        // Only collect identity once per conversation, not per message
+        allIdentities.push({
+          platform,
+          platformId,
+          displayName: extractUsername(pId),
+        });
+      }
+
+      for (const msg of conv.MessageList || []) {
+        const eventType = getEventType(msg, isGroup);
+        if (!eventType) {
+          stats.skipped++;
+          continue;
         }
-      } else if (isGroup && participantIdentifiers.length > 0) {
-        for (const pIdentifier of participantIdentifiers) {
-          if (pIdentifier !== senderIdentifier && !people.includes(pIdentifier)) {
-            people.push(pIdentifier);
+
+        const senderName =
+          decodeHtmlEntities(msg.displayName) || extractUsername(msg.from);
+        const content = extractTextContent(msg.content, msg.messagetype);
+        const duration =
+          msg.messagetype === "Event/Call"
+            ? parseCallDuration(msg.content)
+            : null;
+
+        // For calls with duration, calculate start time and set end_timestamp
+        let timestamp = msg.originalarrivaltime;
+        let endTimestamp: string | null = null;
+        if (eventType === "message:call" && duration) {
+          const endMs = new Date(msg.originalarrivaltime).getTime();
+          const startMs = endMs - duration;
+          timestamp = new Date(startMs).toISOString();
+          endTimestamp = msg.originalarrivaltime;
+        }
+
+        // Parse sender identity
+        const { platform: senderPlatform, platformId: senderPlatformId } = parseSkypeUserId(msg.from);
+        const senderIdentifier = formatIdentifier(senderPlatform, senderPlatformId);
+
+        // Collect sender identity with display name
+        allIdentities.push({
+          platform: senderPlatform,
+          platformId: senderPlatformId,
+          displayName: senderName,
+        });
+
+        // Build people array with platform identifiers
+        const people = [senderIdentifier];
+        if (!isGroup && conv.id) {
+          // For DMs, parse the conversation ID as the other party
+          const { platform: otherPlatform, platformId: otherPlatformId } = parseSkypeUserId(conv.id);
+          const otherIdentifier = formatIdentifier(otherPlatform, otherPlatformId);
+          if (otherIdentifier !== senderIdentifier) {
+            people.push(otherIdentifier);
+            // Collect other party identity
+            allIdentities.push({
+              platform: otherPlatform,
+              platformId: otherPlatformId,
+              displayName: decodeHtmlEntities(conv.displayName) || extractUsername(conv.id),
+            });
+          }
+        } else if (isGroup && participantIdentifiers.length > 0) {
+          for (const pIdentifier of participantIdentifiers) {
+            if (pIdentifier !== senderIdentifier && !people.includes(pIdentifier)) {
+              people.push(pIdentifier);
+            }
           }
         }
-      }
 
-      // Create unique source_id
-      const sourceId = `msg:${conv.id}:${msg.id}`;
+        // Create unique source_id
+        const sourceId = `msg:${conv.id}:${msg.id}`;
 
-      // Build raw data with conversation context
-      const rawData = {
-        ...msg,
-        _conversation: {
-          id: conv.id,
-          displayName: conversationTitle,
-          isGroup,
-          participants: participantIds.map(extractUsername),
-        },
-      };
+        // Build raw data with conversation context
+        const rawData = {
+          ...msg,
+          _conversation: {
+            id: conv.id,
+            displayName: conversationTitle,
+            isGroup,
+            participants: participantIds.map(extractUsername),
+          },
+        };
 
-      try {
-        insert.run(
-          "skype",
-          sourceId,
-          sourceAccount,
-          eventType,
-          timestamp,
-          endTimestamp,
-          duration,
-          conversationTitle,
-          content,
-          JSON.stringify(people),
-          null, // tags
-          JSON.stringify(rawData),
-          importBatch,
-          conv.id
-        );
+        try {
+          insert.run(
+            "skype",
+            sourceId,
+            sourceAccount,
+            eventType,
+            timestamp,
+            endTimestamp,
+            duration,
+            conversationTitle,
+            content,
+            JSON.stringify(people),
+            null, // tags
+            JSON.stringify(rawData),
+            importBatch,
+            conv.id
+          );
 
-        if (eventType === "message:call" || eventType === "call:log") {
-          stats.calls++;
-        } else if (eventType.includes(":attachment")) {
-          stats.attachments++;
-        } else {
-          stats.messages++;
+          if (eventType === "message:call" || eventType === "call:log") {
+            stats.calls++;
+          } else if (eventType.includes(":attachment")) {
+            stats.attachments++;
+          } else {
+            stats.messages++;
+          }
+        } catch {
+          stats.skipped++;
         }
-      } catch {
-        stats.skipped++;
       }
     }
-  }
+  })();
 
   // Batch upsert all collected identities
   if (allIdentities.length > 0) {
