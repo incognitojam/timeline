@@ -226,14 +226,14 @@ describe("conversation summary schema", () => {
   afterEach(() => db.close());
 
   it("uses the shared conversation event type clauses for indexes and triggers", () => {
-    const conversationIndex = normalizeSql(schemaSql(db, "index", "idx_events_conversations"));
+    const conversationTitleIndex = normalizeSql(schemaSql(db, "index", "idx_events_conversation_titles"));
     const conversationIdIndex = normalizeSql(schemaSql(db, "index", "idx_events_conversation_id"));
     const insertTrigger = normalizeSql(schemaSql(db, "trigger", "conversation_summaries_ai"));
     const deleteTrigger = normalizeSql(schemaSql(db, "trigger", "conversation_summaries_ad"));
     const updateTrigger = normalizeSql(schemaSql(db, "trigger", "conversation_summaries_au"));
 
-    expect(conversationIndex).toContain(
-      normalizeSql(`WHERE ${conversationEventEligibilityClause()}`)
+    expect(conversationTitleIndex).toContain(
+      normalizeSql(`WHERE ${conversationEventEligibilityClause()} AND conversation_id IS NOT NULL`)
     );
     expect(conversationIdIndex).toContain(
       normalizeSql(`WHERE conversation_id IS NOT NULL AND ${conversationTypeClause()}`)
@@ -243,6 +243,15 @@ describe("conversation summary schema", () => {
     expect(insertTrigger).toContain(normalizeSql(`WHEN ${eligible("NEW.")} BEGIN`));
     expect(deleteTrigger).toContain(normalizeSql(`WHEN ${eligible("OLD.")} BEGIN`));
     expect(updateTrigger).toContain(normalizeSql(`WHEN (${eligible("OLD.")} OR ${eligible("NEW.")}) AND (`));
+  });
+
+  it("drops the title-keyed conversation index on upgrade", () => {
+    db.exec(
+      `CREATE INDEX idx_events_conversations ON events(source, source_account, title, timestamp) WHERE ${conversationEventEligibilityClause()}`,
+    );
+    initDb(db);
+    const remaining = db.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'index' AND name = 'idx_events_conversations'").get();
+    expect(remaining).toEqual({ count: 0 });
   });
 
   it("updates summaries only for shared conversation event types", () => {

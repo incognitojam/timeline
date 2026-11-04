@@ -267,17 +267,15 @@ function createSchema(db: Database) {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_events_location ON events(latitude, longitude) WHERE latitude IS NOT NULL`);
   ensureIndex(
     db,
-    "idx_events_conversations",
-    `CREATE INDEX idx_events_conversations ON events(source, source_account, title, timestamp) WHERE ${conversationEventEligibilityClause()}`,
-  );
-  ensureIndex(
-    db,
     "idx_events_conversation_id",
     `CREATE INDEX idx_events_conversation_id ON events(source, source_account, conversation_id, timestamp) WHERE conversation_id IS NOT NULL AND ${conversationTypeClause()}`,
   );
   // Serves the summary triggers' per-title bound probes (one conversation, one
   // title, ordered by timestamp), so they stay index lookups even when other
-  // conversations in the same source and account share the title.
+  // conversations in the same source and account share the title. It replaces
+  // the title-keyed idx_events_conversations, which is dropped first so the new
+  // index can reuse its pages.
+  db.exec(`DROP INDEX IF EXISTS idx_events_conversations`);
   ensureIndex(
     db,
     "idx_events_conversation_titles",
