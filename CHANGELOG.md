@@ -1,5 +1,12 @@
 # Timeline
 
+## 0.15.1
+
+### Patch Changes
+
+- 0c825c5: The Coding page's project list loads again on large databases. It now comes from the maintained conversation tables and takes under a second instead of running past the server's 30-second limit.
+- 648cffb: Google Messages syncs time out far less often and usually finish much faster: the sidecar asks the phone for smaller pages, retries a page the phone did not answer, and normally stops listing conversations once it reaches ones older than the last clean run. Rebuild and reinstall `timeline-gmessages` before upgrading Timeline, because this release passes the sidecar a new flag.
+
 ## 0.15.0
 
 ### Minor Changes
