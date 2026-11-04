@@ -1,5 +1,18 @@
 # Timeline
 
+## 0.14.0
+
+### Minor Changes
+
+- c4c57c1: OpenCode imports now read OpenCode's `opencode.db` database, so sessions from OpenCode 1.2 onward, including OpenCode 2, appear in Timeline alongside those from the older JSON `storage/` folder, each message once. Point the OpenCode source at OpenCode's data directory (usually `~/.local/share/opencode`); a `storage/` folder or an `opencode.db` file on its own still works. Reasoning and failed tool calls now appear in imported OpenCode turns.
+
+### Patch Changes
+
+- 25a8b7b: Re-importing, renaming or archiving a long conversation no longer stalls syncs for minutes. Updates that leave a conversation's title, timing and membership unchanged, such as raw-data refreshes, skip the conversation list entirely, and renaming or deleting every message of a conversation now takes time proportional to its size instead of its size squared.
+- 7c47e80: Skype, Google Keep, and Minecraft imports now write each export in a single transaction, so large imports are much faster.
+- 4be9f8b: Screen recording no longer reports an outage after a single failed capture. Timeline now waits for three failed captures in a row before showing an error or posting the "Timeline stopped recording your screen" notification, and it removes that notification once capturing works again.
+- 9bc35c9: The desktop navigation rail now keeps Attachments, MCP sessions, and Evaluations behind a More menu, so every Explore destination stays visible on shorter windows, including when sign-in is enabled.
+
 ## 0.13.1
 
 ### Patch Changes
