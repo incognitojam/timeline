@@ -3501,6 +3501,55 @@ describe("API Smoke Tests", () => {
       expect(typeof first.lastEventId).toBe("number");
     });
 
+    test("coding-agent sessions list on /api/coding/conversations, not in Messages", async () => {
+      const db = getDb();
+      const insert = db.prepare(`
+        INSERT OR IGNORE INTO events (source, source_id, source_account, type, timestamp, title, content, raw_data, conversation_id)
+        VALUES (?, ?, 'alice', ?, '2099-03-01T10:00:00.000Z', ?, 'hi', ?, ?)
+      `);
+      insert.run("codex", "ai-list-api-codex", "codex:message:user", "ai-list-api session", JSON.stringify({ cwd: "/srv/ai-list-api-project" }), "ai-list-api-codex-thread");
+      insert.run("amp", "ai-list-api-amp", "amp:message:user", "ai-list-api scratch", "{}", "ai-list-api-amp-thread");
+      insert.run("chatgpt", "ai-list-api-chatgpt", "chatgpt:message:user", "ai-list-api chat", "{}", "ai-list-api-chatgpt-thread");
+      insert.run("discord", "ai-list-api-discord", "message:dm", "ai-list-api dm", "{}", "ai-list-api-discord-thread");
+      db.close();
+
+      const ids = (json: { conversations: { conversationId: string }[] }) =>
+        json.conversations.map((c) => c.conversationId).sort();
+
+      const messages = await (await app.request("/api/conversations?search=ai-list-api")).json();
+      expect(ids(messages)).toEqual(["ai-list-api-chatgpt-thread", "ai-list-api-discord-thread"]);
+      const messageSources = await (await app.request("/api/conversations/sources")).json();
+      expect(messageSources.sources).not.toContain("codex");
+      expect(messageSources.sources).toContain("chatgpt");
+
+      const res = await app.request("/api/coding/conversations?search=ai-list-api");
+      expect(res.status).toBe(200);
+      expectServerTimings(res, ["coding.conversations.list"]);
+      const coding = await res.json();
+      expect(coding.conversations.map((c: { source: string; project: string | null }) => [c.source, c.project]).sort()).toEqual([
+        ["amp", null],
+        ["codex", "ai-list-api-project"],
+      ]);
+
+      const byProject = await (await app.request("/api/coding/conversations?project=ai-list-api-project")).json();
+      expect(ids(byProject)).toEqual(["ai-list-api-codex-thread"]);
+
+      const unassigned = await (await app.request("/api/coding/conversations?unassigned=1&search=ai-list-api")).json();
+      expect(ids(unassigned)).toEqual(["ai-list-api-amp-thread"]);
+
+      expect((await app.request("/api/coding/conversations?project=x&unassigned=1")).status).toBe(400);
+      expect((await app.request("/api/coding/conversations?unassigned=0")).status).toBe(400);
+      const badPaging = await app.request("/api/coding/conversations?limit=-1&offset=abc");
+      expect(badPaging.status).toBe(200);
+      expect((await badPaging.json()).conversations.length).toBeLessThanOrEqual(50);
+
+      const filters = await (await app.request("/api/coding/conversations/filters")).json();
+      expect(filters.sources).toContain("codex");
+      expect(filters.sources).not.toContain("chatgpt");
+      expect(filters.projects).toContainEqual({ name: "ai-list-api-project", count: 1 });
+      expect(filters.unassigned).toBeGreaterThanOrEqual(1);
+    });
+
     test("GET /api/coding/projects/:name/conversations returns empty list for unknown project", async () => {
       const res = await app.request(
         "/api/coding/projects/definitely-not-a-real-project-xyz/conversations"

@@ -1,16 +1,23 @@
 import type { GroupableEvent } from "./types";
 
-// AI chat sources (grouped by conversation)
-export const AI_SOURCES = [
-  "claude",
+// Coding agents: AI sessions run against a workspace, listed on the Coding page.
+export const CODING_AGENT_SOURCES = [
   "claude-code",
-  "chatgpt",
   "amp",
   "opencode",
   "conductor",
   "t3code",
   "codex",
 ] as const;
+
+// General-purpose chat assistants.
+export const CHAT_ASSISTANT_SOURCES = [
+  "claude",
+  "chatgpt",
+] as const;
+
+// AI chat sources (grouped by conversation).
+export const AI_SOURCES = [...CODING_AGENT_SOURCES, ...CHAT_ASSISTANT_SOURCES] as const;
 
 // Social/messaging sources with real people (grouped by conversation)
 export const SOCIAL_SOURCES = [

@@ -1,4 +1,4 @@
-import { useNavigate, useParams } from "@solidjs/router";
+import { A, useNavigate, useParams } from "@solidjs/router";
 import { sourceLabel } from "@shared/sources";
 import type { EChartsOption } from "echarts";
 import { EChartsAutoSize } from "../ui/echarts";
@@ -11,7 +11,7 @@ import {
   useCodingProjectConversations,
   useCodingProjectSessions,
 } from "../lib/queries";
-import { buildConversationUrl, buildTimelineUrl } from "../lib/routes";
+import { buildCodingConversationsUrl, buildConversationUrl, buildTimelineUrl } from "../lib/routes";
 import { getSourceColorStyle } from "../lib/source-styles";
 import type { TimelineEvent } from "../lib/types";
 import { useScrollToAnchor } from "../lib/useScrollToAnchor";
@@ -462,6 +462,14 @@ export default function WakaTimeProjectView() {
                   <span class="ml-1.5 text-xs text-muted-foreground">{conversationsTotal()}</span>
                 </Show>
               </button>
+              <Show when={tab() === "conversations"}>
+                <A
+                  href={buildCodingConversationsUrl({ project: projectName() })}
+                  class="ml-auto self-center px-4 text-sm text-muted-foreground hover:text-foreground"
+                >
+                  Search and filter sessions
+                </A>
+              </Show>
             </div>
 
             <div class="flex-1 overflow-auto">

@@ -1,4 +1,4 @@
-import { useNavigate, useSearchParams } from "@solidjs/router";
+import { A, useNavigate, useSearchParams } from "@solidjs/router";
 import { sourceLabel } from "@shared/sources";
 import type { EChartsOption } from "echarts";
 import { EChartsAutoSize } from "../ui/echarts";
@@ -10,6 +10,7 @@ import { useChartTheme } from "../lib/echarts-theme";
 import { formatDuration } from "../lib/format";
 import { useCodingProjects, useCodingStats } from "../lib/queries";
 import { normalizeRouteParam } from "../lib/route-params";
+import { ROUTES } from "../lib/routes";
 import { getSourceColorStyle } from "../lib/source-styles";
 import SegmentedControl from "../ui/SegmentedControl";
 
@@ -224,7 +225,15 @@ export default function WakaTimeOverview() {
         {/* Header */}
         <div class="flex items-center justify-between mb-6">
           <h1 class="font-display text-2xl font-medium">Coding Activity</h1>
-          <SegmentedControl options={PRESETS} value={preset()} onChange={setPreset} />
+          <div class="flex items-center gap-3">
+            <A
+              href={ROUTES.CODING_CONVERSATIONS}
+              class="px-3 py-1.5 rounded-sm border border-border bg-background text-sm hover:bg-accent transition-colors"
+            >
+              Agent sessions
+            </A>
+            <SegmentedControl options={PRESETS} value={preset()} onChange={setPreset} />
+          </div>
         </div>
 
         <Show when={statsQuery.isRefetchError}>

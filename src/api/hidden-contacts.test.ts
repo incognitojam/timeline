@@ -32,6 +32,8 @@ const exempt = {
   "/api/auth/status": "Returns authentication state only.",
   "/api/coding/projects": "Coding-project aggregation is outside this slice.",
   "/api/coding/projects/:name/conversations": "Project-scoped conversation access is outside this slice.",
+  "/api/coding/conversations": "Coding-agent sessions carry no contacts.",
+  "/api/coding/conversations/filters": "Returns source and project names only.",
   "/api/contacts": "Hidden contacts are already omitted by the contacts query.",
   "/api/contacts/:id": "Direct contact lookup is an explicit escape hatch.",
   "/api/contacts/:id/conversations": "Contact-scoped conversation lookup is an explicit escape hatch.",

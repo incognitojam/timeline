@@ -1,17 +1,7 @@
+import { AI_SOURCES } from "@shared/grouping";
 import type { ContentBlock } from "./content-blocks";
 import { isContentBlock } from "./content-blocks";
 import type { TimelineEvent } from "./types";
-
-export const AI_SOURCES = [
-  "claude",
-  "claude-code",
-  "amp",
-  "opencode",
-  "conductor",
-  "t3code",
-  "codex",
-  "chatgpt",
-] as const;
 
 export type AISource = (typeof AI_SOURCES)[number];
 

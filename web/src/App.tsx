@@ -2,7 +2,7 @@ import { Route, type RoutePreloadFunc, Router } from "@solidjs/router";
 import { type Component, Suspense } from "solid-js";
 import AttachmentsView from "./components/AttachmentsView";
 import ContactsView from "./components/ContactsView";
-import ConversationsListView from "./components/ConversationsListView";
+import ConversationsListView, { CodingConversationsListView } from "./components/ConversationsListView";
 import ConversationView from "./components/ConversationView";
 import DiscordServersView from "./components/DiscordServersView";
 import DiscordServerView from "./components/DiscordServerView";
@@ -81,16 +81,30 @@ const preloadContacts: RoutePreloadFunc = ({ location }) => {
   return Promise.all(preloads);
 };
 
-const preloadConversations: RoutePreloadFunc = ({ location }) => {
-  const params = {
-    search: normalizeRouteParam(location.query.search) || undefined,
-    source: normalizeRouteParam(location.query.source) || undefined,
+function conversationListParams(query: Parameters<RoutePreloadFunc>[0]["location"]["query"]) {
+  return {
+    search: normalizeRouteParam(query.search) || undefined,
+    source: normalizeRouteParam(query.source) || undefined,
     limit: CONVERSATIONS_PAGE_SIZE,
-    offset: routePageOffset(location.query.page, CONVERSATIONS_PAGE_SIZE),
+    offset: routePageOffset(query.page, CONVERSATIONS_PAGE_SIZE),
   };
+}
+
+const preloadConversations: RoutePreloadFunc = ({ location }) => {
   return Promise.all([
-    queryClient.prefetchQuery(queryOptions.conversations(params)),
+    queryClient.prefetchQuery(queryOptions.conversations(conversationListParams(location.query))),
     queryClient.prefetchQuery(queryOptions.conversationSources()),
+  ]);
+};
+
+const preloadCodingConversations: RoutePreloadFunc = ({ location }) => {
+  return Promise.all([
+    queryClient.prefetchQuery(queryOptions.codingAgentConversations({
+      ...conversationListParams(location.query),
+      project: normalizeRouteParam(location.query.project) || undefined,
+      unassigned: normalizeRouteParam(location.query.unassigned) === "1" || undefined,
+    })),
+    queryClient.prefetchQuery(queryOptions.codingAgentConversationFilters()),
   ]);
 };
 
@@ -155,6 +169,7 @@ export default function App() {
       <Route path="/health" component={suspenseRoute(HealthDashboard, "health")} />
       <Route path="/coding" component={suspenseRoute(WakaTimeOverview, "coding")} />
       <Route path="/coding/project/:name" component={suspenseRoute(WakaTimeProjectView, "project")} />
+      <Route path={ROUTES.CODING_CONVERSATIONS} component={suspenseRoute(CodingConversationsListView, "coding agent sessions")} preload={preloadCodingConversations} />
       <Route path="/music" component={suspenseRoute(MusicOverview, "music")} />
       <Route path="/music/playlist/:id" component={suspenseRoute(MusicPlaylistView, "playlist")} />
       <Route path="/search" component={suspenseRoute(SearchView, "search")} preload={preloadSearch} />

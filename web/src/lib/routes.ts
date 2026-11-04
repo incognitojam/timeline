@@ -1,3 +1,4 @@
+import { CODING_AGENT_SOURCES } from "@shared/grouping";
 import type { HealthWindowSelection } from "@shared/health-periods";
 
 export const ROUTES = {
@@ -6,6 +7,7 @@ export const ROUTES = {
   HEALTH: "/health",
   CODING: "/coding",
   CODING_PROJECT: "/coding/project/:name",
+  CODING_CONVERSATIONS: "/coding/conversations",
   MUSIC: "/music",
   MUSIC_PLAYLIST: "/music/playlist/:id",
   SEARCH: "/search",
@@ -55,6 +57,16 @@ export const APP_NAME = "Timeline";
 
 function routePrefix(route: string): string {
   return route.split("/:")[0];
+}
+
+// Conversation detail pages for these sources, so a coding-agent session
+// highlights the page that lists it rather than Messages.
+function conversationPathsFor(sources: readonly string[]): string[] {
+  return sources.map((source) => buildConversationsPathPrefix(source));
+}
+
+function buildConversationsPathPrefix(source: string): string {
+  return `${routePrefix(ROUTES.CONVERSATION)}/${encodeURIComponent(source)}`;
 }
 
 /**
@@ -112,7 +124,7 @@ export const NAV_ITEMS = [
     section: "primary",
     mobile: false,
     rail: true,
-    activePaths: [ROUTES.CODING],
+    activePaths: [ROUTES.CODING, ...conversationPathsFor(CODING_AGENT_SOURCES)],
   },
   {
     path: ROUTES.MUSIC,
@@ -193,12 +205,22 @@ function matchesPathPrefix(pathname: string, prefix: string): boolean {
   return pathname === prefix || pathname.startsWith(`${prefix}/`);
 }
 
-export function isNavigationItemActive(item: NavigationItem, pathname: string): boolean {
-  return item.activePaths.some((path) => matchesPathPrefix(pathname, path));
+// The item owning a path is the one with the most specific matching prefix,
+// so `/conversation/codex/...` belongs to Coding rather than Messages.
+export function navigationItemForPath(pathname: string): NavigationItem | undefined {
+  let best: { item: NavigationItem; length: number } | undefined;
+  for (const item of NAV_ITEMS) {
+    for (const path of item.activePaths) {
+      if (matchesPathPrefix(pathname, path) && (!best || path.length > best.length)) {
+        best = { item, length: path.length };
+      }
+    }
+  }
+  return best?.item;
 }
 
-export function navigationItemForPath(pathname: string): NavigationItem | undefined {
-  return NAV_ITEMS.find((item) => isNavigationItemActive(item, pathname));
+export function isNavigationItemActive(item: NavigationItem, pathname: string): boolean {
+  return navigationItemForPath(pathname) === item;
 }
 
 /**
@@ -251,6 +273,21 @@ export function buildConversationsUrl(params?: { search?: string; source?: strin
   if (params?.source) searchParams.set("source", params.source);
   const query = searchParams.toString();
   return `/conversations${query ? `?${query}` : ""}`;
+}
+
+export function buildCodingConversationsUrl(params?: {
+  search?: string;
+  source?: string;
+  project?: string;
+  unassigned?: boolean;
+}): string {
+  const searchParams = new URLSearchParams();
+  if (params?.search) searchParams.set("search", params.search);
+  if (params?.source) searchParams.set("source", params.source);
+  if (params?.project) searchParams.set("project", params.project);
+  if (params?.unassigned) searchParams.set("unassigned", "1");
+  const query = searchParams.toString();
+  return `${ROUTES.CODING_CONVERSATIONS}${query ? `?${query}` : ""}`;
 }
 
 export function buildMcpSessionUrl(id: string): string {

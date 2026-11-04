@@ -1,14 +1,21 @@
-import { A, useSearchParams } from "@solidjs/router";
+import { A, Navigate, useSearchParams } from "@solidjs/router";
+import { CODING_AGENT_SOURCES } from "@shared/grouping";
 import { sourceLabel } from "@shared/sources";
 import { createEffect, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
+import type { ConversationListItem } from "../lib/api";
 import { formatRelativeDate } from "../lib/format";
-import { useConversationSources, useConversations } from "../lib/queries";
+import {
+  useCodingAgentConversationFilters,
+  useCodingAgentConversations,
+  useConversationSources,
+  useConversations,
+} from "../lib/queries";
 import { CONVERSATIONS_PAGE_SIZE } from "../lib/query-params";
 import { normalizeRouteParam, routePageIndex } from "../lib/route-params";
-import { buildConversationUrl } from "../lib/routes";
+import { buildCodingConversationsUrl, buildConversationUrl, ROUTES } from "../lib/routes";
 import { getSourceColorStyle } from "../lib/source-styles";
 import { staleContentClass } from "../lib/stale-content";
-import { IconStorage } from "../ui/icons";
+import { IconChevronLeft, IconStorage } from "../ui/icons";
 
 const DEBOUNCE_MS = 300;
 
@@ -30,7 +37,29 @@ function ConversationsSkeleton() {
   );
 }
 
-export default function ConversationsListView() {
+/**
+ * Which conversations a list shows: everything except coding-agent sessions
+ * (`messages`), or coding-agent sessions with their project (`coding`).
+ */
+export type ConversationListScope = "messages" | "coding";
+
+const SEARCH_PLACEHOLDERS: Record<ConversationListScope, string> = {
+  messages: "Search conversations...",
+  coding: "Search coding agent sessions...",
+};
+
+// Project <select> values. A prefix keeps a project literally named
+// "unassigned" distinct from the no-project bucket.
+const UNASSIGNED_OPTION = "unassigned";
+const PROJECT_OPTION_PREFIX = "project:";
+
+function rowProject(conversation: ConversationListItem): string | null {
+  return "project" in conversation && typeof conversation.project === "string"
+    ? conversation.project
+    : null;
+}
+
+function ConversationListView(props: { scope: ConversationListScope }) {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const initialSearch = normalizeRouteParam(searchParams.search);
@@ -41,6 +70,8 @@ export default function ConversationsListView() {
   const [debouncedSearch, setDebouncedSearch] = createSignal(initialSearch);
   const [source, setSource] = createSignal(initialSource);
   const [page, setPage] = createSignal(initialPage);
+  const [project, setProject] = createSignal(normalizeRouteParam(searchParams.project));
+  const [unassigned, setUnassigned] = createSignal(normalizeRouteParam(searchParams.unassigned) === "1");
 
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -56,10 +87,12 @@ export default function ConversationsListView() {
   }, { defer: true }));
 
   // Sync state to URL
-  createEffect(on([debouncedSearch, source, page], ([s, src, p]) => {
+  createEffect(on([debouncedSearch, source, page, project, unassigned], ([s, src, p, proj, none]) => {
     setSearchParams({
       search: s || undefined,
       source: src || undefined,
+      project: proj || undefined,
+      unassigned: none ? "1" : undefined,
       page: p > 0 ? String(p + 1) : undefined,
     }, { replace: true });
   }, { defer: true }));
@@ -75,6 +108,14 @@ export default function ConversationsListView() {
   createEffect(on(() => searchParams.source, (urlSource) => {
     const val = normalizeRouteParam(urlSource);
     if (val !== source()) setSource(val);
+  }));
+  createEffect(on(() => searchParams.project, (urlProject) => {
+    const val = normalizeRouteParam(urlProject);
+    if (val !== project()) setProject(val);
+  }));
+  createEffect(on(() => searchParams.unassigned, (urlUnassigned) => {
+    const val = normalizeRouteParam(urlUnassigned) === "1";
+    if (val !== unassigned()) setUnassigned(val);
   }));
   createEffect(on(() => searchParams.page, (urlPage) => {
     const val = routePageIndex(urlPage);
@@ -97,13 +138,45 @@ export default function ConversationsListView() {
     document.removeEventListener("keydown", handleKeydown);
   });
 
-  const query = useConversations(() => ({
+  const listParams = () => ({
     search: debouncedSearch() || undefined,
     source: source() || undefined,
     limit: CONVERSATIONS_PAGE_SIZE,
     offset: page() * CONVERSATIONS_PAGE_SIZE,
-  }));
-  const sourceQuery = useConversationSources();
+  });
+  // The scope is fixed per route, so each list creates only the queries it uses.
+  const query = props.scope === "coding"
+    ? useCodingAgentConversations(() => ({
+        ...listParams(),
+        project: project() || undefined,
+        unassigned: unassigned() || undefined,
+      }))
+    : useConversations(listParams);
+  const filtersQuery = props.scope === "coding" ? useCodingAgentConversationFilters() : null;
+  const sourceQuery = filtersQuery ?? useConversationSources();
+
+  const projectFilters = () =>
+    !filtersQuery || filtersQuery.isPending || filtersQuery.isLoadingError ? null : filtersQuery.data ?? null;
+  const projectValue = () =>
+    unassigned() ? UNASSIGNED_OPTION : project() ? `${PROJECT_OPTION_PREFIX}${project()}` : "";
+  // Options are keyed by name (strings), so the selected <option> survives the
+  // filter counts loading and the <select> keeps its value.
+  const projectCounts = () =>
+    new Map((projectFilters()?.projects ?? []).map((p) => [p.name, p.count]));
+  const projectCountLabel = (name: string) => {
+    const count = projectCounts().get(name);
+    return count === undefined ? "" : ` (${count.toLocaleString()})`;
+  };
+  const projectOptions = () => {
+    const loaded = [...projectCounts().keys()];
+    const selected = project();
+    return selected && !loaded.includes(selected) ? [selected, ...loaded] : loaded;
+  };
+  const selectProject = (value: string) => {
+    setUnassigned(value === UNASSIGNED_OPTION);
+    setProject(value.startsWith(PROJECT_OPTION_PREFIX) ? value.slice(PROJECT_OPTION_PREFIX.length) : "");
+    setPage(0);
+  };
 
   // Query data is a Solid resource accessor. Reading it while the first request
   // is pending activates the route's Suspense boundary, so only expose it once
@@ -132,7 +205,7 @@ export default function ConversationsListView() {
       <div class="flex items-center gap-3 px-4 py-3 border-b border-border">
         <input
           type="text"
-          placeholder="Search conversations..."
+          placeholder={SEARCH_PLACEHOLDERS[props.scope]}
           value={search()}
           onInput={(e) => setSearch(e.currentTarget.value)}
           class="flex-1 px-3 py-2 rounded-sm border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
@@ -154,14 +227,42 @@ export default function ConversationsListView() {
             {(s) => <option value={s}>{sourceLabel(s)}</option>}
           </For>
         </select>
-        <A
-          href="/servers"
-          class="flex items-center gap-1.5 px-3 py-2 rounded-sm border border-border bg-background text-sm hover:bg-accent transition-colors shrink-0"
-          title="Browse Discord servers"
-        >
-          <IconStorage class="w-4 h-4" />
-          <span class="hidden sm:inline">Servers</span>
-        </A>
+        <Show when={props.scope === "coding"}>
+          <select
+            value={projectValue()}
+            onChange={(e) => selectProject(e.currentTarget.value)}
+            aria-label="Coding project"
+            class="px-3 py-2 rounded-sm border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary max-w-56"
+          >
+            <option value="">
+              {filtersQuery?.isPending
+                ? "Loading projects..."
+                : filtersQuery?.isLoadingError
+                  ? "Projects unavailable"
+                  : "All projects"}
+            </option>
+            <option value={UNASSIGNED_OPTION}>
+              No project{projectFilters() ? ` (${projectFilters()?.unassigned.toLocaleString()})` : ""}
+            </option>
+            <For each={projectOptions()}>
+              {(name) => (
+                <option value={`${PROJECT_OPTION_PREFIX}${name}`}>
+                  {name}{projectCountLabel(name)}
+                </option>
+              )}
+            </For>
+          </select>
+        </Show>
+        <Show when={props.scope === "messages"}>
+          <A
+            href="/servers"
+            class="flex items-center gap-1.5 px-3 py-2 rounded-sm border border-border bg-background text-sm hover:bg-accent transition-colors shrink-0"
+            title="Browse Discord servers"
+          >
+            <IconStorage class="w-4 h-4" />
+            <span class="hidden sm:inline">Servers</span>
+          </A>
+        </Show>
       </div>
 
       {/* Results info */}
@@ -177,14 +278,16 @@ export default function ConversationsListView() {
           {(data) => (
             <span>
               <span class="font-mono">{data().total.toLocaleString()}</span> conversation{data().total !== 1 ? "s" : ""}
-              <Show when={debouncedSearch() || source()}>
+              <Show when={debouncedSearch() || source() || project() || unassigned()}>
                 {" "}matching filters
               </Show>
             </span>
           )}
         </Show>
         <Show when={sourceQuery.isLoadingError}>
-          <span class="text-destructive">Failed to load conversation sources.</span>
+          <span class="text-destructive">
+            {props.scope === "coding" ? "Failed to load filters." : "Failed to load conversation sources."}
+          </span>
         </Show>
       </div>
 
@@ -225,6 +328,11 @@ export default function ConversationsListView() {
                       {sourceLabel(conv.source)}
                     </span>
                     <span class="truncate flex-1 text-sm">{conv.title}</span>
+                    <Show when={rowProject(conv)}>
+                      {(name) => (
+                        <span class="text-xs text-muted-foreground truncate max-w-40 shrink-0">{name()}</span>
+                      )}
+                    </Show>
                     <span class="text-sm text-muted-foreground font-mono tabular-nums shrink-0">
                       {conv.messageCount.toLocaleString()}
                     </span>
@@ -261,6 +369,41 @@ export default function ConversationsListView() {
           </button>
         </div>
       </Show>
+    </div>
+  );
+}
+
+/**
+ * Messages: every conversation except coding-agent sessions. Old links filtered
+ * to a coding agent (`/conversations?source=codex`) redirect to the Coding list.
+ */
+export default function ConversationsListView() {
+  const [searchParams] = useSearchParams();
+  const redirect = () => {
+    const source = normalizeRouteParam(searchParams.source);
+    if (!(CODING_AGENT_SOURCES as readonly string[]).includes(source)) return null;
+    return buildCodingConversationsUrl({ source, search: normalizeRouteParam(searchParams.search) || undefined });
+  };
+  return (
+    <Show when={redirect()} fallback={<ConversationListView scope="messages" />}>
+      {(href) => <Navigate href={href()} />}
+    </Show>
+  );
+}
+
+/** Coding-agent sessions with their project, under the Coding page. */
+export function CodingConversationsListView() {
+  return (
+    <div class="flex flex-col h-full">
+      <div class="flex items-center gap-2 px-4 pt-3">
+        <A href={ROUTES.CODING} class="p-1 rounded-sm hover:bg-accent text-muted-foreground" title="Back to Coding">
+          <IconChevronLeft class="w-5 h-5" />
+        </A>
+        <h1 class="font-display text-lg font-medium">Coding agent sessions</h1>
+      </div>
+      <div class="flex-1 min-h-0">
+        <ConversationListView scope="coding" />
+      </div>
     </div>
   );
 }
