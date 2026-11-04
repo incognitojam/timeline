@@ -177,6 +177,7 @@ func runDump(log zerolog.Logger, args []string) error {
 	folderArg := fs.String("folder", "all", "inbox|archive|spam|all")
 	sinceMs := fs.Int64("since", 0, "only emit messages at/after this Unix-ms timestamp; skip conversations idle before it (0 = everything)")
 	cursorsPath := fs.String("cursors", "", "JSON object of conversation id -> Unix-ms cursor, overriding -since per conversation (\"-\" = stdin)")
+	listUntilMs := fs.Int64("list-until", 0, "stop listing a folder after a page entirely older than this Unix-ms timestamp (0 = list everything)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -220,7 +221,7 @@ func runDump(log zerolog.Logger, args []string) error {
 	seen := map[string]bool{}
 	var totalConvs, totalMsgs, idleConvs, failedConvs int
 	for _, folder := range folders {
-		conversations, err := listAllConversations(ctx, log, cli, folder)
+		conversations, err := listConversations(ctx, log, cli.ListConversations, folder, *listUntilMs)
 		if err != nil {
 			return fmt.Errorf("list conversations (%v): %w", folder, err)
 		}
@@ -261,30 +262,64 @@ func runDump(log zerolog.Logger, args []string) error {
 	return nil
 }
 
-// listAllConversations follows the phone's conversation-list cursor to the
-// end. The phone returns ~250 conversations per page regardless of the
-// requested count; a single page silently drops the rest.
-func listAllConversations(ctx context.Context, log zerolog.Logger, cli *libgm.Client, folder gmproto.ListConversationsRequest_Folder) ([]*gmproto.Conversation, error) {
-	const pageSize = 1000
+// conversationPageSize keeps each list request well inside libgm's 60s wait
+// for the phone, which takes about 0.2s per conversation it returns.
+const conversationPageSize = 25
+
+// listConversations follows the phone's conversation-list cursor, newest
+// activity first, until it runs out or a whole page is older than listUntilMs
+// (0 = list everything).
+func listConversations(
+	ctx context.Context,
+	log zerolog.Logger,
+	list func(context.Context, *gmproto.ListConversationsRequest) (*gmproto.ListConversationsResponse, error),
+	folder gmproto.ListConversationsRequest_Folder,
+	listUntilMs int64,
+) ([]*gmproto.Conversation, error) {
 	var all []*gmproto.Conversation
 	var cursor *gmproto.Cursor
 	for page := 1; ; page++ {
-		resp, err := cli.ListConversations(ctx, &gmproto.ListConversationsRequest{
-			Count:  pageSize,
-			Folder: folder,
-			Cursor: cursor,
+		resp, err := withRetries(log, "ListConversations", func() (*gmproto.ListConversationsResponse, error) {
+			return list(ctx, &gmproto.ListConversationsRequest{
+				Count:  conversationPageSize,
+				Folder: folder,
+				Cursor: cursor,
+			})
 		})
 		if err != nil {
 			return all, err
 		}
-		all = append(all, resp.GetConversations()...)
+		conversations := resp.GetConversations()
+		all = append(all, conversations...)
 		next := resp.GetCursor()
-		if len(resp.GetConversations()) == 0 || next == nil || next.GetLastItemID() == "" {
-			log.Info().Str("folder", folder.String()).Int("pages", page).Int("count", len(all)).Msg("Listed conversations")
+		exhausted := len(conversations) == 0 || next == nil || next.GetLastItemID() == ""
+		if exhausted || pageOlderThan(conversations, listUntilMs) {
+			log.Info().Str("folder", folder.String()).Int("pages", page).Int("count", len(all)).Bool("complete", exhausted).Msg("Listed conversations")
 			return all, nil
 		}
 		cursor = next
 	}
+}
+
+// pageOlderThan reports whether every dated conversation on a page predates
+// cutoffMs. Conversations without a timestamp say nothing about the list's
+// position, so a page holding only those does not count.
+func pageOlderThan(conversations []*gmproto.Conversation, cutoffMs int64) bool {
+	if cutoffMs <= 0 {
+		return false
+	}
+	dated := false
+	for _, conversation := range conversations {
+		timestamp := conversation.GetLastMessageTimestamp()
+		if timestamp == 0 {
+			continue
+		}
+		if toMillis(timestamp) >= cutoffMs {
+			return false
+		}
+		dated = true
+	}
+	return dated
 }
 
 // readCursors loads the per-conversation cursor map ("-" = stdin, "" = none).
@@ -308,24 +343,27 @@ func readCursors(path string) (map[string]int64, error) {
 	return cursors, nil
 }
 
-// fetchPage retries transient request failures (phone-proxied requests drop
-// occasionally) before giving up on a page.
-func fetchPage(ctx context.Context, log zerolog.Logger, cli *libgm.Client, convID string, pageSize int64, cursor *gmproto.Cursor) (*gmproto.ListMessagesResponse, error) {
+// retryBaseDelay scales the wait between attempts in withRetries.
+var retryBaseDelay = 2 * time.Second
+
+// withRetries retries transient request failures (phone-proxied requests drop
+// occasionally) before giving up.
+func withRetries[T any](log zerolog.Logger, operation string, request func() (T, error)) (T, error) {
 	const attempts = 3
+	var resp T
 	var err error
 	for attempt := 1; attempt <= attempts; attempt++ {
-		var resp *gmproto.ListMessagesResponse
-		resp, err = cli.FetchMessages(ctx, convID, pageSize, cursor)
+		resp, err = request()
 		if err == nil {
 			return resp, nil
 		}
 		if attempt < attempts {
-			delay := time.Duration(attempt*attempt) * 2 * time.Second
-			log.Warn().Err(err).Str("conversation", convID).Int("attempt", attempt).Dur("retry_in", delay).Msg("FetchMessages failed, retrying")
+			delay := time.Duration(attempt*attempt) * retryBaseDelay
+			log.Warn().Err(err).Str("operation", operation).Int("attempt", attempt).Dur("retry_in", delay).Msg("Phone request failed, retrying")
 			time.Sleep(delay)
 		}
 	}
-	return nil, err
+	return resp, err
 }
 
 // dumpMessages pages one conversation from newest to oldest following the
@@ -336,7 +374,9 @@ func dumpMessages(ctx context.Context, log zerolog.Logger, cli *libgm.Client, en
 	var cursor *gmproto.Cursor
 	var count int
 	for {
-		resp, err := fetchPage(ctx, log, cli, convID, pageSize, cursor)
+		resp, err := withRetries(log, "FetchMessages", func() (*gmproto.ListMessagesResponse, error) {
+			return cli.FetchMessages(ctx, convID, pageSize, cursor)
+		})
 		if err != nil {
 			return count, err
 		}

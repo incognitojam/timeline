@@ -3,10 +3,10 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { deleteSyncState, getAppStateDb, getSyncState } from "../../db/app-state";
 import { getDb, initDb } from "../../db/schema";
 import { EVENT_SOURCE } from "./parser";
-import { googleMessagesSyncSource, MEDIA_STAGING_PREFIX, SYNC_OVERLAP_MS, type GoogleMessagesSyncState } from "./sync";
+import { deleteSyncState, getAppStateDb, getSyncState, setSyncState } from "../../db/app-state";
+import { FULL_LISTING_INTERVAL_MS, googleMessagesSyncSource, MEDIA_STAGING_PREFIX, SYNC_OVERLAP_MS, type GoogleMessagesSyncState } from "./sync";
 
 // Ofcom drama-range numbers, one per fixture conversation.
 const CONTACT_NUMBERS: Record<string, string> = { "1": "+447700900001", "2": "+447700900002" };
@@ -163,6 +163,64 @@ describe("google-messages sync source", () => {
     expect(result.error).toMatch(/1 conversation\(s\) could not be fully paged.*: 2/);
     expect(result.eventsAdded).toBe(3); // messages fetched before the failure are kept
     expect(Object.keys(state()?.conversations ?? {})).toEqual(["1"]);
+  });
+
+  describe("conversation listing", () => {
+    const lastArgs = () => readFileSync(argsLog, "utf8").trim().split("\n").at(-1) ?? "";
+    const seedState = (overrides: Partial<GoogleMessagesSyncState>) =>
+      setSyncState(getAppStateDb(), EVENT_SOURCE, { conversations: {}, ...overrides });
+
+    it("lists everything until a clean full run, then stops at the last clean run", async () => {
+      await googleMessagesSyncSource.sync(options());
+      expect(lastArgs()).not.toContain("-list-until");
+      const firstRun = state();
+      if (!firstRun?.listedThrough) throw new Error("expected listedThrough");
+      expect(firstRun.fullListingAt).toBe(firstRun.listedThrough);
+
+      await googleMessagesSyncSource.sync(options());
+      expect(lastArgs()).toEndWith(`-list-until ${firstRun.listedThrough - SYNC_OVERLAP_MS}`);
+      const secondRun = state();
+      if (!secondRun?.listedThrough) throw new Error("expected listedThrough");
+      expect(secondRun.listedThrough).toBeGreaterThanOrEqual(firstRun.listedThrough);
+      expect(secondRun.fullListingAt).toBe(firstRun.fullListingAt);
+    });
+
+    it("keeps listing everything after an interrupted first run", async () => {
+      writeFileSync(join(dir, "fixture.jsonl"), fixture("error"));
+      await googleMessagesSyncSource.sync(options());
+      expect(state()?.listedThrough).toBeUndefined();
+      expect(Object.keys(state()?.conversations ?? {})).toEqual(["1"]);
+
+      writeFileSync(join(dir, "fixture.jsonl"), fixture("done"));
+      await googleMessagesSyncSource.sync(options());
+      expect(lastArgs()).not.toContain("-list-until");
+    });
+
+    it("does not move the cutoff past a run that failed", async () => {
+      const listedThrough = Date.now() - 3 * SYNC_OVERLAP_MS;
+      const fullListingAt = listedThrough;
+      seedState({ listedThrough, fullListingAt });
+      const cutoff = `-list-until ${listedThrough - SYNC_OVERLAP_MS}`;
+
+      writeFileSync(join(dir, "fixture.jsonl"), fixture("error"));
+      await googleMessagesSyncSource.sync(options());
+      expect(lastArgs()).toEndWith(cutoff);
+      expect(state()?.listedThrough).toBe(listedThrough);
+
+      process.env.GMESSAGES_FAKE_FAIL = "1";
+      await googleMessagesSyncSource.sync(options());
+      expect(lastArgs()).toEndWith(cutoff);
+      expect(state()?.listedThrough).toBe(listedThrough);
+    });
+
+    it("lists everything again once the last full listing is a day old", async () => {
+      const fullListingAt = Date.now() - FULL_LISTING_INTERVAL_MS;
+      seedState({ listedThrough: Date.now() - SYNC_OVERLAP_MS, fullListingAt });
+      const before = Date.now();
+      await googleMessagesSyncSource.sync(options());
+      expect(lastArgs()).not.toContain("-list-until");
+      expect(state()?.fullListingAt).toBeGreaterThanOrEqual(before);
+    });
   });
 
   it("keeps cursors persisted before an interruption and kills the lingering sidecar", async () => {

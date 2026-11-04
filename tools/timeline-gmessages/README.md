@@ -95,7 +95,11 @@ Output is one JSON object per line, tagged by `kind`:
 Conversation records always precede their messages, and each conversation
 ends with `conversation_done` or `conversation_error`. `-cursors` takes a JSON
 object of per-conversation `since` values (`-` reads it from stdin), which is
-how Timeline resumes. This is the contract consumed by
+how Timeline resumes. `-list-until` stops listing a folder after a page entirely
+older than a Unix-ms timestamp, relying on the phone listing the most recently
+active conversations first; Timeline passes it between its daily full listings
+so a typical sync only asks the phone for the first page of each folder. This
+is the contract consumed by
 `src/platforms/google-messages/parser.ts`. Inspect it:
 
 ```bash
