@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -112,6 +112,23 @@ describe("pre-commit hook", () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
       rmSync(ignoredTmp, { recursive: true, force: true });
+    }
+  });
+
+  test("removes its snapshot when the staged tree cannot be written", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "timeline-pre-commit-test-"));
+    try {
+      const index = join(directory, "index");
+      writeFileSync(index, "not an index\n");
+      const hookTmp = join(directory, "tmp");
+      mkdirSync(hookTmp);
+
+      const result = await runHook(index, { ...process.env, TMPDIR: hookTmp });
+
+      expect(result.exitCode).not.toBe(0);
+      expect(readdirSync(hookTmp)).toEqual([]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
     }
   });
 

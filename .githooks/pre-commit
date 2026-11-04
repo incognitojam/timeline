@@ -7,12 +7,6 @@ cd "$repo_root"
 snapshot=$(mktemp -d "${TMPDIR:-/tmp}/timeline-pre-commit.XXXXXX")
 checks_succeeded=false
 
-# Freeze one tree so every check sees the same commit candidate.
-live_index=$(git rev-parse --path-format=absolute --git-path index)
-checked_tree=$(git write-tree)
-GIT_INDEX_FILE="$snapshot/index" git read-tree "$checked_tree"
-export GIT_INDEX_FILE="$snapshot/index"
-
 verify_index_unchanged() {
   local live_tree
   live_tree=$(GIT_INDEX_FILE="$live_index" git write-tree)
@@ -38,6 +32,12 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT
+
+# Freeze one tree so every check sees the same commit candidate.
+live_index=$(git rev-parse --path-format=absolute --git-path index)
+checked_tree=$(git write-tree)
+GIT_INDEX_FILE="$snapshot/index" git read-tree "$checked_tree"
+export GIT_INDEX_FILE="$snapshot/index"
 
 bun run src/scripts/check-public-release-safety.ts --staged
 
