@@ -996,8 +996,8 @@ async function expectNavigationLinks(navigation: Locator, items: readonly { path
 
 async function expectAppReady(page: Page, unexpectedRequests: string[]): Promise<void> {
   await expect(page.getByRole("link", { name: "Timeline home" })).toBeVisible();
-  // Every destination in the route table is rendered once, however many there are.
-  await expectNavigationLinks(page.getByRole("navigation"), NAV_ITEMS);
+  // Every rail destination in the route table is rendered once, however many there are.
+  await expectNavigationLinks(page.getByRole("navigation"), NAV_ITEMS.filter((item) => item.rail));
   await expect(page.locator("[aria-busy='true']")).toHaveCount(0);
   await page.evaluate(async () => {
     await document.fonts.ready;
@@ -1245,9 +1245,9 @@ test("renders attachments", async ({ page }) => {
   await sourceFilter.click();
   await expect(page.getByRole("heading", { name: "January 2025", level: 2 })).toBeVisible();
   await expect(page.getByTitle("A winding coastal path beside blue water")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Attachments", exact: true })).toHaveAttribute(
-    "aria-current",
-    "page",
+  await expect(page.getByRole("button", { name: "More utilities" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
   );
   await expect
     .poll(() =>

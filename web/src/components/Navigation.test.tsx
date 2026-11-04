@@ -36,7 +36,16 @@ describe("Navigation", () => {
     if (!rail) throw new Error("Desktop navigation rail was not rendered");
 
     expect(within(rail).getByRole("navigation", { name: "Primary" }).querySelectorAll("a")).toHaveLength(6);
-    expect(within(rail).getByRole("navigation", { name: "Utilities" }).querySelectorAll("a")).toHaveLength(6);
+    const utilities = within(rail).getByRole("navigation", { name: "Utilities" });
+    expect(within(utilities).getAllByRole("link").map((link) => link.textContent)).toEqual([
+      "Search",
+      "Sync",
+      "Settings",
+    ]);
+    expect(within(utilities).getByRole("button", { name: "More utilities" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
     expect(within(rail).getByRole("link", { name: "Timeline" })).toHaveAttribute("aria-current", "page");
   });
 
@@ -106,5 +115,29 @@ describe("Navigation", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Close more destinations" }));
     await waitFor(() => expect(moreButton).toHaveAttribute("aria-expanded", "false"));
     expect(dialog).toHaveAttribute("data-closed");
+  });
+
+  test("keeps the remaining utilities behind the rail's More menu", async () => {
+    const { container } = renderNavigation("/eval");
+    const rail = container.querySelector<HTMLElement>("aside");
+    if (!rail) throw new Error("Desktop navigation rail was not rendered");
+    const moreButton = within(rail).getByRole("button", { name: "More utilities" });
+    expect(moreButton).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(moreButton);
+
+    const dialog = await screen.findByRole("dialog", { name: "More utilities" });
+    expect(within(dialog).getAllByRole("link").map((link) => link.textContent)).toEqual([
+      "Attachments",
+      "MCP sessions",
+      "Evaluations",
+    ]);
+    expect(within(dialog).getByRole("link", { name: "Evaluations" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+
+    fireEvent.click(within(dialog).getByRole("link", { name: "MCP sessions" }));
+    await waitFor(() => expect(moreButton).toHaveAttribute("aria-expanded", "false"));
   });
 });

@@ -8,6 +8,8 @@ import {
   MOBILE_MORE_ITEMS,
   MOBILE_NAV_ITEMS,
   navigationItemForPath,
+  RAIL_MORE_ITEMS,
+  RAIL_UTILITY_ITEMS,
   PRIMARY_NAV_ITEMS,
   ROUTES,
   safeDecode,
@@ -63,6 +65,8 @@ describe("navigation hierarchy", () => {
     expect(MOBILE_NAV_ITEMS).toHaveLength(4);
     expect(MOBILE_MORE_ITEMS).toHaveLength(8);
     expect(UTILITY_NAV_ITEMS).toHaveLength(6);
+    expect(RAIL_UTILITY_ITEMS.map((item) => item.label)).toEqual(["Search", "Sync", "Settings"]);
+    expect(RAIL_MORE_ITEMS.map((item) => item.label)).toEqual(["Attachments", "MCP sessions", "Evaluations"]);
   });
 
   test.each([

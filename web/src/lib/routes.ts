@@ -45,6 +45,8 @@ export interface NavigationItem {
   icon: NavigationIcon;
   section: NavigationSection;
   mobile: boolean;
+  // Shown directly in the desktop rail; otherwise behind the rail's More menu.
+  rail: boolean;
   activePaths: readonly string[];
 }
 
@@ -66,6 +68,7 @@ export const NAV_ITEMS = [
     icon: "timeline",
     section: "primary",
     mobile: true,
+    rail: true,
     activePaths: [ROUTES.TIMELINE, routePrefix(ROUTES.EVENT)],
   },
   {
@@ -75,6 +78,7 @@ export const NAV_ITEMS = [
     icon: "people",
     section: "primary",
     mobile: true,
+    rail: true,
     activePaths: [ROUTES.CONTACTS],
   },
   {
@@ -84,6 +88,7 @@ export const NAV_ITEMS = [
     icon: "conversations",
     section: "primary",
     mobile: true,
+    rail: true,
     activePaths: [
       ROUTES.CONVERSATIONS,
       routePrefix(ROUTES.CONVERSATION),
@@ -97,6 +102,7 @@ export const NAV_ITEMS = [
     icon: "health",
     section: "primary",
     mobile: true,
+    rail: true,
     activePaths: [ROUTES.HEALTH],
   },
   {
@@ -105,6 +111,7 @@ export const NAV_ITEMS = [
     icon: "coding",
     section: "primary",
     mobile: false,
+    rail: true,
     activePaths: [ROUTES.CODING],
   },
   {
@@ -113,6 +120,7 @@ export const NAV_ITEMS = [
     icon: "music",
     section: "primary",
     mobile: false,
+    rail: true,
     activePaths: [ROUTES.MUSIC],
   },
   {
@@ -121,6 +129,7 @@ export const NAV_ITEMS = [
     icon: "search",
     section: "utility",
     mobile: false,
+    rail: true,
     activePaths: [ROUTES.SEARCH],
   },
   {
@@ -129,6 +138,7 @@ export const NAV_ITEMS = [
     icon: "sync",
     section: "utility",
     mobile: false,
+    rail: true,
     activePaths: [ROUTES.SYNC],
   },
   {
@@ -137,6 +147,7 @@ export const NAV_ITEMS = [
     icon: "settings",
     section: "utility",
     mobile: false,
+    rail: true,
     activePaths: [ROUTES.SETTINGS],
   },
   {
@@ -145,6 +156,7 @@ export const NAV_ITEMS = [
     icon: "attachments",
     section: "utility",
     mobile: false,
+    rail: false,
     activePaths: [ROUTES.ATTACHMENTS],
   },
   {
@@ -154,6 +166,7 @@ export const NAV_ITEMS = [
     icon: "mcp",
     section: "utility",
     mobile: false,
+    rail: false,
     activePaths: [ROUTES.MCP],
   },
   {
@@ -163,6 +176,7 @@ export const NAV_ITEMS = [
     icon: "eval",
     section: "utility",
     mobile: false,
+    rail: false,
     activePaths: [ROUTES.EVAL],
   },
 ] as const satisfies readonly NavigationItem[];
@@ -171,6 +185,8 @@ export const PRIMARY_NAV_ITEMS = NAV_ITEMS.filter((item) => item.section === "pr
 export const UTILITY_NAV_ITEMS = NAV_ITEMS.filter((item) => item.section === "utility");
 export const MOBILE_NAV_ITEMS = NAV_ITEMS.filter((item) => item.mobile);
 export const MOBILE_MORE_ITEMS = NAV_ITEMS.filter((item) => !item.mobile);
+export const RAIL_UTILITY_ITEMS = UTILITY_NAV_ITEMS.filter((item) => item.rail);
+export const RAIL_MORE_ITEMS = NAV_ITEMS.filter((item) => !item.rail);
 
 function matchesPathPrefix(pathname: string, prefix: string): boolean {
   if (prefix === ROUTES.TIMELINE) return pathname === ROUTES.TIMELINE;
