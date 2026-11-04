@@ -238,17 +238,11 @@ describe("conversation summary schema", () => {
     expect(conversationIdIndex).toContain(
       normalizeSql(`WHERE conversation_id IS NOT NULL AND ${conversationTypeClause()}`)
     );
-    expect(insertTrigger).toContain(
-      normalizeSql(`WHEN ${conversationEventEligibilityClause("NEW.")} AND NEW.conversation_id IS NOT NULL`)
-    );
-    expect(deleteTrigger).toContain(
-      normalizeSql(`WHEN ${conversationEventEligibilityClause("OLD.")} AND OLD.conversation_id IS NOT NULL`)
-    );
-    expect(updateTrigger).toContain(
-      normalizeSql(
-        `WHEN ${conversationEventEligibilityClause("OLD.")} AND OLD.conversation_id IS NOT NULL OR ${conversationEventEligibilityClause("NEW.")} AND NEW.conversation_id IS NOT NULL`
-      )
-    );
+    const eligible = (ref: "NEW." | "OLD.") =>
+      `(${conversationEventEligibilityClause(ref)} AND ${ref}conversation_id IS NOT NULL)`;
+    expect(insertTrigger).toContain(normalizeSql(`WHEN ${eligible("NEW.")} BEGIN`));
+    expect(deleteTrigger).toContain(normalizeSql(`WHEN ${eligible("OLD.")} BEGIN`));
+    expect(updateTrigger).toContain(normalizeSql(`WHEN (${eligible("OLD.")} OR ${eligible("NEW.")}) AND (`));
   });
 
   it("updates summaries only for shared conversation event types", () => {
