@@ -328,6 +328,22 @@ describe("getCodingProjects", () => {
     expect(projects[0].aiSources).toEqual(["opencode"]);
   });
 
+  test("counts a conversation id used by two accounts as two conversations", async () => {
+    for (const account of ["work", "personal"]) {
+      db.prepare(`
+        INSERT INTO events (
+          source, source_id, source_account, type, timestamp, title, raw_data, conversation_id
+        ) VALUES ('claude-code', ?, ?, 'claude-code:message:user', '2026-01-01T10:00:00Z', 'timeline (slug)', '{}', 'shared')
+      `).run(`shared-${account}`, account);
+    }
+
+    const { projects } = await getCodingProjects(wrapDatabase(db));
+
+    expect(projects).toHaveLength(1);
+    expect(projects[0].conversationCount).toBe(2);
+    expect(projects[0].messageCount).toBe(2);
+  });
+
   test("sorts by most recent activity descending", async () => {
     insertWakaTimeSession({
       sourceId: "w1",
