@@ -60,6 +60,22 @@ never uses port 3001, which belongs to the installed service; read the ports
 from `dev:status` rather than guessing. Vite started on its own has no API to
 proxy to, so start the app through `bun run dev`.
 
+## Running one sync source
+
+`bun run sync:once <source>` runs a source's `canSync()` and `sync()` once in a
+sandbox under `.sync-once/`, without the service, scheduler, or API, and prints
+the result, the events it inserted, updated, or deleted, and `sync_state`:
+
+```bash
+bun run sync:once claude-code --set path=./fixtures/claude --set account=alice
+```
+
+The source gets an empty config, a sandbox `HOME`, and no host environment, so
+credentials and fixtures reach it only through the options that pass them, such
+as `--env`, `--home-file`, or `--state-json`. Reuse a database across runs with `--db` to check idempotency or cursor
+progress; `--help` lists every option. Tests call the same path through
+`runSourceOnce()` in `src/sync/once.ts`.
+
 ## Testing
 
 Run `./test.sh` before pushing. Screenshot comparisons run in the same Ubuntu

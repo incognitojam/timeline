@@ -14,6 +14,7 @@
     "dev:stop": "bun run scripts/dev-ctl.ts stop",
     "inbox": "bun run src/inbox/index.ts",
     "service": "bun run src/service.ts",
+    "sync:once": "bun run src/sync/once-cli.ts",
     "service:verbose": "bun run src/service.ts --verbose",
     "build:service": "bun run scripts/build-service-artifact.ts",
     "smoke-service": "./scripts/smoke-service.sh",

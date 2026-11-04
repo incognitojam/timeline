@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, resolve, join } from "node:path";
 import { parse as parseTOML } from "@iarna/toml";
 import { expandPath, loadEnvFile } from "../config";
+import { APP_STATE_DB_FILE, EMBEDDINGS_DB_FILE } from "./sibling-files";
 
 const DEFAULT_DB_PATH = "./timeline.db";
 const HOST_CONFIG_PATH = join(homedir(), ".config", "timeline", "config.toml");
@@ -58,14 +59,14 @@ export function assertNoLocalDbMarker(info: DbPathInfo, targetPath: string, labe
 
 export function getAppStateDbPath(timelineDbPath: string): string {
   const info = getDbPathInfo(timelineDbPath);
-  const appStatePath = join(info.dbParentDir, "app-state.db");
+  const appStatePath = join(info.dbParentDir, APP_STATE_DB_FILE);
   assertNoLocalDbMarker(info, appStatePath, "app state database");
   return appStatePath;
 }
 
 export function getEmbeddingsDbPath(timelineDbPath: string): string {
   const info = getDbPathInfo(timelineDbPath);
-  const embeddingsPath = join(info.dbParentDir, "embeddings.db");
+  const embeddingsPath = join(info.dbParentDir, EMBEDDINGS_DB_FILE);
   assertNoLocalDbMarker(info, embeddingsPath, "embeddings database");
   return embeddingsPath;
 }
