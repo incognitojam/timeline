@@ -83,10 +83,28 @@ notarize() {
   fi
 }
 
+# stapler fetches and checks tickets through Apple's CloudKit service. When
+# that request drops, it exits 68, so retry that status with backoff; any other
+# failure (for example a missing or invalid ticket) fails at once.
+stapler() {
+  local attempt=1 delay=15 status
+  while true; do
+    status=0
+    xcrun stapler "$@" || status=$?
+    if [ "$status" -ne 68 ] || [ "$attempt" -ge 5 ]; then
+      return "$status"
+    fi
+    echo "stapler $1 hit a network error (attempt $attempt of 5); retrying in ${delay}s." >&2
+    sleep "$delay"
+    attempt=$((attempt + 1))
+    delay=$((delay * 2))
+  done
+}
+
 ditto -c -k --keepParent "$APP" "$WORK/Timeline.zip"
 notarize "$WORK/Timeline.zip" app
-xcrun stapler staple "$APP"
-xcrun stapler validate "$APP"
+stapler staple "$APP"
+stapler validate "$APP"
 spctl --assess --type execute --verbose "$APP"
 
 version="$(bun run "$ROOT/scripts/print-product-version.ts")"
@@ -100,12 +118,12 @@ python3 -m venv "$WORK/dmgbuild"
 mkdir "$WORK/mount"
 hdiutil attach -readonly -nobrowse -mountpoint "$WORK/mount" "$DMG" >/dev/null
 codesign --verify --deep --strict "$WORK/mount/Timeline.app"
-xcrun stapler validate "$WORK/mount/Timeline.app"
+stapler validate "$WORK/mount/Timeline.app"
 hdiutil detach "$WORK/mount" >/dev/null
 codesign --force --timestamp --keychain "$KEYCHAIN" --sign "$identity" "$DMG"
 notarize "$DMG" dmg
-xcrun stapler staple "$DMG"
-xcrun stapler validate "$DMG"
+stapler staple "$DMG"
+stapler validate "$DMG"
 codesign --verify --strict "$DMG"
 spctl --assess --type open --context context:primary-signature --verbose "$DMG"
 (cd "$OUTPUT" && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256")
