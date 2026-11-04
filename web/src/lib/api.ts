@@ -183,14 +183,23 @@ export interface ConversationListItem {
   lastMessage: string | null;
 }
 
-export async function fetchConversations(params: {
+// Plain conversation lists: people (`messages`) or chat assistants. Coding-agent
+// sessions list with their project via fetchCodingAgentConversations.
+export type ConversationListScope = "messages" | "assistants";
+
+export interface ConversationListParams {
+  scope: ConversationListScope;
   search?: string;
   source?: string;
   limit?: number;
   offset?: number;
-  signal: AbortSignal;
-}): Promise<{ conversations: ConversationListItem[]; total: number }> {
+}
+
+export async function fetchConversations(
+  params: ConversationListParams & { signal: AbortSignal },
+): Promise<{ conversations: ConversationListItem[]; total: number }> {
   const searchParams = new URLSearchParams();
+  if (params.scope !== "messages") searchParams.set("scope", params.scope);
   if (params?.search) searchParams.set("search", params.search);
   if (params?.source) searchParams.set("source", params.source);
   if (params?.limit) searchParams.set("limit", String(params.limit));
@@ -199,8 +208,12 @@ export async function fetchConversations(params: {
   return parseApiJson(res, "Failed to fetch conversations");
 }
 
-export async function fetchConversationSources(signal: AbortSignal): Promise<{ sources: string[] }> {
-  const res = await apiFetch(`${API_BASE}/api/conversations/sources`, { signal });
+export async function fetchConversationSources(
+  scope: ConversationListScope,
+  signal: AbortSignal,
+): Promise<{ sources: string[] }> {
+  const query = scope === "messages" ? "" : `?scope=${scope}`;
+  const res = await apiFetch(`${API_BASE}/api/conversations/sources${query}`, { signal });
   return parseApiJson(res, "Failed to fetch conversation sources");
 }
 

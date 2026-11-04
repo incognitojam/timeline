@@ -61,9 +61,9 @@ describe("buildHealthUrl", () => {
 
 describe("navigation hierarchy", () => {
   test("keeps Material navigation destination counts within their intended ranges", () => {
-    expect(PRIMARY_NAV_ITEMS).toHaveLength(6);
+    expect(PRIMARY_NAV_ITEMS).toHaveLength(7);
     expect(MOBILE_NAV_ITEMS).toHaveLength(4);
-    expect(MOBILE_MORE_ITEMS).toHaveLength(8);
+    expect(MOBILE_MORE_ITEMS).toHaveLength(9);
     expect(UTILITY_NAV_ITEMS).toHaveLength(6);
     expect(RAIL_UTILITY_ITEMS.map((item) => item.label)).toEqual(["Search", "Sync", "Settings"]);
     expect(RAIL_MORE_ITEMS.map((item) => item.label)).toEqual(["Attachments", "MCP sessions", "Evaluations"]);
@@ -84,7 +84,9 @@ describe("navigation hierarchy", () => {
     ["/coding/conversations", "Coding"],
     ["/conversation/claude-code/session-1", "Coding"],
     ["/conversation/codex/session-1", "Coding"],
-    ["/conversation/chatgpt/chat-1", "Messages"],
+    ["/ai-chats", "AI chats"],
+    ["/conversation/chatgpt/chat-1", "AI chats"],
+    ["/conversation/claude/chat-1", "AI chats"],
     ["/music", "Music"],
     ["/music/playlist/focus", "Music"],
     ["/sync", "Sync"],

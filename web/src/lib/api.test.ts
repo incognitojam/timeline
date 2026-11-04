@@ -130,14 +130,14 @@ describe("conversation lists", () => {
   it("rejects HTTP failures from list and source requests", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
-      const error = path.endsWith("/sources")
+      const error = new URL(path, "http://localhost").pathname.endsWith("/sources")
         ? "Could not load conversation sources"
         : "Could not load conversations";
       return Response.json({ error }, { status: 500 });
     }));
 
-    await expect(fetchConversations({ signal: TEST_SIGNAL })).rejects.toThrow("Could not load conversations");
-    await expect(fetchConversationSources(TEST_SIGNAL)).rejects.toThrow("Could not load conversation sources");
+    await expect(fetchConversations({ scope: "messages", signal: TEST_SIGNAL })).rejects.toThrow("Could not load conversations");
+    await expect(fetchConversationSources("messages", TEST_SIGNAL)).rejects.toThrow("Could not load conversation sources");
   });
 });
 

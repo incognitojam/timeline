@@ -25,6 +25,7 @@ export { default as IconBuild } from "~icons/material-symbols/build-outline-roun
 export { default as IconCalendarToday } from "~icons/material-symbols/calendar-today-outline-rounded";
 export { default as IconCancel } from "~icons/material-symbols/cancel-outline-rounded";
 export { default as IconChat } from "~icons/material-symbols/chat-bubble-outline-rounded";
+export { default as IconSmartToy } from "~icons/material-symbols/smart-toy-outline-rounded";
 export { default as IconCheck } from "~icons/material-symbols/check-rounded";
 export { default as IconChevronLeft } from "~icons/material-symbols/chevron-left-rounded";
 export { default as IconChevronRight } from "~icons/material-symbols/chevron-right-rounded";

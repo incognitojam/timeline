@@ -3501,7 +3501,7 @@ describe("API Smoke Tests", () => {
       expect(typeof first.lastEventId).toBe("number");
     });
 
-    test("coding-agent sessions list on /api/coding/conversations, not in Messages", async () => {
+    test("conversation scopes split Messages, chat assistants, and coding agents", async () => {
       const db = getDb();
       const insert = db.prepare(`
         INSERT OR IGNORE INTO events (source, source_id, source_account, type, timestamp, title, content, raw_data, conversation_id)
@@ -3517,10 +3517,17 @@ describe("API Smoke Tests", () => {
         json.conversations.map((c) => c.conversationId).sort();
 
       const messages = await (await app.request("/api/conversations?search=ai-list-api")).json();
-      expect(ids(messages)).toEqual(["ai-list-api-chatgpt-thread", "ai-list-api-discord-thread"]);
+      expect(ids(messages)).toEqual(["ai-list-api-discord-thread"]);
       const messageSources = await (await app.request("/api/conversations/sources")).json();
       expect(messageSources.sources).not.toContain("codex");
-      expect(messageSources.sources).toContain("chatgpt");
+      expect(messageSources.sources).not.toContain("chatgpt");
+
+      const assistants = await (await app.request("/api/conversations?scope=assistants&search=ai-list-api")).json();
+      expect(ids(assistants)).toEqual(["ai-list-api-chatgpt-thread"]);
+      const assistantSources = await (await app.request("/api/conversations/sources?scope=assistants")).json();
+      expect(assistantSources.sources).toEqual(["chatgpt"]);
+      expect((await app.request("/api/conversations?scope=coding")).status).toBe(400);
+      expect((await app.request("/api/conversations/sources?scope=bogus")).status).toBe(400);
 
       const res = await app.request("/api/coding/conversations?search=ai-list-api");
       expect(res.status).toBe(200);

@@ -947,7 +947,7 @@ function baseResponses(): Record<string, unknown> {
     "/api/music/rankings": music.rankings,
     "/api/music/recent": music.recent,
     "/api/search": buildSearchResults(),
-    "/api/conversations/sources": { sources: ["discord", "claude", "facebook", "phone"] },
+    "/api/conversations/sources": { sources: ["discord", "facebook", "phone"] },
     "/api/contacts": {
       contacts: CAST.map((p, i): ContactWithStats => ({
         id: p.contactId,

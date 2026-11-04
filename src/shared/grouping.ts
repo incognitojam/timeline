@@ -10,13 +10,13 @@ export const CODING_AGENT_SOURCES = [
   "codex",
 ] as const;
 
-// General-purpose chat assistants.
+// General-purpose chat assistants, listed on their own AI chats page.
 export const CHAT_ASSISTANT_SOURCES = [
   "claude",
   "chatgpt",
 ] as const;
 
-// AI chat sources (grouped by conversation).
+// AI chat sources (grouped by conversation); neither group appears in Messages.
 export const AI_SOURCES = [...CODING_AGENT_SOURCES, ...CHAT_ASSISTANT_SOURCES] as const;
 
 // Social/messaging sources with real people (grouped by conversation)

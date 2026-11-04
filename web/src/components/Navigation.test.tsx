@@ -29,13 +29,13 @@ function renderNavigation(path = "/") {
 }
 
 describe("Navigation", () => {
-  test("renders the six primary destinations and separates utilities", () => {
+  test("renders the seven primary destinations and separates utilities", () => {
     const { container } = renderNavigation();
     const rail = container.querySelector<HTMLElement>("aside");
     expect(rail).not.toBeNull();
     if (!rail) throw new Error("Desktop navigation rail was not rendered");
 
-    expect(within(rail).getByRole("navigation", { name: "Primary" }).querySelectorAll("a")).toHaveLength(6);
+    expect(within(rail).getByRole("navigation", { name: "Primary" }).querySelectorAll("a")).toHaveLength(7);
     const utilities = within(rail).getByRole("navigation", { name: "Utilities" });
     expect(within(utilities).getAllByRole("link").map((link) => link.textContent)).toEqual([
       "Search",
@@ -106,7 +106,7 @@ describe("Navigation", () => {
     fireEvent.click(moreButton);
 
     const dialog = await screen.findByRole("dialog", { name: "More destinations" });
-    expect(within(dialog).getAllByRole("link")).toHaveLength(8);
+    expect(within(dialog).getAllByRole("link")).toHaveLength(9);
     expect(within(dialog).getByRole("link", { name: "Music" })).toHaveAttribute(
       "aria-current",
       "page",
