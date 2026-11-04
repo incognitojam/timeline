@@ -16,12 +16,6 @@ import type { JobTrigger } from "../jobs/types";
 import { getVisionAvailability, type VisionAvailability } from "../llm";
 import { isSyncSourceEnabled, listSyncSourceRows, loadSyncConfig, loadSyncSourcesConfig } from "../sync/config";
 import {
-  completeSyncLog,
-  formatSyncResult,
-  recordSkippedSync,
-  startSyncLog,
-} from "../sync/log";
-import {
   checkNetworkGuard,
   meteredFromStatus,
   parseNetworkGuardConfig,
@@ -29,7 +23,8 @@ import {
 import { detectPowerStatus, evaluatePowerGuard, parsePowerGuardConfig } from "../sync/power-guard";
 import { SYNC_SOURCES } from "../sync/sources";
 import { attachmentDescriptionModelRefs } from "../sync/sources/attachment-descriptions";
-import type { SyncOptions, SyncResult, SyncSource } from "../sync/types";
+import { runSyncSource } from "../sync/run";
+import type { SyncResult, SyncSource } from "../sync/types";
 
 export interface ScheduledTask {
   source: string;
@@ -612,71 +607,33 @@ export class Scheduler {
     }
 
     try {
-      // Load sync config for canSync check and sync function
       const syncConfig = await loadSyncConfig(this.db, this.registeredSourceNames);
-      const runtimeSourceConfig = syncConfig.sources[sourceName];
-
-      // Check if sync can run
-      const cannotSync = await syncSource.canSync(runtimeSourceConfig);
-      if (cannotSync) {
-        const result: SyncResult = {
-          source: sourceName,
-          success: true,
-          skipped: true,
-          eventsAdded: 0,
-          eventsUpdated: 0,
-          error: cannotSync,
-          durationMs: 0,
-        };
-        recordSkippedSync(this.db, jobId ?? null, result);
-        if (this.verbose) {
-          console.log(formatSyncResult(result));
-        }
-        return result;
-      }
-
-      // Guard pipeline: defer the run on adverse conditions (e.g. uploading
-      // backups over a tethered iPhone) instead of running it. A deferral is
-      // recorded as a skipped sync_log row with success=1 — worker.ts treats a
-      // result with success=false as a hard failure and retries it, which a
-      // polite deferral must not trigger. Manual ("force it now") triggers
-      // bypass the guard. Runs here, after canSync, because a guard in canSync
-      // returns before startSyncLog and would leave no record of the deferral.
-      if (trigger !== "manual") {
-        const skip = await this.guardCheck({
-          source: sourceName,
-          sourceConfig: runtimeSourceConfig,
-          blockedNetworks: getBlockedNetworks(this.db),
-        });
-        if (skip) {
-          recordSkippedSync(this.db, jobId ?? null, skip);
-          if (this.verbose) {
-            console.log(formatSyncResult(skip));
-          }
-          return skip;
-        }
-      }
-
-      // Log start
-      const logId = startSyncLog(this.db, sourceName, jobId ?? null);
-
-      const options: SyncOptions = {
-        verbose: this.verbose,
+      // Guards defer a run on adverse conditions (e.g. uploading backups over
+      // a tethered iPhone). A deferral is recorded as a skipped sync_log row
+      // with success=1 — worker.ts treats a result with success=false as a
+      // hard failure and retries it, which a polite deferral must not trigger.
+      // Manual ("force it now") triggers bypass the guard.
+      const guard =
+        trigger === "manual"
+          ? undefined
+          : () =>
+              this.guardCheck({
+                source: sourceName,
+                sourceConfig: syncConfig.sources[sourceName],
+                blockedNetworks: getBlockedNetworks(this.db),
+              });
+      const { result, ran } = await runSyncSource({
+        appDb: this.db,
+        source: syncSource,
         config: syncConfig,
+        jobId,
         signal: abortController.signal,
         localWork,
-      };
-
-      // Run sync
-      const result = await syncSource.sync(options);
-
-      // Log completion
-      completeSyncLog(this.db, logId, result);
-
-      this.recordRunAndReschedule(sourceName, syncSource, sourceConfig);
-
-      if (this.verbose) {
-        console.log(formatSyncResult(result));
+        verbose: this.verbose,
+        guard,
+      });
+      if (ran) {
+        this.recordRunAndReschedule(sourceName, syncSource, sourceConfig);
       }
 
       return result;
