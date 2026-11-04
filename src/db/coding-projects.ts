@@ -320,7 +320,10 @@ export async function getCodingProjects(
 ): Promise<{ projects: CodingProject[] }> {
   const { search, limit = 200 } = options;
 
-  // WakaTime sessions, grouped by extracted project name from title.
+  // WakaTime sessions, grouped by extracted project name from title. A
+  // project's primary language is the one with the most proportional duration
+  // (heartbeats / total heartbeats * session duration), matching the byLanguage
+  // aggregation.
   const wakaRows = await db.query<{
     name: string;
     primaryLanguage: string | null;
@@ -329,136 +332,74 @@ export async function getCodingProjects(
     firstActivity: string | null;
     lastActivity: string | null;
   }>(`
-    WITH wakatime_sessions AS (
+    WITH sessions AS (
       SELECT
-        id,
         duration_ms,
         timestamp,
         raw_data,
         CASE
           WHEN INSTR(title, ' (') > 0 THEN SUBSTR(title, 1, INSTR(title, ' (') - 1)
           ELSE title
-        END as project_name
+        END AS name
       FROM events
       WHERE source = 'wakatime' AND type = 'code:session' AND title IS NOT NULL
+    ),
+    language_weights AS (
+      SELECT
+        s.name,
+        l.key AS language,
+        SUM(
+          CAST(l.value AS REAL)
+          / (SELECT SUM(CAST(value AS REAL)) FROM json_each(json_extract(s.raw_data, '$.languages')))
+          * COALESCE(s.duration_ms, 0)
+        ) AS weight
+      FROM sessions s, json_each(json_extract(s.raw_data, '$.languages')) l
+      GROUP BY s.name, l.key
+    ),
+    primary_languages AS (
+      SELECT name, language, MAX(weight) FROM language_weights GROUP BY name
     )
     SELECT
-      project_name as name,
-      (
-        -- Rank languages by proportional duration (heartbeats / total
-        -- heartbeats * session duration). Matches the byLanguage aggregation
-        -- so a project's primary language equals its top byLanguage entry.
-        SELECT l.key
-        FROM wakatime_sessions w2, json_each(json_extract(w2.raw_data, '$.languages')) l
-        WHERE w2.project_name = wakatime_sessions.project_name
-        GROUP BY l.key
-        ORDER BY SUM(
-          CAST(l.value AS REAL)
-          / (SELECT SUM(CAST(value AS REAL)) FROM json_each(json_extract(w2.raw_data, '$.languages')))
-          * COALESCE(w2.duration_ms, 0)
-        ) DESC
-        LIMIT 1
-      ) as primaryLanguage,
-      COALESCE(SUM(duration_ms), 0) as totalDuration,
-      COUNT(*) as sessionCount,
-      MIN(timestamp) as firstActivity,
-      MAX(timestamp) as lastActivity
-    FROM wakatime_sessions
-    GROUP BY project_name
-    HAVING project_name IS NOT NULL AND project_name != ''
+      s.name,
+      p.language AS primaryLanguage,
+      COALESCE(SUM(s.duration_ms), 0) AS totalDuration,
+      COUNT(*) AS sessionCount,
+      MIN(s.timestamp) AS firstActivity,
+      MAX(s.timestamp) AS lastActivity
+    FROM sessions s
+    LEFT JOIN primary_languages p ON p.name = s.name
+    WHERE s.name != ''
+    GROUP BY s.name
   `);
 
-  const ai = new Map<string, AiAggregate>();
-
-  // Conductor / t3code: project name comes directly from a raw_data field.
-  for (const { source, nameExpr } of [
-    { source: "conductor", nameExpr: "$.repo_name" },
-    { source: "t3code", nameExpr: "$.project_title" },
-  ] as const) {
-    const rows = await db.query<{
-      name: string;
-      conversation_count: number;
-      message_count: number;
-      first_message: string | null;
-      last_message: string | null;
-    }>(`
-      SELECT
-        json_extract(raw_data, '${nameExpr}') as name,
-        COUNT(DISTINCT COALESCE(conversation_id, IFNULL(source_account, '') || '|' || title)) as conversation_count,
-        COUNT(*) as message_count,
-        MIN(timestamp) as first_message,
-        MAX(timestamp) as last_message
-      FROM events
-      WHERE source = '${source}'
-        AND ${conversationTypeClause()}
-        AND title IS NOT NULL
-        AND json_extract(raw_data, '${nameExpr}') IS NOT NULL
-      GROUP BY name
-    `);
-    for (const row of rows) {
-      if (row.name) mergeAi(ai, row.name, source, row);
-    }
-  }
-
-  // Claude-code: title prefix (same "Project (Language)" convention as WakaTime).
-  const claudeCodeRows = await db.query<{
+  // Coding-agent conversations, from the maintained per-conversation tables so
+  // listing never parses raw_data.
+  const aiRows = await db.query<{
     name: string;
+    source: string;
     conversation_count: number;
     message_count: number;
     first_message: string | null;
     last_message: string | null;
   }>(`
     SELECT
-      CASE
-        WHEN INSTR(title, ' (') > 0 THEN SUBSTR(title, 1, INSTR(title, ' (') - 1)
-        ELSE title
-      END as name,
-      COUNT(DISTINCT COALESCE(conversation_id, IFNULL(source_account, '') || '|' || title)) as conversation_count,
-      COUNT(*) as message_count,
-      MIN(timestamp) as first_message,
-      MAX(timestamp) as last_message
-    FROM events
-    WHERE source = 'claude-code'
-      AND ${conversationTypeClause()}
-      AND title IS NOT NULL
-    GROUP BY name
+      cac.project AS name,
+      cs.source,
+      COUNT(*) AS conversation_count,
+      SUM(cs.message_count) AS message_count,
+      MIN(cs.first_message) AS first_message,
+      MAX(cs.last_message) AS last_message
+    FROM coding_agent_conversations cac
+    JOIN conversation_summaries cs
+      ON cs.source = cac.source
+     AND cs.source_account_key = cac.source_account_key
+     AND cs.conversation_id = cac.conversation_id
+    WHERE cac.project IS NOT NULL
+    GROUP BY cac.project, cs.source
   `);
-  for (const row of claudeCodeRows) {
-    if (row.name) mergeAi(ai, row.name, "claude-code", row);
-  }
 
-  // Amp / opencode / codex: aggregate by raw path, then resolve to project
-  // name in JS to mirror the path-matching done by PROJECT_FILTERS.
-  for (const { source, pathExpr } of [
-    { source: "amp", pathExpr: "$.workspace_roots[0]" },
-    { source: "opencode", pathExpr: "$.project_path" },
-    { source: "codex", pathExpr: "$.cwd" },
-  ] as const) {
-    const rows = await db.query<{
-      path: string | null;
-      conversation_count: number;
-      message_count: number;
-      first_message: string | null;
-      last_message: string | null;
-    }>(`
-      SELECT
-        json_extract(raw_data, '${pathExpr}') as path,
-        COUNT(DISTINCT COALESCE(conversation_id, IFNULL(source_account, '') || '|' || title)) as conversation_count,
-        COUNT(*) as message_count,
-        MIN(timestamp) as first_message,
-        MAX(timestamp) as last_message
-      FROM events
-      WHERE source = ?
-        AND ${conversationTypeClause()}
-        AND title IS NOT NULL
-        AND json_extract(raw_data, '${pathExpr}') IS NOT NULL
-      GROUP BY path
-    `, source);
-    for (const row of rows) {
-      const name = projectNameFromWorkspacePath(row.path);
-      if (name) mergeAi(ai, name, source, row);
-    }
-  }
+  const ai = new Map<string, AiAggregate>();
+  for (const row of aiRows) mergeAi(ai, row.name, row.source, row);
 
   // Merge WakaTime projects with AI aggregates, keyed by project name.
   const merged = new Map<string, CodingProject>();
