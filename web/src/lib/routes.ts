@@ -1,4 +1,4 @@
-import { CODING_AGENT_SOURCES } from "@shared/grouping";
+import { CHAT_ASSISTANT_SOURCES, CODING_AGENT_SOURCES } from "@shared/grouping";
 import type { HealthWindowSelection } from "@shared/health-periods";
 
 export const ROUTES = {
@@ -18,6 +18,7 @@ export const ROUTES = {
   EVAL: "/eval",
   MCP_SESSION: "/mcp-sessions/:id",
   CONVERSATIONS: "/conversations",
+  AI_CHATS: "/ai-chats",
   CONVERSATION: "/conversation/:source/:conversationId",
   SERVERS: "/servers",
   SERVER: "/server/:source/:id",
@@ -31,6 +32,7 @@ export type NavigationIcon =
   | "search"
   | "health"
   | "coding"
+  | "assistants"
   | "music"
   | "sync"
   | "settings"
@@ -59,8 +61,8 @@ function routePrefix(route: string): string {
   return route.split("/:")[0];
 }
 
-// Conversation detail pages for these sources, so a coding-agent session
-// highlights the page that lists it rather than Messages.
+// Conversation detail pages for these sources, so an AI conversation highlights
+// the page that lists it rather than Messages.
 function conversationPathsFor(sources: readonly string[]): string[] {
   return sources.map((source) => buildConversationsPathPrefix(source));
 }
@@ -125,6 +127,15 @@ export const NAV_ITEMS = [
     mobile: false,
     rail: true,
     activePaths: [ROUTES.CODING, ...conversationPathsFor(CODING_AGENT_SOURCES)],
+  },
+  {
+    path: ROUTES.AI_CHATS,
+    label: "AI chats",
+    icon: "assistants",
+    section: "primary",
+    mobile: false,
+    rail: true,
+    activePaths: [ROUTES.AI_CHATS, ...conversationPathsFor(CHAT_ASSISTANT_SOURCES)],
   },
   {
     path: ROUTES.MUSIC,
@@ -273,6 +284,14 @@ export function buildConversationsUrl(params?: { search?: string; source?: strin
   if (params?.source) searchParams.set("source", params.source);
   const query = searchParams.toString();
   return `/conversations${query ? `?${query}` : ""}`;
+}
+
+export function buildAiChatsUrl(params?: { search?: string; source?: string }): string {
+  const searchParams = new URLSearchParams();
+  if (params?.search) searchParams.set("search", params.search);
+  if (params?.source) searchParams.set("source", params.source);
+  const query = searchParams.toString();
+  return `${ROUTES.AI_CHATS}${query ? `?${query}` : ""}`;
 }
 
 export function buildCodingConversationsUrl(params?: {

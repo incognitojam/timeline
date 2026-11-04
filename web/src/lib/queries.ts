@@ -20,6 +20,8 @@ import {
   type AttachmentsListParams,
   batchLinkIdentities,
   type ConversationAroundParams,
+  type ConversationListParams,
+  type ConversationListScope,
   type ConversationMediaParams,
   type ConversationParams,
   type ConversationRangeExportRequest,
@@ -168,9 +170,8 @@ export const queryKeys = {
   semanticSearch: (params: { q: string; includeNoisySources?: boolean }) =>
     ["semanticSearch", params] as const,
   conversationsRoot: () => ["conversations"] as const,
-  conversations: (params?: { search?: string; source?: string; limit?: number; offset?: number }) =>
-    ["conversations", params] as const,
-  conversationSources: () => ["conversationSources"] as const,
+  conversations: (params: ConversationListParams) => ["conversations", params] as const,
+  conversationSources: (scope: ConversationListScope) => ["conversationSources", scope] as const,
   codingAgentConversations: (params: CodingAgentConversationListParams) => ["codingAgentConversations", params] as const,
   codingAgentConversationFilters: () => ["codingAgentConversationFilters"] as const,
   conversationPage: (params: ConversationPageParams) =>
@@ -396,17 +397,17 @@ export const queryOptions = {
       retry: false,
     }),
 
-  conversations: (params: { search?: string; source?: string; limit?: number; offset?: number }) =>
+  conversations: (params: ConversationListParams) =>
     defineQueryOptions({
       queryKey: queryKeys.conversations(params),
       queryFn: ({ signal }) => fetchConversations({ ...params, signal }),
       placeholderData: keepPreviousData,
     }),
 
-  conversationSources: () =>
+  conversationSources: (scope: ConversationListScope) =>
     defineQueryOptions({
-      queryKey: queryKeys.conversationSources(),
-      queryFn: ({ signal }) => fetchConversationSources(signal),
+      queryKey: queryKeys.conversationSources(scope),
+      queryFn: ({ signal }) => fetchConversationSources(scope, signal),
     }),
 
   codingAgentConversations: (params: CodingAgentConversationListParams) =>
@@ -1022,12 +1023,12 @@ export function useSemanticSearch(
 }
 
 // Conversations list query
-export function useConversations(params: () => { search?: string; source?: string; limit?: number; offset?: number }) {
+export function useConversations(params: () => ConversationListParams) {
   return createQuery(() => queryOptions.conversations(params()));
 }
 
-export function useConversationSources() {
-  return createQuery(() => queryOptions.conversationSources());
+export function useConversationSources(scope: () => ConversationListScope) {
+  return createQuery(() => queryOptions.conversationSources(scope()));
 }
 
 export function useCodingAgentConversations(params: () => CodingAgentConversationListParams) {

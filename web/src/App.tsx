@@ -2,7 +2,10 @@ import { Route, type RoutePreloadFunc, Router } from "@solidjs/router";
 import { type Component, Suspense } from "solid-js";
 import AttachmentsView from "./components/AttachmentsView";
 import ContactsView from "./components/ContactsView";
-import ConversationsListView, { CodingConversationsListView } from "./components/ConversationsListView";
+import ConversationsListView, {
+  AiChatsListView,
+  CodingConversationsListView,
+} from "./components/ConversationsListView";
 import ConversationView from "./components/ConversationView";
 import DiscordServersView from "./components/DiscordServersView";
 import DiscordServerView from "./components/DiscordServerView";
@@ -92,8 +95,15 @@ function conversationListParams(query: Parameters<RoutePreloadFunc>[0]["location
 
 const preloadConversations: RoutePreloadFunc = ({ location }) => {
   return Promise.all([
-    queryClient.prefetchQuery(queryOptions.conversations(conversationListParams(location.query))),
-    queryClient.prefetchQuery(queryOptions.conversationSources()),
+    queryClient.prefetchQuery(queryOptions.conversations({ scope: "messages", ...conversationListParams(location.query) })),
+    queryClient.prefetchQuery(queryOptions.conversationSources("messages")),
+  ]);
+};
+
+const preloadAiChats: RoutePreloadFunc = ({ location }) => {
+  return Promise.all([
+    queryClient.prefetchQuery(queryOptions.conversations({ scope: "assistants", ...conversationListParams(location.query) })),
+    queryClient.prefetchQuery(queryOptions.conversationSources("assistants")),
   ]);
 };
 
@@ -170,6 +180,7 @@ export default function App() {
       <Route path="/coding" component={suspenseRoute(WakaTimeOverview, "coding")} />
       <Route path="/coding/project/:name" component={suspenseRoute(WakaTimeProjectView, "project")} />
       <Route path={ROUTES.CODING_CONVERSATIONS} component={suspenseRoute(CodingConversationsListView, "coding agent sessions")} preload={preloadCodingConversations} />
+      <Route path={ROUTES.AI_CHATS} component={suspenseRoute(AiChatsListView, "AI chats")} preload={preloadAiChats} />
       <Route path="/music" component={suspenseRoute(MusicOverview, "music")} />
       <Route path="/music/playlist/:id" component={suspenseRoute(MusicPlaylistView, "playlist")} />
       <Route path="/search" component={suspenseRoute(SearchView, "search")} preload={preloadSearch} />

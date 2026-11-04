@@ -1,5 +1,5 @@
 import { A, Navigate, useSearchParams } from "@solidjs/router";
-import { CODING_AGENT_SOURCES } from "@shared/grouping";
+import { CHAT_ASSISTANT_SOURCES, CODING_AGENT_SOURCES } from "@shared/grouping";
 import { sourceLabel } from "@shared/sources";
 import { createEffect, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import type { ConversationListItem } from "../lib/api";
@@ -12,7 +12,12 @@ import {
 } from "../lib/queries";
 import { CONVERSATIONS_PAGE_SIZE } from "../lib/query-params";
 import { normalizeRouteParam, routePageIndex } from "../lib/route-params";
-import { buildCodingConversationsUrl, buildConversationUrl, ROUTES } from "../lib/routes";
+import {
+  buildAiChatsUrl,
+  buildCodingConversationsUrl,
+  buildConversationUrl,
+  ROUTES,
+} from "../lib/routes";
 import { getSourceColorStyle } from "../lib/source-styles";
 import { staleContentClass } from "../lib/stale-content";
 import { IconChevronLeft, IconStorage } from "../ui/icons";
@@ -38,14 +43,15 @@ function ConversationsSkeleton() {
 }
 
 /**
- * Which conversations a list shows: everything except coding-agent sessions
- * (`messages`), or coding-agent sessions with their project (`coding`).
+ * Which conversations a list shows: people (`messages`), coding-agent sessions
+ * with their project (`coding`), or chat assistants (`assistants`).
  */
-export type ConversationListScope = "messages" | "coding";
+export type ConversationListScope = "messages" | "coding" | "assistants";
 
 const SEARCH_PLACEHOLDERS: Record<ConversationListScope, string> = {
   messages: "Search conversations...",
   coding: "Search coding agent sessions...",
+  assistants: "Search AI chats...",
 };
 
 // Project <select> values. A prefix keeps a project literally named
@@ -151,9 +157,13 @@ function ConversationListView(props: { scope: ConversationListScope }) {
         project: project() || undefined,
         unassigned: unassigned() || undefined,
       }))
-    : useConversations(listParams);
+    : useConversations(() => ({
+        scope: props.scope === "assistants" ? "assistants" : "messages",
+        ...listParams(),
+      }));
   const filtersQuery = props.scope === "coding" ? useCodingAgentConversationFilters() : null;
-  const sourceQuery = filtersQuery ?? useConversationSources();
+  const sourceQuery = filtersQuery
+    ?? useConversationSources(() => (props.scope === "assistants" ? "assistants" : "messages"));
 
   const projectFilters = () =>
     !filtersQuery || filtersQuery.isPending || filtersQuery.isLoadingError ? null : filtersQuery.data ?? null;
@@ -373,16 +383,29 @@ function ConversationListView(props: { scope: ConversationListScope }) {
   );
 }
 
+function scopeForSource(source: string): Exclude<ConversationListScope, "messages"> | null {
+  if ((CODING_AGENT_SOURCES as readonly string[]).includes(source)) return "coding";
+  if ((CHAT_ASSISTANT_SOURCES as readonly string[]).includes(source)) return "assistants";
+  return null;
+}
+
 /**
- * Messages: every conversation except coding-agent sessions. Old links filtered
- * to a coding agent (`/conversations?source=codex`) redirect to the Coding list.
+ * Messages: conversations with people. Old links filtered to an AI source
+ * (`/conversations?source=codex`) redirect to the page that now lists it.
  */
 export default function ConversationsListView() {
   const [searchParams] = useSearchParams();
   const redirect = () => {
     const source = normalizeRouteParam(searchParams.source);
-    if (!(CODING_AGENT_SOURCES as readonly string[]).includes(source)) return null;
-    return buildCodingConversationsUrl({ source, search: normalizeRouteParam(searchParams.search) || undefined });
+    const search = normalizeRouteParam(searchParams.search) || undefined;
+    switch (scopeForSource(source)) {
+      case "coding":
+        return buildCodingConversationsUrl({ source, search });
+      case "assistants":
+        return buildAiChatsUrl({ source, search });
+      default:
+        return null;
+    }
   };
   return (
     <Show when={redirect()} fallback={<ConversationListView scope="messages" />}>
@@ -406,4 +429,9 @@ export function CodingConversationsListView() {
       </div>
     </div>
   );
+}
+
+/** General-purpose chat assistant conversations (claude.ai, ChatGPT, ...). */
+export function AiChatsListView() {
+  return <ConversationListView scope="assistants" />;
 }

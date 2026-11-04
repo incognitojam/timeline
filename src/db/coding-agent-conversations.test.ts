@@ -1,7 +1,8 @@
 /**
- * Tests for the conversation scopes: Messages excludes coding-agent sessions,
- * and the coding-agent list carries each conversation's coding project
- * (derived once into `coding_agent_conversations`) for filtering.
+ * Tests for the conversation scopes: Messages excludes AI sources, chat
+ * assistants list on their own, and the coding-agent list carries each
+ * conversation's coding project (derived once into
+ * `coding_agent_conversations`) for filtering.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -68,12 +69,20 @@ function seed(): void {
 }
 
 describe("conversation scopes", () => {
-  test("Messages list and sources exclude coding-agent sessions", async () => {
+  test("Messages list and sources exclude AI conversations", async () => {
     seed();
-    const { conversations, total } = await listConversations(wrapDatabase(db));
-    expect(total).toBe(3);
-    expect(conversations.map((c) => c.source)).toEqual(["claude", "phone", "discord"]);
-    expect(await listConversationSources(wrapDatabase(db), "messages")).toEqual(["claude", "discord", "phone"]);
+    const { conversations, total } = await listConversations(wrapDatabase(db), { scope: "messages" });
+    expect(total).toBe(2);
+    expect(conversations.map((c) => c.source)).toEqual(["phone", "discord"]);
+    expect(await listConversationSources(wrapDatabase(db), "messages")).toEqual(["discord", "phone"]);
+  });
+
+  test("chat assistant list returns only chat assistant conversations", async () => {
+    seed();
+    const { conversations, total } = await listConversations(wrapDatabase(db), { scope: "assistants" });
+    expect(total).toBe(1);
+    expect(conversations.map((c) => c.conversationId)).toEqual(["chat-1"]);
+    expect(await listConversationSources(wrapDatabase(db), "assistants")).toEqual(["claude"]);
   });
 
   test("coding-agent list returns only coding-agent conversations with their project", async () => {

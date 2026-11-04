@@ -110,6 +110,8 @@ import {
   listConversationSources,
   listCodingAgentConversations,
   listCodingAgentConversationProjects,
+  isConversationScope,
+  type ConversationScope,
   listDiscordServers,
   getDiscordServer,
   createCursor,
@@ -1463,13 +1465,23 @@ function fallbackNameFromIdentifier(identifier: string): string {
   return parsed.platformId || identifier;
 }
 
-// Coding-agent sessions list with their project on /api/coding/conversations.
+// `scope` picks the plain conversation list: `messages` (default, people) or
+// `assistants` (chat assistants). Coding-agent sessions list with their
+// project on /api/coding/conversations.
+function plainConversationScope(value: string | undefined): Exclude<ConversationScope, "coding"> | null {
+  if (!value) return "messages";
+  return isConversationScope(value) && value !== "coding" ? value : null;
+}
+
 app.get("/api/conversations", async (c) => {
   const query = c.req.query();
+  const scope = plainConversationScope(query.scope);
+  if (!scope) return c.json({ error: "scope must be messages or assistants" }, 400);
   setMetric(c, "dbpool.pending.before", readDbPool.getStats().pending, "pending query count before handler");
   timingStart(c, "conversations.list", "List Conversations");
   try {
     const result = await listConversations(readDb, {
+      scope,
       search: query.search || undefined,
       source: query.source || undefined,
       limit: query.limit ? parseInt(query.limit) : 50,
@@ -1486,7 +1498,9 @@ app.get("/api/conversations", async (c) => {
 });
 
 app.get("/api/conversations/sources", async (c) => {
-  const sources = await listConversationSources(readDb, "messages");
+  const scope = plainConversationScope(c.req.query("scope"));
+  if (!scope) return c.json({ error: "scope must be messages or assistants" }, 400);
+  const sources = await listConversationSources(readDb, scope);
   return c.json({ sources });
 });
 

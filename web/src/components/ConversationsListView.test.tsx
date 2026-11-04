@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CodingAgentConversationListItem, ConversationListItem } from "../lib/api";
 import { queryKeys } from "../lib/queries";
 import { CONVERSATIONS_PAGE_SIZE } from "../lib/query-params";
-import ConversationsListView, { CodingConversationsListView } from "./ConversationsListView";
+import ConversationsListView, { AiChatsListView, CodingConversationsListView } from "./ConversationsListView";
 
 const apiMocks = vi.hoisted(() => ({
   fetchConversations: vi.fn(),
@@ -78,6 +78,7 @@ function renderRoutes(client: QueryClient, path: string) {
       <MemoryRouter history={history}>
         <Route path="/conversations" component={ConversationsListView} />
         <Route path="/coding/conversations" component={() => (<><CodingConversationsListView /><LocationProbe /></>)} />
+        <Route path="/ai-chats" component={() => (<><AiChatsListView /><LocationProbe /></>)} />
       </MemoryRouter>
     </QueryClientProvider>
   ));
@@ -153,6 +154,7 @@ describe("ConversationsListView", () => {
     const client = createTestClient();
     client.setQueryData(
       queryKeys.conversations({
+        scope: "messages",
         search: undefined,
         source: undefined,
         limit: CONVERSATIONS_PAGE_SIZE,
@@ -160,7 +162,7 @@ describe("ConversationsListView", () => {
       }),
       { conversations: [conversation], total: 1 },
     );
-    client.setQueryData(queryKeys.conversationSources(), { sources: ["discord"] });
+    client.setQueryData(queryKeys.conversationSources("messages"), { sources: ["discord"] });
 
     const view = renderConversations(client);
     const searchInput = await view.findByPlaceholderText("Search conversations...");
@@ -171,6 +173,7 @@ describe("ConversationsListView", () => {
     await vi.advanceTimersByTimeAsync(300);
 
     expect(apiMocks.fetchConversations).toHaveBeenCalledWith({
+      scope: "messages",
       search: "Alice",
       source: undefined,
       limit: CONVERSATIONS_PAGE_SIZE,
@@ -183,13 +186,36 @@ describe("ConversationsListView", () => {
     expect(view.container.querySelector("[aria-busy='true']")).toBeInTheDocument();
   });
 
-  it("redirects old Messages links filtered to a coding agent to the Coding list", async () => {
+  it("redirects old Messages links filtered to an AI source to the page that lists it", async () => {
     apiMocks.fetchCodingAgentConversations.mockResolvedValue({ conversations: [], total: 0 });
     apiMocks.fetchCodingAgentConversationFilters.mockResolvedValue({ sources: [], projects: [], unassigned: 0 });
+    apiMocks.fetchConversations.mockResolvedValue({ conversations: [], total: 0 });
+    apiMocks.fetchConversationSources.mockResolvedValue({ sources: [] });
 
-    const view = renderRoutes(createTestClient(), "/conversations?source=claude-code&search=build");
-    expect(await view.findByTestId("location")).toHaveTextContent("/coding/conversations?search=build&source=claude-code");
-    expect(apiMocks.fetchConversations).not.toHaveBeenCalled();
+    const coding = renderRoutes(createTestClient(), "/conversations?source=claude-code&search=build");
+    expect(await coding.findByTestId("location")).toHaveTextContent("/coding/conversations?search=build&source=claude-code");
+    cleanup();
+
+    const chats = renderRoutes(createTestClient(), "/conversations?source=chatgpt");
+    expect(await chats.findByTestId("location")).toHaveTextContent("/ai-chats?source=chatgpt");
+    expect(apiMocks.fetchConversations).not.toHaveBeenCalledWith(expect.objectContaining({ scope: "messages", source: "chatgpt" }));
+  });
+
+  it("lists chat assistants through the assistants scope without project controls", async () => {
+    apiMocks.fetchConversations.mockResolvedValue({
+      conversations: [{ ...conversation, source: "chatgpt", title: "Recipe ideas" }],
+      total: 1,
+    });
+    apiMocks.fetchConversationSources.mockResolvedValue({ sources: ["chatgpt", "claude"] });
+
+    const view = renderRoutes(createTestClient(), "/ai-chats");
+
+    expect(await view.findByText("Recipe ideas")).toBeInTheDocument();
+    expect(apiMocks.fetchConversations).toHaveBeenCalledWith(expect.objectContaining({ scope: "assistants" }));
+    expect(apiMocks.fetchConversationSources).toHaveBeenCalledWith("assistants", expect.anything());
+    expect(view.getByPlaceholderText("Search AI chats...")).toBeInTheDocument();
+    expect(view.queryByRole("combobox", { name: "Coding project" })).not.toBeInTheDocument();
+    expect(view.queryByRole("link", { name: "Servers" })).not.toBeInTheDocument();
   });
 
   it("filters coding agent sessions by project and the unassigned bucket", async () => {

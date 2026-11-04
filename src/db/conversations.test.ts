@@ -155,7 +155,7 @@ describe("conversation linking by conversation_id", () => {
       timestamp: "2026-02-01T00:00:00Z",
     });
 
-    const { conversations, total } = await listConversations(wrapDatabase(db));
+    const { conversations, total } = await listConversations(wrapDatabase(db), { scope: "messages" });
 
     expect(total).toBe(1);
     expect(conversations).toHaveLength(1);
@@ -581,7 +581,7 @@ describe("conversation linking by conversation_id", () => {
              ('facebook', 'm3', 'alice', 'message:dm', '2026-01-03T00:00:00Z', 'Carol', '{}', NULL)
     `).run();
 
-    const { conversations, total } = await listConversations(wrapDatabase(db));
+    const { conversations, total } = await listConversations(wrapDatabase(db), { scope: "messages" });
 
     expect(total).toBe(0);
     expect(conversations).toEqual([]);
@@ -631,7 +631,7 @@ describe("conversation linking by conversation_id", () => {
       VALUES ('facebook', 'fb1', 'alice', 'message:dm', '2026-01-15T00:00:00Z', 'Bob', '{}', NULL)
     `).run();
 
-    const { conversations, total } = await listConversations(wrapDatabase(db));
+    const { conversations, total } = await listConversations(wrapDatabase(db), { scope: "messages" });
 
     expect(total).toBe(1);
     const discord = conversations.find((c) => c.source === "discord");
@@ -659,7 +659,7 @@ describe("conversation linking by conversation_id", () => {
       timestamp: "2026-02-01T00:00:00Z",
     });
 
-    const { conversations, total } = await listConversations(wrapDatabase(db), { search: "Old project" });
+    const { conversations, total } = await listConversations(wrapDatabase(db), { scope: "messages", search: "Old project" });
 
     expect(total).toBe(1);
     expect(conversations).toHaveLength(1);
@@ -691,18 +691,18 @@ describe("conversation linking by conversation_id", () => {
       "Older renamed",
       latestId,
     );
-    let result = await listConversations(wrapDatabase(db));
+    let result = await listConversations(wrapDatabase(db), { scope: "messages" });
     expect(result.conversations[0].title).toBe("General");
     expect(result.conversations[0].lastMessage).toBe("2026-01-01T00:00:00Z");
 
     db.prepare("DELETE FROM events WHERE source_id = 'm1'").run();
-    result = await listConversations(wrapDatabase(db));
+    result = await listConversations(wrapDatabase(db), { scope: "messages" });
     expect(result.total).toBe(1);
     expect(result.conversations[0].title).toBe("Older renamed");
     expect(result.conversations[0].messageCount).toBe(1);
 
     db.prepare("DELETE FROM events WHERE source_id = 'm2'").run();
-    result = await listConversations(wrapDatabase(db));
+    result = await listConversations(wrapDatabase(db), { scope: "messages" });
     expect(result.total).toBe(0);
   });
 
@@ -739,7 +739,7 @@ describe("conversation linking by conversation_id", () => {
     `).run();
 
     initDb(existing);
-    const { conversations, total } = await listConversations(wrapDatabase(existing));
+    const { conversations, total } = await listConversations(wrapDatabase(existing), { scope: "messages" });
 
     expect(total).toBe(1);
     expect(conversations[0].title).toBe("After");

@@ -1,4 +1,4 @@
-import { CODING_AGENT_SOURCES } from "../shared/grouping";
+import { CHAT_ASSISTANT_SOURCES, CODING_AGENT_SOURCES } from "../shared/grouping";
 
 // raw_data field naming each source's coding project (or a workspace path the
 // project is derived from). claude-code derives it from the title instead.
@@ -19,6 +19,7 @@ function sqlList(values: readonly string[]): string {
 }
 
 export const CODING_AGENT_SOURCES_SQL = sqlList(CODING_AGENT_SOURCES);
+export const CHAT_ASSISTANT_SOURCES_SQL = sqlList(CHAT_ASSISTANT_SOURCES);
 
 /**
  * SQL expression for the coding project a coding-agent event belongs to,

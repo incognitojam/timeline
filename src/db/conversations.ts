@@ -8,7 +8,7 @@ import { loadReplyQuotesForEvents } from "../export/reply-quotes";
 import { countTokens } from "../export/tokens";
 import { AI_USAGE_SOURCES, estimateCostUsd, tokenUsageFromExtract, USAGE_EXTRACT_SQL } from "../lib/ai-usage";
 import { type ConversationRangeExportFormat, normalizeConversationRangeExportFormat } from "../shared/conversation-export";
-import { CODING_AGENT_SOURCES_SQL } from "./coding-agent-conversations";
+import { CHAT_ASSISTANT_SOURCES_SQL, CODING_AGENT_SOURCES_SQL } from "./coding-agent-conversations";
 import { conversationTypeClause } from "./conversation-types";
 import { createCursor, parseCursor, transformEvent, transformEvents } from "./events";
 import { parseIdentifier, resolveIdentities } from "./identities";
@@ -415,18 +415,26 @@ async function withQueryTiming<T>(
 }
 
 /**
- * Which conversations a list covers: `messages` is every conversation except
- * coding-agent sessions, and `coding` is coding-agent sessions. Source
- * membership is defined in src/shared/grouping.ts.
+ * Which conversations a list covers: `messages` is conversations with people
+ * (every non-AI source), `coding` is coding-agent sessions, and `assistants`
+ * is general-purpose chat assistants. Source membership is defined in
+ * src/shared/grouping.ts.
  */
-export type ConversationScope = "messages" | "coding";
+export const CONVERSATION_SCOPES = ["messages", "coding", "assistants"] as const;
+export type ConversationScope = (typeof CONVERSATION_SCOPES)[number];
+
+export function isConversationScope(value: string): value is ConversationScope {
+  return (CONVERSATION_SCOPES as readonly string[]).includes(value);
+}
 
 function scopeCondition(scope: ConversationScope): string {
   switch (scope) {
     case "messages":
-      return `cs.source NOT IN (${CODING_AGENT_SOURCES_SQL})`;
+      return `cs.source NOT IN (${CODING_AGENT_SOURCES_SQL}, ${CHAT_ASSISTANT_SOURCES_SQL})`;
     case "coding":
       return `cs.source IN (${CODING_AGENT_SOURCES_SQL})`;
+    case "assistants":
+      return `cs.source IN (${CHAT_ASSISTANT_SOURCES_SQL})`;
   }
 }
 
@@ -538,9 +546,9 @@ async function queryConversationList<T extends ConversationListItem>(
  */
 export function listConversations(
   db: QueryExecutor,
-  options: ListConversationsOptions = {},
+  options: ListConversationsOptions & { scope: Exclude<ConversationScope, "coding"> },
 ): Promise<{ conversations: ConversationListItem[]; total: number }> {
-  return queryConversationList(db, { ...options, scope: "messages" });
+  return queryConversationList(db, options);
 }
 
 /** List coding-agent conversations with their coding project (null when unassigned). */
