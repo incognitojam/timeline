@@ -1,6 +1,6 @@
 # Releases
 
-Timeline uses Changesets to record release intent independently of its scoped commit titles. Every pull request must add either a release note with `bun changeset` or an empty decision with `bun changeset --empty`.
+Timeline uses Changesets to record release intent independently of its scoped commit titles. Every pull request must add either a release note with `bun changeset` or an empty decision with `bun changeset --empty`. Renovate's dependency update pull requests, from `renovate/` branches, are the exception: Renovate can't run `bun changeset`, so CI skips the changeset check for them and dependency updates don't appear in the changelog.
 
 Choose `patch` for compatible fixes and performance improvements, `minor` for compatible features, and `major` for incompatible changes. Changelog summaries should describe the effect for somebody using Timeline rather than the implementation.
 
