@@ -373,46 +373,53 @@ See `.agents/skills/` for detailed patterns and examples.
 
 ## Current Data Sources
 
-| Source | Types |
-|--------|-------|
-| WakaTime | code:session (aggregated from heartbeats) |
-| Facebook | message, message:photo, message:share, message:gif, message:call, etc.; post, comment, reaction:<type>, group:join, event:response, event:invitation, friend:added |
-| Google Search | search (searches and visited results) |
-| Spotify | listen:track, listen:podcast, listen:audiobook |
-| Spotify Friends | listen:track:friend (friends' listening activity via unofficial API) |
-| Discord | message:dm, message:group, message:dm:attachment, message:group:attachment |
-| YouTube | youtube:watch, youtube:search, youtube:like, youtube:subscribe, youtube:subscription, youtube:view |
-| Skype | message:dm, message:group, message:call |
-| Google Fit | activity:walking, activity:running, activity:biking, etc. |
-| Google Location | location:visit, location:transit |
-| Reddit | post, comment, message, vote:up, vote:down, save |
-| Monzo | transaction, transaction:topup, transaction:credit, transaction:transport, etc. |
-| Amex | transaction, transaction:payment, transaction:refund, transaction:groceries, transaction:food, etc. |
-| Chrome | browse |
-| Trakt | trakt:movie, trakt:episode |
-| Swarm | location:visit |
-| Google Play Store | app:install |
-| Google Calendar | event, event:all-day |
-| LinkedIn | message, connection, job, education |
-| GitHub | export: github:issue, github:pull_request, github:issue_comment, github:pr_review, github:commit_comment; API sync: github:pr, github:pr_review, github:star, github:create, etc. |
-| Google Keep | note:text, note:list |
-| Google Chat | message |
-| Instagram | message:dm, message:dm:attachment, message:dm:share, message:dm:share:reel |
-| Google Timeline | location:visit, location:transit (new Timeline.json format, stored as source google-location) |
-| SMS Backup & Restore (source phone) | sms:sent, sms:received, mms:sent, mms:received, call:incoming, call:outgoing, call:missed |
-| Google Messages | sms:sent, sms:received, mms:sent, mms:received, rcs:sent, rcs:received (live via tools/timeline-gmessages) |
-| Minecraft | minecraft:chat, minecraft:join, minecraft:leave, minecraft:advancement, minecraft:death |
-| Claude | claude:message:user, claude:message:assistant, claude:memory |
-| ChatGPT | chatgpt:message:user, chatgpt:message:assistant |
-| Claude Code | claude-code:message:user, claude-code:message:assistant |
-| Amp | amp:message:user, amp:message:assistant |
-| OpenCode | opencode:message:user, opencode:message:assistant |
-| Conductor | conductor:message:user, conductor:message:assistant |
-| T3 Code | t3code:message:user, t3code:message:assistant |
-| Codex | codex:message:user, codex:message:assistant |
-| Fitbit (Takeout) | sleep, sleep:nap, daily:readiness, daily:stress, daily:hrv |
-| Google Health (replaces Fitbit API sync) | sleep, sleep:nap, daily:hrv, daily:spo2, daily:breathing, daily:heart, daily:activity, daily:temperature, daily:azm, daily:weight |
-| Thriva | thriva:biomarker, thriva:order |
+Generated from each platform's `meta.ts` by `bun run docs:sources`; a test fails when it's out of date. A trailing `*` stands for a suffix taken from the source's data.
+
+<!-- sources:start -->
+| Platform | Source | Event types |
+|----------|--------|-------------|
+| amex | `amex` | `transaction`, `transaction:entertainment`, `transaction:food`, `transaction:groceries`, `transaction:health`, `transaction:payment`, `transaction:refund`, `transaction:shopping`, `transaction:transport` |
+| amp | `amp` | `amp:message:user`, `amp:message:assistant` |
+| chatgpt | `chatgpt` | `chatgpt:message:user`, `chatgpt:message:assistant` |
+| claude | `claude` | `claude:message:user`, `claude:message:assistant`, `claude:memory` |
+| claude-code | `claude-code` | `claude-code:message:user`, `claude-code:message:assistant` |
+| codex | `codex` | `codex:message:user`, `codex:message:assistant` |
+| conductor | `conductor` | `conductor:message:user`, `conductor:message:assistant` |
+| discord | `discord` | `message:dm`, `message:dm:attachment`, `message:dm:call`, `message:dm:forward`, `message:dm:poll`, `message:dm:sticker`, `message:group`, `message:group:attachment`, `message:group:call`, `message:group:forward`, `message:group:poll`, `message:group:sticker`, `message:guild`, `message:guild:attachment`, `message:guild:call`, `message:guild:forward`, `message:guild:poll`, `message:guild:sticker` |
+| facebook | `facebook` | `message`, `message:audio`, `message:call`, `message:gif`, `message:photo`, `message:poll`, `message:share`, `message:sticker`, `message:unsent`, `message:video`, `post`, `post:page`, `comment`, `reaction:*`, `group:post`, `group:comment`, `group:join`, `event:invitation`, `event:response`, `friend:added`, `friend:removed`, `poke` |
+| github | `github` | `github:commit_comment`, `github:create`, `github:delete`, `github:follow`, `github:fork`, `github:gist`, `github:issue`, `github:issue_comment`, `github:member`, `github:pr`, `github:pr_comment`, `github:pr_review`, `github:public`, `github:pull_request`, `github:release`, `github:star`, `github:wiki` |
+| google | `google-calendar` | `event`, `event:all-day` |
+| google | `google-keep` | `note:text`, `note:list` |
+| google | `google-chat` | `message` |
+| google | `google-fit` | `activity:*` |
+| google | `google-search` | `search` |
+| google | `google-playstore` | `app:install` |
+| google | `chrome` | `browse` |
+| google | `youtube` | `youtube:watch`, `youtube:search`, `youtube:like`, `youtube:subscribe`, `youtube:subscription`, `youtube:view` |
+| google | `google-location` | `location:visit`, `location:transit` |
+| google | `fitbit` | `sleep`, `sleep:nap`, `daily:breathing`, `daily:hrv`, `daily:readiness`, `daily:spo2`, `daily:stress` |
+| google | `google-health` | `sleep`, `sleep:nap`, `daily:activity`, `daily:azm`, `daily:breathing`, `daily:heart`, `daily:hrv`, `daily:spo2`, `daily:temperature`, `daily:weight` |
+| google-messages | `google-messages` | `sms:sent`, `sms:received`, `mms:sent`, `mms:received`, `rcs:sent`, `rcs:received` |
+| instagram | `instagram` | `message:dm`, `message:dm:attachment`, `message:dm:audio`, `message:dm:share`, `message:dm:share:reel`, `message:dm:sticker`, `message:dm:unsent`, `message:group`, `message:group:attachment`, `message:group:audio`, `message:group:share`, `message:group:share:reel`, `message:group:sticker`, `message:group:unsent` |
+| linkedin | `linkedin` | `message`, `connection`, `job`, `education` |
+| minecraft | `minecraft` | `minecraft:chat`, `minecraft:join`, `minecraft:leave`, `minecraft:advancement`, `minecraft:death` |
+| monzo | `monzo` | `transaction`, `transaction:bills`, `transaction:cash`, `transaction:credit`, `transaction:declined`, `transaction:entertainment`, `transaction:food`, `transaction:groceries`, `transaction:shopping`, `transaction:topup`, `transaction:transport` |
+| opencode | `opencode` | `opencode:message:user`, `opencode:message:assistant` |
+| phone | `phone` | `call:incoming`, `call:outgoing`, `call:missed`, `call:voicemail`, `call:rejected`, `call:blocked`, `call:type*`, `sms:received`, `sms:sent`, `sms:draft`, `sms:outbox`, `sms:failed`, `sms:queued`, `sms:type*`, `mms:received`, `mms:sent`, `mms:draft`, `mms:outbox`, `mms:type*` |
+| recall | `recall` | `screen:capture` |
+| reddit | `reddit` | `post`, `comment`, `message`, `vote:up`, `vote:down`, `save` |
+| skype | `skype` | `message:dm`, `message:dm:attachment`, `message:group`, `message:group:attachment`, `message:call`, `call:log` |
+| spotify | `spotify` | `listen:track`, `listen:podcast`, `listen:audiobook`, `listen:unknown` |
+| spotify | `spotify-friends` | `listen:track:friend` |
+| steam | `steam` | `steam:achievement`, `steam:game:added`, `steam:session` |
+| swarm | `swarm` | `location:visit` |
+| t3code | `t3code` | `t3code:message:user`, `t3code:message:assistant` |
+| thriva | `thriva` | `thriva:biomarker`, `thriva:order` |
+| trakt | `trakt` | `trakt:movie`, `trakt:episode` |
+| wakatime | `wakatime` | `code:session`, `code:heartbeat` |
+| (built in) | `journal` | `journal:qa`, `journal:reflection` |
+| (built in) | `manual` | `note`, `transport:train`, `transport:flight`, `transport:bus`, `transport:taxi`, `transport:car`, `transport:tube`, `transport:ferry`, `transport:tram` |
+<!-- sources:end -->
 
 ## Source Setup
 
