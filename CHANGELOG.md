@@ -1,5 +1,12 @@
 # Timeline
 
+## 0.16.1
+
+### Patch Changes
+
+- ea896b3: Google Messages now syncs every 30 minutes by default instead of every hour, so new texts appear sooner. An interval you've set for the source still applies, and the sync dashboard shows the new default. Each sync asks your phone for data, so set a longer interval if you notice extra battery drain.
+- fe225fd: Spotify Friends picks up new listens again, and friends who had dropped out of the old feed return. It now reads Spotify's listening-activity feed, so a listen stays one event when a friend pauses or seeks.
+
 ## 0.16.0
 
 ### Minor Changes
