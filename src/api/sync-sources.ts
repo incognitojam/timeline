@@ -122,7 +122,8 @@ function serializeSource(source: string, schedulerDefaultInterval: string) {
   if (!registered) return null;
 
   const row = getSyncSourceRow(source, appDb);
-  const effectiveInterval = row?.interval ?? schedulerDefaultInterval;
+  const defaultInterval = registered.defaultInterval ?? schedulerDefaultInterval;
+  const effectiveInterval = row?.interval ?? defaultInterval;
   return {
     name: registered.name,
     description: registered.description,
@@ -131,7 +132,7 @@ function serializeSource(source: string, schedulerDefaultInterval: string) {
     interval: row?.interval ?? null,
     effectiveInterval,
     effectiveIntervalMs: parseInterval(effectiveInterval),
-    defaultInterval: schedulerDefaultInterval,
+    defaultInterval,
     settings: row ? parseSyncSourceSettings(row) : {},
     settingsSchema: registered.configSchema ?? [],
     ...(registered.authStatus ? { authStatus: registered.authStatus() } : {}),
@@ -144,7 +145,8 @@ export function createSyncSourceRoutes(schedulerDefaultInterval: string) {
       const rows = new Map(listSyncSourceRows(getAppStateDb()).map((row) => [row.source, row]));
       const sources = SYNC_SOURCES.map((source) => {
         const row = rows.get(source.name);
-        const effectiveInterval = row?.interval ?? schedulerDefaultInterval;
+        const defaultInterval = source.defaultInterval ?? schedulerDefaultInterval;
+        const effectiveInterval = row?.interval ?? defaultInterval;
         return {
           name: source.name,
           description: source.description,
@@ -153,7 +155,7 @@ export function createSyncSourceRoutes(schedulerDefaultInterval: string) {
           interval: row?.interval ?? null,
           effectiveInterval,
           effectiveIntervalMs: parseInterval(effectiveInterval),
-          defaultInterval: schedulerDefaultInterval,
+          defaultInterval,
           settings: row ? parseSyncSourceSettings(row) : {},
           settingsSchema: source.configSchema ?? [],
           ...(source.authStatus ? { authStatus: source.authStatus() } : {}),

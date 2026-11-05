@@ -62,6 +62,9 @@ export interface SyncSource {
   /** Whether this source is enabled for sync */
   enabled: boolean;
 
+  /** Interval when none is stored for this source, instead of `scheduler.default_interval`. */
+  defaultInterval?: string;
+
   /** Editable per-source settings exposed by the API and web UI. */
   configSchema?: SyncSourceConfigField[];
 
