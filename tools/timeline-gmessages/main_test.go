@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/rs/zerolog"
@@ -127,4 +129,34 @@ func TestListConversations(t *testing.T) {
 			t.Fatalf("calls %d, err %v", *calls, err)
 		}
 	})
+}
+
+func TestMessageRecordReactions(t *testing.T) {
+	const customID = "5f0c9a52-7d3e-4b18-9c46-2e8a1b7d6f30"
+	record := messageRecord(&gmproto.Message{
+		MessageID: "100",
+		Reactions: []*gmproto.ReactionEntry{
+			{Data: &gmproto.ReactionData{Unicode: "❤️", Type: gmproto.EmojiType_RED_HEART}, ParticipantIDs: []string{"2", "1"}},
+			{Data: &gmproto.ReactionData{Type: gmproto.EmojiType_LIKE}, ParticipantIDs: []string{"3"}},
+			{Data: &gmproto.ReactionData{Unicode: customID, Type: gmproto.EmojiType_EMOTIFY}},
+		},
+	})
+	encoded, err := json.Marshal(record.Reactions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"emoji":"❤️","type":"RED_HEART","participant_ids":["2","1"]},` +
+		`{"emoji":"👍","type":"LIKE","participant_ids":["3"]},` +
+		`{"emoji":"` + customID + `","type":"EMOTIFY","participant_ids":[]}]`
+	if string(encoded) != want {
+		t.Fatalf("reactions:\n got %s\nwant %s", encoded, want)
+	}
+
+	line, err := json.Marshal(messageRecord(&gmproto.Message{MessageID: "101"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(line), "reactions") {
+		t.Fatalf("a message with no reactions should omit the field: %s", line)
+	}
 }

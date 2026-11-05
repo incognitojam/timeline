@@ -156,6 +156,35 @@ describe("ConversationMessage", () => {
     });
   });
 
+  it("shows Google Messages reactions with their reactors and counts", () => {
+    const view = renderMessage(makeEvent({
+      source: "google-messages",
+      raw_data: JSON.stringify({
+        participants: [
+          { participant_id: "1", number: "+15550100000", is_me: true },
+          { participant_id: "2", number: "+15550100001", name: "Alice", is_me: false },
+        ],
+        reactions: [{ emoji: "❤️", type: "RED_HEART", participant_ids: ["2", "1"] }],
+      }),
+    }));
+
+    const chip = view.getByTitle("Alice, You");
+    expect(chip).toHaveTextContent("❤️");
+    expect(chip).toHaveTextContent("2");
+  });
+
+  it("draws an icon rather than an id for a Google Messages custom reaction", () => {
+    const id = "5f0c9a52-7d3e-4b18-9c46-2e8a1b7d6f30";
+    const view = renderMessage(makeEvent({
+      source: "google-messages",
+      raw_data: JSON.stringify({ reactions: [id] }),
+    }));
+
+    expect(view.getByRole("img", { name: "Custom reaction" })).toBeInTheDocument();
+    expect(view.getByTitle("Custom reaction")).toBeInTheDocument();
+    expect(view.queryByText(id)).toBeNull();
+  });
+
   it("renders a Discord poll through the shared message surface", () => {
     const view = renderMessage(makeEvent({
       source: "discord",

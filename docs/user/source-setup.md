@@ -403,6 +403,8 @@ Attachments arrive with the messages that carry them, so a source that was synce
 sqlite3 ~/.local/share/timeline/app-state.db "DELETE FROM sync_state WHERE source = 'google-messages'"
 ```
 
+Conversations show each message's reactions and who added them. A sidecar built before reactions named people still works: its reactions show without names, and a count of one per emoji, until it's rebuilt and the message is fetched again. Custom reactions from Google Messages show as an icon, because their images exist only on the phone. A sync notices a changed reaction only when it re-fetches the message, which each daily full listing does for messages up to 14 days older than the conversation's last sync. A reaction added to an older message, or to a conversation idle for longer than that, is missed. Clearing the cursors as above re-fetches everything, which also fills in reactors on rows imported from an older sidecar.
+
 ## MacBook screen recall
 
 Periodic Apple Vision OCR'd screen captures imported as `screen:capture` events. See [recall-setup.md](recall-setup.md).

@@ -87,6 +87,7 @@ export { default as IconReply } from "~icons/material-symbols/reply-rounded";
 export { default as IconSchedule } from "~icons/material-symbols/schedule-outline-rounded";
 export { default as IconScreenshotMonitor } from "~icons/material-symbols/screenshot-monitor-outline-rounded";
 export { default as IconSearch } from "~icons/material-symbols/search-rounded";
+export { default as IconSentimentSatisfied } from "~icons/material-symbols/sentiment-satisfied-outline-rounded";
 export { default as IconSettingsBackupRestore } from "~icons/material-symbols/settings-backup-restore-rounded";
 export { default as IconSettings } from "~icons/material-symbols/settings-outline-rounded";
 export { default as IconSlideshow } from "~icons/material-symbols/slideshow-outline-rounded";

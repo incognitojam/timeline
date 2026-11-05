@@ -86,7 +86,14 @@ Output is one JSON object per line, tagged by `kind`:
   `outgoing`, `system` for tombstone banners such as "Texting with …
   (SMS/MMS)", or `unknown`), protocol status name, message type
   (`sms`/`mms`/`rcs`), sender participant id/number/name, text, subject,
-  reply-to, reactions, media
+  reply-to, reactions, media. The phone reports a message's current reactions
+  each time the message is fetched. Each entry in `reactions` is `emoji`, `type`
+  (the protocol's `EmojiType` name), and `participant_ids` (keys into the
+  conversation's participants, including invisible ones):
+  `{"emoji":"❤️","type":"RED_HEART","participant_ids":["586"]}`. An `EMOTIFY`
+  reaction carries a UUID as its `emoji`; its image exists only on the phone.
+  Binaries built before this format emit `reactions` as bare strings, one per
+  entry, with custom reactions as the same UUID. Timeline accepts both.
 
 - `conversation_done` — every page of that conversation was fetched (the
   consumer may advance its cursor); `conversation_error` — it could not be

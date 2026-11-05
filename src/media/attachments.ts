@@ -78,6 +78,7 @@ function statements(db: Database): AttachmentStatements {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'failed')
       ON CONFLICT(event_id, source_id) DO UPDATE SET
         status = 'failed'
+      WHERE attachments.status != 'stored'
     `),
     markFailedById: db.prepare(`
       UPDATE attachments
@@ -95,6 +96,7 @@ function statements(db: Database): AttachmentStatements {
         width, height, original_uri, status
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'unrecoverable')
       ON CONFLICT(event_id, source_id) DO UPDATE SET status = 'unrecoverable'
+      WHERE attachments.status != 'stored'
     `),
   };
 

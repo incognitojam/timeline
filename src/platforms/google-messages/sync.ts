@@ -36,6 +36,12 @@ export const SYNC_OVERLAP_MS = 60 * 60 * 1000;
  */
 export const FULL_LISTING_INTERVAL_MS = 24 * 60 * 60 * 1000;
 /**
+ * How far behind each cursor a full listing re-fetches. The phone reports a
+ * reaction only as part of the message it landed on, so a reaction added after
+ * that message left the overlap window is picked up here, or not at all.
+ */
+export const REACTION_REFRESH_MS = 14 * 24 * 60 * 60 * 1000;
+/**
  * Prefix of the per-run directory (inside the state dir) the sidecar downloads
  * media into. Files leave it as the importer stores them; the directory is
  * removed when the run ends, and any left behind by a crash is swept next run.
@@ -70,10 +76,10 @@ function loadState(): GoogleMessagesSyncState {
   return { ...state, conversations: state?.conversations ?? {} };
 }
 
-/** Per-conversation `since` values handed to the sidecar. */
-export function cursorsFor(state: GoogleMessagesSyncState): Record<string, number> {
+/** Per-conversation `since` values handed to the sidecar, `lookback` behind each cursor. */
+export function cursorsFor(state: GoogleMessagesSyncState, lookback: number): Record<string, number> {
   return Object.fromEntries(
-    Object.entries(state.conversations).map(([id, completedAt]) => [id, Math.max(0, completedAt - SYNC_OVERLAP_MS)]),
+    Object.entries(state.conversations).map(([id, completedAt]) => [id, Math.max(0, completedAt - lookback)]),
   );
 }
 
@@ -211,7 +217,7 @@ export const googleMessagesSyncSource: SyncSource = {
       source: EVENT_SOURCE,
       success: false,
       eventsAdded: stats?.imported ?? 0,
-      eventsUpdated: 0,
+      eventsUpdated: stats?.reactionsUpdated ?? 0,
       error,
       durationMs: Date.now() - startTime,
       ...(stats ? { metadata: metadataFor(stats) } : {}),
@@ -222,8 +228,8 @@ export const googleMessagesSyncSource: SyncSource = {
 
     const appState = getAppStateDb();
     const state = loadState();
-    const cursors = cursorsFor(state);
     const listUntil = listUntilFor(state, startTime);
+    const cursors = cursorsFor(state, listUntil === undefined ? REACTION_REFRESH_MS : SYNC_OVERLAP_MS);
 
     const db = getDb();
     initDb(db);
@@ -258,7 +264,7 @@ export const googleMessagesSyncSource: SyncSource = {
         source: EVENT_SOURCE,
         success: true,
         eventsAdded: stats.imported,
-        eventsUpdated: 0,
+        eventsUpdated: stats.reactionsUpdated,
         durationMs: Date.now() - startTime,
         metadata: { ...metadataFor(stats), resumedConversations: Object.keys(cursors).length },
       };
