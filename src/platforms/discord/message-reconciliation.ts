@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { getRenderer } from "../../render";
+import { renderDiscordEvent } from "./render";
 import type { NormalizedMessage } from "./client";
 import {
   buildDiscordMessageRawData,
@@ -114,9 +114,7 @@ export function reconcileDiscordMessage(
   }
 
   const nextRaw = mergeEditedFields(storedRaw, freshRaw);
-  const renderer = getRenderer("discord");
-  if (!renderer) throw new Error("Discord renderer is not registered");
-  const rendered = renderer(nextRaw);
+  const rendered = renderDiscordEvent(nextRaw);
   if (rendered.title === null) throw new Error(`Discord event ${message.id} has no channel title`);
   const nextType = getDiscordMessageEventType(message, baseMessageType(stored.type));
 
