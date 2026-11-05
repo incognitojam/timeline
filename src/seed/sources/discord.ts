@@ -135,24 +135,7 @@ export const discordSeed: SeedSource = {
     const trailAlerts = await trailAlertMessages(ctx, snowflake, alex);
 
     archive.transaction(() => {
-      archive
-        .prepare("INSERT INTO guilds VALUES (?, ?, 0)")
-        .run(TRAIL_ALERTS.guildId, TRAIL_ALERTS.guildName);
-      archive
-        .prepare("INSERT INTO channels VALUES (?, ?, 'GuildTextChat', ?, ?, '[]', 'Text')")
-        .run(TRAIL_ALERTS.channelId, TRAIL_ALERTS.channelName, TRAIL_ALERTS.guildId, TRAIL_ALERTS.guildName);
-      for (const msg of trailAlerts) {
-        insertMessage.run(
-          msg.id,
-          TRAIL_ALERTS.channelId,
-          msg.content,
-          msg.author.id,
-          msg.author.name,
-          msg.author.nickname,
-          msg.timestamp,
-          JSON.stringify(buildDiscordMessageRawData(msg)),
-        );
-      }
+      insertTrailAlerts(archive, trailAlerts);
 
       for (const channel of channels) {
         insertChannel.run(
@@ -259,6 +242,28 @@ const TRAIL_ALERTS = {
  * and reached through `proxy_url` so the cards render without network access;
  * the `.invalid` gallery shows what a card looks like once a signed URL expires.
  */
+function insertTrailAlerts(archive: Database, messages: readonly NormalizedMessage[]): void {
+  archive
+    .prepare("INSERT INTO guilds VALUES (?, ?, 0)")
+    .run(TRAIL_ALERTS.guildId, TRAIL_ALERTS.guildName);
+  archive
+    .prepare("INSERT INTO channels VALUES (?, ?, 'GuildTextChat', ?, ?, '[]', 'Text')")
+    .run(TRAIL_ALERTS.channelId, TRAIL_ALERTS.channelName, TRAIL_ALERTS.guildId, TRAIL_ALERTS.guildName);
+  const insertMessage = archive.prepare("INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+  for (const msg of messages) {
+    insertMessage.run(
+      msg.id,
+      TRAIL_ALERTS.channelId,
+      msg.content,
+      msg.author.id,
+      msg.author.name,
+      msg.author.nickname,
+      msg.timestamp,
+      JSON.stringify(buildDiscordMessageRawData(msg)),
+    );
+  }
+}
+
 async function trailAlertMessages(
   ctx: SeedContext,
   snowflake: (ms: number) => string,
