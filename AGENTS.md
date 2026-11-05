@@ -167,7 +167,7 @@ sqlite3 ./timeline.db "SELECT * FROM events WHERE source='spotify' LIMIT 5;"
 sqlite3 ./timeline.db "SELECT * FROM events WHERE id IN (SELECT rowid FROM events_fts WHERE events_fts MATCH 'search term');"
 ```
 
-> **Syncs**: The scheduler in `bun run service` runs syncs automatically; the web UI's `/status` page can trigger any source on demand.
+> **Syncs**: The scheduler in `bun run service` runs syncs automatically; the web UI's `/status` page can trigger any source on demand. To test one source in-process against scratch data, use `bun run sync:once <source>` ([Running one sync source](docs/operations/development.md#running-one-sync-source)) rather than booting the service.
 
 > **Note**: Commands use `./timeline.db` by default. Override with `TIMELINE_DB_PATH=<path>`. Utility scripts live in `src/scripts/` (backfills, verification, etc.).
 
@@ -230,7 +230,7 @@ Automated data syncing from API-based sources. Structure: `config.ts`, `types.ts
 
 **Configuration**: Per-source sync settings live in the `sync_sources` table in `app-state.db` and are edited from the web UI. Legacy `[sync.<source>]` sections in `config.toml` are imported once at `bun run service` startup when the table is empty, then ignored with a warning until removed. Discord account is auto-detected.
 
-**Adding new sync sources**: Create a file in `src/sync/sources/` exporting a `SyncSource` object with `name`, `description`, `enabled`, `canSync()`, and `sync()` methods. A source with editable settings declares them through `configSchema`. Register it in `src/sync/sources/index.ts`.
+**Adding new sync sources**: Create a file in `src/sync/sources/` exporting a `SyncSource` object with `name`, `description`, `enabled`, `canSync()`, and `sync()` methods. A source with editable settings declares them through `configSchema`. Register it in `src/sync/sources/index.ts`. Test it with `runSourceOnce()` from `src/sync/once.ts` rather than hand-assembling `SyncOptions`.
 
 ### Service Mode (`src/service.ts`)
 

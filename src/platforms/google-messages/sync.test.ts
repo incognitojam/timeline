@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { getDb, initDb } from "../../db/schema";
+import { runSourceOnce } from "../../sync/once";
 import { EVENT_SOURCE } from "./parser";
 import { deleteSyncState, getAppStateDb, getSyncState, setSyncState } from "../../db/app-state";
 import { FULL_LISTING_INTERVAL_MS, googleMessagesSyncSource, MEDIA_STAGING_PREFIX, REACTION_REFRESH_MS, SYNC_OVERLAP_MS, type GoogleMessagesSyncState } from "./sync";
@@ -117,22 +118,24 @@ describe("google-messages sync source", () => {
   });
 
   it("imports the sidecar output and advances one cursor per completed conversation", async () => {
+    writeFileSync(join(dir, "session.json"), "{}");
     const before = Date.now();
-    const first = await googleMessagesSyncSource.sync(options());
-    expect(first).toMatchObject({ success: true, eventsAdded: 3, metadata: { conversationsDone: 2, resumedConversations: 0, attachmentsStored: 1 } });
+    const first = await runSourceOnce(googleMessagesSyncSource, { config: config() });
+    expect(first.result).toMatchObject({ success: true, eventsAdded: 3, metadata: { conversationsDone: 2, resumedConversations: 0, attachmentsStored: 1 } });
+    expect(first.events.inserted.byType).toEqual({ "mms:received": 1, "sms:received": 2 });
     const args = readFileSync(argsLog, "utf8").trim();
     expect(args).toMatch(new RegExp(`^dump -folder all -cursors - -media ${dir}/${MEDIA_STAGING_PREFIX}\\S+$`));
     expect(sentCursors()).toEqual({});
     // The staging directory lives only for the run.
     expect(readdirSync(dir).filter((entry) => entry.startsWith(MEDIA_STAGING_PREFIX))).toEqual([]);
 
-    const after = state();
-    if (!after) throw new Error("expected sync state");
+    const after = first.state[EVENT_SOURCE] as GoogleMessagesSyncState;
     expect(Object.keys(after.conversations).sort()).toEqual(["1", "2"]);
     expect(after.conversations["1"]).toBeGreaterThanOrEqual(before);
 
-    const second = await googleMessagesSyncSource.sync(options());
-    expect(second).toMatchObject({ success: true, eventsAdded: 0, metadata: { skipped: 3, resumedConversations: 2, attachmentsStored: 1 } });
+    const second = await runSourceOnce(googleMessagesSyncSource, { config: config() });
+    expect(second.result).toMatchObject({ success: true, eventsAdded: 0, metadata: { skipped: 3, resumedConversations: 2, attachmentsStored: 1 } });
+    expect(second.events.inserted.count).toBe(0);
     expect(sentCursors()).toEqual({ "1": after.conversations["1"] - SYNC_OVERLAP_MS, "2": after.conversations["2"] - SYNC_OVERLAP_MS });
 
     const db = getDb();

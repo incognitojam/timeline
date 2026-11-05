@@ -178,3 +178,6 @@ version.json
 /.seed-build-*/
 /.seed-new-*
 /.seed-old-media/
+
+# Scratch sandboxes from bun run sync:once
+.sync-once/
