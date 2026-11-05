@@ -33,17 +33,17 @@ describe("source registry", () => {
     expect(sourceColor("new-source")).toBe(DEFAULT_SOURCE_COLOR);
   });
 
-  test("inherits colors for source families", () => {
+  test("gives a platform's sources the platform colour unless they set their own", () => {
     expect(sourceColor("google-takeout")).toBe(sourceColor("google"));
-    expect(sourceColor("google-future-export")).toBe(sourceColor("google"));
-    expect(getSourceDefinition("spotify-friends")?.color).toBe(
-      getSourceDefinition("spotify")?.color,
-    );
-    expect(sourceColor("steam-future-source")).toBe(sourceColor("steam"));
-    expect(getSourceDefinition("backup-offsite")?.color).toBe(
-      getSourceDefinition("backup")?.color,
-    );
-    expect(sourceColor("spotify-future-source")).toBe(sourceColor("spotify"));
+    expect(sourceColor("google-location-sharing")).toBe(sourceColor("google"));
+    expect(sourceColor("google-calendar")).not.toBe(sourceColor("google"));
+    expect(getSourceDefinition("spotify-friends")?.color).toBe(getSourceDefinition("spotify")?.color);
+    expect(sourceColor("steam-friends")).toBe(sourceColor("steam"));
+    expect(getSourceDefinition("backup-offsite")?.color).toBe(getSourceDefinition("backup")?.color);
+  });
+
+  test("does not guess a colour from an unregistered id's prefix", () => {
+    expect(sourceColor("spotify-future-source")).toBe(DEFAULT_SOURCE_COLOR);
   });
 
   test("defaults a platform's sources to the platform colour", () => {
@@ -55,10 +55,10 @@ describe("source registry", () => {
         { id: "alpha-beta", label: "Beta", color: "#222222" },
       ],
     };
-    expect(buildSourceRegistry([meta], [{ id: "other", label: "Other", colorFrom: "alpha" }])).toEqual([
+    expect(buildSourceRegistry([meta], [{ id: "other", label: "Other", color: "#333333" }])).toEqual([
       { id: "alpha", label: "Alpha", color: "#111111" },
       { id: "alpha-beta", label: "Beta", color: "#222222" },
-      { id: "other", label: "Other", color: "#111111" },
+      { id: "other", label: "Other", color: "#333333" },
     ]);
   });
 

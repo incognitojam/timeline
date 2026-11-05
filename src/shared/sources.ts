@@ -1,5 +1,6 @@
 import { PLATFORM_METAS } from "../platforms/metas";
-import type { PlatformMeta } from "../platforms/types";
+import type { PlatformMeta, PlatformSource } from "../platforms/types";
+import { SYSTEM_SOURCES, type SystemSource } from "./system-sources";
 
 export interface SourceDefinition {
   id: string;
@@ -7,124 +8,39 @@ export interface SourceDefinition {
   color: string;
 }
 
-type SourceRegistration = { id: string; label: string } & (
-  | { color: string; colorFrom?: never }
-  | { colorFrom: string; color?: never }
-);
-
 export const DEFAULT_SOURCE_COLOR = "#9ca3af";
+
+const PLATFORMS: readonly PlatformMeta[] = PLATFORM_METAS;
+
+/** Every declared source, including the facts only the service needs. */
+export const DECLARED_SOURCES: readonly PlatformSource[] = [
+  ...PLATFORMS.flatMap((meta) => meta.sources),
+  ...SYSTEM_SOURCES,
+];
 
 /**
  * Source metadata shared by the service and web app. IDs are persisted in the
- * database and used in URLs; labels are presentation-only. Platform modules
- * declare their own sources in their `meta.ts`; these haven't moved yet.
+ * database and used in URLs; labels are presentation-only.
  */
-const OTHER_SOURCE_REGISTRATIONS = [
-  // Music and entertainment
-  { id: "spotify", label: "Spotify", color: "#1DB954" },
-  { id: "spotify-friends", label: "Spotify Friends", colorFrom: "spotify" },
-  { id: "spotify-playlists", label: "Spotify Playlists", colorFrom: "spotify" },
-  { id: "youtube", label: "YouTube", color: "#FF0000" },
-  { id: "trakt", label: "Trakt", color: "#ED1C24" },
-
-  // Social and messaging
-  { id: "reddit", label: "Reddit", color: "#FF4500" },
-  { id: "linkedin", label: "LinkedIn", color: "#0A66C2" },
-  { id: "facebook", label: "Facebook", color: "#1877F2" },
-  { id: "skype", label: "Skype", color: "#00AFF0" },
-  { id: "live", label: "Microsoft Live", colorFrom: "skype" },
-  { id: "instagram", label: "Instagram", color: "#E4405F" },
-  { id: "swarm", label: "Swarm", color: "#FFA633" },
-
-  // Google services
-  { id: "google", label: "Google", color: "#EA4335" },
-  { id: "google-calendar", label: "Google Calendar", color: "#4285F4" },
-  { id: "google-keep", label: "Google Keep", color: "#E37400" },
-  { id: "google-chat", label: "Google Chat", color: "#00AC47" },
-  { id: "google-fit", label: "Google Fit", color: "#4285F4" },
-  { id: "google-search", label: "Google Search", color: "#4285F4" },
-  { id: "google-location", label: "Google Location", colorFrom: "google" },
-  { id: "google-playstore", label: "Google Play Store", color: "#01875f" },
-  { id: "google-places", label: "Google Places", color: "#34A853" },
-  { id: "google-takeout", label: "Google Takeout", colorFrom: "google" },
-  { id: "google-timeline", label: "Google Timeline", colorFrom: "google" },
-  { id: "chrome", label: "Chrome", color: "#D99200" },
-
-  // Finance and health
-  { id: "amex", label: "American Express", color: "#006FCF" },
-  { id: "monzo", label: "Monzo", color: "#FF5F5F" },
-  { id: "fitbit", label: "Fitbit", color: "#00B0B9" },
-  { id: "google-health", label: "Google Health", color: "#00B0B9" },
-  { id: "thriva", label: "Thriva", color: "#9856c8" },
-
-  // Coding and developer tools
-  { id: "wakatime", label: "WakaTime", color: "#2595ff" },
-  { id: "github", label: "GitHub", color: "#8b949e" },
-  { id: "claude", label: "Claude", color: "#D97757" },
-  { id: "chatgpt", label: "ChatGPT", color: "#10A37F" },
-  { id: "claude-code", label: "Claude Code", colorFrom: "claude" },
-  { id: "amp", label: "Amp", color: "#f87171" },
-  { id: "opencode", label: "OpenCode", color: "#9ca3af" },
-  { id: "conductor", label: "Conductor", color: "#a4847f" },
-  { id: "t3code", label: "T3 Code", color: "#8e51ff" },
-  { id: "codex", label: "Codex", color: "#74c69d" },
-
-  // Gaming
-  { id: "steam", label: "Steam", color: "#66c0f4" },
-  { id: "minecraft", label: "Minecraft", color: "#62B047" },
-
-  // Local and operational sources
-  { id: "journal", label: "Journal", color: "#8b5cf6" },
-  { id: "phone", label: "Phone", color: "#2dd4bf" },
-  { id: "sms-backup-restore", label: "SMS Backup & Restore", colorFrom: "phone" },
-  { id: "manual", label: "Manual", color: "#6366f1" },
-  { id: "auto-detect", label: "Auto-detect", color: "#9ca3af" },
-  { id: "thumbhash", label: "ThumbHash", color: "#a78bfa" },
-  { id: "recall", label: "Recall", color: "#7c8aa3" },
-  { id: "backup", label: "Backup", color: "#64748b" },
-  { id: "backup-app-state", label: "App State Backup", colorFrom: "backup" },
-  { id: "backup-offsite", label: "Offsite Backup", colorFrom: "backup" },
-  { id: "inbox-rclone", label: "Inbox Sync", color: "#3b82f6" },
-  { id: "attachment-descriptions", label: "Attachment Descriptions", color: "#c084fc" },
-  { id: "render-sweep", label: "Render Sweep", color: "#94a3b8" },
-  { id: "embeddings", label: "Embeddings", color: "#2dd4bf" },
-  { id: "media-evict", label: "Media Eviction", color: "#78716c" },
-] as const satisfies readonly SourceRegistration[];
-
 export function buildSourceRegistry(
   metas: readonly PlatformMeta[],
-  others: readonly SourceRegistration[],
+  system: readonly SystemSource[],
 ): readonly SourceDefinition[] {
   const byId = new Map<string, SourceDefinition>();
-  const add = (definition: SourceDefinition) => {
-    if (byId.has(definition.id)) throw new Error(`Duplicate source id: ${definition.id}`);
-    byId.set(definition.id, definition);
+  const add = (source: PlatformSource, color: string) => {
+    if (byId.has(source.id)) throw new Error(`Duplicate source id: ${source.id}`);
+    byId.set(source.id, { id: source.id, label: source.label, color });
   };
 
   for (const meta of metas) {
-    for (const source of meta.sources) {
-      add({ id: source.id, label: source.label, color: source.color ?? meta.color });
-    }
+    for (const source of meta.sources) add(source, source.color ?? meta.color);
   }
-  for (const source of others) {
-    let color: string;
-    if (source.color !== undefined) {
-      color = source.color;
-    } else {
-      const parent = byId.get(source.colorFrom);
-      if (!parent) {
-        throw new Error(`Source ${source.id} inherits color from unknown source ${source.colorFrom}`);
-      }
-      color = parent.color;
-    }
-    add({ id: source.id, label: source.label, color });
-  }
+  for (const source of system) add(source, source.color);
   return [...byId.values()];
 }
 
-export const SOURCE_REGISTRY = buildSourceRegistry(PLATFORM_METAS, OTHER_SOURCE_REGISTRATIONS);
+export const SOURCE_REGISTRY = buildSourceRegistry(PLATFORMS, SYSTEM_SOURCES);
 const SOURCES_BY_ID = new Map(SOURCE_REGISTRY.map((source) => [source.id, source]));
-const SOURCE_COLOR_FAMILIES = ["backup", "spotify", "steam", "google"] as const;
 
 export function getSourceDefinition(id: string): SourceDefinition | undefined {
   return SOURCES_BY_ID.get(id);
@@ -136,14 +52,7 @@ export function sourceLabel(id: string): string {
 }
 
 export function sourceColor(id: string): string {
-  const exact = getSourceDefinition(id);
-  if (exact) return exact.color;
-
-  for (const family of SOURCE_COLOR_FAMILIES) {
-    if (id.startsWith(`${family}-`)) return getSourceDefinition(family)?.color ?? DEFAULT_SOURCE_COLOR;
-  }
-
-  return DEFAULT_SOURCE_COLOR;
+  return getSourceDefinition(id)?.color ?? DEFAULT_SOURCE_COLOR;
 }
 
 export function isRegisteredSource(id: string): boolean {

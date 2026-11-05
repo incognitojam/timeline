@@ -1,52 +1,18 @@
 import { sourceColor } from "@shared/sources";
 import {
-  IconAmericanExpress,
   IconAutoAwesome,
-  IconBloodtype,
-  IconBolt,
-  IconBuild,
   IconCircle,
-  IconClaude,
   IconCleaningServices,
   IconCloudUpload,
-  IconCode,
   type IconComponent,
   IconDeleteSweep,
   IconEdit,
-  IconFacebook,
-  IconFavorite,
-  IconFitbit,
-  IconGitHub,
-  IconGoogle,
-  IconGoogleCalendar,
-  IconGoogleChat,
-  IconGoogleChrome,
-  IconGoogleFit,
-  IconGoogleKeep,
   IconGoogleMaps,
-  IconGooglePlay,
   IconHub,
   IconImage,
   IconInbox,
-  IconInstagram,
   IconLabel,
-  IconLinkedIn,
-  IconLocationOn,
   IconMenuBook,
-  IconMinecraft,
-  IconMonzo,
-  IconOpenAI,
-  IconPhone,
-  IconReddit,
-  IconScreenshotMonitor,
-  IconSearch,
-  IconSimpleSkype,
-  IconSpotify,
-  IconSteam,
-  IconSwarm,
-  IconTrakt,
-  IconWakaTime,
-  IconYouTube,
 } from "../ui/icons";
 import { PLATFORM_DISPLAYS } from "../platforms";
 import type { PlatformDisplay } from "../platforms/types";
@@ -59,104 +25,43 @@ import type { PlatformDisplay } from "../platforms/types";
 
 export function buildSourceIcons(
   displays: readonly PlatformDisplay[],
-  others: Readonly<Record<string, IconComponent>>,
+  system: Readonly<Record<string, IconComponent>>,
 ): Record<string, IconComponent> {
-  const icons = { ...others };
+  const icons = { ...system };
   for (const display of displays) {
-    for (const source of display.meta.sources) icons[source.id] = display.icon;
+    for (const source of display.meta.sources) {
+      icons[source.id] = display.sourceIcons?.[source.id] ?? display.icon;
+    }
   }
   return icons;
 }
 
-// Icons for sources not yet declared by a platform module.
-const OTHER_SOURCE_ICONS: Record<string, IconComponent> = {
-  // Music & Entertainment
-  spotify: IconSpotify,
-  youtube: IconYouTube,
-  trakt: IconTrakt,
-
-  // Social & Messaging
-  reddit: IconReddit,
-  linkedin: IconLinkedIn,
-  facebook: IconFacebook,
-  skype: IconSimpleSkype,
-  live: IconSimpleSkype,
-  instagram: IconInstagram,
-  swarm: IconSwarm,
-
-  // Google services
-  google: IconGoogle,
-  "google-location": IconLocationOn,
-  "google-takeout": IconGoogle,
-  "google-timeline": IconLocationOn,
-  "google-fit": IconGoogleFit,
-  "google-search": IconSearch,
-  chrome: IconGoogleChrome,
-  "google-calendar": IconGoogleCalendar,
-  "google-keep": IconGoogleKeep,
-  "google-chat": IconGoogleChat,
-  "google-playstore": IconGooglePlay,
-  "google-places": IconGoogleMaps,
-
-  // Finance & Health
-  amex: IconAmericanExpress,
-  monzo: IconMonzo,
-  fitbit: IconFitbit,
-  "google-health": IconFavorite,
-  thriva: IconBloodtype,
-
-  // Coding & Dev tools
-  wakatime: IconWakaTime,
-  github: IconGitHub,
-  claude: IconClaude,
-  chatgpt: IconOpenAI,
-  "claude-code": IconClaude,
-  amp: IconBolt,
-  opencode: IconBuild,
-  conductor: IconAutoAwesome,
-  t3code: IconCode,
-  codex: IconOpenAI,
-
-  // Gaming
-  steam: IconSteam,
-  minecraft: IconMinecraft,
-
-  // Other
+// Icons for sources that belong to the app rather than to a platform.
+const SYSTEM_SOURCE_ICONS: Record<string, IconComponent> = {
   journal: IconMenuBook,
-  phone: IconPhone,
-  "sms-backup-restore": IconPhone,
-  "auto-detect": IconAutoAwesome,
   manual: IconEdit,
-  thumbhash: IconImage,
-  recall: IconScreenshotMonitor,
-  backup: IconCloudUpload,
+  "auto-detect": IconAutoAwesome,
   "inbox-rclone": IconInbox,
+  "google-places": IconGoogleMaps,
+  thumbhash: IconImage,
   "attachment-descriptions": IconLabel,
   "render-sweep": IconCleaningServices,
   embeddings: IconHub,
+  backup: IconCloudUpload,
+  "backup-app-state": IconCloudUpload,
+  "backup-offsite": IconCloudUpload,
   "media-evict": IconDeleteSweep,
 };
 
-const SOURCE_ICONS = buildSourceIcons(PLATFORM_DISPLAYS, OTHER_SOURCE_ICONS);
+const SOURCE_ICONS = buildSourceIcons(PLATFORM_DISPLAYS, SYSTEM_SOURCE_ICONS);
 const DEFAULT_ICON = IconCircle;
-const SOURCE_FAMILY_KEYS = ["backup", "spotify", "steam"] as const;
-
-function getSourceFamilyKey(source: string): string | null {
-  for (const key of SOURCE_FAMILY_KEYS) {
-    if (source === key || source.startsWith(`${key}-`)) return key;
-  }
-  return null;
-}
 
 export function getSourceIcon(source: string): IconComponent {
-  if (Object.hasOwn(SOURCE_ICONS, source)) return SOURCE_ICONS[source];
-  const familyKey = getSourceFamilyKey(source);
-  if (familyKey) return SOURCE_ICONS[familyKey];
-  return DEFAULT_ICON;
+  return Object.hasOwn(SOURCE_ICONS, source) ? SOURCE_ICONS[source] : DEFAULT_ICON;
 }
 
 export function hasSourceIcon(source: string): boolean {
-  return Object.hasOwn(SOURCE_ICONS, source) || getSourceFamilyKey(source) !== null;
+  return Object.hasOwn(SOURCE_ICONS, source);
 }
 
 // Get the actual color value for a source

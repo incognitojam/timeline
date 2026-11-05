@@ -26,6 +26,7 @@
     "test": "bun test",
     "test:api": "bun test src/api/",
     "seed": "bun run src/seed/index.ts",
+    "check-event-types": "bun run src/scripts/check-event-types.ts",
     "prepare-sample": "bun run scripts/prepare-sample-db.ts",
     "prepare-full": "bun run scripts/prepare-sample-db.ts --full",
     "changeset": "changeset",
