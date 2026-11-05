@@ -7,6 +7,7 @@ import { join } from "path";
 import { initDb } from "../db/schema";
 import { seed } from "../testing/seed";
 import { computeHash } from "../media/storage";
+import { createT3CodeV2Fixture, FIXTURE } from "./fixtures/t3code/statev2-fixture";
 import { activityToBlocks, importT3Code } from "./t3code";
 
 interface EventRow {
@@ -616,6 +617,49 @@ describe("importT3Code", () => {
       )
       .get() as { display_name: string } | null;
     expect(identity?.display_name).toBe("Claude Sonnet 5");
+  });
+});
+
+describe("importT3Code across store versions", () => {
+  it("does not duplicate a thread imported from v1 and later from its v2 migration", async () => {
+    const db = new Database(":memory:");
+    initDb(db);
+    const root = join(tmpdir(), `t3code-upgrade-${randomUUID()}`);
+    await mkdir(join(root, "v1"), { recursive: true });
+    await mkdir(join(root, "v2"), { recursive: true });
+    try {
+      const v1Path = join(root, "v1", "state.sqlite");
+      const v1 = createT3Fixture(v1Path);
+      v1.prepare("INSERT INTO projection_projects VALUES (?, 'demo-app', '/home/alice/code/demo-app')")
+        .run(FIXTURE.projectId);
+      v1.prepare(
+        `INSERT INTO projection_threads VALUES (?, ?, 'Legacy thread', NULL, NULL, '{"instanceId":"codex","model":"gpt-5.4"}', NULL, NULL)`
+      ).run(FIXTURE.threads.legacy, FIXTURE.projectId);
+      v1.prepare(
+        "INSERT INTO projection_thread_messages VALUES (?, ?, 'legacy-turn-1', 'user', 'Legacy question', 0, '2026-04-01T09:00:00.000Z', NULL)"
+      ).run(FIXTURE.legacy.messageId, FIXTURE.threads.legacy);
+      v1.prepare(
+        "INSERT INTO projection_thread_activities VALUES (?, ?, 'legacy-turn-1', 'tool', 'tool.completed', 'Ran command', ?, '2026-04-01T09:01:00.000Z', 1)"
+      ).run(FIXTURE.legacy.completedActivityId, FIXTURE.threads.legacy, codexCommandPayload);
+      v1.close();
+      const v2Path = join(root, "v2", "statev2.sqlite");
+      createT3CodeV2Fixture(v2Path).close();
+
+      const fromV1 = await importT3Code(db, v1Path, "alice");
+      expect(fromV1.messages + fromV1.toolCalls).toBe(2);
+      await importT3Code(db, v2Path, "alice");
+
+      const legacyRows = db
+        .prepare("SELECT source_id FROM events WHERE source = 't3code' AND conversation_id = ? ORDER BY source_id")
+        .all(FIXTURE.threads.legacy);
+      expect(legacyRows).toEqual([
+        { source_id: `${FIXTURE.threads.legacy}:${FIXTURE.legacy.completedActivityId}` },
+        { source_id: `${FIXTURE.threads.legacy}:${FIXTURE.legacy.messageId}` },
+      ]);
+    } finally {
+      db.close();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 

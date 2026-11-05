@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { getDb, initDb } from "../db/schema";
+import { conversationSourceAccountKey, getDb, initDb } from "../db/schema";
 import {
   onImportComplete,
   upsertIdentities,
@@ -9,6 +9,7 @@ import {
 import { readdir } from "fs/promises";
 import type { Dirent } from "fs";
 import { join, basename } from "path";
+import { markConversationsSuperseded } from "../db/superseded-conversations";
 import { insertStoredAttachment } from "../media/attachments";
 import {
   type ContentBlock,
@@ -68,6 +69,7 @@ interface ImportStats {
   messages: number;
   refreshed: number;
   skipped: number;
+  titleGenerationSessions: number;
   identitiesUpserted: number;
 }
 
@@ -155,6 +157,15 @@ function isConductorWorkspace(projectPath: string): boolean {
   // -Users-alice-conductor-workspaces-timeline-sample-worktree
   // Skip these since they're imported by the conductor parser
   return projectPath.includes("-conductor-workspaces-");
+}
+
+/**
+ * T3 Code (and styal) runs a throwaway Claude session in a temp dir named
+ * `t3code-claude-title-*` to name each thread; it only echoes the thread's
+ * first message.
+ */
+function isT3TitleGenerationDir(projectDir: string): boolean {
+  return projectDir.includes("t3code-claude-title-");
 }
 
 /**
@@ -292,6 +303,7 @@ export async function importClaudeCode(
     messages: 0,
     refreshed: 0,
     skipped: 0,
+    titleGenerationSessions: 0,
     identitiesUpserted: 0,
   };
 
@@ -482,6 +494,29 @@ export async function importClaudeCode(
         continue;
       }
 
+      // Skip T3 title-generation sessions; mark them superseded so copies
+      // imported before this check leave conversation lists too. Copies whose
+      // files are gone are matched by title after the import.
+      if (isT3TitleGenerationDir(projectDir)) {
+        let sessionFiles: string[];
+        try {
+          sessionFiles = (await readdir(join(claudeDir, projectDir))).filter((f) => f.endsWith(".jsonl"));
+        } catch {
+          continue;
+        }
+        markConversationsSuperseded(
+          db,
+          sessionFiles.map((file) => ({
+            source: "claude-code",
+            sourceAccount,
+            conversationId: basename(file, ".jsonl"),
+            reason: "title_generation",
+          }))
+        );
+        stats.titleGenerationSessions += sessionFiles.length;
+        continue;
+      }
+
       const projectPath = join(claudeDir, projectDir);
 
       // List project entries; capture .jsonl files and session-named
@@ -618,6 +653,20 @@ export async function importClaudeCode(
     throw error;
   }
 
+  const importedTitleSessions = db.prepare(`
+    SELECT conversation_id FROM conversation_summaries
+    WHERE source = 'claude-code' AND source_account_key = ? AND title LIKE 't3code-claude-title-%'
+  `).all(conversationSourceAccountKey(sourceAccount)) as { conversation_id: string }[];
+  markConversationsSuperseded(
+    db,
+    importedTitleSessions.map((row) => ({
+      source: "claude-code",
+      sourceAccount,
+      conversationId: row.conversation_id,
+      reason: "title_generation",
+    }))
+  );
+
   // Upsert all collected identities
   if (identities.size > 0) {
     upsertIdentities(db, [...identities.values()]);
@@ -634,6 +683,7 @@ export async function importClaudeCode(
   }
   console.log(`  Identities: ${stats.identitiesUpserted}`);
   console.log(`  Skipped: ${stats.skipped}`);
+  console.log(`  T3 title-generation sessions skipped: ${stats.titleGenerationSessions}`);
   console.log(`  Batch ID: ${importBatch}`);
 
   onImportComplete(db);

@@ -6,6 +6,7 @@ import { conversationTypeClause } from "./conversations";
 import { addTextSearch, transformEvents, parseCursor, createCursor } from "./events";
 import type { SearchOptions } from "./events";
 import { parseIdentifier, formatIdentifier, getIdentitiesForContact } from "./identities";
+import { notSupersededClause } from "./superseded-conversations";
 import { PHONE_IDENTITY_PLATFORM, PHONE_IDENTITY_SOURCES } from "../lib/phone";
 
 /**
@@ -417,6 +418,7 @@ export async function getContactConversations(
       WHERE ep.person IN (${placeholders})
         AND ${conversationTypeClause("e.")}
         AND e.conversation_id IS NOT NULL
+        AND ${notSupersededClause("e")}
       GROUP BY e.source, e.source_account, e.conversation_id
       ORDER BY lastMessage DESC
       LIMIT 200

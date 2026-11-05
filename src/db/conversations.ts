@@ -14,6 +14,7 @@ import { createCursor, parseCursor, transformEvent, transformEvents } from "./ev
 import { parseIdentifier, resolveIdentities } from "./identities";
 import type { QueryExecutor } from "./pool";
 import { conversationSourceAccountKey, type TimelineEvent } from "./schema";
+import { notSupersededClause } from "./superseded-conversations";
 
 export { conversationTypeClause } from "./conversation-types";
 
@@ -449,6 +450,7 @@ export async function listConversationSources(db: QueryExecutor, scope: Conversa
     SELECT DISTINCT source
     FROM conversation_summaries cs
     WHERE ${scopeCondition(scope)}
+      AND ${notSupersededClause("cs")}
     ORDER BY source
   `);
   return rows.map((row) => row.source);
@@ -479,7 +481,9 @@ async function queryConversationList<T extends ConversationListItem>(
 ): Promise<{ conversations: T[]; total: number }> {
   const { scope, search, source, project, limit = 50, offset = 0, timing } = options;
 
-  const conditions: string[] = [scopeCondition(scope)];
+  // Superseded conversations duplicate a canonical one (or are noise);
+  // their events stay reachable but are not listed.
+  const conditions: string[] = [scopeCondition(scope), notSupersededClause("cs")];
   const params: (string | number)[] = [];
   if (search) {
     conditions.push(`EXISTS (
@@ -573,6 +577,7 @@ export async function listCodingAgentConversationProjects(
     FROM conversation_summaries cs
     ${CODING_AGENT_CONVERSATIONS_JOIN}
     WHERE ${scopeCondition("coding")}
+      AND ${notSupersededClause("cs")}
     GROUP BY cac.project
     ORDER BY count DESC, name
   `);

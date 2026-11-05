@@ -2,24 +2,36 @@
 /**
  * T3 Code Chat Parser
  *
- * Imports chat threads from T3 Code (desktop coding agent app) SQLite state
- * database at ~/.t3/userdata/state.sqlite. T3 Code drives external agent
- * providers (claudeAgent, codex, opencode, ...); messages are stored as plain
- * text in projection tables, and tool calls in projection_thread_activities.
- * Completed tool activities import as assistant events whose raw_data.content
- * carries tool_use/tool_result blocks (payload shape differs per provider;
- * both are normalized to the shared ContentBlock vocabulary).
+ * Imports chat threads from a T3 Code (desktop coding agent app) SQLite
+ * state database. T3 Code drives external agent providers (claudeAgent,
+ * codex, opencode, ...). Two stores exist, detected by schema:
+ *
+ * - v2 `statev2.sqlite` (current T3 Code and its styal fork, e.g.
+ *   ~/.styal/userdata/statev2.sqlite) — read by ./t3code-v2.ts
+ * - v1 `state.sqlite` (older T3 Code, ~/.t3/userdata/state.sqlite) —
+ *   messages are plain text in projection tables, and tool calls are
+ *   completed projection_thread_activities rows
+ *
+ * Tool calls import as assistant events whose raw_data.content carries
+ * tool_use/tool_result blocks (payload shape differs per provider; all are
+ * normalized to the shared ContentBlock vocabulary).
+ *
+ * The account distinguishes hosts: import each machine's database with its
+ * own account.
  *
  * Usage:
- *   bun run src/parsers/t3code.ts [account] [--dry-run] [--refresh-raw-data]
- *   bun run src/parsers/t3code.ts alice ~/.t3/userdata/state.sqlite
+ *   bun run src/parsers/t3code.ts <account> [db-path] [--dry-run] [--refresh-raw-data]
+ *   bun run src/parsers/t3code.ts alice ~/.styal/userdata/statev2.sqlite --dry-run
  */
 
 import { Database } from "bun:sqlite";
 import { existsSync } from "fs";
 import { readFile } from "fs/promises";
 import { dirname, extname, join } from "path";
+import { extractConversationId } from "../db/conversation-id";
 import { onImportComplete } from "../db/queries";
+import { conversationTypeClause } from "../db/conversation-types";
+import { markConversationsSuperseded } from "../db/superseded-conversations";
 import { getDb, initDb } from "../db/schema";
 import { insertStoredAttachment } from "../media/attachments";
 import { type StoreFileResult, storeFile } from "../media/storage";
@@ -35,10 +47,91 @@ import {
   recordFromUnknown,
   safePathPart,
 } from "./shared/image-blocks";
+import {
+  asString,
+  type PlannedT3Event,
+  type PlannedT3EventKind,
+  t3EventTags,
+  t3EventTitle,
+} from "./t3code-events";
+import {
+  readT3CodeV2Events,
+  readT3CodeV2ProviderSessions,
+  T3_V2_REQUIRED_COLUMNS,
+  type T3ProviderSession,
+  type T3V2ReadStats,
+} from "./t3code-v2";
+
+/**
+ * Timeline sources that import a provider driver's own transcripts. A T3
+ * thread supersedes those transcripts in conversation lists; drivers
+ * without a Timeline importer (antigravity, ...) need no link.
+ */
+const PROVIDER_DRIVER_SOURCES: Record<string, string> = {
+  claudeAgent: "claude-code",
+  codex: "codex",
+  opencode: "opencode",
+};
 
 export const DEFAULT_T3CODE_DB = `${process.env.HOME}/.t3/userdata/state.sqlite`;
 
-// Thread/project/session columns shared by the message and activity queries.
+/** Tables and columns the v1 reader queries; checked before any read. */
+const T3_V1_REQUIRED_COLUMNS: Record<string, readonly string[]> = {
+  projection_threads: [
+    "thread_id", "project_id", "title", "branch", "worktree_path",
+    "model_selection_json", "archived_at", "deleted_at",
+  ],
+  projection_projects: ["project_id", "title", "workspace_root"],
+  projection_thread_sessions: ["thread_id", "provider_name"],
+  projection_thread_messages: [
+    "message_id", "thread_id", "turn_id", "role", "text", "is_streaming", "created_at", "attachments_json",
+  ],
+  projection_thread_activities: ["activity_id", "thread_id", "turn_id", "kind", "payload_json", "created_at"],
+};
+
+export type T3Store = "v1" | "v2";
+
+/**
+ * Identify the store by its tables and verify every column the matching
+ * reader queries. An unrecognised or drifted schema fails the import
+ * instead of importing part of it.
+ */
+export function detectT3Store(t3Db: Database, t3DbPath: string): T3Store {
+  const tables = new Set(
+    (t3Db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[])
+      .map((row) => row.name)
+  );
+  const store: T3Store | null = tables.has("orchestration_v2_projection_threads")
+    ? "v2"
+    : tables.has("projection_threads")
+      ? "v1"
+      : null;
+  if (!store) {
+    throw new Error(
+      `Unrecognised T3 Code database at ${t3DbPath}: expected orchestration_v2_projection_threads (statev2.sqlite) or projection_threads (state.sqlite)`
+    );
+  }
+
+  const required = store === "v2" ? T3_V2_REQUIRED_COLUMNS : T3_V1_REQUIRED_COLUMNS;
+  const missing: string[] = [];
+  for (const [table, columns] of Object.entries(required)) {
+    const present = new Set(
+      (t3Db.prepare("SELECT name FROM pragma_table_info(?)").all(table) as { name: string }[])
+        .map((row) => row.name)
+    );
+    for (const column of columns) {
+      if (!present.has(column)) missing.push(`${table}.${column}`);
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `Unsupported T3 Code ${store} schema at ${t3DbPath}: missing ${missing.join(", ")}`
+    );
+  }
+  return store;
+}
+
+// Thread/project/session columns shared by the v1 message and activity queries.
 interface T3ThreadRow {
   thread_id: string;
   turn_id: string | null;
@@ -89,12 +182,33 @@ export interface StoredT3CodeImageAttachment {
 }
 
 export interface ImportStats {
+  store: T3Store;
+  /** Events inserted — or, on a dry run, planned — by kind. */
   messages: number;
   toolCalls: number;
+  plans: number;
+  reasoning: number;
   refreshed: number;
   skipped: number;
   threads: Set<string>;
   identitiesUpserted: number;
+  /** v2 only: pass back as `cursor` to read only later changes. */
+  cursor: string | null;
+  /** v2 only: migrated v1 threads not yet readable from the v2 tables. */
+  pendingTranscriptThreads: number;
+  /** v2 only: source rows not planned as events, by reason. */
+  skippedByReason: Record<string, number>;
+  /**
+   * v2 only: provider-native conversations (Claude Code, Codex, OpenCode)
+   * marked as superseded by an imported thread — or, on a dry run, linked
+   * from any thread.
+   */
+  supersededConversations: number;
+}
+
+export interface T3ImportOptions extends AiImportOptions {
+  /** v2 only: `cursor` from a previous run's stats. */
+  cursor?: string | null;
 }
 
 function parseModelSelection(json: string | null): ModelSelection {
@@ -119,10 +233,6 @@ function parseAttachments(json: string | null): unknown[] | undefined {
 
 export function t3CodeAttachmentsDir(t3DbPath: string): string {
   return join(dirname(t3DbPath), "attachments");
-}
-
-function asString(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function isSafePathPart(value: string): boolean {
@@ -386,33 +496,13 @@ export function activityToBlocks(payload: unknown, activityId: string): ContentB
   }
 }
 
-export async function importT3Code(
-  db: Database,
-  t3DbPath: string,
-  sourceAccount: string,
-  options: AiImportOptions = {}
-): Promise<ImportStats> {
-  const importBatch = `t3code-${sourceAccount}-${Date.now()}`;
-  const dryRun = options.dryRun ?? false;
-  const refreshRawData = options.refreshRawData ?? false;
-  const attachmentsDir = t3CodeAttachmentsDir(t3DbPath);
 
-  const stats: ImportStats = {
-    messages: 0,
-    toolCalls: 0,
-    refreshed: 0,
-    skipped: 0,
-    threads: new Set(),
-    identitiesUpserted: 0,
-  };
-
-  // Collect identities for batch upsert
-  const identityCollector = createIdentityCollector("t3code", sourceAccount);
-  const userIdentifier = identityCollector.userIdentifier;
-
-  // Open T3 Code state DB read-only
-  const t3Db = new Database(t3DbPath, { readonly: true });
-
+/**
+ * Plan events from a v1 store. The model is thread-level state there, so it
+ * reflects the thread's last selection, not necessarily the model that
+ * produced a specific message.
+ */
+function* readT3CodeV1Events(t3Db: Database, stats: ImportStats): Generator<PlannedT3Event> {
   const threadColumns = `
       t.title AS thread_title, t.branch, t.worktree_path,
       t.model_selection_json,
@@ -423,7 +513,7 @@ export async function importT3Code(
 
   // Messages still streaming are incomplete snapshots - skip them; they'll
   // import on the next run once T3 marks them complete.
-  const query = `
+  const messages = t3Db.prepare(`
     SELECT
       m.message_id, m.thread_id, m.turn_id, m.role, m.text, m.created_at,
       m.attachments_json,${threadColumns}
@@ -433,11 +523,11 @@ export async function importT3Code(
     LEFT JOIN projection_thread_sessions s ON s.thread_id = m.thread_id
     WHERE m.is_streaming = 0
     ORDER BY m.created_at ASC
-  `;
+  `).all() as T3CodeMessage[];
 
   // Only completed tool calls carry a final input+result; started/updated
   // rows are in-flight snapshots and import on a later run once completed.
-  const activityQuery = `
+  const activities = t3Db.prepare(`
     SELECT
       a.activity_id, a.thread_id, a.turn_id, a.payload_json, a.created_at,${threadColumns}
     FROM projection_thread_activities a
@@ -446,212 +536,309 @@ export async function importT3Code(
     LEFT JOIN projection_thread_sessions s ON s.thread_id = a.thread_id
     WHERE a.kind = 'tool.completed'
     ORDER BY a.created_at ASC
-  `;
+  `).all() as T3CodeActivity[];
 
-  const messages = t3Db.prepare(query).all() as T3CodeMessage[];
-  const activities = t3Db.prepare(activityQuery).all() as T3CodeActivity[];
-  console.log(
-    `Found ${messages.length.toLocaleString()} messages and ${activities.length.toLocaleString()} completed tool calls in T3 Code DB`
-  );
-
-  if (dryRun) {
-    const threads = new Set(messages.map((m) => m.thread_id));
-    console.log(`Threads: ${threads.size}`);
-    console.log("\nSample messages:");
-    for (const msg of messages.slice(0, 5)) {
-      const preview = msg.text.slice(0, 100).replace(/\n/g, " ");
-      console.log(
-        `  [${msg.role}] ${msg.project_title || "?"}: ${msg.thread_title || "?"}: ${preview}...`
-      );
-    }
-    t3Db.close();
-    return stats;
-  }
-
-  const eventWriter = createEventWriter(db, {
-    source: "t3code",
-    sourceAccount,
-    importBatch,
-    refreshRawData,
-  });
-
-  // Per-thread context shared by message and activity rows. The model is
-  // thread-level state, so it reflects the thread's last selection, not
-  // necessarily the model that produced a specific message. Registers the
-  // assistant identity as a side effect.
   const threadContext = (row: T3ThreadRow) => {
     const modelSelection = parseModelSelection(row.model_selection_json);
-    const modelId = modelSelection.model || null;
+    const model = modelSelection.model || null;
     const provider = row.provider_name || modelSelection.instanceId || null;
-
-    const title =
-      [row.project_title, row.thread_title].filter(Boolean).join(": ") ||
-      "T3 Code Chat";
-
-    const tags = [
-      "editor:t3code",
-      row.project_title && `project:${row.project_title}`,
-      modelId && `model:${modelId}`,
-      provider && `provider:${provider}`,
-      row.branch && `branch:${row.branch}`,
-    ].filter((t): t is string => Boolean(t));
-
-    const assistantIdentifier = identityCollector.registerAssistant(modelId);
-
-    const threadRaw = {
-      thread_id: row.thread_id,
-      turn_id: row.turn_id,
-      provider,
-      model: modelId,
-      model_options: modelSelection.options,
-      thread_title: row.thread_title,
-      thread_archived: Boolean(row.thread_archived),
-      thread_deleted: Boolean(row.thread_deleted),
-      branch: row.branch,
-      worktree_path: row.worktree_path,
-      project_title: row.project_title,
-      workspace_root: row.workspace_root,
+    return {
+      title: t3EventTitle(row.project_title, row.thread_title),
+      model,
+      tags: t3EventTags({ projectTitle: row.project_title, model, provider, branch: row.branch }),
+      raw: {
+        thread_id: row.thread_id,
+        turn_id: row.turn_id,
+        provider,
+        model,
+        model_options: modelSelection.options,
+        thread_title: row.thread_title,
+        thread_archived: Boolean(row.thread_archived),
+        thread_deleted: Boolean(row.thread_deleted),
+        branch: row.branch,
+        worktree_path: row.worktree_path,
+        project_title: row.project_title,
+        workspace_root: row.workspace_root,
+      },
     };
-
-    return { title, tags, assistantIdentifier, threadRaw };
   };
 
-  db.run("BEGIN TRANSACTION");
-
-  try {
-    for (const msg of messages) {
-      const attachments = parseAttachments(msg.attachments_json);
-
-      // Skip rows with nothing to show
-      if (msg.text.trim() === "" && !attachments) {
-        stats.skipped++;
-        continue;
-      }
-
-      stats.threads.add(msg.thread_id);
-
-      const ctx = threadContext(msg);
-      const eventType =
-        msg.role === "user" ? "t3code:message:user" : "t3code:message:assistant";
-      const people =
-        msg.role === "user"
-          ? [userIdentifier]
-          : [ctx.assistantIdentifier, userIdentifier];
-
-      const rawData = JSON.stringify({
-        ...ctx.threadRaw,
-        message_id: msg.message_id,
-        attachments,
-      });
-
-      const sourceId = `${msg.thread_id}:${msg.message_id}`;
-      const { outcome, eventId } = eventWriter.write({
-        sourceId,
-        eventType,
-        timestamp: msg.created_at,
-        title: ctx.title,
-        content: msg.text,
-        people,
-        tags: ctx.tags,
-        rawData,
-        conversationId: msg.thread_id,
-      });
-      if (outcome === "inserted") stats.messages++;
-      else if (outcome === "refreshed") stats.refreshed++;
-      else stats.skipped++;
-
-      if (eventId !== null && outcome !== "skipped") {
-        const storedAttachments = await storeT3CodeImageAttachments({
-          attachments,
-          attachmentsDir,
-          sourceAccount,
-          threadId: msg.thread_id,
-          messageId: msg.message_id,
-          eventSourceId: sourceId,
-        });
-        for (const attachment of storedAttachments) {
-          insertStoredAttachment(db, {
-            eventId,
-            source: "t3code",
-            sourceId: attachment.sourceId,
-            filename: attachment.filename,
-            mimeType: attachment.mimeType,
-          }, attachment.stored);
-        }
-      }
+  for (const msg of messages) {
+    const attachments = parseAttachments(msg.attachments_json);
+    // Skip rows with nothing to show
+    if (msg.text.trim() === "" && !attachments) {
+      stats.skipped++;
+      continue;
     }
+    const ctx = threadContext(msg);
+    yield {
+      kind: "message",
+      sourceId: `${msg.thread_id}:${msg.message_id}`,
+      role: msg.role,
+      timestamp: msg.created_at,
+      title: ctx.title,
+      content: msg.text,
+      model: ctx.model,
+      tags: ctx.tags,
+      raw: { ...ctx.raw, message_id: msg.message_id, attachments },
+      attachments: attachments && { messageId: msg.message_id, items: attachments },
+    };
+  }
 
-    for (const activity of activities) {
-      let payload: unknown;
-      try {
-        payload = JSON.parse(activity.payload_json);
-      } catch {
-        payload = null;
-      }
-
-      const blocks = activityToBlocks(payload, activity.activity_id);
-      if (blocks.length === 0) {
-        stats.skipped++;
-        continue;
-      }
-
-      stats.threads.add(activity.thread_id);
-
-      const ctx = threadContext(activity);
-      const rawData = JSON.stringify({
-        ...ctx.threadRaw,
+  for (const activity of activities) {
+    let payload: unknown;
+    try {
+      payload = JSON.parse(activity.payload_json);
+    } catch {
+      payload = null;
+    }
+    const blocks = activityToBlocks(payload, activity.activity_id);
+    if (blocks.length === 0) {
+      stats.skipped++;
+      continue;
+    }
+    const ctx = threadContext(activity);
+    // Tool calls are assistant actions; content stays empty so tool noise
+    // never reaches FTS (matching the other AI parsers).
+    yield {
+      kind: "tool_call",
+      sourceId: `${activity.thread_id}:${activity.activity_id}`,
+      role: "assistant",
+      timestamp: activity.created_at,
+      title: ctx.title,
+      content: "",
+      model: ctx.model,
+      tags: ctx.tags,
+      raw: {
+        ...ctx.raw,
         activity_id: activity.activity_id,
         content: blocks,
         // Original payload, preserved for reprocessing (blocks are derived).
         activity: payload,
-      });
+      },
+    };
+  }
+}
 
-      // Tool calls are assistant actions; content stays empty so tool noise
-      // never reaches FTS (matching the other AI parsers).
-      const { outcome } = eventWriter.write({
-        sourceId: `${activity.thread_id}:${activity.activity_id}`,
-        eventType: "t3code:message:assistant",
-        timestamp: activity.created_at,
-        title: ctx.title,
-        content: "",
-        people: [ctx.assistantIdentifier, userIdentifier],
-        tags: ctx.tags,
-        rawData,
-        conversationId: activity.thread_id,
-      });
-      if (outcome === "inserted") stats.toolCalls++;
-      else if (outcome === "refreshed") stats.refreshed++;
-      else stats.skipped++;
+const STAT_BY_KIND: Record<PlannedT3EventKind, "messages" | "toolCalls" | "plans" | "reasoning"> = {
+  message: "messages",
+  tool_call: "toolCalls",
+  plan: "plans",
+  reasoning: "reasoning",
+};
+
+export async function importT3Code(
+  db: Database | null,
+  t3DbPath: string,
+  sourceAccount: string,
+  options: T3ImportOptions = {}
+): Promise<ImportStats> {
+  const importBatch = `t3code-${sourceAccount}-${Date.now()}`;
+  const dryRun = options.dryRun ?? false;
+  const refreshRawData = options.refreshRawData ?? false;
+  const attachmentsDir = t3CodeAttachmentsDir(t3DbPath);
+
+  // Read-only, so the live T3 Code process keeps writing; one read
+  // transaction gives every query the same WAL snapshot.
+  const t3Db = new Database(t3DbPath, { readonly: true });
+  t3Db.run("PRAGMA busy_timeout = 5000");
+
+  try {
+    const store = detectT3Store(t3Db, t3DbPath);
+    const stats: ImportStats = {
+      store,
+      messages: 0,
+      toolCalls: 0,
+      plans: 0,
+      reasoning: 0,
+      refreshed: 0,
+      skipped: 0,
+      threads: new Set(),
+      identitiesUpserted: 0,
+      cursor: null,
+      pendingTranscriptThreads: 0,
+      skippedByReason: {},
+      supersededConversations: 0,
+    };
+    const v2Stats: T3V2ReadStats = { cursor: null, pendingTranscriptThreads: 0, skipped: {} };
+
+    if (!dryRun && !db) throw new Error("importT3Code needs a Timeline database unless dryRun is set");
+    const identityCollector = createIdentityCollector("t3code", sourceAccount);
+    const userIdentifier = identityCollector.userIdentifier;
+    const eventWriter = db && !dryRun
+      ? createEventWriter(db, {
+          source: "t3code",
+          sourceAccount,
+          importBatch,
+          refreshRawData,
+          // v2 rows are re-read when they change (edited prompts, reopened
+          // subagents, renamed or archived threads), so rewrite what differs.
+          updateChanged: store === "v2",
+        })
+      : null;
+
+    t3Db.run("BEGIN");
+    if (db && eventWriter) db.run("BEGIN TRANSACTION");
+    try {
+      const providerSessions = store === "v2" ? readT3CodeV2ProviderSessions(t3Db) : [];
+      const events =
+        store === "v2"
+          ? readT3CodeV2Events(t3Db, { cursor: options.cursor ?? null }, v2Stats)
+          : readT3CodeV1Events(t3Db, stats);
+
+      for (const event of events) {
+        stats.threads.add(event.raw.thread_id);
+        if (!eventWriter) {
+          stats[STAT_BY_KIND[event.kind]]++;
+          continue;
+        }
+
+        const people =
+          event.role === "user"
+            ? [userIdentifier]
+            : [identityCollector.registerAssistant(event.model), userIdentifier];
+        const conversationId = extractConversationId("t3code", event.raw);
+        if (!conversationId) throw new Error(`T3 Code event ${event.sourceId} has no thread_id`);
+
+        const { outcome, eventId } = eventWriter.write({
+          sourceId: event.sourceId,
+          eventType: `t3code:message:${event.role}`,
+          timestamp: event.timestamp,
+          title: event.title,
+          content: event.content,
+          people,
+          tags: event.tags,
+          rawData: JSON.stringify(event.raw),
+          conversationId,
+        });
+        if (outcome === "inserted") stats[STAT_BY_KIND[event.kind]]++;
+        else if (outcome === "refreshed") stats.refreshed++;
+        else stats.skipped++;
+
+        if (db && event.attachments && eventId !== null && outcome !== "skipped") {
+          const storedAttachments = await storeT3CodeImageAttachments({
+            attachments: event.attachments.items,
+            attachmentsDir,
+            sourceAccount,
+            threadId: event.raw.thread_id,
+            messageId: event.attachments.messageId,
+            eventSourceId: event.sourceId,
+          });
+          for (const attachment of storedAttachments) {
+            insertStoredAttachment(db, {
+              eventId,
+              source: "t3code",
+              sourceId: attachment.sourceId,
+              filename: attachment.filename,
+              mimeType: attachment.mimeType,
+            }, attachment.stored);
+          }
+        }
+      }
+      if (db && eventWriter) {
+        stats.supersededConversations = supersedeProviderSessions(db, sourceAccount, providerSessions);
+        db.run("COMMIT");
+      } else {
+        stats.supersededConversations = providerSessions.filter(
+          (session) => PROVIDER_DRIVER_SOURCES[session.driver]
+        ).length;
+      }
+    } catch (error) {
+      if (db?.inTransaction) db.run("ROLLBACK");
+      throw error;
+    } finally {
+      t3Db.run("COMMIT");
     }
 
-    db.run("COMMIT");
-  } catch (error) {
-    db.run("ROLLBACK");
+    stats.cursor = v2Stats.cursor;
+    stats.pendingTranscriptThreads = v2Stats.pendingTranscriptThreads;
+    stats.skippedByReason = v2Stats.skipped;
+    stats.skipped += Object.values(v2Stats.skipped).reduce((sum, n) => sum + n, 0);
+
+    if (db && eventWriter) {
+      stats.identitiesUpserted = identityCollector.upsertAll(db);
+    }
+
+    printSummary(stats, { dryRun, refreshRawData, importBatch });
+    if (db && eventWriter) onImportComplete(db);
+    return stats;
+  } finally {
     t3Db.close();
-    throw error;
   }
+}
 
-  t3Db.close();
+/**
+ * Mark the provider-native transcripts of every imported thread as
+ * superseded by it, under the same account: the claude-code/codex/opencode
+ * importers on a machine use the account its T3 database is imported with. Covers all threads, not just those read this run, so
+ * transcripts imported after their thread are still linked.
+ */
+function supersedeProviderSessions(
+  db: Database,
+  sourceAccount: string,
+  sessions: T3ProviderSession[]
+): number {
+  const mapped = sessions.flatMap((session) => {
+    const source = PROVIDER_DRIVER_SOURCES[session.driver];
+    return source ? [{ ...session, source }] : [];
+  });
+  if (mapped.length === 0) return 0;
 
-  // Upsert all collected identities (only on actual import)
-  stats.identitiesUpserted = identityCollector.upsertAll(db);
+  const imported = new Set(
+    (db.prepare(`
+      SELECT DISTINCT conversation_id FROM events
+      WHERE source = 't3code' AND source_account = ? AND ${conversationTypeClause()}
+        AND conversation_id IN (SELECT value FROM json_each(?))
+    `).all(sourceAccount, JSON.stringify([...new Set(mapped.map((s) => s.threadId))])) as {
+      conversation_id: string;
+    }[]).map((row) => row.conversation_id)
+  );
+  const rows = mapped
+    .filter((session) => imported.has(session.threadId))
+    .map((session) => ({
+      source: session.source,
+      sourceAccount,
+      conversationId: session.nativeId,
+      reason: "orchestrated" as const,
+      canonical: { source: "t3code", sourceAccount, conversationId: session.threadId },
+    }));
+  markConversationsSuperseded(db, rows);
+  return rows.length;
+}
 
-  // Print summary
+function printSummary(
+  stats: ImportStats,
+  run: { dryRun: boolean; refreshRawData: boolean; importBatch: string }
+): void {
   console.log(`\n${"=".repeat(50)}`);
-  console.log("Import complete:");
+  console.log(run.dryRun ? `Dry run (${stats.store} store), events planned:` : `Import complete (${stats.store} store):`);
   console.log(`  Threads: ${stats.threads.size}`);
   console.log(`  Messages: ${stats.messages.toLocaleString()}`);
   console.log(`  Tool calls: ${stats.toolCalls.toLocaleString()}`);
-  if (refreshRawData) {
+  if (stats.store === "v2") {
+    console.log(`  Proposed plans: ${stats.plans.toLocaleString()}`);
+    console.log(`  Reasoning: ${stats.reasoning.toLocaleString()}`);
+  }
+  if (run.refreshRawData) {
     console.log(`  Refreshed: ${stats.refreshed.toLocaleString()}`);
   }
-  console.log(`  Identities: ${stats.identitiesUpserted}`);
+  if (!run.dryRun) console.log(`  Identities: ${stats.identitiesUpserted}`);
   console.log(`  Skipped: ${stats.skipped.toLocaleString()}`);
-  console.log(`  Batch ID: ${importBatch}`);
-
-  onImportComplete(db);
-
-  return stats;
+  for (const [reason, count] of Object.entries(stats.skippedByReason).sort()) {
+    console.log(`    ${reason}: ${count.toLocaleString()}`);
+  }
+  if (stats.pendingTranscriptThreads > 0) {
+    console.warn(
+      `  Pending: ${stats.pendingTranscriptThreads} migrated v1 thread(s) await T3 Code's transcript import and were skipped`
+    );
+  }
+  if (stats.store === "v2") {
+    console.log(
+      `  Provider-native conversations ${run.dryRun ? "linked" : "superseded"}: ${stats.supersededConversations.toLocaleString()}`
+    );
+  }
+  if (stats.cursor) console.log(`  Cursor: ${stats.cursor}`);
+  if (!run.dryRun) console.log(`  Batch ID: ${run.importBatch}`);
 }
 
 // CLI
@@ -662,7 +849,11 @@ if (import.meta.main) {
   const refreshRawData = args.includes("--refresh-raw-data");
   const positionalArgs = args.filter((a) => !a.startsWith("--"));
 
-  const accountName = positionalArgs[0] || "default";
+  const accountName = positionalArgs[0];
+  if (!accountName) {
+    console.error("Usage: bun run src/parsers/t3code.ts <account> [db-path] [--dry-run] [--refresh-raw-data]");
+    process.exit(1);
+  }
   const t3DbPath = positionalArgs[1]
     ? positionalArgs[1].startsWith("~")
       ? positionalArgs[1].replace("~", process.env.HOME || "")
@@ -691,16 +882,12 @@ if (import.meta.main) {
     initDb(db);
   }
 
-  const stats = await importT3Code(
-    db as ReturnType<typeof getDb>,
-    t3DbPath,
-    accountName,
-    { dryRun, refreshRawData }
-  );
+  const stats = await importT3Code(db, t3DbPath, accountName, { dryRun, refreshRawData });
 
   if (db) {
     db.close();
   }
 
-  process.exit(stats.messages > 0 || stats.toolCalls > 0 || dryRun ? 0 : 1);
+  const planned = stats.messages + stats.toolCalls + stats.plans + stats.reasoning;
+  process.exit(planned > 0 || dryRun ? 0 : 1);
 }

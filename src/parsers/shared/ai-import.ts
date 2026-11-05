@@ -88,9 +88,17 @@ export function createEventWriter(
     sourceAccount: string;
     importBatch: string;
     refreshRawData: boolean;
+    /**
+     * On duplicate, rewrite title, content, people, tags and raw_data when
+     * any of them differ (an edited message, a renamed thread, a re-attributed
+     * model). Unchanged rows are not written, so re-reading them is cheap.
+     * `refreshRawData` still rewrites every duplicate.
+     */
+    updateChanged?: boolean;
   }
 ) {
   const { source, sourceAccount, importBatch, refreshRawData } = options;
+  const updateChanged = options.updateChanged ?? false;
 
   const insert = db.prepare(`
     INSERT OR IGNORE INTO events (
@@ -105,6 +113,21 @@ export function createEventWriter(
     WHERE source = ? AND source_id = ? AND source_account = ?
   `);
 
+  const updateAll = db.prepare(`
+    UPDATE events SET title = ?, content = ?, people = ?, tags = ?, raw_data = ?, conversation_id = ?
+    WHERE source = ? AND source_id = ? AND source_account = ?
+    RETURNING id
+  `);
+
+  // RETURNING yields a row only when the WHERE matched, i.e. something differed.
+  const updateIfChanged = db.prepare(`
+    UPDATE events SET title = ?, content = ?, people = ?, tags = ?, raw_data = ?, conversation_id = ?
+    WHERE source = ? AND source_id = ? AND source_account = ?
+      AND (title IS NOT ? OR content IS NOT ? OR people IS NOT ? OR tags IS NOT ?
+        OR raw_data IS NOT ? OR conversation_id IS NOT ?)
+    RETURNING id
+  `);
+
   const findStmt = db.prepare(`
     SELECT id FROM events
     WHERE source = ? AND source_id = ? AND source_account = ?
@@ -117,6 +140,8 @@ export function createEventWriter(
 
   /** Insert one event row; on duplicate, refresh content+raw_data+conversation_id when enabled. */
   const write = (event: AiEventRow): { outcome: WriteOutcome; eventId: number | null } => {
+    const tags = event.tags.length > 0 ? JSON.stringify(event.tags) : null;
+    const people = JSON.stringify(event.people);
     const inserted = insert.get(
       source,
       event.sourceId,
@@ -125,13 +150,31 @@ export function createEventWriter(
       event.timestamp,
       event.title,
       event.content,
-      JSON.stringify(event.people),
-      event.tags.length > 0 ? JSON.stringify(event.tags) : null,
+      people,
+      tags,
       event.rawData,
       importBatch,
       event.conversationId
     ) as { id: number } | null;
     if (inserted !== null) return { outcome: "inserted", eventId: inserted.id };
+
+    if (updateChanged && refreshRawData) {
+      const updated = updateAll.get(
+        event.title, event.content, people, tags, event.rawData, event.conversationId,
+        source, event.sourceId, sourceAccount
+      ) as { id: number } | null;
+      return { outcome: "refreshed", eventId: updated?.id ?? null };
+    }
+    if (updateChanged) {
+      const updated = updateIfChanged.get(
+        event.title, event.content, people, tags, event.rawData, event.conversationId,
+        source, event.sourceId, sourceAccount,
+        event.title, event.content, people, tags, event.rawData, event.conversationId
+      ) as { id: number } | null;
+      return updated !== null
+        ? { outcome: "refreshed", eventId: updated.id }
+        : { outcome: "skipped", eventId: findExisting(event.sourceId) };
+    }
 
     const existingId = findExisting(event.sourceId);
     if (refreshRawData) {
