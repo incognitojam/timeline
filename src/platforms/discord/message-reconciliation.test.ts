@@ -97,6 +97,24 @@ describe("reconcileDiscordMessage", () => {
     expect(db.prepare("SELECT count(*) AS n FROM event_versions").get()).toEqual({ n: 0 });
   });
 
+  test("an edited Components V2 message replaces its components and searchable text", () => {
+    insertStoredEvent();
+    db.prepare("UPDATE events SET raw_data = json_remove(raw_data, '$.poll')").run();
+    const fresh = message("", "2026-01-01T00:01:00.000Z");
+    fresh.flags = 1 << 15;
+    fresh.components = [{ type: 17, components: [{ type: 10, content: "edited card" }] }];
+
+    const result = reconcileDiscordMessage(db, fresh, "account-1");
+
+    expect(result.edited).toBe(true);
+    const current = db.prepare(
+      "SELECT content, raw_data FROM events WHERE source_id = '900000000000000000'",
+    ).get() as { content: string; raw_data: string };
+    expect(current.content).toBe("edited card");
+    expect(JSON.parse(current.raw_data).components).toEqual(fresh.components);
+    expect(db.prepare("SELECT count(*) AS n FROM events_fts WHERE events_fts MATCH 'edited'").get()).toEqual({ n: 1 });
+  });
+
   test("does not version an embed-only refresh without an edit timestamp", () => {
     insertStoredEvent();
     const fresh = message("before", null);

@@ -1,8 +1,11 @@
+import { parseDiscordComponents } from "@shared/discord-components";
 import { For, type JSX, Show } from "solid-js";
 import type { TimelineEvent } from "../../lib/types";
 import { IconPlayArrow } from "../../ui/icons";
-import { Markdown, sanitizeLinkUri } from "../Markdown";
+import { Markdown } from "../Markdown";
+import { DiscordComponents } from "./DiscordComponents";
 import { DiscordEmoji } from "./DiscordEmoji";
+import { externalLinkProps, hexColor, pickImageSrc } from "./discord-media";
 
 export interface DiscordEmbedData {
   type?: string;
@@ -18,6 +21,8 @@ export interface DiscordEmbedData {
   image?: { url?: string; proxy_url?: string; width?: number; height?: number };
   video?: { url?: string; proxy_url?: string; width?: number; height?: number };
   fields?: Array<{ name: string; value: string; inline?: boolean }>;
+  /** Component Embeds: a link preview laid out as Components V2 instead of the fields above. */
+  components?: unknown;
 }
 
 // Discord attaches an "embed" object to messages that share a URL (link previews,
@@ -42,11 +47,6 @@ export function getDiscordEmbeds(event: TimelineEvent): DiscordEmbedData[] | nul
   }
 }
 
-function hexColor(n: number | undefined): string | undefined {
-  if (typeof n !== "number" || n < 0 || n > 0xffffff) return undefined;
-  return `#${n.toString(16).padStart(6, "0")}`;
-}
-
 // Matches Discord's footer format: "15/04/2026, 22:54".
 function formatEmbedTimestamp(ts: string | undefined): string | undefined {
   if (!ts) return undefined;
@@ -59,30 +59,6 @@ function formatEmbedTimestamp(ts: string | undefined): string | undefined {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-// Discord's proxy_url routes through its CDN (stable, CORS-safe). Prefer it when present.
-function pickImageSrc(
-  m: { url?: string; proxy_url?: string } | undefined
-): string | undefined {
-  if (!m) return undefined;
-  const href = m.proxy_url || m.url;
-  if (!href) return undefined;
-  const safe = sanitizeLinkUri(href);
-  return safe || undefined;
-}
-
-interface SafeLink {
-  href: string;
-  target: string;
-  rel: string;
-}
-
-function externalLinkProps(url: string | undefined): SafeLink | null {
-  if (!url) return null;
-  const safe = sanitizeLinkUri(url);
-  if (!safe) return null;
-  return { href: safe, target: "_blank", rel: "noopener noreferrer" };
 }
 
 // Poll-close notification (message type 46). Discord attaches a synthetic
@@ -136,8 +112,9 @@ function PollResultEmbed(props: { embed: DiscordEmbedData }): JSX.Element {
   );
 }
 
-export function DiscordEmbed(props: { embed: DiscordEmbedData }): JSX.Element {
+export function DiscordEmbed(props: { embed: DiscordEmbedData; rawData?: unknown }): JSX.Element {
   const embed = () => props.embed;
+  const components = () => parseDiscordComponents(embed().components);
   const stripe = () => hexColor(embed().color);
   const titleLink = () => externalLinkProps(embed().url);
   const authorLink = () => externalLinkProps(embed().author?.url);
@@ -181,6 +158,10 @@ export function DiscordEmbed(props: { embed: DiscordEmbedData }): JSX.Element {
     embed().type === "gifv" ? pickImageSrc(embed().video) : undefined;
 
   return (
+    <Show
+      when={components().length === 0}
+      fallback={<DiscordComponents components={components()} rawData={props.rawData} />}
+    >
     <Show
       when={embed().type !== "poll_result"}
       fallback={<PollResultEmbed embed={embed()} />}
@@ -309,6 +290,7 @@ export function DiscordEmbed(props: { embed: DiscordEmbedData }): JSX.Element {
           </div>
         </Show>
       </div>
+    </Show>
     </Show>
     </Show>
     </Show>

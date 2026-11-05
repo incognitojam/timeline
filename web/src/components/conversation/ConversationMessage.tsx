@@ -1,5 +1,6 @@
+import { getDiscordComponentText, getDiscordMessageComponents } from "@shared/discord-components";
 import { parseDiscordPoll } from "@shared/discord-forward";
-import { For, type JSX, Show } from "solid-js";
+import { createMemo, For, type JSX, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import type { Attachment } from "../../lib/api";
 import {
@@ -30,6 +31,7 @@ import type { TimelineEvent } from "../../lib/types";
 import AttachmentPreview from "../AttachmentPreview";
 import Avatar from "../Avatar";
 import { DiscordAttachmentFallback } from "./DiscordAttachmentFallback";
+import { DiscordComponents } from "./DiscordComponents";
 import { DiscordContent } from "./DiscordContent";
 import { DiscordEmbed, getDiscordEmbeds } from "./DiscordEmbed";
 import { DiscordEmoji } from "./DiscordEmoji";
@@ -158,6 +160,14 @@ export function ConversationMessage(props: ConversationMessageProps): JSX.Elemen
     const poll = discordPoll();
     return poll !== null && props.event.content === poll.poll.question.text;
   };
+  const discordComponents = createMemo(() =>
+    props.event.source === "discord" ? getDiscordMessageComponents(props.event.raw_data) : [],
+  );
+  // A Components V2 message's stored content is its Text Displays, shown in place by the card.
+  const componentsHideContent = () => {
+    const text = getDiscordComponentText(discordComponents());
+    return text !== null && messageContent() === text;
+  };
   const compact = () => props.density === "compact";
   const contentIsPlaceholder = () =>
     compact()
@@ -261,7 +271,7 @@ export function ConversationMessage(props: ConversationMessageProps): JSX.Elemen
             forwarded={isDiscordForwardedEvent(props.event)}
             source={forwardedMessageSource()}
           >
-            <Show when={!contentIsPlaceholder() && !pollHidesContent() ? messageContent() : null}>
+            <Show when={!contentIsPlaceholder() && !pollHidesContent() && !componentsHideContent() ? messageContent() : null}>
               {(content) => (
                 <p
                   class={`${compact() ? "mt-0.5" : props.showSenderHeader ? "mt-1" : ""} whitespace-pre-wrap break-words ${
@@ -319,10 +329,18 @@ export function ConversationMessage(props: ConversationMessageProps): JSX.Elemen
               {(embeds) => (
                 <div class={`flex flex-col ${compact() ? "gap-1.5 mt-1" : "gap-2 mt-2"}`}>
                   <For each={embeds()}>
-                    {(embed) => <DiscordEmbed embed={embed} />}
+                    {(embed) => <DiscordEmbed embed={embed} rawData={props.event.raw_data} />}
                   </For>
                 </div>
               )}
+            </Show>
+            <Show when={discordComponents().length > 0}>
+              <div class={compact() ? "mt-1" : "mt-2"}>
+                <DiscordComponents components={discordComponents()} rawData={props.event.raw_data} />
+                <Show when={componentsHideContent()}>
+                  <EditedBadge event={props.event} />
+                </Show>
+              </div>
             </Show>
           </DiscordForwardedMessage>
 

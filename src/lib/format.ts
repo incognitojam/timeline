@@ -1,4 +1,5 @@
 import { getDiscordCallDetails } from "../shared/discord-call";
+import { getDiscordComponentText, parseDiscordComponents } from "../shared/discord-components";
 import { getDiscordSnapshotAttachments, getDiscordStickerItems } from "../shared/discord-forward";
 import { isRecord } from "../shared/guards";
 import { type NormalizedReaction, normalizeReactions, type ReactionActor } from "../shared/reactions";
@@ -136,6 +137,7 @@ interface DiscordEmbedData {
   title?: unknown;
   description?: unknown;
   fields?: unknown;
+  components?: unknown;
 }
 
 function parseRawData(rawData: string | null | undefined): unknown {
@@ -202,6 +204,10 @@ function formatEmbedDescription(embed: DiscordEmbedData): string | null {
 
   const fields = formatEmbedFields(embed.fields);
   if (fields.length > 0) parts.push(fields.join("; "));
+
+  // Component embeds (link previews) carry everything in `components`.
+  const componentText = collapseEmbedText(getDiscordComponentText(parseDiscordComponents(embed.components)));
+  if (componentText) parts.push(truncateEmbedDescription(componentText));
 
   return parts.length > 0 ? `[embed: ${parts.join(" — ")}]` : null;
 }

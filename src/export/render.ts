@@ -9,6 +9,7 @@ import {
 } from "../lib/format";
 import type { ConversationRangeExportTimestampStyle } from "../shared/conversation-export";
 import { isConversationEventType } from "../shared/grouping";
+import { getDiscordComponentsText } from "../shared/discord-components";
 import { getDiscordForwardedText, getDiscordMessageAttachments, getDiscordPollText } from "../shared/discord-forward";
 import { discordMentionsToPlainText } from "../shared/discord-mentions";
 import type { AttachmentDescriptionsByEvent } from "./attachment-descriptions";
@@ -277,6 +278,7 @@ function getRenderableContent(
     ? getDiscordPollText(event.raw_data, { user: discordUserResolver })
       || event.content
       || getDiscordForwardedText(event.raw_data)
+      || getDiscordComponentsText(event.raw_data)
     : event.content;
   const content = convertLegacyEmoji(rawContent);
   return event.source === "discord" && content

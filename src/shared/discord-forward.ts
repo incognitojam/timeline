@@ -18,7 +18,7 @@ export interface DiscordStickerItem {
   formatType: number | null;
 }
 
-function parseRawData(rawData: unknown): unknown {
+export function parseRawData(rawData: unknown): unknown {
   if (typeof rawData !== "string") return rawData;
   try {
     return JSON.parse(rawData);
@@ -27,7 +27,7 @@ function parseRawData(rawData: unknown): unknown {
   }
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
+export function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object"
     ? value as Record<string, unknown>
     : null;
@@ -69,7 +69,7 @@ function parseStickerItem(value: unknown): DiscordStickerItem | null {
   };
 }
 
-function getSnapshotMessages(rawData: unknown): Record<string, unknown>[] {
+export function getSnapshotMessages(rawData: unknown): Record<string, unknown>[] {
   const raw = asRecord(parseRawData(rawData));
   if (!raw || !Array.isArray(raw.message_snapshots)) return [];
 

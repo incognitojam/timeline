@@ -62,6 +62,58 @@ describe("ConversationMessage", () => {
     vi.restoreAllMocks();
   });
 
+  describe("Discord components", () => {
+    const rawData = JSON.stringify({
+      content: "",
+      components: [{ type: 17, components: [{ type: 10, content: "Card text" }] }],
+    });
+
+    it("renders a Components V2 message whose stored content is still empty", () => {
+      const { getAllByText } = renderMessage(
+        makeEvent({ source: "discord", type: "message:guild", content: "", raw_data: rawData }),
+      );
+
+      expect(getAllByText("Card text")).toHaveLength(1);
+    });
+
+    it("does not repeat stored content that came from the components", () => {
+      const { getAllByText } = renderMessage(
+        makeEvent({ source: "discord", type: "message:guild", content: "Card text", raw_data: rawData }),
+      );
+
+      expect(getAllByText("Card text")).toHaveLength(1);
+    });
+
+    it("shows the edited badge when the card replaces the message text", () => {
+      const { getByText } = renderMessage(
+        makeEvent({ source: "discord", content: "Card text", raw_data: rawData, version_count: 1 }),
+      );
+
+      expect(getByText("(edited)")).toBeInTheDocument();
+    });
+
+    it("keeps real message text beside a legacy button row", () => {
+      const { getByText } = renderMessage(
+        makeEvent({
+          source: "discord",
+          content: "Real text",
+          raw_data: JSON.stringify({
+            components: [{ type: 1, components: [{ type: 2, style: 1, label: "Go" }] }],
+          }),
+        }),
+      );
+
+      expect(getByText("Real text")).toBeInTheDocument();
+      expect(getByText("Go")).toBeInTheDocument();
+    });
+
+    it("ignores components on other sources", () => {
+      const { queryByText } = renderMessage(makeEvent({ content: null, raw_data: rawData }));
+
+      expect(queryByText("Card text")).toBeNull();
+    });
+  });
+
   it("resolves its reactors on hover and names them by the contact that comes back", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(

@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { storeAndInsertAttachment } from "../../media/attachments";
+import { storeFile } from "../../media/storage";
 import { safeFileName } from "../../platforms/discord/attachment-downloader";
 import type { NormalizedMessage } from "../../platforms/discord/client";
 import { buildDiscordMessageRawData } from "../../platforms/discord/event-converter";
@@ -55,7 +56,7 @@ interface Channel {
 export const discordSeed: SeedSource = {
   name: NAME,
   produces: {
-    discord: ["message:dm", "message:group", "message:dm:attachment", "message:group:attachment"],
+    discord: ["message:dm", "message:group", "message:guild", "message:dm:attachment", "message:group:attachment"],
   },
   async seed(ctx) {
     const rng = ctx.rng(NAME);
@@ -131,8 +132,28 @@ export const discordSeed: SeedSource = {
     const insertChannel = archive.prepare("INSERT INTO channels VALUES (?, ?, ?, NULL, NULL, ?, ?)");
     const insertMessage = archive.prepare("INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
     const pendingImages: PendingImage[] = [];
+    const trailAlerts = await trailAlertMessages(ctx, snowflake, alex);
 
     archive.transaction(() => {
+      archive
+        .prepare("INSERT INTO guilds VALUES (?, ?, 0)")
+        .run(TRAIL_ALERTS.guildId, TRAIL_ALERTS.guildName);
+      archive
+        .prepare("INSERT INTO channels VALUES (?, ?, 'GuildTextChat', ?, ?, '[]', 'Text')")
+        .run(TRAIL_ALERTS.channelId, TRAIL_ALERTS.channelName, TRAIL_ALERTS.guildId, TRAIL_ALERTS.guildName);
+      for (const msg of trailAlerts) {
+        insertMessage.run(
+          msg.id,
+          TRAIL_ALERTS.channelId,
+          msg.content,
+          msg.author.id,
+          msg.author.name,
+          msg.author.nickname,
+          msg.timestamp,
+          JSON.stringify(buildDiscordMessageRawData(msg)),
+        );
+      }
+
       for (const channel of channels) {
         insertChannel.run(
           channel.id,
@@ -221,6 +242,200 @@ export const discordSeed: SeedSource = {
     }
   },
 };
+
+const IS_COMPONENTS_V2 = 1 << 15;
+const TRAIL_ALERTS = {
+  guildId: "720000000000000001",
+  guildName: "Trailhead Collective",
+  channelId: "720000000000000002",
+  channelName: "trail-alerts",
+  webhookId: "720000000000000003",
+  webhookName: "Trail Alerts",
+} as const;
+
+/**
+ * A webhook posting Components V2 cards, whose `content` Discord keeps empty,
+ * plus one ordinary message with a legacy button row. Images are stored locally
+ * and reached through `proxy_url` so the cards render without network access;
+ * the `.invalid` gallery shows what a card looks like once a signed URL expires.
+ */
+async function trailAlertMessages(
+  ctx: SeedContext,
+  snowflake: (ms: number) => string,
+  alex: Person,
+): Promise<NormalizedMessage[]> {
+  const localMedia = async (name: string, width: number, height: number, hue: number) => {
+    const stored = await storeFile({
+      source: NAME,
+      relativePath: `${TRAIL_ALERTS.channelId}/${name}`,
+      content: await ctx.image({ width, height, hue, variant: hue }),
+    });
+    return {
+      url: `https://example.com/trail-alerts/${name}`,
+      proxy_url: `/api/media/${stored.storagePath}`,
+      width,
+      height,
+      content_type: "image/jpeg",
+    };
+  };
+  const postedAt = (daysAgo: number, hour: number) => {
+    const day = ctx.recentDays(daysAgo + 1)[0];
+    if (!day) throw new Error(`discord: no seed day ${daysAgo} days before the anchor`);
+    return ctx.localDate(day.date, hour);
+  };
+
+  const cards: Array<{ at: Date; components: unknown[]; content?: string }> = [
+    {
+      at: postedAt(21, 7),
+      components: [
+        {
+          type: 17,
+          id: 1,
+          accent_color: 0x2e8b57,
+          spoiler: false,
+          components: [
+            {
+              type: 9,
+              id: 2,
+              components: [
+                {
+                  type: 10,
+                  id: 3,
+                  content: `### Ridge Loop is open\nSnow has cleared above the second switchback.\n<@${discordUserId(alex)}>, your permit is good through Sunday.`,
+                },
+              ],
+              accessory: {
+                type: 11,
+                id: 4,
+                media: await localMedia("ridge-loop.jpg", 320, 320, 140),
+                description: "Ridge Loop trailhead sign",
+                spoiler: false,
+              },
+            },
+          ],
+        },
+      ],
+    },
+    {
+      at: postedAt(9, 8),
+      components: [
+        {
+          type: 17,
+          id: 1,
+          accent_color: 0x3b82f6,
+          spoiler: false,
+          components: [
+            { type: 10, id: 2, content: "## Saturday meetup\n**Where:** North lot\n**Bring:** water, layers" },
+            { type: 14, id: 3, divider: true, spacing: 1 },
+            {
+              type: 9,
+              id: 4,
+              components: [{ type: 10, id: 5, content: "The [route map](https://example.com/trail-alerts/map) has the new detour." }],
+              accessory: { type: 2, id: 6, style: 5, label: "Open map", url: "https://example.com/trail-alerts/map" },
+            },
+            {
+              type: 12,
+              id: 7,
+              items: [
+                { media: await localMedia("north-lot.jpg", 640, 480, 30), description: "North lot at sunrise", spoiler: false },
+                { media: await localMedia("detour.jpg", 640, 480, 200), description: "Detour marker", spoiler: false },
+                { media: await localMedia("summit.jpg", 640, 360, 280), description: "Summit view", spoiler: true },
+              ],
+            },
+            {
+              type: 13,
+              id: 8,
+              file: { url: "https://example.com/trail-alerts/packing-list.txt", content_type: "text/plain" },
+              name: "packing-list.txt",
+              size: 2048,
+              spoiler: false,
+            },
+            { type: 14, id: 9, divider: false, spacing: 2 },
+            { type: 10, id: 10, content: "-# Posted automatically by Trail Alerts" },
+            {
+              type: 1,
+              id: 11,
+              components: [
+                { type: 2, id: 12, style: 1, label: "Going", custom_id: "rsvp:going" },
+                { type: 2, id: 13, style: 2, label: "Maybe", custom_id: "rsvp:maybe" },
+                { type: 2, id: 14, style: 4, label: "Can't make it", custom_id: "rsvp:no" },
+                { type: 2, id: 15, style: 3, label: "Carpool", custom_id: "rsvp:carpool", disabled: true },
+              ],
+            },
+            {
+              type: 1,
+              id: 16,
+              components: [{ type: 3, id: 17, custom_id: "time", placeholder: "Pick a start time", options: [{ label: "7am", value: "7" }] }],
+            },
+          ],
+        },
+      ],
+    },
+    {
+      at: postedAt(2, 18),
+      components: [
+        {
+          type: 17,
+          id: 1,
+          accent_color: 0xb45309,
+          spoiler: false,
+          components: [
+            { type: 10, id: 2, content: "### Last season's photos\nThese uploads have since expired." },
+            {
+              type: 12,
+              id: 3,
+              items: [
+                {
+                  media: {
+                    url: "https://media.example.invalid/attachments/expired.png?ex=1",
+                    proxy_url: "https://media.example.invalid/attachments/expired.png?ex=1",
+                    content_type: "image/png",
+                  },
+                  description: "Expired upload",
+                  spoiler: false,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    {
+      at: postedAt(1, 9),
+      content: "Parking passes renew Monday.",
+      components: [
+        {
+          type: 1,
+          id: 1,
+          components: [{ type: 2, id: 2, style: 1, label: "Renew", custom_id: "renew" }],
+        },
+      ],
+    },
+  ];
+
+  return cards.map(({ at, components, content }) => ({
+    id: snowflake(at.getTime()),
+    type: "Default",
+    rawType: 0,
+    timestamp: at.toISOString(),
+    timestampEdited: null,
+    content: content ?? "",
+    flags: content === undefined ? IS_COMPONENTS_V2 : 0,
+    author: {
+      id: TRAIL_ALERTS.webhookId,
+      name: TRAIL_ALERTS.webhookName,
+      nickname: TRAIL_ALERTS.webhookName,
+      isBot: true,
+      avatarUrl: null,
+    },
+    attachments: [],
+    embeds: [],
+    reactions: [],
+    mentions: [{ id: discordUserId(alex), name: alex.first }],
+    components,
+    webhookId: TRAIL_ALERTS.webhookId,
+  }));
+}
 
 interface PendingImage {
   messageId: string;

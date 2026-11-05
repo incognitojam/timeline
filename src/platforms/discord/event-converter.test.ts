@@ -48,6 +48,37 @@ const groupChannel: ChannelContext = {
 };
 
 describe("convertMessage", () => {
+  test("keeps components in raw_data and derives content from Components V2 text", () => {
+    const components = [
+      { type: 17, id: 1, accent_color: 0x112233, components: [{ type: 10, id: 2, content: "Card text" }] },
+    ];
+    const normalized = normalizeMessage({
+      id: "1000000000000000003",
+      type: 0,
+      content: "",
+      channel_id: groupChannel.id,
+      author: { id: "2000000000000000000", username: "alice", global_name: "Alice", discriminator: "0", avatar: null },
+      timestamp: "2026-04-03T22:12:26.529Z",
+      edited_timestamp: null,
+      tts: false,
+      mention_everyone: false,
+      mentions: [],
+      attachments: [],
+      embeds: [],
+      pinned: false,
+      flags: 1 << 15,
+      webhook_id: "4000000000000000000",
+      components,
+    });
+
+    const { event } = convertMessage(normalized, groupChannel, "account", "batch");
+
+    expect(event.rawData.components).toEqual(components);
+    expect(event.rawData.webhook_id).toBe("4000000000000000000");
+    expect(event.type).toBe("message:group");
+    expect(event.content).toBe("Card text");
+  });
+
   test("forwarded message sets :forward type and preserves message_snapshots", () => {
     const snapshot: DiscordMessageSnapshot = {
       message: {

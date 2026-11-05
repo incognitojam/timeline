@@ -662,6 +662,37 @@ describe("renderEvents", () => {
     );
   });
 
+  test("Components V2 text reaches transcripts even when stored content is empty", () => {
+    expect(renderEvent(makeEvent({
+      source: "discord",
+      type: "message:guild",
+      title: "General",
+      content: "",
+      people: JSON.stringify(["Alice"]),
+      raw_data: JSON.stringify({
+        mentions: [{ id: "111", name: "Bob" }],
+        components: [{ type: 17, components: [{ type: 10, content: "Deploy for <@111> finished" }] }],
+      }),
+    }))).toBe("2026-01-01 09:00 <Alice> Deploy for @Bob finished");
+  });
+
+  test("component embeds add their text as an embed marker", () => {
+    expect(renderEvent(makeEvent({
+      source: "discord",
+      type: "message:guild",
+      title: "General",
+      content: "https://example.com/post",
+      people: JSON.stringify(["Alice"]),
+      raw_data: JSON.stringify({
+        embeds: [{
+          type: "components",
+          url: "https://example.com/post",
+          components: [{ type: 17, components: [{ type: 10, content: "Preview\ntext" }] }],
+        }],
+      }),
+    }))).toBe("2026-01-01 09:00 <Alice> https://example.com/post [embed: Preview text]");
+  });
+
   test("media-only forwards keep their markers and missing snapshots are explicit", () => {
     const event = makeEvent({
       source: "discord",

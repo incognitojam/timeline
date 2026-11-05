@@ -1,4 +1,5 @@
 import { getDiscordCallDetails } from "@shared/discord-call";
+import { getDiscordComponentsText } from "@shared/discord-components";
 import {
   type DiscordRawAttachment,
   getDiscordForwardedText,
@@ -103,9 +104,13 @@ export function getReplyTarget(event: TimelineEvent): ReplyTarget | null {
   };
 }
 
-/** Canonical message text, including historical Discord forwards with null content. */
+/** Canonical message text, including historical Discord forwards and Components V2 messages with empty content. */
 export function getConversationContent(event: TimelineEvent): string | null {
-  return event.content || getForwardedText(event);
+  return (
+    event.content ||
+    getForwardedText(event) ||
+    (event.source === "discord" ? getDiscordComponentsText(event.raw_data) : null)
+  );
 }
 
 /** Discord attachments from either the message wrapper or a forwarded snapshot. */

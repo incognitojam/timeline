@@ -416,6 +416,21 @@ describe("getForwardedText", () => {
   });
 });
 
+describe("getConversationContent for Components V2 messages", () => {
+  const raw_data = JSON.stringify({
+    content: "",
+    components: [{ type: 17, components: [{ type: 10, content: "Card text" }] }],
+  });
+
+  it("falls back to component text while stored content is empty", () => {
+    expect(getConversationContent(makeEvent({ source: "discord", content: "", raw_data }))).toBe("Card text");
+  });
+
+  it("does not read components from other sources", () => {
+    expect(getConversationContent(makeEvent({ source: "example", content: null, raw_data }))).toBeNull();
+  });
+});
+
 describe("getDiscordAttachments", () => {
   it("returns forwarded snapshot attachments", () => {
     const event = makeEvent({
