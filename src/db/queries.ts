@@ -1,7 +1,6 @@
 export * from "./events";
 export * from "./stats";
 export * from "./conversations";
-export * from "./discord-servers";
 export * from "./locations";
 export * from "./contacts";
 export * from "./skipped-identities";

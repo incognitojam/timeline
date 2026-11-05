@@ -17,8 +17,8 @@ import { getSenderLabel, getDisplayName, getResolvedIdentity } from "../../lib/i
 import { getSessionAlbumArts, getEventAlbumArt, isSpotifyEvent } from "../../lib/spotify-art";
 import { formatDuration, formatTime } from "../../lib/format";
 import { getConversationContent } from "../../lib/conversation";
-import { discordMentionsToPlainText } from "../../lib/discord-mentions";
-import { viewerTimeZone } from "../../lib/discord-timestamps";
+import { discordMentionsToPlainText } from "../../platforms/discord/mentions";
+import { viewerTimeZone } from "../../platforms/discord/timestamps";
 import { IconChevronDown, IconGridView } from "../../ui/icons";
 
 const discordUserResolver = (id: string) => getResolvedIdentity(`discord:${id}`)?.name ?? null;

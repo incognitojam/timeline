@@ -1,8 +1,8 @@
 import { resolveIdentities } from "../db/identities";
 import type { QueryExecutor } from "../db/pool";
 import type { TimelineEvent } from "../db/schema";
-import { parseDiscordPoll } from "../shared/discord-forward";
-import { extractUserMentionIds } from "../shared/discord-mentions";
+import { parseDiscordPoll } from "../platforms/discord/shared/forward";
+import { extractUserMentionIds } from "../platforms/discord/shared/mentions";
 import { normalizeReactions } from "../shared/reactions";
 
 export interface RenderIdentityOptions {

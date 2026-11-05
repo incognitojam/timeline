@@ -9,7 +9,7 @@
  * - AbortSignal support for graceful cancellation
  */
 
-import type { DiscordPoll, PollVoter } from "../../shared/discord-forward";
+import type { DiscordPoll, PollVoter } from "./shared/forward";
 
 const API_BASE = "https://discord.com/api/v10";
 const DISCORD_EPOCH = 1420070400000n; // 2015-01-01 00:00:00 UTC

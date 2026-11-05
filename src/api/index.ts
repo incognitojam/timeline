@@ -35,11 +35,12 @@ import { AsyncTtlCache } from "./async-ttl-cache";
 import {
   addDiscordForwardTargets,
   resolveDiscordForwardTargets,
-} from "./discord-forward-references";
+} from "../platforms/discord/forward-references";
 import {
   addDiscordReplyTargets,
   resolveDiscordReplyTargets,
-} from "../lib/discord-reply-references";
+} from "../platforms/discord/reply-references";
+import { getDiscordServer, listDiscordServers } from "../platforms/discord/servers";
 import { mcpRoutes } from "./mcp";
 import { generateStatusMarkdown, renderMarkdownToHtml } from "./status-md";
 import { authMiddleware, authRoutes, isAuthEnabled, assertApiAuthConfigured } from "./auth";
@@ -112,8 +113,6 @@ import {
   listCodingAgentConversationProjects,
   isConversationScope,
   type ConversationScope,
-  listDiscordServers,
-  getDiscordServer,
   createCursor,
   // Contact management
   createContact,

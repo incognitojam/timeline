@@ -11,7 +11,7 @@ import { getRenderer } from "../../render";
 import {
   getDiscordSnapshotAttachments,
   getDiscordStickerItems,
-} from "../../shared/discord-forward";
+} from "./shared/forward";
 import {
   CHANNEL_TYPE,
   type DiscordChannel,

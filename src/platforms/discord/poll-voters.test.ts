@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { initDb } from "../../db/schema";
-import type { PollVoter } from "../../shared/discord-forward";
+import type { PollVoter } from "./shared/forward";
 import { DiscordClient } from "./client";
 import {
   captureExpiredPollVoters,

@@ -7,8 +7,8 @@ import ConversationsListView, {
   CodingConversationsListView,
 } from "./components/ConversationsListView";
 import ConversationView from "./components/ConversationView";
-import DiscordServersView from "./components/DiscordServersView";
-import DiscordServerView from "./components/DiscordServerView";
+import DiscordServersView from "./platforms/discord/DiscordServersView";
+import DiscordServerView from "./platforms/discord/DiscordServerView";
 import EvalView from "./components/EvalView";
 import EventRedirect from "./components/EventRedirect";
 import HealthDashboard from "./components/HealthDashboard";
