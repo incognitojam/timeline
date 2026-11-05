@@ -61,6 +61,15 @@ export interface GmMedia {
   path?: string;
 }
 
+/** One reaction entry on a message; `participant_ids` key into the conversation's participants. */
+export interface GmReaction {
+  /** The emoji, or the reaction's id for a custom reaction, whose image only exists on the phone. */
+  emoji: string;
+  /** EmojiType name from the protocol. */
+  type: string;
+  participant_ids: string[];
+}
+
 export interface GmMessage {
   kind: "message";
   id: string;
@@ -77,7 +86,8 @@ export interface GmMessage {
   text?: string;
   subject?: string;
   reply_to?: string;
-  reactions?: string[];
+  /** Sidecars built before reactions carried participants emit bare strings. */
+  reactions?: (string | GmReaction)[];
   media?: GmMedia[];
 }
 
@@ -109,6 +119,8 @@ export interface ImportStats {
   imported: number;
   /** Already imported by a previous run (same source_id). */
   skipped: number;
+  /** Already imported messages whose reactions changed since the stored copy. */
+  reactionsUpdated: number;
   conversations: number;
   conversationsDone: number;
   /** Conversation ids the sidecar could not fully page. */
@@ -292,6 +304,8 @@ interface ImportContext {
   identities: Map<string, UpsertIdentityOptions>;
   insert: Statement;
   findEvent: Statement;
+  setReactions: Statement;
+  clearReactions: Statement;
 }
 
 function rememberIdentity(ctx: ImportContext, identity: UpsertIdentityOptions | null): void {
@@ -363,18 +377,31 @@ async function handleMessage(ctx: ImportContext, record: GmMessage): Promise<voi
   if (inserted) ctx.stats.imported++;
   else ctx.stats.skipped++;
 
-  if (record.media && record.media.length > 0) {
-    // A re-fetched message (cursor overlap, or a re-run to backfill media) is
-    // skipped as an event but still gets its attachments recorded.
-    const eventId = inserted?.id ?? existingEventId(ctx, record.id);
-    await storeMedia(ctx, eventId, record, conversationId);
-  }
+  // A re-fetched message (cursor overlap, reaction refresh, or a re-run to
+  // backfill media) is skipped as an event, but its reactions may have changed
+  // and its attachments still get recorded.
+  const eventId = inserted?.id ?? refreshExisting(ctx, record);
+  if (record.media && record.media.length > 0) await storeMedia(ctx, eventId, record, conversationId);
 }
 
-function existingEventId(ctx: ImportContext, sourceId: string): number {
-  const row = ctx.findEvent.get(EVENT_SOURCE, sourceId, ctx.options.sourceAccount) as { id: number } | null;
-  if (!row) throw new Error(`Message ${sourceId} was neither inserted nor already present`);
-  return row.id;
+interface ExistingEvent {
+  id: number;
+  /** The stored `$.reactions` as JSON text, null when the row has none. */
+  reactions: string | null;
+}
+
+/** Bring a stored row's reactions in line with the phone's current view of the message, returning its id. */
+function refreshExisting(ctx: ImportContext, record: GmMessage): number {
+  const existing = ctx.findEvent.get(EVENT_SOURCE, record.id, ctx.options.sourceAccount) as ExistingEvent | null;
+  if (!existing) throw new Error(`Message ${record.id} was neither inserted nor already present`);
+  const current = record.reactions && record.reactions.length > 0 ? JSON.stringify(record.reactions) : null;
+  const stored = existing.reactions === null ? null : JSON.stringify(JSON.parse(existing.reactions));
+  if (current !== stored) {
+    if (current === null) ctx.clearReactions.run(existing.id);
+    else ctx.setReactions.run(current, existing.id);
+    ctx.stats.reactionsUpdated++;
+  }
+  return existing.id;
 }
 
 const EXTENSION_BY_MIME: Record<string, string> = {
@@ -518,6 +545,7 @@ export async function importGoogleMessages(
     stats: {
       imported: 0,
       skipped: 0,
+      reactionsUpdated: 0,
       conversations: 0,
       conversationsDone: 0,
       conversationsFailed: [],
@@ -538,7 +566,12 @@ export async function importGoogleMessages(
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       RETURNING id
     `),
-    findEvent: db.prepare("SELECT id FROM events WHERE source = ? AND source_id = ? AND source_account = ?"),
+    findEvent: db.prepare(`
+      SELECT id, json_extract(raw_data, '$.reactions') AS reactions
+      FROM events WHERE source = ? AND source_id = ? AND source_account = ?
+    `),
+    setReactions: db.prepare("UPDATE events SET raw_data = json_set(raw_data, '$.reactions', json(?)) WHERE id = ?"),
+    clearReactions: db.prepare("UPDATE events SET raw_data = json_remove(raw_data, '$.reactions') WHERE id = ?"),
   };
 
   for await (const line of lines) {

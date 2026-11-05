@@ -92,6 +92,7 @@ describe("google-messages parser", () => {
       ),
     );
     expect(stats).toEqual({
+      reactionsUpdated: 0,
       imported: 3,
       skipped: 0,
       conversations: 1,
@@ -209,6 +210,61 @@ describe("google-messages parser", () => {
     expect(stats.imported).toBe(1);
   });
 
+  describe("reactions", () => {
+    const LOVE = { emoji: "❤️", type: "RED_HEART", participant_ids: ["1"] };
+    const LAUGH = { emoji: "😂", type: "LAUGH", participant_ids: ["1", "2"] };
+    const importMessage = (overrides: Partial<GmMessage>) => importAll(jsonl(conversation(), message(overrides)));
+    const storedReactions = () => {
+      const row = rows()[0];
+      if (!row) throw new Error("expected the message to be stored");
+      return (JSON.parse(row.raw_data) as { reactions?: unknown }).reactions;
+    };
+
+    it("stores either reaction shape on first import", async () => {
+      await importMessage({ reactions: [LOVE] });
+      expect(storedReactions()).toEqual([LOVE]);
+      db.exec("DELETE FROM events");
+      await importMessage({ reactions: ["😮"] });
+      expect(storedReactions()).toEqual(["😮"]);
+    });
+
+    it("adds a reaction that landed after the message was imported", async () => {
+      await importMessage({});
+      const stats = await importMessage({ reactions: [LOVE] });
+      expect(stats).toMatchObject({ imported: 0, skipped: 1, reactionsUpdated: 1 });
+      expect(storedReactions()).toEqual([LOVE]);
+    });
+
+    it("replaces changed reactions and removes withdrawn ones, leaving the rest of the row alone", async () => {
+      await importMessage({ reactions: [LOVE] });
+      const before = rows()[0];
+      expect((await importMessage({ reactions: [LOVE, LAUGH] })).reactionsUpdated).toBe(1);
+      expect(storedReactions()).toEqual([LOVE, LAUGH]);
+      expect((await importMessage({})).reactionsUpdated).toBe(1);
+      const after = rows()[0];
+      expect(storedReactions()).toBeUndefined();
+      expect(JSON.parse(after?.raw_data ?? "")).toEqual(
+        Object.fromEntries(Object.entries(JSON.parse(before?.raw_data ?? "")).filter(([key]) => key !== "reactions")),
+      );
+    });
+
+    it("upgrades a row imported from an older sidecar when the message is re-fetched", async () => {
+      await importMessage({ reactions: ["😂"] });
+      expect((await importMessage({ reactions: [LAUGH] })).reactionsUpdated).toBe(1);
+      expect(storedReactions()).toEqual([LAUGH]);
+    });
+
+    it("leaves a row alone when its reactions are unchanged", async () => {
+      await importMessage({ reactions: [LOVE] });
+      expect(await importMessage({ reactions: [LOVE] })).toMatchObject({ skipped: 1, reactionsUpdated: 0 });
+    });
+
+    it("still imports the message when a reaction is malformed", async () => {
+      const stats = await importMessage({ reactions: [{ emoji: "❤️" }] as unknown as GmMessage["reactions"] });
+      expect(stats.imported).toBe(1);
+    });
+  });
+
   it("fails loudly on malformed input", async () => {
     await expect(importAll(["{not json"])).rejects.toThrow(/Invalid Google Messages JSONL/);
     await expect(importAll(jsonl({ kind: "message", id: "1" }))).rejects.toThrow(/conversation_id/);
@@ -310,6 +366,19 @@ describe("google-messages parser", () => {
       writeFileSync(join(staging, "p.png"), PNG_1X1);
       await importWithMedia(jsonl(conversation(), withMedia, done()));
       expect(attachments()).toHaveLength(1);
+    });
+
+    it("keeps a stored attachment when a re-fetch cannot download it again", async () => {
+      const part = { media_id: "abc/9", name: "photo.png", mime_type: "image/png" };
+      writeFileSync(join(staging, "stored.png"), PNG_1X1);
+      const stored = message({ id: "309", message_type: "rcs", text: "", media: [{ ...part, status: "stored", path: join(staging, "stored.png") }] });
+      await importWithMedia(jsonl(conversation(), stored, done()));
+
+      for (const status of ["failed", "unavailable"] as const) {
+        const refetched = message({ id: "309", message_type: "rcs", text: "", media: [{ ...part, status }] });
+        await importWithMedia(jsonl(conversation(), refetched, done()));
+        expect(attachments()[0]?.status).toBe("stored");
+      }
     });
 
     it("records a withheld part positionally, since the phone sends it with no media id", async () => {

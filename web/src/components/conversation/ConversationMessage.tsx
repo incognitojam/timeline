@@ -1,5 +1,5 @@
 import { parseDiscordPoll } from "@shared/discord-forward";
-import { For, type JSX, Show } from "solid-js";
+import { For, type JSX, Match, Show, Switch } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import type { Attachment } from "../../lib/api";
 import {
@@ -12,6 +12,7 @@ import {
   getReplyTarget,
   isDiscordForwardedEvent,
   isPlaceholderContent,
+  type Reaction,
   type ReplyTarget,
 } from "../../lib/conversation";
 import {
@@ -27,6 +28,7 @@ import {
   resolveIdentifiers,
 } from "../../lib/identities";
 import type { TimelineEvent } from "../../lib/types";
+import { IconSentimentSatisfied } from "../../ui/icons";
 import AttachmentPreview from "../AttachmentPreview";
 import Avatar from "../Avatar";
 import { DiscordAttachmentFallback } from "./DiscordAttachmentFallback";
@@ -117,6 +119,14 @@ function rootClass(props: ConversationMessageProps): string {
   return `group ${props.showSenderHeader ? "p-3" : "px-3 py-0.5"} ${surface} ${
     props.rangeMode ? "cursor-crosshair" : ""
   } transition-colors`;
+}
+
+function reactionTitle(reaction: Reaction): string | undefined {
+  const names = reaction.actors
+    ?.map((actor) => getResolvedNameOr(actor.identifier, actor.name))
+    .join(", ");
+  if (!reaction.undisplayable) return names;
+  return names ? `Custom reaction: ${names}` : "Custom reaction";
 }
 
 function reactionClass(props: ConversationMessageProps): string {
@@ -337,22 +347,26 @@ export function ConversationMessage(props: ConversationMessageProps): JSX.Elemen
                   {(reaction) => (
                     <span
                       class={reactionClass(props)}
-                      title={reaction.actors
-                        ?.map((actor) => getResolvedNameOr(actor.identifier, actor.name))
-                        .join(", ")}
+                      title={reactionTitle(reaction)}
                     >
-                      <Show
-                        when={reaction.custom}
-                        fallback={<span class={compact() ? "" : "text-lg"}>{reaction.emoji}</span>}
-                      >
-                        {(custom) => (
-                          <DiscordEmoji
-                            id={custom().id}
-                            name={custom().name}
-                            size="reaction"
+                      <Switch fallback={<span class={compact() ? "" : "text-lg"}>{reaction.emoji}</span>}>
+                        <Match when={reaction.custom}>
+                          {(custom) => (
+                            <DiscordEmoji
+                              id={custom().id}
+                              name={custom().name}
+                              size="reaction"
+                            />
+                          )}
+                        </Match>
+                        <Match when={reaction.undisplayable}>
+                          <IconSentimentSatisfied
+                            class={`text-muted-foreground ${compact() ? "size-3.5" : "size-4.5"}`}
+                            role="img"
+                            aria-label="Custom reaction"
                           />
-                        )}
-                      </Show>
+                        </Match>
+                      </Switch>
                       <span class="text-muted-foreground">{reaction.count}</span>
                     </span>
                   )}

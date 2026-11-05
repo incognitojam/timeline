@@ -1,3 +1,4 @@
+import { normalizePhoneNumber, PHONE_IDENTITY_PLATFORM } from "../lib/phone";
 import { isRecord } from "./guards";
 
 export interface DiscordCustomReactionEmoji {
@@ -19,6 +20,8 @@ export interface NormalizedReaction {
   actors?: ReactionActor[];
   /** Discord server emoji metadata used by the web UI to render /api/discord/emoji/{id}. */
   custom?: DiscordCustomReactionEmoji;
+  /** A custom reaction with nothing to draw it from; `emoji` is only a text label. */
+  undisplayable?: boolean;
 }
 
 export interface ReactionEvent {
@@ -27,6 +30,9 @@ export interface ReactionEvent {
 }
 
 const DEFAULT_FACEBOOK_REACTION = "👍";
+const UNDISPLAYABLE_REACTION_LABEL = ":custom:";
+/** Google Messages sends a custom reaction's id where an emoji would otherwise be. */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function parseRawData(rawData: string | null | undefined): Record<string, unknown> | null {
   if (!rawData) return null;
@@ -108,6 +114,50 @@ function normalizeFacebookReactions(rawReactions: unknown[]): NormalizedReaction
   });
 }
 
+function googleMessagesActor(participant: Record<string, unknown>): ReactionActor {
+  const number = typeof participant.number === "string" && participant.number !== "" ? participant.number : null;
+  const name = typeof participant.name === "string" && participant.name !== "" ? participant.name : null;
+  return {
+    identifier: number ? `${PHONE_IDENTITY_PLATFORM}:${normalizePhoneNumber(number)}` : null,
+    name: name ?? (participant.is_me === true ? "You" : (number ?? "Unknown")),
+  };
+}
+
+/**
+ * Sidecars older than the `{emoji, participant_ids}` records emitted bare
+ * strings, and rows imported from them stay that way until the message is
+ * re-fetched: those show one reaction per entry, with nobody named. The phone
+ * may list several people on one entry or give each their own, so entries with
+ * the same emoji merge.
+ */
+function normalizeGoogleMessagesReactions(rawReactions: unknown[], participants: unknown): NormalizedReaction[] {
+  const listed = Array.isArray(participants) ? participants.filter(isRecord) : [];
+  const grouped = new Map<string, NormalizedReaction>();
+
+  for (const rawReaction of rawReactions) {
+    const entry = typeof rawReaction === "string" ? { emoji: rawReaction } : rawReaction;
+    if (!isRecord(entry)) continue;
+
+    const emoji = typeof entry.emoji === "string" ? entry.emoji : "";
+    let reaction = grouped.get(emoji);
+    if (!reaction) {
+      reaction = emoji === "" || UUID_PATTERN.test(emoji)
+        ? { emoji: UNDISPLAYABLE_REACTION_LABEL, count: 0, undisplayable: true }
+        : { emoji, count: 0 };
+      grouped.set(emoji, reaction);
+    }
+
+    const participantIds: unknown[] = Array.isArray(entry.participant_ids) ? entry.participant_ids : [];
+    reaction.count += Math.max(participantIds.length, 1);
+    for (const id of participantIds) {
+      const participant = listed.find((candidate) => candidate.participant_id === id);
+      if (participant) (reaction.actors ??= []).push(googleMessagesActor(participant));
+    }
+  }
+
+  return Array.from(grouped.values());
+}
+
 export function normalizeReactions(event: ReactionEvent): NormalizedReaction[] | null {
   const raw = parseRawData(event.raw_data);
   if (!raw) return null;
@@ -120,6 +170,8 @@ export function normalizeReactions(event: ReactionEvent): NormalizedReaction[] |
     reactions = normalizeDiscordReactions(rawReactions);
   } else if (event.source === "facebook") {
     reactions = normalizeFacebookReactions(rawReactions);
+  } else if (event.source === "google-messages") {
+    reactions = normalizeGoogleMessagesReactions(rawReactions, raw.participants);
   } else {
     return null;
   }
