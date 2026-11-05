@@ -2,16 +2,25 @@
 /**
  * Spotify Friends Activity Parser
  *
- * Syncs friends' listening activity via Spotify's unofficial buddylist API.
- * Uses the same internal endpoint as the Spotify desktop client's "Friend Activity" sidebar.
+ * Syncs friends' listening activity via Spotify's unofficial listening-activity
+ * feed, the route the current web player uses for its "Listening activity" panel.
+ * The feed carries URIs only, so names and artwork are looked up separately.
  */
 
 import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 import { getDb, initDb } from "../db/schema";
-import { deleteSyncState, getAppStateDb, getSyncState, setSyncState, setSpotifyResource } from "../db/app-state";
+import {
+  deleteSyncState,
+  getAppStateDb,
+  getSpotifyResource,
+  getSyncState,
+  setSyncState,
+  setSpotifyResource,
+} from "../db/app-state";
 import { upsertIdentity } from "../db/identities";
 
 // ============================================================================
@@ -41,27 +50,26 @@ interface FriendTrackAlbum {
 
 interface FriendTrackContext {
   uri: string;
-  name: string;
-  index: number;
+  /** Absent when Spotify won't say, e.g. a playlist this account can't read. */
+  name?: string;
 }
 
 interface FriendTrack {
   uri: string;
   name: string;
-  imageUrl: string;
+  imageUrl?: string;
+  durationMs: number;
   album: FriendTrackAlbum;
   artist: FriendTrackArtist;
   context?: FriendTrackContext;
 }
 
+/** One listen as stored in raw_data: the feed entity plus what was looked up for it. */
 interface FriendActivity {
   timestamp: number;
   user: FriendUser;
   track: FriendTrack;
-}
-
-interface BuddylistResponse {
-  friends: FriendActivity[];
+  listeningActivity: ListeningActivityEntity;
 }
 
 interface AccessTokenResponse {
@@ -72,12 +80,15 @@ interface AccessTokenResponse {
 
 interface SpotifyFriendsSyncState {
   lastSyncedTimestamps?: Record<string, number>; // friend_uri -> last seen timestamp
+  lastPlaying?: Record<string, boolean>; // friend_uri -> isPlaying at the last sync
 }
 
 export interface SpotifyFriendsSyncStats {
   imported: number;
   skipped: number;
   friendsCount: number;
+  /** First lookup failure. Listens it affected are retried on the next sync. */
+  error?: string;
 }
 
 // ============================================================================
@@ -272,67 +283,231 @@ async function getWebAccessToken(config: SpotifyFriendsConfig): Promise<string> 
   return data.accessToken;
 }
 
-/**
- * Fetch friend activity from the buddylist endpoint.
- */
-async function fetchFriendActivity(accessToken: string): Promise<FriendActivity[]> {
-  const response = await fetch(
-    "https://guc-spclient.spotify.com/presence-view/v1/buddylist",
-    {
-      headers: {
-        "User-Agent": USER_AGENT,
-        Authorization: `Bearer ${accessToken}`,
-      },
-    }
-  );
+const SPCLIENT_BASE = "https://spclient.wg.spotify.com";
+const REQUEST_TIMEOUT_MS = 20_000;
 
-  if (!response.ok) {
-    if (response.status === 401) {
-      throw new Error("Access token rejected. The sp_dc cookie may be invalid or expired.");
-    }
-    throw new Error(`Buddylist API error: ${response.status} ${response.statusText}`);
+/** Carries only a route label and status, so messages are safe to log. */
+class SpotifyRequestError extends Error {
+  constructor(
+    readonly label: string,
+    readonly status: number,
+  ) {
+    super(`${label} request failed: ${status}`);
+    this.name = "SpotifyRequestError";
   }
-
-  const data: BuddylistResponse = await response.json();
-  return data.friends || [];
 }
 
-// ============================================================================
-// User Profile (for avatars)
-// ============================================================================
-
-interface SpotifyImage {
-  url: string;
-  height: number | null;
-  width: number | null;
-}
-
-interface SpotifyUserProfile {
-  id: string;
-  display_name: string | null;
-  images: SpotifyImage[];
-}
-
-/**
- * Fetch a user's public profile to get their avatar.
- * Returns the largest image URL, or null if unavailable.
- */
-async function fetchUserProfileImage(accessToken: string, userId: string): Promise<string | null> {
-  const response = await fetch(`https://api.spotify.com/v1/users/${encodeURIComponent(userId)}`, {
+async function spclientRequest(
+  accessToken: string,
+  label: string,
+  path: string,
+  body?: unknown,
+): Promise<unknown> {
+  const response = await fetch(`${SPCLIENT_BASE}${path}`, {
+    method: body === undefined ? "GET" : "POST",
     headers: {
       "User-Agent": USER_AGENT,
       Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
     },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
 
-  if (!response.ok) return null;
+  if (response.status === 401) {
+    throw new Error(`${label}: access token rejected. The sp_dc cookie may be invalid or expired.`);
+  }
+  if (!response.ok) {
+    throw new SpotifyRequestError(label, response.status);
+  }
+  return response.json();
+}
 
-  const profile: SpotifyUserProfile = await response.json();
-  if (!profile.images || profile.images.length === 0) return null;
+function parseResponse<T>(schema: z.ZodType<T>, label: string, payload: unknown): T {
+  const parsed = schema.safeParse(payload);
+  if (!parsed.success) {
+    // Paths only: issue messages could quote values from private responses.
+    const paths = parsed.error.issues.map((issue) => issue.path.join(".")).join(", ");
+    throw new Error(`${label} response has an unexpected shape at: ${paths}`);
+  }
+  return parsed.data;
+}
 
-  // Pick the largest image (last in array is typically largest, but sort to be safe)
-  const sorted = [...profile.images].sort((a, b) => (b.width ?? 0) - (a.width ?? 0));
-  return sorted[0].url;
+// ============================================================================
+// Listening Activity Feed
+// ============================================================================
+
+const listeningActivityEntitySchema = z.looseObject({
+  uri: z.string(),
+  activity: z
+    .looseObject({
+      entityUri: z.string(),
+      contextUri: z.string().optional(),
+      isPlaying: z.boolean().optional(),
+      timestamp: z.string(),
+    })
+    .optional(),
+});
+
+const listeningActivityFeedSchema = z.looseObject({
+  entities: z.array(
+    z.looseObject({
+      userEntity: listeningActivityEntitySchema.optional(),
+      followEntity: listeningActivityEntitySchema.optional(),
+    }),
+  ),
+});
+
+type RawListeningActivityEntity = z.infer<typeof listeningActivityEntitySchema>;
+type ListeningActivityEntity = RawListeningActivityEntity & {
+  activity: NonNullable<RawListeningActivityEntity["activity"]>;
+};
+
+interface FeedEntry {
+  entity: ListeningActivityEntity;
+  timestampMs: number;
+}
+
+/**
+ * Fetch friends' latest listens, oldest first. `ignored` counts entities that
+ * aren't a friend's track, such as a podcast episode.
+ */
+async function fetchListeningActivity(
+  accessToken: string,
+): Promise<{ entries: FeedEntry[]; ignored: number }> {
+  const payload = await spclientRequest(accessToken, "Listening activity", "/listening-activity/v1/feed", {
+    unused: true,
+    resultLimit: 100,
+  });
+  const feed = parseResponse(listeningActivityFeedSchema, "Listening activity", payload);
+
+  const entries: FeedEntry[] = [];
+  let ignored = 0;
+  for (const item of feed.entities) {
+    const entity = item.userEntity ?? item.followEntity;
+    if (!entity?.uri.startsWith("spotify:user:") || !entity.activity?.entityUri.startsWith("spotify:track:")) {
+      ignored++;
+      continue;
+    }
+    const timestampMs = Date.parse(entity.activity.timestamp);
+    if (Number.isNaN(timestampMs)) {
+      throw new Error("Listening activity response has an unparseable timestamp");
+    }
+    entries.push({ entity: { ...entity, activity: entity.activity }, timestampMs });
+  }
+
+  entries.sort((a, b) => a.timestampMs - b.timestampMs);
+  return { entries, ignored };
+}
+
+// ============================================================================
+// Name and Artwork Lookups
+// ============================================================================
+
+const BASE62 = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+/** Spotify's metadata routes address items by a 32-digit hex gid rather than the base62 id in a URI. */
+function base62ToGid(id: string): string {
+  let value = 0n;
+  for (const char of id) {
+    const digit = BASE62.indexOf(char);
+    if (digit === -1) throw new Error("Spotify id is not base62");
+    value = value * 62n + BigInt(digit);
+  }
+  return value.toString(16).padStart(32, "0");
+}
+
+function gidToBase62(gid: string): string {
+  let value = BigInt(`0x${gid}`);
+  let id = "";
+  while (value > 0n) {
+    id = BASE62[Number(value % 62n)] + id;
+    value /= 62n;
+  }
+  return id.padStart(22, "0");
+}
+
+const trackMetadataSchema = z.looseObject({
+  name: z.string(),
+  duration: z.number(),
+  album: z.looseObject({
+    gid: z.string(),
+    name: z.string(),
+    cover_group: z
+      .looseObject({
+        image: z.array(z.looseObject({ file_id: z.string(), size: z.string().optional() })),
+      })
+      .optional(),
+  }),
+  artist: z
+    .array(z.looseObject({ gid: z.string(), name: z.string() }))
+    .min(1),
+});
+
+type TrackDetails = Omit<FriendTrack, "context">;
+
+async function fetchTrackDetails(accessToken: string, trackUri: string): Promise<TrackDetails> {
+  const id = trackUri.slice("spotify:track:".length);
+  const payload = await spclientRequest(accessToken, "Track metadata", `/metadata/4/track/${base62ToGid(id)}`);
+  const metadata = parseResponse(trackMetadataSchema, "Track metadata", payload);
+
+  const images = metadata.album.cover_group?.image ?? [];
+  // LARGE is the variant the old feed returned, so old and new events show the same art.
+  const cover = images.find((image) => image.size === "LARGE") ?? images[0];
+  const artist = metadata.artist[0];
+
+  return {
+    uri: trackUri,
+    name: metadata.name,
+    ...(cover ? { imageUrl: `https://i.scdn.co/image/${cover.file_id}` } : {}),
+    durationMs: metadata.duration,
+    album: { uri: `spotify:album:${gidToBase62(metadata.album.gid)}`, name: metadata.album.name },
+    artist: { uri: `spotify:artist:${gidToBase62(artist.gid)}`, name: artist.name },
+  };
+}
+
+const userProfileSchema = z.looseObject({
+  name: z.string().optional(),
+  image_url: z.string().optional(),
+});
+
+async function fetchUserProfile(
+  accessToken: string,
+  username: string,
+): Promise<{ name?: string; avatarUrl?: string }> {
+  const params = new URLSearchParams({
+    playlist_limit: "0",
+    artist_limit: "0",
+    episode_limit: "0",
+    market: "from_token",
+  });
+  const payload = await spclientRequest(
+    accessToken,
+    "User profile",
+    `/user-profile-view/v3/profile/${encodeURIComponent(username)}?${params}`,
+  );
+  const profile = parseResponse(userProfileSchema, "User profile", payload);
+  return {
+    ...(profile.name ? { name: profile.name } : {}),
+    ...(profile.image_url ? { avatarUrl: profile.image_url } : {}),
+  };
+}
+
+const playlistMetadataSchema = z.looseObject({
+  attributes: z.looseObject({ name: z.string() }),
+});
+
+/** Returns null for a playlist this account can't read; other failures throw. */
+async function fetchPlaylistName(accessToken: string, playlistUri: string): Promise<string | null> {
+  const id = playlistUri.slice("spotify:playlist:".length);
+  try {
+    const payload = await spclientRequest(accessToken, "Playlist metadata", `/playlist/v2/playlist/${id}/metadata`);
+    return parseResponse(playlistMetadataSchema, "Playlist metadata", payload).attributes.name;
+  } catch (error) {
+    if (error instanceof SpotifyRequestError && (error.status === 403 || error.status === 404)) return null;
+    throw error;
+  }
 }
 
 // ============================================================================
@@ -375,11 +550,84 @@ function buildTags(track: FriendTrack): string[] {
   return Array.from(tags);
 }
 
-function normalizeTimestampMs(value: number): number {
-  if (!Number.isFinite(value)) return value;
-  if (value < 1e12) return value * 1000; // seconds -> ms
-  if (value > 1e15) return Math.floor(value / 1000); // microseconds -> ms
-  return value;
+/** A same-track timestamp this close to a full track length later still counts as a repeat. */
+const REPEAT_TOLERANCE_MS = 5_000;
+
+interface StoredListen {
+  trackUri: string | null;
+  timestampMs: number;
+  durationMs: number | null;
+}
+
+function getLastStoredListen(db: Database, friendAccount: string): StoredListen | null {
+  const row = db
+    .prepare(`
+      SELECT
+        timestamp,
+        json_extract(raw_data, '$.track.uri') AS trackUri,
+        json_extract(raw_data, '$.track.durationMs') AS durationMs
+      FROM events
+      WHERE source = 'spotify-friends' AND source_account = ?
+      ORDER BY timestamp DESC, id DESC
+      LIMIT 1
+    `)
+    .get(friendAccount) as { timestamp: string; trackUri: string | null; durationMs: number | null } | null;
+  if (!row) return null;
+  return { trackUri: row.trackUri, timestampMs: Date.parse(row.timestamp), durationMs: row.durationMs };
+}
+
+/** Lookups for one sync. Friends can be playing the same track, so tracks are memoised per run. */
+class FeedHydrator {
+  private readonly tracks = new Map<string, Promise<TrackDetails>>();
+
+  constructor(
+    private readonly db: Database,
+    private readonly appDb: Database,
+    private readonly accessToken: string,
+  ) {}
+
+  track(trackUri: string): Promise<TrackDetails> {
+    let details = this.tracks.get(trackUri);
+    if (!details) {
+      details = fetchTrackDetails(this.accessToken, trackUri);
+      this.tracks.set(trackUri, details);
+    }
+    return details;
+  }
+
+  async context(contextUri: string | undefined, track: TrackDetails): Promise<FriendTrackContext | undefined> {
+    if (!contextUri) return undefined;
+    if (contextUri === track.album.uri) return { uri: contextUri, name: track.album.name };
+    if (contextUri === track.artist.uri) return { uri: contextUri, name: track.artist.name };
+
+    const cached = getSpotifyResource(this.appDb, contextUri);
+    if (cached) return { uri: contextUri, name: cached.name };
+
+    if (contextUri.startsWith("spotify:playlist:")) {
+      const name = await fetchPlaylistName(this.accessToken, contextUri);
+      if (name) return { uri: contextUri, name };
+    }
+    return { uri: contextUri };
+  }
+
+  /**
+   * The friend's current name and avatar. A friend already known keeps their
+   * stored name if the profile can't be fetched, so a profile outage doesn't
+   * hold back listens.
+   */
+  async friend(friendAccount: string): Promise<{ name: string; avatarUrl?: string }> {
+    const known = this.db
+      .prepare(`SELECT display_name FROM identities WHERE platform = 'spotify' AND platform_id = ?`)
+      .get(friendAccount) as { display_name: string | null } | null;
+
+    try {
+      const profile = await fetchUserProfile(this.accessToken, friendAccount);
+      return { ...profile, name: profile.name ?? known?.display_name ?? friendAccount };
+    } catch (error) {
+      if (known?.display_name) return { name: known.display_name };
+      throw error;
+    }
+  }
 }
 
 async function syncFriendsWithDb(
@@ -395,170 +643,159 @@ async function syncFriendsWithDb(
   const accessToken = await getWebAccessToken(config);
 
   if (options.verbose) {
-    console.log("[spotify-friends] Fetching friend activity...");
+    console.log("[spotify-friends] Fetching listening activity...");
   }
 
-  const friends = await fetchFriendActivity(accessToken);
+  const { entries, ignored } = await fetchListeningActivity(accessToken);
+  const friendsCount = new Set(entries.map((entry) => entry.entity.uri)).size;
 
   if (options.verbose) {
-    console.log(`[spotify-friends] Found ${friends.length} friend(s) with activity`);
+    console.log(`[spotify-friends] Found ${friendsCount} friend(s) with activity`);
+  }
+
+  if (options.dryRun) {
+    return { imported: 0, skipped: entries.length + ignored, friendsCount };
   }
 
   const importBatch = `spotify-friends-${Date.now()}`;
-
-  if (options.dryRun) {
-    for (const friend of friends) {
-      console.log(`  ${friend.user.name}: ${friend.track.name} by ${friend.track.artist.name}`);
-    }
-    return { imported: 0, skipped: friends.length, friendsCount: friends.length };
-  }
-
   const appDb = getAppStateDb();
   const syncState = getSyncState<SpotifyFriendsSyncState>(appDb, SYNC_STATE_KEY);
-  const seenTimestamps = syncState?.lastSyncedTimestamps || {};
+  const seenTimestamps = { ...syncState?.lastSyncedTimestamps };
+  const lastPlaying = { ...syncState?.lastPlaying };
+  const hydrator = new FeedHydrator(db, appDb, accessToken);
 
-  const insert = db.prepare(`
-    INSERT OR IGNORE INTO events (
-      source, source_id, source_account, type, timestamp,
-      title, content, people, tags, raw_data, import_batch
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
+  let imported = 0;
+  let skipped = ignored;
+  let error: string | undefined;
 
-  let totalImported = 0;
-  let totalSkipped = 0;
-  const newSeenTimestamps: Record<string, number> = { ...seenTimestamps };
-
-  const insertMany = db.transaction((activities: FriendActivity[]) => {
-    for (const activity of activities) {
-      const { user, track, timestamp } = activity;
-      const timestampMs = normalizeTimestampMs(timestamp);
-
-      // Skip if we've already seen this exact activity (same friend, same timestamp)
-      const lastSeenTs = seenTimestamps[user.uri];
-      if (lastSeenTs && timestampMs <= lastSeenTs) {
-        totalSkipped++;
-        continue;
-      }
-
-      const timestampIso = new Date(timestampMs).toISOString();
-      const sourceId = `spotify:friend:${user.uri}:${track.uri}@${timestampMs}`;
-      const title = track.name;
-      const content = buildContent(track);
-      // Extract username from URI (spotify:user:USERNAME -> USERNAME)
-      const friendAccount = user.uri.replace("spotify:user:", "");
-      const people = [`spotify:${friendAccount}`];
-      const tags = buildTags(track);
-
-      const result = insert.run(
-        "spotify-friends",
-        sourceId,
-        friendAccount,
-        "listen:track:friend",
-        timestampIso,
-        title,
-        content,
-        JSON.stringify(people),
-        JSON.stringify(tags),
-        JSON.stringify(activity),
-        importBatch
-      );
-
-      if (result.changes > 0) {
-        totalImported++;
-        if (options.verbose) {
-          console.log(`  + ${user.name}: ${track.name}`);
-        }
-      } else {
-        totalSkipped++;
-      }
-
-      // Track the latest timestamp we've seen for each friend
-      if (!newSeenTimestamps[user.uri] || timestampMs > newSeenTimestamps[user.uri]) {
-        newSeenTimestamps[user.uri] = timestampMs;
-      }
+  for (const entry of entries) {
+    const userUri = entry.entity.uri;
+    const lastSeenTs = seenTimestamps[userUri];
+    if (lastSeenTs && entry.timestampMs <= lastSeenTs) {
+      skipped++;
+      continue;
     }
+
+    try {
+      if (await importEntry(db, appDb, hydrator, entry, lastPlaying[userUri] === true, importBatch)) {
+        imported++;
+      } else {
+        skipped++;
+      }
+      seenTimestamps[userUri] = entry.timestampMs;
+    } catch (caught) {
+      // The watermark stays put, so the next sync retries this listen.
+      error ??= caught instanceof Error ? caught.message : String(caught);
+      if (caught instanceof SpotifyRequestError && caught.status === 429) break;
+    }
+  }
+
+  for (const { entity } of entries) {
+    lastPlaying[entity.uri] = entity.activity.isPlaying === true;
+  }
+
+  setSyncState(appDb, SYNC_STATE_KEY, { lastSyncedTimestamps: seenTimestamps, lastPlaying });
+
+  return { imported, skipped, friendsCount, ...(error ? { error } : {}) };
+}
+
+/** Stores a feed entry unless it's a play already recorded. Returns whether it added an event. */
+async function importEntry(
+  db: Database,
+  appDb: Database,
+  hydrator: FeedHydrator,
+  { entity, timestampMs }: FeedEntry,
+  wasPlaying: boolean,
+  importBatch: string,
+): Promise<boolean> {
+  const userUri = entity.uri;
+  const trackUri = entity.activity.entityUri;
+  // Extract username from URI (spotify:user:USERNAME -> USERNAME)
+  const friendAccount = userUri.replace("spotify:user:", "");
+
+  const last = getLastStoredListen(db, friendAccount);
+  const playedThrough = wasPlaying && entity.activity.isPlaying === true;
+  if (last && (await isSameListen(hydrator, last, trackUri, timestampMs, playedThrough))) return false;
+
+  const details = await hydrator.track(trackUri);
+  const context = await hydrator.context(entity.activity.contextUri, details);
+  const friend = await hydrator.friend(friendAccount);
+  const track: FriendTrack = { ...details, ...(context ? { context } : {}) };
+  const activity: FriendActivity = {
+    timestamp: timestampMs,
+    user: { uri: userUri, name: friend.name },
+    track,
+    listeningActivity: entity,
+  };
+
+  const result = db
+    .prepare(`
+      INSERT OR IGNORE INTO events (
+        source, source_id, source_account, type, timestamp,
+        title, content, people, tags, raw_data, import_batch
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    .run(
+      "spotify-friends",
+      `spotify:friend:${userUri}:${trackUri}@${timestampMs}`,
+      friendAccount,
+      "listen:track:friend",
+      new Date(timestampMs).toISOString(),
+      track.name,
+      buildContent(track),
+      JSON.stringify([`spotify:${friendAccount}`]),
+      JSON.stringify(buildTags(track)),
+      JSON.stringify(activity),
+      importBatch,
+    );
+
+  cacheResources(appDb, track);
+  upsertIdentity(db, {
+    platform: "spotify",
+    platformId: friendAccount,
+    displayName: friend.name,
+    ...(friend.avatarUrl ? { avatarUrl: friend.avatarUrl } : {}),
   });
 
-  insertMany(friends);
+  return result.changes > 0;
+}
 
-  // Cache URI → name mappings for future lookups (e.g., spotify-api playlist resolution)
-  // Also cache track URI → album art URL for image lookups
-  for (const activity of friends) {
-    const { track } = activity;
-    if (track.artist?.uri && track.artist?.name) {
-      setSpotifyResource(appDb, track.artist.uri, "artist", track.artist.name);
-    }
-    if (track.album?.uri && track.album?.name) {
-      setSpotifyResource(appDb, track.album.uri, "album", track.album.name);
-    }
-    if (track.uri && track.name && track.imageUrl) {
-      setSpotifyResource(appDb, track.uri, "track", track.name, track.imageUrl);
-    }
-    if (track.context?.uri && track.context?.name) {
-      const contextUri = track.context.uri;
-      const type = contextUri.startsWith("spotify:playlist:")
-        ? "playlist"
-        : contextUri.startsWith("spotify:album:")
-          ? "album"
-          : contextUri.startsWith("spotify:artist:")
-            ? "artist"
-            : "context";
-      setSpotifyResource(appDb, contextUri, type, track.context.name);
-    }
+/**
+ * The feed's timestamp also moves on a seek or a resume, so a moved timestamp
+ * alone doesn't mean a new listen. It's a repeat only once a full track length
+ * has passed and the friend was playing at both this sync and the last, which
+ * rules out a long pause.
+ */
+async function isSameListen(
+  hydrator: FeedHydrator,
+  last: StoredListen,
+  trackUri: string,
+  timestampMs: number,
+  playedThrough: boolean,
+): Promise<boolean> {
+  if (timestampMs <= last.timestampMs) return true;
+  if (last.trackUri !== trackUri) return false;
+  if (!playedThrough) return true;
+  const durationMs = last.durationMs ?? (await hydrator.track(trackUri)).durationMs;
+  return timestampMs - last.timestampMs < durationMs - REPEAT_TOLERANCE_MS;
+}
+
+/** Cache URI -> name mappings for later lookups (e.g., spotify-api playlist resolution). */
+function cacheResources(appDb: Database, track: FriendTrack): void {
+  setSpotifyResource(appDb, track.artist.uri, "artist", track.artist.name);
+  setSpotifyResource(appDb, track.album.uri, "album", track.album.name);
+  setSpotifyResource(appDb, track.uri, "track", track.name, track.imageUrl);
+  if (track.context?.name) {
+    const contextUri = track.context.uri;
+    const type = contextUri.startsWith("spotify:playlist:")
+      ? "playlist"
+      : contextUri.startsWith("spotify:album:")
+        ? "album"
+        : contextUri.startsWith("spotify:artist:")
+          ? "artist"
+          : "context";
+    setSpotifyResource(appDb, contextUri, type, track.context.name);
   }
-
-  // Upsert identities and fetch avatars for friends
-  // Deduplicate friends by URI (buddylist can list same friend multiple times)
-  const uniqueFriends = new Map<string, FriendActivity>();
-  for (const activity of friends) {
-    uniqueFriends.set(activity.user.uri, activity);
-  }
-
-  // Check which friends already have avatars (skip re-fetching)
-  const existingAvatars = new Set<string>();
-  const checkAvatarStmt = db.prepare(
-    `SELECT avatar_url FROM identities WHERE platform = 'spotify' AND platform_id = ?`
-  );
-  for (const [, activity] of uniqueFriends) {
-    const username = activity.user.uri.replace("spotify:user:", "");
-    const row = checkAvatarStmt.get(username) as { avatar_url: string | null } | null;
-    if (row?.avatar_url) {
-      existingAvatars.add(username);
-    }
-  }
-
-  for (const [, activity] of uniqueFriends) {
-    const username = activity.user.uri.replace("spotify:user:", "");
-    let avatarUrl: string | null = null;
-
-    // Only fetch profile if we don't already have an avatar
-    if (!existingAvatars.has(username)) {
-      try {
-        avatarUrl = await fetchUserProfileImage(accessToken, username);
-        if (options.verbose && avatarUrl) {
-          console.log(`  [avatar] ${activity.user.name}: ${avatarUrl}`);
-        }
-      } catch {
-        // Avatar fetch failed — not critical, continue
-      }
-    }
-
-    upsertIdentity(db, {
-      platform: "spotify",
-      platformId: username,
-      displayName: activity.user.name,
-      ...(avatarUrl ? { avatarUrl } : {}),
-    });
-  }
-
-  // Update sync state with new timestamps
-  setSyncState(appDb, SYNC_STATE_KEY, { lastSyncedTimestamps: newSeenTimestamps });
-
-  return {
-    imported: totalImported,
-    skipped: totalSkipped,
-    friendsCount: friends.length,
-  };
 }
 
 export async function syncSpotifyFriends(
@@ -592,27 +829,22 @@ async function showStatus(): Promise<void> {
     return;
   }
 
-  console.log(`Config: present (sp_dc: ${config.sp_dc.substring(0, 10)}...)`);
+  console.log("Config: present");
 
   // Test the cookie
   try {
     console.log("Testing cookie...");
     const accessToken = await getWebAccessToken(config);
-    console.log(`Access token: valid (${accessToken.substring(0, 20)}...)`);
+    console.log("Access token: valid");
 
-    // Try fetching friend activity
-    const friends = await fetchFriendActivity(accessToken);
-    console.log(`Friends online: ${friends.length}`);
+    const { entries } = await fetchListeningActivity(accessToken);
+    const friends = new Set(entries.map((entry) => entry.entity.uri));
+    const playing = entries.filter((entry) => entry.entity.activity.isPlaying).length;
+    console.log(`Friends with activity: ${friends.size} (${playing} playing now)`);
 
-    if (friends.length > 0) {
-      console.log("\nCurrently listening:");
-      for (const friend of friends.slice(0, 5)) {
-        const ago = Math.round((Date.now() - normalizeTimestampMs(friend.timestamp)) / 60000);
-        console.log(`  ${friend.user.name}: ${friend.track.name} (${ago}m ago)`);
-      }
-      if (friends.length > 5) {
-        console.log(`  ... and ${friends.length - 5} more`);
-      }
+    const newest = entries.at(-1);
+    if (newest) {
+      console.log(`Freshest listen: ${Math.round((Date.now() - newest.timestampMs) / 60000)}m ago`);
     }
   } catch (error) {
     console.log(`Cookie test: failed`);
@@ -642,7 +874,7 @@ if (import.meta.main) {
 
 Usage:
   bun run src/parsers/spotify-friends.ts              # Sync friend activity
-  bun run src/parsers/spotify-friends.ts status       # Check cookie and show friends
+  bun run src/parsers/spotify-friends.ts status       # Check cookie and count friends
   bun run src/parsers/spotify-friends.ts reset        # Clear sync state
   bun run src/parsers/spotify-friends.ts --dry-run    # Preview without saving
 
