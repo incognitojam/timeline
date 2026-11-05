@@ -11,6 +11,7 @@ import { createRequire } from "module";
 import * as os from "os";
 import { join } from "path";
 import { createTestFetchGuard } from "../src/testing/fetch-guard";
+import { removeStaleRunDirectories, runDirectoryPrefix } from "../src/testing/run-directories";
 
 // Tests may replace globalThis.fetch with a route-specific mock, but restoring
 // it must never expose Bun's unrestricted implementation. Keep loopback access
@@ -28,32 +29,12 @@ for (const file of readdirSync(process.cwd()).filter((name) => DOTENV_FILE.test(
 }
 
 // Everything a run writes lives under one directory, removed when the run
-// finishes. Its name carries the owning pid so a later run can remove directories
-// left behind by a run that was killed before its cleanup ran.
-const RUN_ROOT_PREFIX = "timeline-test-run-";
+// finishes. A later run removes directories left by runs killed before then.
 const hostTmpdir = os.tmpdir();
-for (const entry of readdirSync(hostTmpdir)) {
-  const pid = Number(entry.slice(RUN_ROOT_PREFIX.length).split("-")[0]);
-  if (!entry.startsWith(RUN_ROOT_PREFIX) || !Number.isInteger(pid) || isAlive(pid)) continue;
-  try {
-    rmSync(join(hostTmpdir, entry), { recursive: true, force: true });
-  } catch (error) {
-    // Another user's leftovers must not stop this run.
-    console.warn(`Could not remove stale test run directory ${entry}: ${error}`);
-  }
-}
-const runRoot = mkdtempSync(join(hostTmpdir, `${RUN_ROOT_PREFIX}${process.pid}-`));
+removeStaleRunDirectories(hostTmpdir);
+const runRoot = mkdtempSync(join(hostTmpdir, runDirectoryPrefix()));
 // A preload-level afterAll runs once, after every test file.
 afterAll(() => rmSync(runRoot, { recursive: true, force: true }));
-
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
 
 function runPath(name: string, kind: "dir" | "file" = "dir"): string {
   const path = join(runRoot, name);
