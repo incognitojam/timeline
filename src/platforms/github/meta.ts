@@ -7,6 +7,7 @@ export const githubMeta = {
     {
       id: "github",
       label: "GitHub",
+      traits: { corpus: true },
       eventTypes: [
         "github:commit_comment",
         "github:create",

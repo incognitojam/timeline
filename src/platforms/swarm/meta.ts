@@ -7,6 +7,8 @@ export const swarmMeta = {
     {
       id: "swarm",
       label: "Swarm",
+      // groupEvents also requires spatial proximity: time alone would merge train journeys.
+      traits: { session: { gapMinutes: 15 } },
       eventTypes: ["location:visit"],
     },
   ],

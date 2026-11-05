@@ -4,6 +4,7 @@ export const youtubeSources = [
   {
     id: "youtube",
     label: "YouTube",
+    traits: { session: { gapMinutes: 15 } },
     color: "#FF0000",
     eventTypes: [
       "youtube:watch",

@@ -7,6 +7,7 @@ export const codexMeta = {
     {
       id: "codex",
       label: "Codex",
+      traits: { conversation: "coding-agent", noisy: true, aiUsage: true, corpus: true },
       eventTypes: ["codex:message:user", "codex:message:assistant"],
     },
   ],

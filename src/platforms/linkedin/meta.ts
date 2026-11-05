@@ -7,6 +7,7 @@ export const linkedinMeta = {
     {
       id: "linkedin",
       label: "LinkedIn",
+      traits: { conversation: "social", corpus: true },
       eventTypes: ["message", "connection", "job", "education"],
     },
   ],

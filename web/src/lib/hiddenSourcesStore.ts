@@ -1,10 +1,7 @@
+import { DEFAULT_HIDDEN_SOURCES } from "@shared/sources";
 import { createLocalStorageSignal } from "./createLocalStorageSignal";
 
 const STORAGE_KEY = "timeline:hiddenSources";
-
-// Sources hidden by default when the user has no stored preference.
-// Recall captures land every 30s, so showing them inline buries everything else.
-const DEFAULT_HIDDEN_SOURCES: readonly string[] = ["recall"];
 
 // Migration: any new entry added to DEFAULT_HIDDEN_SOURCES is auto-hidden once
 // per user even if they already have a stored preference. Bump the version when

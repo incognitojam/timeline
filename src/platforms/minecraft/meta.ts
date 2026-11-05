@@ -7,6 +7,7 @@ export const minecraftMeta = {
     {
       id: "minecraft",
       label: "Minecraft",
+      traits: { session: { gapMinutes: 10 } },
       eventTypes: [
         "minecraft:chat",
         "minecraft:join",

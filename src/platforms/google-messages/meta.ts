@@ -7,6 +7,7 @@ export const googleMessagesMeta = {
     {
       id: "google-messages",
       label: "Google Messages",
+      traits: { conversation: "social", phoneIdentity: true, corpus: true },
       eventTypes: [
         "sms:sent",
         "sms:received",

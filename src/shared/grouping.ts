@@ -1,35 +1,25 @@
+import { type ConversationSourceId, DECLARED_SOURCES, sourceIdsWithTraits } from "./sources";
 import type { GroupableEvent } from "./types";
 
 // Coding agents: AI sessions run against a workspace, listed on the Coding page.
-export const CODING_AGENT_SOURCES = [
-  "claude-code",
-  "amp",
-  "opencode",
-  "conductor",
-  "t3code",
-  "codex",
-] as const;
+// Written into trigger SQL, so changing this list or its order rebuilds triggers at startup.
+export const CODING_AGENT_SOURCES = sourceIdsWithTraits(
+  (traits) => traits.conversation === "coding-agent",
+) as readonly ConversationSourceId<"coding-agent">[];
 
 // General-purpose chat assistants, listed on their own AI chats page.
-export const CHAT_ASSISTANT_SOURCES = [
-  "claude",
-  "chatgpt",
-] as const;
+export const CHAT_ASSISTANT_SOURCES = sourceIdsWithTraits(
+  (traits) => traits.conversation === "chat-assistant",
+) as readonly ConversationSourceId<"chat-assistant">[];
 
 // AI chat sources (grouped by conversation); neither group appears in Messages.
-export const AI_SOURCES = [...CODING_AGENT_SOURCES, ...CHAT_ASSISTANT_SOURCES] as const;
+export const AI_SOURCES: readonly (typeof CODING_AGENT_SOURCES[number] | typeof CHAT_ASSISTANT_SOURCES[number])[] = [
+  ...CODING_AGENT_SOURCES,
+  ...CHAT_ASSISTANT_SOURCES,
+];
 
 // Social/messaging sources with real people (grouped by conversation)
-export const SOCIAL_SOURCES = [
-  "discord",
-  "skype",
-  "facebook",
-  "google-chat",
-  "phone", // SMS Backup & Restore
-  "google-messages",
-  "linkedin",
-  "instagram",
-] as const;
+export const SOCIAL_SOURCES: readonly string[] = sourceIdsWithTraits((traits) => traits.conversation === "social");
 
 // Sources that should be grouped by conversation (title field)
 export const MESSAGE_SOURCES: Set<string> = new Set([...AI_SOURCES, ...SOCIAL_SOURCES]);
@@ -71,34 +61,20 @@ function isReactionSession<T extends GroupableEvent>(events: T[]): boolean {
 
 // Sources with actual personal contacts (for contact matching)
 // Excludes public content like youtube, reddit where "people" are channels/authors
-export const PERSONAL_SOURCES = [...SOCIAL_SOURCES, "google-calendar"] as const;
+export const PERSONAL_SOURCES: readonly string[] = sourceIdsWithTraits(
+  (traits) => traits.conversation === "social" || traits.personal === true,
+);
 
 // Sources that should be grouped by time proximity (sessions)
 // Note: spotify-friends is handled specially in groupEvents() with per-person grouping
-export const SESSION_SOURCES = new Set(["spotify", "youtube", "trakt", "chrome", "google-search", "spotify-friends", "google-playstore", "steam", "minecraft", "recall", "swarm"]);
+export const SESSION_SOURCES = new Set(
+  sourceIdsWithTraits((traits) => traits.session !== undefined && traits.session.reactionsOnly !== true),
+);
 
 // Gap in minutes to consider same session
-export const SESSION_GAP_MINUTES: Record<string, number> = {
-  spotify: 10,
-  youtube: 15,
-  trakt: 30,
-  chrome: 30,
-  "google-search": 15,
-  "spotify-friends": 15,
-  "google-playstore": 30,
-  steam: 30,
-  minecraft: 10,
-  // Captures land every 30s — group anything within 5 minutes as one session.
-  // Larger gaps would merge separate work sessions into one giant group.
-  recall: 5,
-  // Reactions come in scroll-and-like bursts; group like a browsing session.
-  // Facebook is not a SESSION_SOURCE (its messages group as conversations) —
-  // only its reaction:* events are routed to a session bucket in groupEvents.
-  facebook: 15,
-  // Swarm additionally requires spatial proximity (see groupEvents) — the
-  // time gap alone would merge train journeys, not just nested venues.
-  swarm: 15,
-};
+export const SESSION_GAP_MINUTES: Record<string, number> = Object.fromEntries(
+  DECLARED_SOURCES.flatMap((source) => (source.traits?.session ? [[source.id, source.traits.session.gapMinutes]] : [])),
+);
 
 // Swarm check-ins merge only when this close together. Nested-venue pairs
 // (station → platform, adjacent shops) sit well under this; consecutive

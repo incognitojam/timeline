@@ -8,6 +8,7 @@ export const claudeCodeMeta = {
     {
       id: "claude-code",
       label: "Claude Code",
+      traits: { conversation: "coding-agent", noisy: true, aiUsage: true, corpus: true },
       eventTypes: ["claude-code:message:user", "claude-code:message:assistant"],
     },
   ],

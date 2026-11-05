@@ -1,3 +1,5 @@
+import { DECLARED_SOURCES, sourceIdsWithTraits } from "../shared/sources";
+
 export interface CorpusFilterTerm {
   source: string;
   type?: string;
@@ -11,36 +13,17 @@ const ASCII_WHITESPACE = " \t\n\u000b\f\r";
 // embedding_vectors, and the vec0 table. Add-back candidates include
 // google-search (title equals content, so each document collapses to a page
 // title), YouTube, Chrome, and recall (OCR of variable quality).
-export const EVENT_CORPUS_POLICY = {
-  sources: [
-    "facebook",
-    "discord",
-    "skype",
-    "reddit",
-    "phone",
-    "google-messages",
-    "claude",
-    "chatgpt",
-    "claude-code",
-    "conductor",
-    "codex",
-    "amp",
-    "t3code",
-    "opencode",
-    "google-keep",
-    "google-calendar",
-    "google-chat",
-    "instagram",
-    "linkedin",
-    "github",
-    "journal",
-    "manual",
-  ],
-  excluded: [
-    { source: "reddit", type: "vote:up" },
-    { source: "reddit", type: "vote:down" },
-  ],
-} as const satisfies { sources: readonly string[]; excluded: readonly CorpusFilterTerm[] };
+export const EVENT_CORPUS_POLICY: {
+  readonly sources: readonly string[];
+  readonly excluded: readonly CorpusFilterTerm[];
+} = {
+  sources: sourceIdsWithTraits((traits) => traits.corpus !== undefined),
+  excluded: DECLARED_SOURCES.flatMap((source) => {
+    const corpus = source.traits?.corpus;
+    if (corpus === undefined || corpus === true) return [];
+    return corpus.excludedTypes.map((type) => ({ source: source.id, type }));
+  }),
+};
 
 function uniqueTerms(terms: readonly CorpusFilterTerm[]): CorpusFilterTerm[] {
   const seen = new Set<string>();

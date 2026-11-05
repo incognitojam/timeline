@@ -1,3 +1,5 @@
+import { sourceIdsWithTraits } from "../shared/sources";
+
 /**
  * Phone-number helpers shared by the SMS Backup & Restore parser and the
  * conversation-id extractor. Kept in a leaf module so `src/db` code can use
@@ -8,7 +10,9 @@
 export const PHONE_IDENTITY_PLATFORM = "phone";
 
 /** Sources whose participants are phone numbers (identities on PHONE_IDENTITY_PLATFORM). */
-export const PHONE_IDENTITY_SOURCES: ReadonlySet<string> = new Set(["phone", "google-messages"]);
+export const PHONE_IDENTITY_SOURCES: ReadonlySet<string> = new Set(
+  sourceIdsWithTraits((traits) => traits.phoneIdentity === true),
+);
 
 export function isPhoneNumberLike(str: string): boolean {
   return /^\+?\d[\d\s()\-]*$/.test(str.trim());

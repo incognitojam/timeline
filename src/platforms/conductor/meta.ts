@@ -7,6 +7,7 @@ export const conductorMeta = {
     {
       id: "conductor",
       label: "Conductor",
+      traits: { conversation: "coding-agent", noisy: true, aiUsage: true, corpus: true },
       eventTypes: ["conductor:message:user", "conductor:message:assistant"],
     },
   ],

@@ -7,6 +7,7 @@ export const chatgptMeta = {
     {
       id: "chatgpt",
       label: "ChatGPT",
+      traits: { conversation: "chat-assistant", corpus: true },
       eventTypes: ["chatgpt:message:user", "chatgpt:message:assistant"],
     },
   ],

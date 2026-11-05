@@ -7,6 +7,7 @@ export const spotifyMeta = {
     {
       id: "spotify",
       label: "Spotify",
+      traits: { session: { gapMinutes: 10 } },
       eventTypes: [
         "listen:track",
         "listen:podcast",
@@ -17,6 +18,8 @@ export const spotifyMeta = {
     {
       id: "spotify-friends",
       label: "Spotify Friends",
+      // groupEvents groups these per person.
+      traits: { session: { gapMinutes: 15 } },
       eventTypes: ["listen:track:friend"],
     },
     {

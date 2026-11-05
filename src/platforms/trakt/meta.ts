@@ -7,6 +7,7 @@ export const traktMeta = {
     {
       id: "trakt",
       label: "Trakt",
+      traits: { session: { gapMinutes: 30 } },
       eventTypes: ["trakt:movie", "trakt:episode"],
     },
   ],

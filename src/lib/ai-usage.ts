@@ -1,3 +1,5 @@
+import { sourceIdsWithTraits } from "../shared/sources";
+
 /**
  * Token usage extraction and API-rate cost estimation for AI coding session
  * sources. Parsers preserve each assistant message's token accounting in
@@ -8,7 +10,7 @@
  */
 
 /** Sources whose assistant events carry token usage in raw_data. */
-export const AI_USAGE_SOURCES = new Set(["claude-code", "conductor", "amp", "opencode", "codex"]);
+export const AI_USAGE_SOURCES = new Set(sourceIdsWithTraits((traits) => traits.aiUsage === true));
 
 /**
  * SQL expression extracting the usage-bearing fields from raw_data in a
