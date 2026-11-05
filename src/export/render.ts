@@ -9,9 +9,9 @@ import {
 } from "../lib/format";
 import type { ConversationRangeExportTimestampStyle } from "../shared/conversation-export";
 import { isConversationEventType } from "../shared/grouping";
-import { getDiscordComponentsText } from "../shared/discord-components";
-import { getDiscordForwardedText, getDiscordMessageAttachments, getDiscordPollText } from "../shared/discord-forward";
-import { discordMentionsToPlainText } from "../shared/discord-mentions";
+import { getDiscordComponentsText } from "../platforms/discord/shared/components";
+import { getDiscordForwardedText, getDiscordMessageAttachments, getDiscordPollText } from "../platforms/discord/shared/forward";
+import { discordMentionsToPlainText } from "../platforms/discord/shared/mentions";
 import type { AttachmentDescriptionsByEvent } from "./attachment-descriptions";
 import { type EventGroupData, groupEvents } from "./grouping";
 import type { ReplyQuotesByEvent } from "./reply-quotes";

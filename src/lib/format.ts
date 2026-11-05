@@ -1,6 +1,6 @@
-import { getDiscordCallDetails } from "../shared/discord-call";
-import { getDiscordComponentText, parseDiscordComponents } from "../shared/discord-components";
-import { getDiscordSnapshotAttachments, getDiscordStickerItems } from "../shared/discord-forward";
+import { getDiscordCallDetails } from "../platforms/discord/shared/call";
+import { getDiscordComponentText, parseDiscordComponents } from "../platforms/discord/shared/components";
+import { getDiscordSnapshotAttachments, getDiscordStickerItems } from "../platforms/discord/shared/forward";
 import { isRecord } from "../shared/guards";
 import { type NormalizedReaction, normalizeReactions, type ReactionActor } from "../shared/reactions";
 

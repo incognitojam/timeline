@@ -60,8 +60,8 @@ import {
   normalizeMcpToolCallSince,
   searchMcpToolCalls,
 } from "./mcp/recording";
-import { getDiscordComponentsText } from "./shared/discord-components";
-import { discordMentionsToPlainText, extractUserMentionIds } from "./shared/discord-mentions";
+import { getDiscordComponentsText } from "./platforms/discord/shared/components";
+import { discordMentionsToPlainText, extractUserMentionIds } from "./platforms/discord/shared/mentions";
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",

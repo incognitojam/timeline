@@ -1,6 +1,6 @@
 import type { EventRenderer } from "../../render/types";
-import { getDiscordComponentsText } from "../../shared/discord-components";
-import { getDiscordForwardedText } from "../../shared/discord-forward";
+import { getDiscordComponentsText } from "./shared/components";
+import { getDiscordForwardedText } from "./shared/forward";
 
 export interface DiscordConversationTitleChannel {
   name: string;

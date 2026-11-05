@@ -1,10 +1,10 @@
-import { getDiscordCallDetails } from "@shared/discord-call";
-import { getDiscordComponentsText } from "@shared/discord-components";
+import { getDiscordCallDetails } from "@platforms/discord/shared/call";
+import { getDiscordComponentsText } from "@platforms/discord/shared/components";
 import {
   type DiscordRawAttachment,
   getDiscordForwardedText,
   getDiscordMessageAttachments,
-} from "@shared/discord-forward";
+} from "@platforms/discord/shared/forward";
 import { type NormalizedReaction, normalizeReactions } from "@shared/reactions";
 import {
   IconBlock,

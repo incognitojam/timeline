@@ -14,7 +14,8 @@
     "types": ["vite/client", "@testing-library/jest-dom", "unplugin-icons/types/solid"],
     "paths": {
       "@/*": ["./src/*"],
-      "@shared/*": ["../src/shared/*"]
+      "@shared/*": ["../src/shared/*"],
+      "@platforms/*": ["../src/platforms/*"]
     }
   },
   "include": ["src/**/*"]

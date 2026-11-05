@@ -20,7 +20,7 @@
     "media-inventory": "bun run src/scripts/media-inventory.ts",
     "media-upload": "bun run src/scripts/media-upload.ts",
     "media-evict": "bun run src/scripts/media-evict.ts",
-    "media-recover-discord": "bun run src/scripts/media-recover-discord.ts",
+    "media-recover-discord": "bun run src/platforms/discord/scripts/media-recover.ts",
     "media-recover-facebook": "bun run src/scripts/media-recover-facebook.ts",
     "lint": "bunx biome lint src/ web/src/ && oxlint src/ web/src/",
     "test": "bun test",

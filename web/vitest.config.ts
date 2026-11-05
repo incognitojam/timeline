@@ -12,6 +12,7 @@ export default defineConfig({
     alias: {
       "@": resolve(__dirname, "./src"),
       "@shared": resolve(__dirname, "../src/shared"),
+      "@platforms": resolve(__dirname, "../src/platforms"),
     },
     conditions: ["development", "browser"],
   },

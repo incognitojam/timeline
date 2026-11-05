@@ -5,8 +5,8 @@ import type { TimelineEvent } from "../db/schema";
 import {
   resolveDiscordReplyTargets,
   type DiscordReplyTarget,
-} from "../lib/discord-reply-references";
-import { discordMentionsToPlainText, extractUserMentionIds } from "../shared/discord-mentions";
+} from "../platforms/discord/reply-references";
+import { discordMentionsToPlainText, extractUserMentionIds } from "../platforms/discord/shared/mentions";
 import { quotePreview } from "./quote-preview";
 
 /** Inline reply-quote markers keyed by the replying event's id. */

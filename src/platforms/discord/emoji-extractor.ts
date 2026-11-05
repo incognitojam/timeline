@@ -7,7 +7,7 @@
  * or the post-converter raw_data JSON the backfill script will read.
  */
 
-import { extractCustomEmojiRefs } from "../../shared/discord-mentions";
+import { extractCustomEmojiRefs } from "./shared/mentions";
 
 export interface EmojiRef {
   id: string;

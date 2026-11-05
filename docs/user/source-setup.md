@@ -72,11 +72,11 @@ Discord syncs messages directly via the Discord API (user token). DMs and group 
    ```
 4. Bootstrap sync state from existing data (optional, for migration):
    ```bash
-   bun run src/scripts/bootstrap-discord-state.ts
+   bun run src/platforms/discord/scripts/bootstrap-state.ts
    ```
 5. Generate guild config from discord-chat DB (optional, for migration):
    ```bash
-   bun run src/scripts/generate-discord-config.ts
+   bun run src/platforms/discord/scripts/generate-config.ts
    ```
 
 **Guild modes:**

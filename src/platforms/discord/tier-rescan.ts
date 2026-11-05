@@ -21,9 +21,9 @@
 
 import type { Database } from "bun:sqlite";
 import { conversationTypeClause } from "../../db/conversation-types";
+import type { DiscordPoll } from "./shared/forward";
 import {
   type DiscordClient,
-  type DiscordPoll,
   dateToSnowflake,
   type NormalizedReaction,
   snowflakeToDate,

@@ -10,7 +10,7 @@ import { type AttachmentInput, markAttachmentUnrecoverable } from "../../media/a
 import {
   getDiscordMessageAttachments,
   getDiscordStickerItems,
-} from "../../shared/discord-forward";
+} from "./shared/forward";
 import { downloadAndStoreAttachments } from "./attachment-downloader";
 import type { DiscordClient, NormalizedMessage } from "./client";
 import {

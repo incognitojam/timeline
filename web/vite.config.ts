@@ -48,6 +48,7 @@ export default defineConfig({
     alias: {
       "@": resolve(import.meta.dirname, "./src"),
       "@shared": resolve(import.meta.dirname, "../src/shared"),
+      "@platforms": resolve(import.meta.dirname, "../src/platforms"),
     },
     dedupe: ["date-fns"],
   },
