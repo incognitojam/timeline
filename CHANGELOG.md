@@ -1,5 +1,15 @@
 # Timeline
 
+## 0.16.0
+
+### Minor Changes
+
+- 3deb425: Google Messages conversations now show reactions, with a count and who reacted, as other messaging sources do. Reactions added or removed shortly after a message arrives are picked up by later syncs. Custom reactions appear as an icon because their images exist only on the phone. Rebuild and reinstall `timeline-gmessages` to see who reacted; it can be installed before or after this release.
+
+### Patch Changes
+
+- 1b9144a: Discord messages built with Components V2 now appear in conversations as cards with their text, thumbnails, galleries, files and separators, instead of as empty messages. Buttons and menus are shown but can't be clicked, and images whose Discord links have expired show a placeholder. Newly synced messages are searchable by their card text. Conversations, exports and assistant tools show card text on existing messages too. Existing messages become searchable after the next render sweep.
+
 ## 0.15.1
 
 ### Patch Changes
