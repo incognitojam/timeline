@@ -196,6 +196,23 @@ describe("formatEvents — Discord mention resolution", () => {
     expect(out).toContain("<@123>");
   });
 
+  test("reads Components V2 text and resolves its mentions when stored content is empty", async () => {
+    const bob = makeContact("Bob Example");
+    linkIdentity("discord", "900000000000000002", bob);
+
+    const out = await formatEvents(wrapDatabase(db), [makeEvent({
+      source: "discord",
+      type: "message:guild",
+      content: "",
+      people: JSON.stringify(["discord:900000000000000001"]),
+      raw_data: JSON.stringify({
+        components: [{ type: 17, components: [{ type: 10, content: "Ping <@900000000000000002>" }] }],
+      }),
+    })]);
+
+    expect(out).toContain("Ping @Bob Example");
+  });
+
   test("appends embed markers to message content", async () => {
     const events = [makeEvent({
       source: "discord",

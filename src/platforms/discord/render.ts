@@ -1,4 +1,5 @@
 import type { EventRenderer } from "../../render/types";
+import { getDiscordComponentsText } from "../../shared/discord-components";
 import { getDiscordForwardedText } from "../../shared/discord-forward";
 
 export interface DiscordConversationTitleChannel {
@@ -45,7 +46,10 @@ export const renderDiscordEvent: EventRenderer = (rawData) => {
   return {
     title,
     content: isSyncRawData
-      ? content || getDiscordForwardedText(rawData) || getString(question?.text)
+      ? content ||
+        getDiscordForwardedText(rawData) ||
+        getString(question?.text) ||
+        getDiscordComponentsText(rawData)
       : content,
   };
 };

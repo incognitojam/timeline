@@ -2,12 +2,14 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { initDb } from "../../db/schema";
 import { renderDiscordEvent } from "../../platforms/discord/render";
-import type { RendererRegistration } from "../../render";
+import { getRegisteredRenderers, type RendererRegistration } from "../../render";
 import {
   type RenderSweepSettings,
   parseRenderSweepSettings,
   sweepRenderedEvents,
 } from "./render-sweep";
+
+const DISCORD_RENDERER_VERSION = getRegisteredRenderers().get("discord")?.version ?? 0;
 
 describe("render sweep", () => {
   let db: Database;
@@ -77,6 +79,26 @@ describe("render sweep", () => {
     expect(db.prepare("SELECT content FROM events WHERE source_id = 'forward'").get()).toEqual({
       content: "Forwarded body",
     });
+  });
+
+  it("fills Components V2 text into stored content and search when the renderer version changes", () => {
+    insertDiscordEvent({
+      sourceId: "components",
+      content: "",
+      rawData: {
+        ...discordRawData(""),
+        components: [{ type: 17, components: [{ type: 10, content: "Stored card" }] }],
+      },
+    });
+    insertDiscordEvent({ sourceId: "plain", content: "plain", rawData: discordRawData("plain") });
+    const renderers = new Map([["discord", { version: DISCORD_RENDERER_VERSION + 1, render: renderDiscordEvent }]]);
+
+    expect(sweepRenderedEvents(db, { ...settings, dryRun: true }, { renderers })).toMatchObject({ changed: 1, unchanged: 1 });
+    expect(db.prepare("SELECT count(*) AS n FROM events_fts WHERE events_fts MATCH 'card'").get()).toEqual({ n: 0 });
+
+    expect(sweepRenderedEvents(db, settings, { renderers })).toMatchObject({ changed: 1, unchanged: 1, caughtUp: true });
+    expect(db.prepare("SELECT content FROM events WHERE source_id = 'components'").get()).toEqual({ content: "Stored card" });
+    expect(db.prepare("SELECT count(*) AS n FROM events_fts WHERE events_fts MATCH 'card'").get()).toEqual({ n: 1 });
   });
 
   it("does not update rows whose rendered text is already current", () => {
@@ -162,7 +184,7 @@ describe("render sweep", () => {
     const resumed = sweepRenderedEvents(db, settings);
 
     expect(interrupted).toMatchObject({ examined: 2, remaining: 1, caughtUp: false, stoppedReason: "time-budget" });
-    expect(interruptedState).toEqual({ version: 1, last_event_id: secondId });
+    expect(interruptedState).toEqual({ version: DISCORD_RENDERER_VERSION, last_event_id: secondId });
     expect(resumed).toMatchObject({ examined: 1, remaining: 0, caughtUp: true });
   });
 
@@ -170,13 +192,13 @@ describe("render sweep", () => {
     const eventId = insertDiscordEvent({ sourceId: "versioned", content: "current", rawData: discordRawData("current") });
     sweepRenderedEvents(db, settings);
     const renderers: ReadonlyMap<string, RendererRegistration> = new Map([
-      ["discord", { version: 2, render: renderDiscordEvent }],
+      ["discord", { version: DISCORD_RENDERER_VERSION + 1, render: renderDiscordEvent }],
     ]);
 
     const result = sweepRenderedEvents(db, settings, { renderers });
 
     expect(result).toMatchObject({ examined: 1, unchanged: 1, remaining: 0, caughtUp: true });
-    expect(sweepState()).toEqual({ version: 2, last_event_id: eventId });
+    expect(sweepState()).toEqual({ version: DISCORD_RENDERER_VERSION + 1, last_event_id: eventId });
   });
 
   it("counts malformed and untitled rows while advancing past them", () => {
@@ -207,7 +229,7 @@ describe("render sweep", () => {
       remaining: 0,
       caughtUp: true,
     });
-    expect(sweepState()).toEqual({ version: 1, last_event_id: processedId });
+    expect(sweepState()).toEqual({ version: DISCORD_RENDERER_VERSION, last_event_id: processedId });
     expect(db.prepare("SELECT content FROM events WHERE source_id = 'forward'").get()).toEqual({
       content: "Recovered after failures",
     });

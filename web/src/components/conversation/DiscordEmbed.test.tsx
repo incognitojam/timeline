@@ -234,4 +234,19 @@ describe("DiscordEmbed", () => {
     expect(getByText("anyone?")).toBeInTheDocument();
     expect(getByText("No winning answer · 0 votes")).toBeInTheDocument();
   });
+
+  it("renders a component embed link preview through its components", () => {
+    const { getByText, container } = render(() => (
+      <DiscordEmbed
+        embed={{
+          type: "components",
+          url: "https://example.com/post",
+          components: [{ type: 17, components: [{ type: 10, content: "Preview text" }] }],
+        }}
+      />
+    ));
+
+    expect(getByText("Preview text")).toBeInTheDocument();
+    expect(container.querySelector("a")).toBeNull();
+  });
 });

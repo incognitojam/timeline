@@ -98,4 +98,39 @@ describe("renderDiscordEvent", () => {
       content: "",
     });
   });
+
+  test("renders Components V2 Text Displays when a sync message has no content", () => {
+    expect(renderDiscordEvent({
+      content: "",
+      edited_timestamp: null,
+      components: [
+        {
+          type: 17,
+          components: [
+            { type: 9, components: [{ type: 10, content: "Card title" }], accessory: { type: 11, media: { url: "https://example.com/a.png" } } },
+            { type: 10, content: "Card body" },
+          ],
+        },
+      ],
+      _channel: { id: "channel-1", name: "general" },
+    })).toEqual({ title: "general", content: "Card title\nCard body" });
+  });
+
+  test("prefers real message content over component text", () => {
+    expect(renderDiscordEvent({
+      content: "Hello",
+      edited_timestamp: null,
+      components: [{ type: 10, content: "Card" }],
+      _channel: { id: "channel-1", name: "general" },
+    }).content).toBe("Hello");
+  });
+
+  test("leaves content empty for a legacy button row with no text", () => {
+    expect(renderDiscordEvent({
+      content: "",
+      edited_timestamp: null,
+      components: [{ type: 1, components: [{ type: 2, label: "Go" }] }],
+      _channel: { id: "channel-1", name: "general" },
+    }).content).toBeNull();
+  });
 });

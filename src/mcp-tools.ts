@@ -60,6 +60,7 @@ import {
   normalizeMcpToolCallSince,
   searchMcpToolCalls,
 } from "./mcp/recording";
+import { getDiscordComponentsText } from "./shared/discord-components";
 import { discordMentionsToPlainText, extractUserMentionIds } from "./shared/discord-mentions";
 
 const MONTH_NAMES = [
@@ -102,6 +103,11 @@ function formatRunSqlTimeout(timeoutMs: number): string {
   ].join("\n");
 }
 
+function messageContent(event: TimelineEvent): string | null {
+  return event.content
+    || (event.source === "discord" ? getDiscordComponentsText(event.raw_data) : null);
+}
+
 /**
  * Format events for display. Resolves the sender (people[0]) for every event
  * and Discord <@id> mentions in content via a single batched identities lookup,
@@ -125,8 +131,9 @@ export async function formatEvents(
         if (people[0]) identifiers.add(people[0]);
       } catch {}
     }
-    if (e.source === "discord" && e.content) {
-      for (const id of extractUserMentionIds(e.content)) {
+    const discordText = e.source === "discord" ? messageContent(e) : null;
+    if (discordText) {
+      for (const id of extractUserMentionIds(discordText)) {
         identifiers.add(`discord:${id}`);
       }
     }
@@ -157,9 +164,10 @@ export async function formatEvents(
         const sender = people[0];
         const attachments = getAttachmentDescription(e);
         const markers = getMessageMarkers(e, attachments);
-        const rawText = e.content && markers.length > 0
-          ? `${e.content} ${markers.join(" ")}`
-          : e.content || markers.join(" ");
+        const content = messageContent(e);
+        const rawText = content && markers.length > 0
+          ? `${content} ${markers.join(" ")}`
+          : content || markers.join(" ");
         // Resolve <@id> / <#id> / <:emoji:id> in Discord content before truncation.
         const text = rawText && e.source === "discord"
           ? discordMentionsToPlainText(rawText, e.raw_data, { user: discordUserResolver })
