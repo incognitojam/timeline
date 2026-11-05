@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { PollVoter } from "./client";
+import type { PollVoter } from "../../shared/discord-forward";
 
 export const POLL_VOTER_CAPTURE_LIMIT = 25;
 

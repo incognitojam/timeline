@@ -1,6 +1,33 @@
-import type { DiscordPoll, DiscordPollMedia, PollVoter } from "../platforms/discord/client";
+export interface DiscordPollMedia {
+  text?: string;
+  emoji?: { id: string | null; name: string; animated?: boolean };
+}
 
-export type { DiscordPoll, DiscordPollMedia, PollVoter } from "../platforms/discord/client";
+/**
+ * Poll attached to a message. See:
+ * https://docs.discord.com/developers/resources/poll
+ * `results` may be absent in some responses (absent ≠ zero votes); answers
+ * with no votes are omitted from `answer_counts`.
+ */
+export interface DiscordPoll {
+  question: DiscordPollMedia;
+  answers: Array<{ answer_id: number; poll_media: DiscordPollMedia }>;
+  expiry: string | null;
+  allow_multiselect: boolean;
+  layout_type: number;
+  results?: {
+    is_finalized: boolean;
+    answer_counts: Array<{ id: number; count: number; me_voted: boolean }>;
+  };
+}
+
+/** Poll voter identity stored in raw_data.poll.voters.answers. */
+export interface PollVoter {
+  id: string;
+  name: string;
+  username: string;
+  avatar: string | null;
+}
 
 export interface DiscordRawAttachment {
   id: string;
