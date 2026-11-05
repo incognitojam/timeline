@@ -61,8 +61,15 @@ describe("sync history metadata", () => {
     });
   });
 
-  it("keeps a skipped run without an error deferred", () => {
+  it("keeps a skipped run without an error deferred, with its reason as the title", () => {
     const entry = historyEntry('{"guard":"network","skipReason":"offline"}');
+    entry.skipped = 1;
+
+    expect(historyStatusLabel(entry)).toEqual({ label: "Deferred", className: "text-yellow-400", title: "offline" });
+  });
+
+  it("leaves the title off a deferred run without a reason", () => {
+    const entry = historyEntry(null);
     entry.skipped = 1;
 
     expect(historyStatusLabel(entry)).toEqual({ label: "Deferred", className: "text-yellow-400" });

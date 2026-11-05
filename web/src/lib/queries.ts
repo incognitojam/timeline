@@ -87,6 +87,10 @@ import {
   fetchSuggestedContactsForIdentity,
   fetchSyncHistory,
   fetchSyncSources,
+  fetchRemoteAgentsSsh,
+  generateRemoteAgentsKey,
+  testRemoteAgentsConnection,
+  trustRemoteAgentsHost,
   fetchTrackedPlaylists,
   fetchUnlinkedIdentities,
   fetchWakaTimeProject,
@@ -210,6 +214,7 @@ export const queryKeys = {
   releaseStatus: () => ["releaseStatus"] as const,
   networkSettings: () => ["networkSettings"] as const,
   syncSources: () => ["syncSources"] as const,
+  remoteAgentsSsh: () => ["remoteAgentsSsh"] as const,
   syncHistoryRoot: () => ["syncHistory"] as const,
   syncHistory: (params?: { source?: string; limit?: number }) =>
     ["syncHistory", params] as const,
@@ -679,6 +684,13 @@ export const queryOptions = {
     defineQueryOptions({
       queryKey: queryKeys.syncSources(),
       queryFn: ({ signal }) => fetchSyncSources(signal),
+      retry: false,
+    }),
+
+  remoteAgentsSsh: () =>
+    defineQueryOptions({
+      queryKey: queryKeys.remoteAgentsSsh(),
+      queryFn: ({ signal }) => fetchRemoteAgentsSsh(signal),
       retry: false,
     }),
 
@@ -2056,7 +2068,7 @@ export function useUpdateSyncSourceConfiguration() {
   return createMutation(() => ({
     mutationFn: ({ source, patch }: { source: string; patch: SyncSourceConfigurationPatch }) =>
       updateSyncSourceConfiguration(source, patch),
-    onSuccess: (updated) => {
+    onSuccess: (updated, { source }) => {
       // Write the PATCH response straight into the list cache so the form can
       // adopt the confirmed server snapshot even if the refetch fails or hangs.
       if (isSyncSourceInfo(updated)) {
@@ -2070,8 +2082,40 @@ export function useUpdateSyncSourceConfiguration() {
       }
       queryClient.invalidateQueries({ queryKey: queryKeys.serviceStatus() });
       queryClient.invalidateQueries({ queryKey: queryKeys.syncSources() });
+      // The remote-agents SSH state reports the saved host and whether it is trusted.
+      if (source === "remote-agents") {
+        queryClient.invalidateQueries({ queryKey: queryKeys.remoteAgentsSsh() });
+      }
     },
   }));
+}
+
+export function useRemoteAgentsSsh() {
+  return createQuery(() => queryOptions.remoteAgentsSsh());
+}
+
+/** SSH key and host-trust changes alter the source's auth badge as well as the key panel. */
+function useRemoteAgentsMutation<TArgs, TResult>(mutationFn: (args: TArgs) => Promise<TResult>) {
+  const queryClient = useQueryClient();
+  return createMutation(() => ({
+    mutationFn,
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.remoteAgentsSsh() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.syncSources() });
+    },
+  }));
+}
+
+export function useGenerateRemoteAgentsKey() {
+  return useRemoteAgentsMutation((replace: boolean) => generateRemoteAgentsKey(replace));
+}
+
+export function useTestRemoteAgentsConnection() {
+  return useRemoteAgentsMutation((_: void) => testRemoteAgentsConnection());
+}
+
+export function useTrustRemoteAgentsHost() {
+  return useRemoteAgentsMutation((fingerprint: string) => trustRemoteAgentsHost(fingerprint));
 }
 
 export function useUpdateNetworkSettings() {

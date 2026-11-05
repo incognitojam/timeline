@@ -28,6 +28,7 @@ import { summarizeSyncJob } from "../lib/sync-jobs";
 import { syncAuthStatusBadge, syncStatusBadgeClass } from "../lib/sync-auth-status";
 import { IconChevronLeft } from "../ui/icons";
 import SourceIcon from "./SourceIcon";
+import RemoteAgentsSshPanel from "./RemoteAgentsSshPanel";
 import SyncSourceConfigurationForm from "./SyncSourceConfigurationForm";
 
 function formatAbsoluteTime(isoString: string): string {
@@ -424,6 +425,12 @@ export default function SyncSourceDetailView() {
                     {(source) => <SyncSourceConfigurationForm source={source()} />}
                   </Show>
                 </div>
+
+                <Show when={sourceName() === "remote-agents"}>
+                  <div class="mb-6">
+                    <RemoteAgentsSshPanel />
+                  </div>
+                </Show>
 
                 {/* Aggregate stats */}
                 <div class="mb-6">

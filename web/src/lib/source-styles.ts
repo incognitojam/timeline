@@ -13,6 +13,7 @@ import {
   IconInbox,
   IconLabel,
   IconMenuBook,
+  IconTerminal,
 } from "../ui/icons";
 import { PLATFORM_DISPLAYS } from "../platforms";
 import type { PlatformDisplay } from "../platforms/types";
@@ -44,6 +45,7 @@ const SYSTEM_SOURCE_ICONS: Record<string, IconComponent> = {
   "inbox-rclone": IconInbox,
   "google-places": IconGoogleMaps,
   thumbhash: IconImage,
+  "remote-agents": IconTerminal,
   "attachment-descriptions": IconLabel,
   "render-sweep": IconCleaningServices,
   embeddings: IconHub,

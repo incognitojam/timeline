@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# Forced command for Timeline's remote-agents SSH key, installed on the machine
+# whose agent logs Timeline pulls. The key's authorized_keys entry pins it:
+#
+#   restrict,command="~/.local/bin/timeline-export" ssh-ed25519 AAAA... timeline
+#
+# The key can then only probe this host or pull an allow-listed target with a
+# read-only rsync sender; any other command is refused.
+set -euo pipefail
+
+readonly PROTOCOL=1
+
+# Targets this host serves, reported by `probe`; Timeline refuses to pull a
+# target that is not listed. Each resolves to the one directory the sandboxed
+# sender can see for that pull. A snapshot target (for example a consistent
+# subset of styal's statev2.sqlite) also belongs here: write the snapshot into
+# its own cache directory, then resolve the target to that directory.
+readonly TARGETS=(claude-code codex)
+
+target_root() {
+  case "$1" in
+    claude-code) printf '%s\n' "${TIMELINE_EXPORT_CLAUDE_CODE_DIR:-$HOME/.claude/projects}" ;;
+    codex) printf '%s\n' "${TIMELINE_EXPORT_CODEX_DIR:-$HOME/.codex/sessions}" ;;
+    *) return 1 ;;
+  esac
+}
+
+die() {
+  printf 'timeline-export: %s\n' "$*" >&2
+  exit 1
+}
+
+probe() {
+  printf 'timeline-export %s\n' "$PROTOCOL"
+  local target root
+  for target in "${TARGETS[@]}"; do
+    root=$(target_root "$target")
+    if [[ -d $root ]]; then
+      printf 'target\t%s\tok\n' "$target"
+    else
+      printf 'target\t%s\tmissing\t%s\n' "$target" "$root"
+    fi
+  done
+}
+
+# Accept only the server arguments Timeline's `rsync -rt --delete` pull sends,
+# from stock rsync or macOS openrsync, and print the sender's arguments one per
+# line. openrsync forwards --delete-* to the sending server; deletion happens on
+# the receiving client, so they are dropped. It also spells -d as --dirs.
+sender_args() {
+  local -a words
+  read -r -a words <<< "$1"
+  [[ ${words[0]:-} == --server && ${words[1]:-} == --sender ]] || die "only read-only pulls are allowed"
+  local arg saw_dot=0
+  printf '%s\n' --server --sender
+  for arg in "${words[@]:2}"; do
+    if (( saw_dot )); then
+      [[ $arg == "./" ]] || die "refused rsync path: $arg"
+      printf '%s\n' "$arg"
+      continue
+    fi
+    case "$arg" in
+      .) saw_dot=1; printf '%s\n' -- . ;;
+      --delete | --delete-before | --delete-during | --delete-after | --delete-delay) ;;
+      --dirs) printf '%s\n' -d ;;
+      *)
+        # Clusters of -r/-t/-d, optionally ending in stock rsync's -e.<capabilities>.
+        [[ $arg =~ ^-[rtd]+(e[0-9]*\.[A-Za-z]*)?$ ]] || die "refused rsync option: $arg"
+        printf '%s\n' "$arg"
+        ;;
+    esac
+  done
+  (( saw_dot )) || die "missing rsync server arguments"
+}
+
+serve_rsync() {
+  local target=$1 root args
+  root=$(target_root "$target") || die "unknown target: $target"
+  args=$(sender_args "$2") || exit 1
+  [[ -d $root ]] || die "target $target directory not found: $root"
+  local rsync bwrap
+  rsync=$(command -v rsync || true)
+  [[ -n $rsync ]] || die "rsync not found on PATH"
+  bwrap=$(command -v bwrap || true)
+  [[ -n $bwrap ]] || die "bwrap not found on PATH (install bubblewrap)"
+
+  # Filter rules arrive inside the rsync protocol, where no argument check sees
+  # them, and a merge rule makes the sender open any path it names. So the
+  # sender runs in a sandbox holding only $root (read-only, at /export), the
+  # rsync binary, the shared libraries it links and the loader cache, with no
+  # environment, network, or /proc.
+  local -a sandbox=(--unshare-all --die-with-parent --clearenv --dev /dev)
+  local -a libs
+  mapfile -t libs < <(ldd "$rsync" | grep -o '/[^ ]*')
+  local file
+  # Each library keeps the path ldd resolved, so the loader finds it unaided.
+  for file in "$rsync" "${libs[@]}"; do
+    sandbox+=(--ro-bind "$(realpath "$file")" "$file")
+  done
+  # The loader's cache locates libraries registered outside its default paths.
+  if [[ -f /etc/ld.so.cache ]]; then
+    sandbox+=(--ro-bind /etc/ld.so.cache /etc/ld.so.cache)
+  fi
+  sandbox+=(--ro-bind "$root" /export --chdir /export)
+  local -a sender
+  mapfile -t sender <<< "$args"
+  exec "$bwrap" "${sandbox[@]}" "$rsync" "${sender[@]}"
+}
+
+command=${SSH_ORIGINAL_COMMAND:-}
+case "$command" in
+  "timeline-export probe") probe ;;
+  "timeline-export rsync "*)
+    rest=${command#"timeline-export rsync "}
+    target=${rest%% *}
+    [[ $rest == "$target "* ]] || die "missing rsync server arguments"
+    serve_rsync "$target" "${rest#"$target "}"
+    ;;
+  "") die "not invoked through an SSH forced command" ;;
+  *) die "refused command: $command" ;;
+esac

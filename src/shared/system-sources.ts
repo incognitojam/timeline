@@ -27,6 +27,7 @@ export const SYSTEM_SOURCES: readonly SystemSource[] = [
   },
   { id: "auto-detect", label: "Auto-detect", color: "#9ca3af" },
   { id: "inbox-rclone", label: "Inbox Sync", color: "#3b82f6" },
+  { id: "remote-agents", label: "Remote Agents", color: "#0ea5e9" },
   { id: "google-places", label: "Google Places", color: "#34A853" },
   { id: "thumbhash", label: "ThumbHash", color: "#a78bfa" },
   { id: "attachment-descriptions", label: "Attachment Descriptions", color: "#c084fc" },

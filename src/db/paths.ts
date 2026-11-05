@@ -69,3 +69,11 @@ export function getEmbeddingsDbPath(timelineDbPath: string): string {
   assertNoLocalDbMarker(info, embeddingsPath, "embeddings database");
   return embeddingsPath;
 }
+
+/** Remote agent hosts: Timeline's SSH key, pinned host keys, and pulled mirrors. */
+export function getRemoteAgentsDir(timelineDbPath: string): string {
+  const info = getDbPathInfo(timelineDbPath);
+  const dir = join(info.dbParentDir, "remote-agents");
+  assertNoLocalDbMarker(info, dir, "remote agents directory");
+  return dir;
+}

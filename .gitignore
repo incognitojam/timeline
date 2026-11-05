@@ -156,6 +156,9 @@ docs/nas-backup-exploration-progress.md
 *.db
 *.db-shm
 *.db-wal
+
+# Remote agent SSH key, pinned hosts, and pulled logs (next to the local DB)
+/remote-agents/
 .DS_Store
 .no-local-db
 
