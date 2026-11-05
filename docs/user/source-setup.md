@@ -9,19 +9,19 @@
 | LinkedIn | Messages, connections | File export |
 | Google Chat | Messages | Takeout |
 | Google Messages | SMS, MMS, RCS | Live sync |
-| SMS/Calls | Texts, call logs | SMS Backup & Restore app |
+| SMS/Calls | Texts, call logs (stored as source `phone`) | SMS Backup & Restore app |
 | Reddit | Posts, comments, messages | File export |
 | Spotify | Listening history | File export + API sync |
 | Spotify Friends | Friends' activity | API sync (unofficial) |
 | Trakt | Watch history | API sync |
 | YouTube | Watch history, likes, searches | Takeout |
 | Steam | Games, playtime, achievements | API sync |
-| Google Search | Search history | Takeout |
+| Google Search | Searches and visited results | Takeout |
 | Chrome | Browsing history | Takeout |
 | Google Play Store | App installs | Takeout |
 | Google Calendar | Events | Takeout |
 | Google Keep | Notes | Takeout |
-| Google Location | Place visits, transit | Takeout / Timeline.json |
+| Google Location | Place visits, transit (both stored as source `google-location`) | Takeout / Timeline.json |
 | Swarm | Check-ins | API sync |
 | Google Fit | Activity | Takeout |
 | Fitbit | Sleep, readiness, stress, HRV | Takeout |
@@ -29,7 +29,7 @@
 | Thriva | Blood test biomarkers | API sync |
 | Monzo | Transactions | API sync |
 | Amex | Transactions | CSV export |
-| GitHub | Issues, PRs, comments, reviews | API sync |
+| GitHub | Issues, PRs, comments, reviews, stars, forks | API sync / export |
 | WakaTime | Coding sessions | API sync / export |
 | Claude, ChatGPT | Chat history | File export |
 | Claude Code, Codex, OpenCode, Conductor, T3 Code | Agent sessions | Local files |
@@ -333,6 +333,8 @@ GitHub uses a Personal Access Token (PAT) to access activity via the API. This s
 - Commit comments
 
 The `token_expires` field is optional but recommended for tracking PAT expiration.
+
+Exports and API sync name pull requests differently: GitHub export files write `github:pull_request`, while API sync writes `github:pr`. Filter on both to see all of them.
 
 ## WakaTime Setup
 
