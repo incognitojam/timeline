@@ -192,13 +192,15 @@ FTS5 virtual table `events_fts` provides full-text search with automatic sync tr
 
 ### Platform modules (`src/platforms/`)
 
-Discord and Google Messages each live in one module, and the other platforms are moving to the same layout. A platform owns one or more source ids.
+Every platform declares its sources and event types in a `meta.ts`. Discord and Google Messages already live entirely in their module, and the others are moving to the same layout. A platform owns one or more source ids. Sources that belong to the app itself are in `src/shared/system-sources.ts`.
 
 - `src/platforms/<p>/meta.ts` and `shared/` are web-safe, and the web app imports them through `@platforms/*`. Everything else in the module is server-only.
 - `src/platforms/<p>/index.ts` exports the platform's `PlatformModule` (`src/platforms/registry.ts`).
 - `web/src/platforms/<p>/` holds its icon and web components. Solid can't resolve from `src/`, so web code can't live there.
 
-To add a platform, list it in `PLATFORM_METAS` (`src/platforms/metas.ts`), `PLATFORMS` (`src/platforms/index.ts`) and `PLATFORM_DISPLAYS` (`web/src/platforms/index.ts`). The source, icon, renderer, sync and seed registries derive from these. `src/platforms/boundaries.test.ts` enforces the import rules.
+To add a platform, list it in `PLATFORM_METAS` (`src/platforms/metas.ts`), `PLATFORMS` (`src/platforms/index.ts`) and `PLATFORM_DISPLAYS` (`web/src/platforms/index.ts`). The source, icon, identity platform, renderer, sync and seed registries derive from these. `src/platforms/boundaries.test.ts` enforces the import rules.
+
+`bun run seed` fails if an importer writes an event type its source doesn't declare. `bun run check-event-types [db-path]` checks a real database the same way. Declare types no importer writes any more as `legacyEventTypes`.
 
 ### Parsers (`src/parsers/`)
 Each parser reads export files and inserts into the unified schema:

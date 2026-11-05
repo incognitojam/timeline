@@ -1,4 +1,6 @@
 import { Database } from "bun:sqlite";
+import { PLATFORM_METAS } from "../platforms/metas";
+import type { PlatformMeta } from "../platforms/types";
 import type { AttachmentStatus } from "../shared/attachments";
 import { applyConnectionPragmas } from "./connection";
 import { CODING_AGENT_SOURCES_SQL, codingAgentProjectSql } from "./coding-agent-conversations";
@@ -9,33 +11,13 @@ import { assertNoLocalDbMarker, getDbPathInfo, getTimelineDbPath } from "./paths
  * Valid platforms for qualified identifiers (platform:id format).
  * Used by parsers and migration scripts to create/validate identities.
  */
-export const VALID_PLATFORMS = [
-  "amp",
-  "chatgpt",
-  "claude",
-  "claude-code",
-  "codex",
-  "conductor",
-  "discord",
-  "facebook",
-  "github",
-  "google-calendar",
-  "google-chat",
-  "instagram",
-  "linkedin",
-  "live", // From Skype parsing (live:username)
-  "monzo",
-  "opencode",
-  "phone",
-  "reddit",
-  "skype",
-  "steam",
-  "spotify",
-  "t3code",
-  "youtube",
-] as const;
+export const VALID_PLATFORMS = (PLATFORM_METAS as readonly PlatformMeta[]).flatMap(
+  (meta) => meta.identityPlatforms ?? [],
+) as readonly Platform[];
 
-export type Platform = (typeof VALID_PLATFORMS)[number];
+type IdentityPlatformsOf<Meta> = Meta extends { identityPlatforms: readonly (infer Id)[] } ? Id : never;
+
+export type Platform = IdentityPlatformsOf<(typeof PLATFORM_METAS)[number]>;
 
 /**
  * SQL expression that computes a normalized name from an identities row.

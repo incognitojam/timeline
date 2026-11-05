@@ -4,9 +4,11 @@ import { join, resolve } from "node:path";
 import { SEED_SOURCES } from "../seed/sources";
 import { SOURCE_REGISTRY } from "../shared/sources";
 import { SYNC_SOURCES } from "../sync/sources";
+import { VALID_PLATFORMS } from "../db/schema";
 import { PLATFORMS } from ".";
 import { PLATFORM_METAS } from "./metas";
 import { collectRenderers, collectSeedSources, collectSyncSources, type PlatformModule } from "./registry";
+import type { PlatformMeta } from "./types";
 
 const REPO_ROOT = resolve(import.meta.dir, "../..");
 
@@ -92,6 +94,32 @@ const EXPECTED_SEED_ORDER = [
   "thriva",
 ];
 
+const EXPECTED_IDENTITY_PLATFORMS = [
+  "amp",
+  "chatgpt",
+  "claude",
+  "claude-code",
+  "codex",
+  "conductor",
+  "discord",
+  "facebook",
+  "github",
+  "google-calendar",
+  "google-chat",
+  "instagram",
+  "linkedin",
+  "live",
+  "monzo",
+  "opencode",
+  "phone",
+  "reddit",
+  "skype",
+  "spotify",
+  "steam",
+  "t3code",
+  "youtube",
+];
+
 const EXPECTED_SOURCES = [
   ["amex", "American Express", "#006FCF"],
   ["amp", "Amp", "#f87171"],
@@ -118,6 +146,7 @@ const EXPECTED_SOURCES = [
   ["google-health", "Google Health", "#00B0B9"],
   ["google-keep", "Google Keep", "#E37400"],
   ["google-location", "Google Location", "#EA4335"],
+  ["google-location-sharing", "Google Location Sharing", "#EA4335"],
   ["google-messages", "Google Messages", "#1A73E8"],
   ["google-places", "Google Places", "#34A853"],
   ["google-playstore", "Google Play Store", "#01875f"],
@@ -144,6 +173,7 @@ const EXPECTED_SOURCES = [
   ["spotify-friends", "Spotify Friends", "#1DB954"],
   ["spotify-playlists", "Spotify Playlists", "#1DB954"],
   ["steam", "Steam", "#66c0f4"],
+  ["steam-friends", "Steam Friends", "#66c0f4"],
   ["swarm", "Swarm", "#FFA633"],
   ["t3code", "T3 Code", "#8e51ff"],
   ["thriva", "Thriva", "#9856c8"],
@@ -162,6 +192,10 @@ describe("derived registries", () => {
     expect(SEED_SOURCES.map((source) => source.name)).toEqual(EXPECTED_SEED_ORDER);
   });
 
+  test("keep the identity platforms", () => {
+    expect<string[]>([...VALID_PLATFORMS].sort()).toEqual(EXPECTED_IDENTITY_PLATFORMS);
+  });
+
   test("keep every source's id, label and colour", () => {
     const actual = SOURCE_REGISTRY.map((source) => [source.id, source.label, source.color]);
     expect(actual.sort(([a], [b]) => String(a).localeCompare(String(b)))).toEqual(EXPECTED_SOURCES);
@@ -169,8 +203,11 @@ describe("derived registries", () => {
 });
 
 describe("platform lists", () => {
-  test("the server and web-safe lists name the same platforms in the same order", () => {
-    expect(PLATFORMS.map((platform) => platform.meta)).toEqual([...PLATFORM_METAS]);
+  test("server modules follow PLATFORM_METAS, which may list platforms whose code hasn't moved yet", () => {
+    const moved = new Set(PLATFORMS.map((platform) => platform.meta));
+    const metas: readonly PlatformMeta[] = PLATFORM_METAS;
+    expect(metas.filter((meta) => moved.has(meta))).toEqual(PLATFORMS.map((platform) => platform.meta));
+    expect(moved.size).toBe(PLATFORMS.length);
   });
 
   test("every platform directory has a web directory, and the reverse", () => {
@@ -178,7 +215,7 @@ describe("platform lists", () => {
   });
 
   test("the lists cover every platform directory", () => {
-    expect(PLATFORM_METAS.map((meta) => meta.id).sort()).toEqual(platformDirs("src/platforms"));
+    expect<string[]>(PLATFORM_METAS.map((meta) => meta.id).sort()).toEqual(platformDirs("src/platforms"));
   });
 
   test("platforms contribute only for sources they own", async () => {

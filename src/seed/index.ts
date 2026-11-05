@@ -83,6 +83,7 @@ const { initDb } = await import("../db/schema");
 const { initAppStateDb } = await import("../db/app-state");
 const { Database } = await import("bun:sqlite");
 const { SEED_SOURCES } = await import("./sources");
+const { undeclaredEventPairs, undeclaredSeedPairs } = await import("../platforms/event-types");
 const { seedContacts } = await import("./contacts");
 const { seedAppState } = await import("./app-state");
 const { processAttachmentThumbhashes } = await import("../media/thumbhash");
@@ -99,6 +100,10 @@ if (only) {
   if (unknown.length > 0) throw new Error(`Unknown generator(s): ${unknown.join(", ")} (see --list)`);
 }
 const selected = only ? SEED_SOURCES.filter((source) => only.has(source.name)) : SEED_SOURCES;
+const undeclaredPromises = undeclaredSeedPairs(selected);
+if (undeclaredPromises.length > 0) {
+  throw new Error(`Generators promise event types their platforms don't declare: ${undeclaredPromises.join(", ")}`);
+}
 
 mkdirSync(outDir, { recursive: true });
 assertNotHostDataDir(outDir, getHostDbPath());
@@ -139,6 +144,11 @@ try {
     const ctx = new SeedContext(db, buildDbPath, buildMediaRoot, stagingRoot, anchorDate, YEARS);
     console.log(`Seeding ${ctx.startDate} → ${anchorDate} for ${selected.length} generators`);
     const imports = await runGenerators(ctx, db);
+    const undeclared = undeclaredEventPairs(db);
+    if (undeclared.length > 0) {
+      const pairs = undeclared.map(({ source, type }) => `${source}/${type}`).join(", ");
+      throw new Error(`Importers wrote event types their platforms don't declare: ${pairs}`);
+    }
     // What the service's upkeep syncs would do next: image placeholders.
     await quietly(() => processAttachmentThumbhashes(db, { concurrency: 8 }));
     seedContacts(ctx);
