@@ -12,6 +12,7 @@ import {
 import type { SeedContext, SeedDay, SeedSource } from "../context";
 import type { Person, PersonKey } from "../persona";
 import { GROUP_CHATS, peopleOn, personByKey, SELF } from "../persona";
+import type { Rng } from "../rng";
 import { type ChatLine, chatSession, chatStart, GOOGLE_MESSAGES_DAYS, type Topic } from "./messaging-b-data";
 
 const NAME = "google-messages";
@@ -33,6 +34,16 @@ const SERVICES = [
   { number: "+12025550196", lines: ["Your package was delivered to the front desk.", "Your package is out for delivery today."] },
 ] as const;
 
+const REACTIONS = [
+  { emoji: "❤️", type: "RED_HEART" },
+  { emoji: "😂", type: "LAUGH" },
+  { emoji: "👍", type: "LIKE" },
+  { emoji: "😮", type: "SURPRISED" },
+  { emoji: "😢", type: "CRYING_FACE" },
+] as const;
+/** An id standing in for a custom reaction's emoji, as the phone sends it. */
+const CUSTOM_REACTION_ID = "5f0c9a52-7d3e-4b18-9c46-2e8a1b7d6f30";
+
 const PHOTO_CAPTIONS = ["", "", "look!", "today's view", "this is the one", "found it", "🌲🌲🌲", "you had to be there"] as const;
 
 interface Thread {
@@ -44,6 +55,27 @@ interface Thread {
 
 function participant(id: string, person: Person, isMe: boolean): GmParticipant {
   return { participant_id: id, number: person.phone, name: isMe ? undefined : person.name, is_me: isMe, visible: true };
+}
+
+/**
+ * Who reacted to one message: mostly a single person, sometimes a pile-on in
+ * the group, now and then a custom reaction, and the oldest stretch in the bare
+ * strings older sidecars emitted.
+ */
+function reactionsFor(rng: Rng, t: Thread, message: GmMessage, legacyUntil: number): NonNullable<GmMessage["reactions"]> {
+  const reactors = [...t.ids.values()].filter((id) => id !== (message.sender_participant_id ?? "1"));
+  const picked = rng.pick(REACTIONS);
+  if (message.timestamp_ms < legacyUntil) return [picked.emoji];
+  if (rng.chance(0.03)) {
+    return [{ emoji: CUSTOM_REACTION_ID, type: "EMOTIFY", participant_ids: [rng.pick(reactors)] }];
+  }
+  const first = rng.pick(reactors);
+  const reaction = { ...picked, participant_ids: [first] };
+  if (reactors.length < 2 || !rng.chance(0.35)) return [reaction];
+  const second = rng.pick(reactors.filter((id) => id !== first));
+  if (rng.chance(0.5)) return [{ ...reaction, participant_ids: [first, second] }];
+  const other = rng.pick(REACTIONS.filter((candidate) => candidate !== picked));
+  return [reaction, { ...other, participant_ids: [second] }];
 }
 
 /** Sunday brunch lives up to its name. */
@@ -219,6 +251,18 @@ export const googleMessagesSeed: SeedSource = {
           sender_number: service.number,
           text: rng.pick(service.lines).replace("{code}", rng.digits(6)),
         });
+      }
+    }
+
+    // A separate stream, so the messages themselves stay as they were.
+    const reactionRng = ctx.rng(`${NAME}-reactions`);
+    const firstDay = days[0];
+    if (!firstDay) throw new Error("google-messages needs at least one day");
+    const legacyUntil = ctx.localDate(firstDay.date, 0).getTime() + (GOOGLE_MESSAGES_DAYS / 3) * 24 * 60 * 60 * 1000;
+    for (const t of [...direct.values(), group]) {
+      for (const message of t.messages) {
+        if (message.direction === "system" || !reactionRng.chance(t === group ? 0.18 : 0.08)) continue;
+        message.reactions = reactionsFor(reactionRng, t, message, legacyUntil);
       }
     }
 

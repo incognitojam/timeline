@@ -638,21 +638,32 @@ type participantRecord struct {
 }
 
 type messageRecordT struct {
-	Kind           string        `json:"kind"` // "message"
-	ID             string        `json:"id"`
-	ConversationID string        `json:"conversation_id"`
-	TimestampMS    int64         `json:"timestamp_ms"`
-	Direction      string        `json:"direction"` // incoming | outgoing | system | unknown
-	Status         string        `json:"status,omitempty"`
-	MessageType    string        `json:"message_type"`
-	SenderID       string        `json:"sender_participant_id,omitempty"`
-	SenderNumber   string        `json:"sender_number,omitempty"`
-	SenderName     string        `json:"sender_name,omitempty"`
-	Text           string        `json:"text,omitempty"`
-	Subject        string        `json:"subject,omitempty"`
-	ReplyTo        string        `json:"reply_to,omitempty"`
-	Reactions      []string      `json:"reactions,omitempty"`
-	Media          []mediaRecord `json:"media,omitempty"`
+	Kind           string           `json:"kind"` // "message"
+	ID             string           `json:"id"`
+	ConversationID string           `json:"conversation_id"`
+	TimestampMS    int64            `json:"timestamp_ms"`
+	Direction      string           `json:"direction"` // incoming | outgoing | system | unknown
+	Status         string           `json:"status,omitempty"`
+	MessageType    string           `json:"message_type"`
+	SenderID       string           `json:"sender_participant_id,omitempty"`
+	SenderNumber   string           `json:"sender_number,omitempty"`
+	SenderName     string           `json:"sender_name,omitempty"`
+	Text           string           `json:"text,omitempty"`
+	Subject        string           `json:"subject,omitempty"`
+	ReplyTo        string           `json:"reply_to,omitempty"`
+	Reactions      []reactionRecord `json:"reactions,omitempty"`
+	Media          []mediaRecord    `json:"media,omitempty"`
+}
+
+// reactionRecord is one reaction entry on a message. The phone may list several
+// people on one entry or give each their own.
+type reactionRecord struct {
+	// The phone's emoji, else the standard one for Type. An EMOTIFY reaction has
+	// a UUID here instead: its image is only addressed by content:// and file://
+	// URIs local to the phone, so there is nothing else worth emitting for it.
+	Emoji          string   `json:"emoji"`
+	Type           string   `json:"type"`
+	ParticipantIDs []string `json:"participant_ids"`
 }
 
 type mediaRecord struct {
@@ -714,10 +725,6 @@ func messageRecord(m *gmproto.Message) messageRecordT {
 			text.WriteString(mc.MessageContent.GetContent())
 		}
 	}
-	var reactions []string
-	for _, r := range m.GetReactions() {
-		reactions = append(reactions, r.GetData().GetUnicode())
-	}
 	sender := m.GetSenderParticipant()
 	return messageRecordT{
 		Kind:           "message",
@@ -733,8 +740,29 @@ func messageRecord(m *gmproto.Message) messageRecordT {
 		Text:           text.String(),
 		Subject:        m.GetSubject(),
 		ReplyTo:        m.GetReplyMessage().GetMessageID(),
-		Reactions:      reactions,
+		Reactions:      reactionRecords(m.GetReactions()),
 	}
+}
+
+func reactionRecords(entries []*gmproto.ReactionEntry) []reactionRecord {
+	var records []reactionRecord
+	for _, entry := range entries {
+		data := entry.GetData()
+		emoji := data.GetUnicode()
+		if emoji == "" {
+			emoji = data.GetType().Unicode()
+		}
+		participantIDs := entry.GetParticipantIDs()
+		if participantIDs == nil {
+			participantIDs = []string{}
+		}
+		records = append(records, reactionRecord{
+			Emoji:          emoji,
+			Type:           data.GetType().String(),
+			ParticipantIDs: participantIDs,
+		})
+	}
+	return records
 }
 
 func contactRecord(c *gmproto.Contact) contactRecordT {

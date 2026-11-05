@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { getDb, initDb } from "../../db/schema";
 import { EVENT_SOURCE } from "./parser";
 import { deleteSyncState, getAppStateDb, getSyncState, setSyncState } from "../../db/app-state";
-import { FULL_LISTING_INTERVAL_MS, googleMessagesSyncSource, MEDIA_STAGING_PREFIX, SYNC_OVERLAP_MS, type GoogleMessagesSyncState } from "./sync";
+import { FULL_LISTING_INTERVAL_MS, googleMessagesSyncSource, MEDIA_STAGING_PREFIX, REACTION_REFRESH_MS, SYNC_OVERLAP_MS, type GoogleMessagesSyncState } from "./sync";
 
 // Ofcom drama-range numbers, one per fixture conversation.
 const CONTACT_NUMBERS: Record<string, string> = { "1": "+447700900001", "2": "+447700900002" };
@@ -220,6 +220,48 @@ describe("google-messages sync source", () => {
       await googleMessagesSyncSource.sync(options());
       expect(lastArgs()).not.toContain("-list-until");
       expect(state()?.fullListingAt).toBeGreaterThanOrEqual(before);
+    });
+  });
+
+  describe("reaction refresh", () => {
+    const CONVERSATION_CURSOR = Date.UTC(2026, 5, 1);
+    const seedCursor = (overrides: Partial<GoogleMessagesSyncState>) =>
+      setSyncState(getAppStateDb(), EVENT_SOURCE, { conversations: { "1": CONVERSATION_CURSOR }, ...overrides });
+
+    it("re-fetches the refresh window on a full listing", async () => {
+      await googleMessagesSyncSource.sync(options());
+      seedCursor({ listedThrough: Date.now(), fullListingAt: Date.now() - FULL_LISTING_INTERVAL_MS });
+      await googleMessagesSyncSource.sync(options());
+      expect(sentCursors()["1"]).toBe(CONVERSATION_CURSOR - REACTION_REFRESH_MS);
+    });
+
+    it("re-fetches only the overlap between full listings", async () => {
+      seedCursor({ listedThrough: Date.now(), fullListingAt: Date.now() });
+      await googleMessagesSyncSource.sync(options());
+      expect(sentCursors()["1"]).toBe(CONVERSATION_CURSOR - SYNC_OVERLAP_MS);
+    });
+
+    it("reports a late reaction as an updated event and still advances the cursor", async () => {
+      await googleMessagesSyncSource.sync(options());
+      const lines = fixture("done")
+        .trim()
+        .split("\n")
+        .map((line) => {
+          const record = JSON.parse(line) as { kind: string; id: string };
+          return JSON.stringify(record.kind === "message" && record.id === "100" ? { ...record, reactions: [{ emoji: "❤️", participant_ids: ["1"] }] } : record);
+        });
+      writeFileSync(join(dir, "fixture.jsonl"), `${lines.join("\n")}\n`);
+      const before = Date.now();
+      const result = await googleMessagesSyncSource.sync(options());
+      expect(result).toMatchObject({ success: true, eventsAdded: 0, eventsUpdated: 1, metadata: { reactionsUpdated: 1 } });
+      expect(state()?.conversations["1"]).toBeGreaterThanOrEqual(before);
+
+      const db = getDb();
+      const row = db
+        .prepare("SELECT json_extract(raw_data, '$.reactions[0].emoji') AS emoji FROM events WHERE source = ? AND source_id = '100'")
+        .get(EVENT_SOURCE) as { emoji: string };
+      db.close();
+      expect(row.emoji).toBe("❤️");
     });
   });
 
