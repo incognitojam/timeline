@@ -33,9 +33,10 @@ export const spotifyFriendsSyncSource: SyncSource = {
 
       return {
         source: "spotify-friends",
-        success: true,
+        success: !stats.error,
         eventsAdded: stats.imported,
         eventsUpdated: 0,
+        ...(stats.error ? { error: stats.error } : {}),
         durationMs: Date.now() - startTime,
       };
     } catch (error) {

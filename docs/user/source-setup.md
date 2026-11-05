@@ -255,10 +255,10 @@ Query the series with SQL/MCP, e.g. `SELECT observed_date, follower_count FROM s
 
 ## Spotify Friends Setup
 
-Syncs friends' listening activity using Spotify's unofficial internal API (the same endpoint the desktop client uses for "Friend Activity" sidebar).
+Syncs friends' listening activity using Spotify's unofficial internal API (the listening-activity feed behind the web player's "Listening activity" panel), then looks up track, playlist and profile details through other internal routes.
 
 **Caveats:**
-- **Unofficial API** - May break without notice
+- **Unofficial API** - May break without notice. Spotify's token response states that use of this endpoint isn't permitted under its Developer Terms and Developer Policy; enabling this source is your decision, on your own account.
 - **Cookie expires** - Need to re-extract `sp_dc` yearly
 - **TOTP rotates** - The web player's TOTP secret and version are not committed;
   update the local config when Spotify changes them
@@ -287,7 +287,7 @@ Syncs friends' listening activity using Spotify's unofficial internal API (the s
 - `source_account`: Friend's Spotify username (from URI)
 - `people`: `spotify:<username>` (from URI)
 - `tags`: `album:<name>`, `artist:<name>`, plus `playlist:<name>`/`album:<name>`/`artist:<name>`/`context:<name>` from playback context
-- `raw_data`: Full API response (includes track/album/artist URIs for enrichment)
+- `raw_data`: The feed entry as returned (`listeningActivity`) with the looked-up `user` and `track` details. Listens stored before the feed change have the older buddylist shape, without `listeningActivity` or `track.durationMs`
 
 ## Google Places Setup
 

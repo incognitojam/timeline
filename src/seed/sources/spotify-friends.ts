@@ -4,10 +4,10 @@ import { type PersonKey, personByKey } from "../persona";
 import { albumArt, type CatalogueTrack, spotifyId, tracksBy } from "./life-data";
 
 /**
- * Friend activity comes from Spotify's unofficial buddylist endpoint, polled by
- * the scheduler. The parser exports no insert helper (its sync needs a live
- * sp_dc cookie), so this builds the same buddylist payloads and writes them with
- * the parser's exact INSERT and identity upsert.
+ * Friend activity comes from Spotify's unofficial listening-activity feed, polled
+ * by the scheduler. The parser exports no insert helper (its sync needs a live
+ * sp_dc cookie), so this builds the same stored payloads and writes them with the
+ * parser's exact INSERT and identity upsert.
  */
 
 interface FriendTaste {
@@ -57,7 +57,7 @@ const FRIENDS: readonly FriendTaste[] = [
   },
 ];
 
-/** The scheduler polls the buddylist every 15 minutes. */
+/** The scheduler polls the feed every 15 minutes. */
 const POLL_MS = 15 * 60_000;
 const HISTORY_DAYS = 150;
 
@@ -68,9 +68,14 @@ interface FriendActivity {
     uri: string;
     name: string;
     imageUrl: string;
+    durationMs: number;
     album: { uri: string; name: string };
     artist: { uri: string; name: string };
-    context?: { uri: string; name: string; index: number };
+    context?: { uri: string; name: string };
+  };
+  listeningActivity: {
+    uri: string;
+    activity: { entityUri: string; contextUri?: string; isPlaying: boolean; timestamp: string };
   };
 }
 
@@ -115,10 +120,10 @@ export const spotifyFriendsSeed: SeedSource = {
             const track = playlist || albumTracks.length < 2 ? rng.pick(pool) : (albumTracks[p % albumTracks.length] ?? albumSeed);
             if (track.released > day.date) continue;
             const context = playlist
-              ? { uri: `spotify:playlist:${spotifyId(`playlist:${friend.key}:${playlist}`)}`, name: playlist, index: rng.int(0, 60) }
+              ? { uri: `spotify:playlist:${spotifyId(`playlist:${friend.key}:${playlist}`)}`, name: playlist }
               : rng.chance(0.7)
-                ? { uri: track.albumUri, name: track.album, index: p }
-                : { uri: track.artistUri, name: track.artist, index: 0 };
+                ? { uri: track.albumUri, name: track.album }
+                : { uri: track.artistUri, name: track.artist };
             activities.push({
               timestamp: at,
               user,
@@ -126,9 +131,19 @@ export const spotifyFriendsSeed: SeedSource = {
                 uri: track.uri,
                 name: track.track,
                 imageUrl: albumArt(`${track.artist}/${track.album}`),
+                durationMs: track.durationMs,
                 album: { uri: track.albumUri, name: track.album },
                 artist: { uri: track.artistUri, name: track.artist },
                 context,
+              },
+              listeningActivity: {
+                uri: user.uri,
+                activity: {
+                  entityUri: track.uri,
+                  contextUri: context.uri,
+                  isPlaying: false,
+                  timestamp: new Date(at).toISOString(),
+                },
               },
             });
             at += POLL_MS + rng.int(-90_000, 90_000);
