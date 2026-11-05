@@ -171,6 +171,7 @@ export const googleMessagesSyncSource: SyncSource = {
   name: EVENT_SOURCE,
   description: "Sync SMS, MMS and RCS messages and their attachments from Google Messages via the paired timeline-gmessages sidecar",
   enabled: true,
+  defaultInterval: "30m",
   configSchema: [
     {
       key: "account",

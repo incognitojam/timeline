@@ -29,6 +29,7 @@ import {
   WriteThroughMediaStore,
 } from "../media/storage";
 import { enqueueJob } from "../jobs/store";
+import { parseInterval } from "../config";
 import { SYNC_SOURCES } from "../sync/sources";
 import { app, fetchApiRequest } from "./index";
 import { setSyncConfigChangedNotifier } from "./service-control";
@@ -2302,6 +2303,43 @@ describe("API Smoke Tests", () => {
         });
       } finally {
         appDb.prepare("DELETE FROM sync_sources WHERE source = 'trakt'").run();
+      }
+    });
+
+    test("GET /api/sync/sources reports a source's own default interval", async () => {
+      const appDb = getAppStateDb();
+      const registered = SYNC_SOURCES.find((source) => source.name === "google-messages");
+      if (!registered?.defaultInterval) throw new Error("google-messages has no default interval");
+      const sourceDefault = registered.defaultInterval;
+      const routes = createSyncSourceRoutes("7h");
+      const fetchSource = async () => {
+        const res = await routes.request("/api/sync/sources");
+        expect(res.status).toBe(200);
+        const json = await res.json();
+        return json.sources.find((source: { name: string }) => source.name === "google-messages");
+      };
+      appDb.prepare("DELETE FROM sync_sources WHERE source = 'google-messages'").run();
+
+      try {
+        expect(await fetchSource()).toMatchObject({
+          interval: null,
+          effectiveInterval: sourceDefault,
+          effectiveIntervalMs: parseInterval(sourceDefault),
+          defaultInterval: sourceDefault,
+        });
+
+        appDb.prepare(
+          `INSERT INTO sync_sources (source, enabled, interval, settings)
+           VALUES ('google-messages', 1, '4h', '{}')`
+        ).run();
+        expect(await fetchSource()).toMatchObject({
+          interval: "4h",
+          effectiveInterval: "4h",
+          effectiveIntervalMs: 4 * 60 * 60 * 1000,
+          defaultInterval: sourceDefault,
+        });
+      } finally {
+        appDb.prepare("DELETE FROM sync_sources WHERE source = 'google-messages'").run();
       }
     });
 

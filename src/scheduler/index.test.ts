@@ -616,4 +616,63 @@ describe("scheduler", () => {
       scheduler.stop();
     }
   });
+
+  describe("source default interval", () => {
+    const createSyncSource = (source: string, defaultInterval?: string): SyncSource => ({
+      name: source,
+      description: "Test sync source",
+      enabled: true,
+      defaultInterval,
+      async canSync() {
+        return null;
+      },
+      async sync() {
+        return { source, success: true, eventsAdded: 0, eventsUpdated: 0, durationMs: 1 };
+      },
+    });
+
+    const insertUnsetInterval = (source: string) =>
+      getAppStateDb()
+        .prepare("INSERT INTO sync_sources (source, enabled, interval, settings) VALUES (?, 1, NULL, '{}')")
+        .run(source);
+
+    test("applies when no interval is stored, and a stored interval wins", async () => {
+      const usesSourceDefault = `scheduler-test-${crypto.randomUUID()}`;
+      const storedInterval = `scheduler-test-${crypto.randomUUID()}`;
+      const usesGlobalDefault = `scheduler-test-${crypto.randomUUID()}`;
+      insertUnsetInterval(usesSourceDefault);
+      insertSyncSource(storedInterval, true, "2h");
+      insertUnsetInterval(usesGlobalDefault);
+
+      const scheduler = new Scheduler(testConfig(usesSourceDefault), {
+        syncSources: [
+          createSyncSource(usesSourceDefault, "20m"),
+          createSyncSource(storedInterval, "20m"),
+          createSyncSource(usesGlobalDefault),
+        ],
+      });
+      await scheduler.start();
+
+      try {
+        const statusBySource = new Map(scheduler.getStatus().map((task) => [task.source, task]));
+        expect(statusBySource.get(usesSourceDefault)?.intervalMs).toBe(20 * 60 * 1000);
+        expect(statusBySource.get(storedInterval)?.intervalMs).toBe(2 * 60 * 60 * 1000);
+        expect(statusBySource.get(usesGlobalDefault)?.intervalMs).toBe(60 * 60 * 1000);
+      } finally {
+        scheduler.stop();
+      }
+    });
+
+    test("refuses to start on an invalid source default", async () => {
+      const source = `scheduler-test-${crypto.randomUUID()}`;
+      insertSyncSource(source, true, "2h");
+
+      const scheduler = new Scheduler(testConfig(source), {
+        syncSources: [createSyncSource(source, "soon")],
+      });
+
+      await expect(scheduler.start()).rejects.toThrow("Invalid interval format: soon");
+      scheduler.stop();
+    });
+  });
 });

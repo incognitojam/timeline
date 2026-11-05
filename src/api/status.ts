@@ -125,11 +125,11 @@ export async function getSchedulerSourceStatuses(): Promise<SchedulerSourceStatu
   return configuredSourceNames.map((source) => {
     const sourceConfig = configuredSources[source];
     const state = statesBySource.get(source);
+    const syncSource = SYNC_SOURCES.find((candidate) => candidate.name === source);
     const intervalMs = state?.interval_ms ??
       (sourceConfig.interval
         ? parseInterval(sourceConfig.interval)
-        : parseInterval(config.scheduler.default_interval));
-    const syncSource = SYNC_SOURCES.find((candidate) => candidate.name === source);
+        : parseInterval(syncSource?.defaultInterval ?? config.scheduler.default_interval));
     const enabled = sourceConfig.enabled !== false;
 
     return {
