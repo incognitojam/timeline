@@ -7,6 +7,7 @@ export const ampMeta = {
     {
       id: "amp",
       label: "Amp",
+      traits: { conversation: "coding-agent", noisy: true, aiUsage: true, corpus: true },
       eventTypes: ["amp:message:user", "amp:message:assistant"],
     },
   ],

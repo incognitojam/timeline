@@ -7,6 +7,7 @@ export const t3codeMeta = {
     {
       id: "t3code",
       label: "T3 Code",
+      traits: { conversation: "coding-agent", noisy: true, corpus: true },
       eventTypes: ["t3code:message:user", "t3code:message:assistant"],
     },
   ],

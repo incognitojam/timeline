@@ -7,6 +7,7 @@ export const skypeMeta = {
     {
       id: "skype",
       label: "Skype",
+      traits: { conversation: "social", corpus: true },
       eventTypes: [
         "message:dm",
         "message:dm:attachment",

@@ -7,6 +7,7 @@ export const phoneMeta = {
     {
       id: "phone",
       label: "Phone",
+      traits: { conversation: "social", phoneIdentity: true, corpus: true },
       eventTypes: [
         "call:incoming",
         "call:outgoing",

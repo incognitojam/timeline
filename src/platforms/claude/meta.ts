@@ -7,6 +7,7 @@ export const claudeMeta = {
     {
       id: "claude",
       label: "Claude",
+      traits: { conversation: "chat-assistant", corpus: true },
       eventTypes: ["claude:message:user", "claude:message:assistant", "claude:memory"],
     },
   ],

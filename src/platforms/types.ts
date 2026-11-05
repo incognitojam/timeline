@@ -1,3 +1,23 @@
+/** How the rest of the app treats a source's events. */
+export interface SourceTraits {
+  /** Events group into conversation threads. `chat-assistant` and `coding-agent` stay out of Messages. */
+  conversation?: "social" | "chat-assistant" | "coding-agent";
+  /** Participants are personal contacts without being a conversation source. Social sources always are. */
+  personal?: true;
+  /** Events group into time-proximity sessions, or only `reaction:*` events do. */
+  session?: { gapMinutes: number; reactionsOnly?: true };
+  /** High-volume machine-generated events, left out of derived text and search by default. */
+  noisy?: true;
+  /** Hidden in the UI until the user chooses to show it. */
+  defaultHidden?: true;
+  /** Events record token usage. */
+  aiUsage?: true;
+  /** Participants are phone numbers, stored as identities on the `phone` platform. */
+  phoneIdentity?: true;
+  /** Events are embedded for semantic search, except any excluded types. */
+  corpus?: true | { excludedTypes: readonly string[] };
+}
+
 /** One id this platform owns in `events.source` or `sync_log.source`. Persisted; never rename. */
 export interface PlatformSource {
   id: string;
@@ -11,6 +31,7 @@ export interface PlatformSource {
   eventTypes?: readonly string[];
   /** Types left in older databases that no importer writes any more. */
   legacyEventTypes?: readonly string[];
+  traits?: SourceTraits;
 }
 
 /** Everything the web app may know about a platform. Plain data, so it stays web-safe. */

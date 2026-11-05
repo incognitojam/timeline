@@ -7,7 +7,7 @@ const BACKUP_COLOR = "#64748b";
 
 /** Built-in event sources, ingestion channels, and maintenance jobs. */
 export const SYSTEM_SOURCES: readonly SystemSource[] = [
-  { id: "journal", label: "Journal", color: "#8b5cf6", eventTypes: ["journal:qa", "journal:reflection"] },
+  { id: "journal", label: "Journal", color: "#8b5cf6", eventTypes: ["journal:qa", "journal:reflection"], traits: { corpus: true } },
   {
     id: "manual",
     label: "Manual",
@@ -23,6 +23,7 @@ export const SYSTEM_SOURCES: readonly SystemSource[] = [
       "transport:ferry",
       "transport:tram",
     ],
+    traits: { corpus: true },
   },
   { id: "auto-detect", label: "Auto-detect", color: "#9ca3af" },
   { id: "inbox-rclone", label: "Inbox Sync", color: "#3b82f6" },

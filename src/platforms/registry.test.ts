@@ -4,7 +4,23 @@ import { join, resolve } from "node:path";
 import { SEED_SOURCES } from "../seed/sources";
 import { SOURCE_REGISTRY } from "../shared/sources";
 import { SYNC_SOURCES } from "../sync/sources";
+import { CHAT_ASSISTANT_SOURCES_SQL, CODING_AGENT_SOURCES_SQL } from "../db/coding-agent-conversations";
 import { VALID_PLATFORMS } from "../db/schema";
+import { EVENT_CORPUS_POLICY } from "../embeddings/corpus";
+import { AI_USAGE_SOURCES } from "../lib/ai-usage";
+import { PHONE_IDENTITY_SOURCES } from "../lib/phone";
+import {
+  AI_SOURCES,
+  CHAT_ASSISTANT_SOURCES,
+  CODING_AGENT_SOURCES,
+  MESSAGE_SOURCES,
+  PERSONAL_SOURCES,
+  SESSION_GAP_MINUTES,
+  SESSION_SOURCES,
+  SOCIAL_SOURCES,
+} from "../shared/grouping";
+import { NOISY_MACHINE_SOURCES } from "../shared/noisy-sources";
+import { DEFAULT_HIDDEN_SOURCES } from "../shared/sources";
 import { PLATFORMS } from ".";
 import { PLATFORM_METAS } from "./metas";
 import { collectRenderers, collectSeedSources, collectSyncSources, type PlatformModule } from "./registry";
@@ -199,6 +215,70 @@ describe("derived registries", () => {
   test("keep every source's id, label and colour", () => {
     const actual = SOURCE_REGISTRY.map((source) => [source.id, source.label, source.color]);
     expect(actual.sort(([a], [b]) => String(a).localeCompare(String(b)))).toEqual(EXPECTED_SOURCES);
+  });
+});
+
+describe("source groups derived from traits", () => {
+  const sorted = (values: Iterable<string>) => [...values].sort();
+  const SOCIAL = ["discord", "facebook", "google-chat", "google-messages", "instagram", "linkedin", "phone", "skype"];
+  const AI = ["amp", "chatgpt", "claude", "claude-code", "codex", "conductor", "opencode", "t3code"];
+
+  test("keep the coding agent order that trigger SQL depends on", () => {
+    expect<string[]>([...CODING_AGENT_SOURCES]).toEqual(["claude-code", "amp", "opencode", "conductor", "t3code", "codex"]);
+    expect(CODING_AGENT_SOURCES_SQL).toBe("'claude-code', 'amp', 'opencode', 'conductor', 't3code', 'codex'");
+  });
+
+  test("keep the chat assistant order", () => {
+    expect<string[]>([...CHAT_ASSISTANT_SOURCES]).toEqual(["claude", "chatgpt"]);
+    expect(CHAT_ASSISTANT_SOURCES_SQL).toBe("'claude', 'chatgpt'");
+  });
+
+  test("keep their conversation and contact members", () => {
+    expect(sorted(AI_SOURCES)).toEqual(AI);
+    expect(sorted(SOCIAL_SOURCES)).toEqual(SOCIAL);
+    expect(sorted(MESSAGE_SOURCES)).toEqual([...AI, ...SOCIAL].sort());
+    expect(sorted(PERSONAL_SOURCES)).toEqual([...SOCIAL, "google-calendar"].sort());
+  });
+
+  test("keep session sources and their gaps", () => {
+    expect(sorted(SESSION_SOURCES)).toEqual(
+      sorted(["spotify", "youtube", "trakt", "chrome", "google-search", "spotify-friends", "google-playstore", "steam", "minecraft", "recall", "swarm"]),
+    );
+    expect(SESSION_GAP_MINUTES).toEqual({
+      spotify: 10,
+      youtube: 15,
+      trakt: 30,
+      chrome: 30,
+      "google-search": 15,
+      "spotify-friends": 15,
+      "google-playstore": 30,
+      steam: 30,
+      minecraft: 10,
+      recall: 5,
+      facebook: 15,
+      swarm: 15,
+    });
+  });
+
+  test("keep noisy, hidden, usage and phone identity sources", () => {
+    expect(sorted(NOISY_MACHINE_SOURCES)).toEqual(sorted(["claude-code", "conductor", "amp", "t3code", "codex", "opencode", "recall"]));
+    expect(DEFAULT_HIDDEN_SOURCES).toEqual(["recall"]);
+    expect(sorted(AI_USAGE_SOURCES)).toEqual(sorted(["claude-code", "conductor", "amp", "opencode", "codex"]));
+    expect(sorted(PHONE_IDENTITY_SOURCES)).toEqual(["google-messages", "phone"]);
+  });
+
+  test("keep the embedding corpus", () => {
+    expect(sorted(EVENT_CORPUS_POLICY.sources)).toEqual(
+      sorted([
+        "facebook", "discord", "skype", "reddit", "phone", "google-messages", "claude", "chatgpt", "claude-code",
+        "conductor", "codex", "amp", "t3code", "opencode", "google-keep", "google-calendar", "google-chat",
+        "instagram", "linkedin", "github", "journal", "manual",
+      ]),
+    );
+    expect(EVENT_CORPUS_POLICY.excluded).toEqual([
+      { source: "reddit", type: "vote:up" },
+      { source: "reddit", type: "vote:down" },
+    ]);
   });
 });
 

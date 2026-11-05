@@ -7,6 +7,7 @@ export const steamMeta = {
     {
       id: "steam",
       label: "Steam",
+      traits: { session: { gapMinutes: 30 } },
       eventTypes: ["steam:achievement", "steam:game:added", "steam:session"],
     },
     {

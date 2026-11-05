@@ -7,6 +7,7 @@ export const discordMeta = {
     {
       id: "discord",
       label: "Discord",
+      traits: { conversation: "social", corpus: true },
       eventTypes: [
         "message:dm",
         "message:dm:attachment",

@@ -1,3 +1,4 @@
+import { DEFAULT_HIDDEN_SOURCES } from "@shared/sources";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import type { AttachmentListItem, AttachmentsStats } from "../lib/api";
 import { createKeyedRecords } from "../lib/createKeyedRecords";
@@ -27,13 +28,6 @@ const DESCRIBED_OPTIONS = [
   { value: "described", label: "Described" },
   { value: "undescribed", label: "Undescribed" },
 ] as const satisfies readonly { value: DescribedFilter; label: string }[];
-
-/**
- * Gallery-local default. Recall captures every 30s, so its screenshots swamp
- * the grid; every other source starts visible. Kept separate from the day
- * timeline's persisted preference so hiding a source here is not sticky there.
- */
-const DEFAULT_HIDDEN_SOURCES: readonly string[] = ["recall"];
 
 /** Abnormal statuses surfaced prominently in the stats header. */
 const ABNORMAL_STATUSES = [
@@ -126,6 +120,7 @@ export default function AttachmentsView() {
   const [mimeFilter, setMimeFilter] = createSignal<MimeFilter>("all");
   const [describedFilter, setDescribedFilter] = createSignal<DescribedFilter>("all");
   const [hiddenSources, setHiddenSources] = createSignal<ReadonlySet<string>>(
+    // Gallery-local: hiding a source here is not sticky in the day timeline's preference.
     new Set(DEFAULT_HIDDEN_SOURCES),
   );
   const [selectedAttachment, setSelectedAttachment] = createSignal<AttachmentListItem | null>(null);

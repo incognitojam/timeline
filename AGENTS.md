@@ -200,6 +200,8 @@ Every platform declares its sources and event types in a `meta.ts`. Discord and 
 
 To add a platform, list it in `PLATFORM_METAS` (`src/platforms/metas.ts`), `PLATFORMS` (`src/platforms/index.ts`) and `PLATFORM_DISPLAYS` (`web/src/platforms/index.ts`). The source, icon, identity platform, renderer, sync and seed registries derive from these. `src/platforms/boundaries.test.ts` enforces the import rules.
 
+Each source's `traits` decide which lists it belongs to, such as conversation groups, session gaps, noisy sources and the embedding corpus. `CODING_AGENT_SOURCES` is written into trigger SQL in `src/db/schema.ts`, so reordering `PLATFORM_METAS` or changing that trait rebuilds those triggers on every database at next startup.
+
 `bun run seed` fails if an importer writes an event type its source doesn't declare. `bun run check-event-types [db-path]` checks a real database the same way. Declare types no importer writes any more as `legacyEventTypes`.
 
 ### Parsers (`src/parsers/`)

@@ -7,6 +7,7 @@ export const instagramMeta = {
     {
       id: "instagram",
       label: "Instagram",
+      traits: { conversation: "social", corpus: true },
       eventTypes: [
         "message:dm",
         "message:dm:attachment",

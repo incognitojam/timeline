@@ -7,6 +7,7 @@ export const redditMeta = {
     {
       id: "reddit",
       label: "Reddit",
+      traits: { corpus: { excludedTypes: ["vote:up", "vote:down"] } },
       eventTypes: [
         "post",
         "comment",

@@ -7,6 +7,9 @@ export const facebookMeta = {
     {
       id: "facebook",
       label: "Facebook",
+      // Reactions come in scroll-and-like bursts, so only they group by time;
+      // messages group as conversations.
+      traits: { conversation: "social", session: { gapMinutes: 15, reactionsOnly: true }, corpus: true },
       eventTypes: [
         "message",
         "message:audio",
