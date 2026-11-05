@@ -12,7 +12,6 @@ import {
   IconCode,
   type IconComponent,
   IconDeleteSweep,
-  IconDiscord,
   IconEdit,
   IconFacebook,
   IconFavorite,
@@ -25,7 +24,6 @@ import {
   IconGoogleFit,
   IconGoogleKeep,
   IconGoogleMaps,
-  IconGoogleMessages,
   IconGooglePlay,
   IconHub,
   IconImage,
@@ -50,6 +48,8 @@ import {
   IconWakaTime,
   IconYouTube,
 } from "../ui/icons";
+import { PLATFORM_DISPLAYS } from "../platforms";
+import type { PlatformDisplay } from "../platforms/types";
 
 // Shared source styling for event sources
 // Brand colors are defined in the shared source registry and exposed here via
@@ -57,14 +57,25 @@ import {
 // CSS classes (.source-badge, .source-card, .source-icon) use color-mix()
 // to derive background/border from the --source-color custom property
 
-const SOURCE_ICONS: Record<string, IconComponent> = {
+export function buildSourceIcons(
+  displays: readonly PlatformDisplay[],
+  others: Readonly<Record<string, IconComponent>>,
+): Record<string, IconComponent> {
+  const icons = { ...others };
+  for (const display of displays) {
+    for (const source of display.meta.sources) icons[source.id] = display.icon;
+  }
+  return icons;
+}
+
+// Icons for sources not yet declared by a platform module.
+const OTHER_SOURCE_ICONS: Record<string, IconComponent> = {
   // Music & Entertainment
   spotify: IconSpotify,
   youtube: IconYouTube,
   trakt: IconTrakt,
 
   // Social & Messaging
-  discord: IconDiscord,
   reddit: IconReddit,
   linkedin: IconLinkedIn,
   facebook: IconFacebook,
@@ -115,7 +126,6 @@ const SOURCE_ICONS: Record<string, IconComponent> = {
   phone: IconPhone,
   "sms-backup-restore": IconPhone,
   "auto-detect": IconAutoAwesome,
-  "google-messages": IconGoogleMessages,
   manual: IconEdit,
   thumbhash: IconImage,
   recall: IconScreenshotMonitor,
@@ -127,6 +137,7 @@ const SOURCE_ICONS: Record<string, IconComponent> = {
   "media-evict": IconDeleteSweep,
 };
 
+const SOURCE_ICONS = buildSourceIcons(PLATFORM_DISPLAYS, OTHER_SOURCE_ICONS);
 const DEFAULT_ICON = IconCircle;
 const SOURCE_FAMILY_KEYS = ["backup", "spotify", "steam"] as const;
 

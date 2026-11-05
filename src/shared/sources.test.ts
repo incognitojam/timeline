@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { VALID_PLATFORMS } from "../db/schema";
 import {
+  buildSourceRegistry,
   DEFAULT_SOURCE_COLOR,
   getSourceDefinition,
   SOURCE_REGISTRY,
@@ -43,5 +44,28 @@ describe("source registry", () => {
       getSourceDefinition("backup")?.color,
     );
     expect(sourceColor("spotify-future-source")).toBe(sourceColor("spotify"));
+  });
+
+  test("defaults a platform's sources to the platform colour", () => {
+    const meta = {
+      id: "alpha",
+      color: "#111111",
+      sources: [
+        { id: "alpha", label: "Alpha" },
+        { id: "alpha-beta", label: "Beta", color: "#222222" },
+      ],
+    };
+    expect(buildSourceRegistry([meta], [{ id: "other", label: "Other", colorFrom: "alpha" }])).toEqual([
+      { id: "alpha", label: "Alpha", color: "#111111" },
+      { id: "alpha-beta", label: "Beta", color: "#222222" },
+      { id: "other", label: "Other", color: "#111111" },
+    ]);
+  });
+
+  test("rejects a source declared twice", () => {
+    const meta = { id: "alpha", color: "#111111", sources: [{ id: "alpha", label: "Alpha" }] };
+    expect(() => buildSourceRegistry([meta], [{ id: "alpha", label: "Alpha", color: "#222222" }])).toThrow(
+      "Duplicate source id: alpha",
+    );
   });
 });

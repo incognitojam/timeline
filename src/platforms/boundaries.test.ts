@@ -180,3 +180,107 @@ describe("web bundle boundary", () => {
     expect(violations).toEqual([]);
   });
 });
+
+/** Importing any of these from inside a platform would create an import cycle through the registries. */
+const REGISTRY_MODULES = new Set([
+  "src/platforms/index.ts",
+  "src/platforms/metas.ts",
+  "src/render/index.ts",
+  "src/seed/sources/index.ts",
+  "src/sync/sources/index.ts",
+]);
+
+/** Code the platforms build on. It may reach platforms only through their web-safe files. */
+const CORE_ROOTS = ["src/db", "src/export", "src/lib", "src/media", "src/shared"];
+const CORE_FILES = ["src/render/types.ts", "src/seed/context.ts", "src/sync/types.ts"];
+
+/**
+ * Server-tree platform files that core may import regardless: their only value
+ * imports are web-safe, so they cannot pull anything that loops back into core.
+ * The second test below holds them to that. `src/export` needs this one to quote
+ * replies and it needs the database types, which keeps it out of `shared/`.
+ */
+const CORE_IMPORTABLE_PLATFORM_FILES = new Set(["src/platforms/discord/reply-references.ts"]);
+
+/** The bundle's entry points in scripts/build-service-artifact.ts, plus the module the service runs. */
+const SERVICE_ENTRY_POINTS = [
+  "src/service.ts",
+  "src/service-main.ts",
+  "src/scheduler/worker.ts",
+  "src/db/pool-worker.ts",
+  "src/parsers/monzo.ts",
+];
+
+describe("platform layering", () => {
+  test("platforms never import a registry", async () => {
+    const violations: string[] = [];
+    for (const file of await sourceFiles(join(SERVER_SRC, "platforms"))) {
+      const from = relative(REPO_ROOT, file);
+      // The platform lists themselves sit one level above the platforms.
+      if (REGISTRY_MODULES.has(from)) continue;
+      for (const specifier of moduleSpecifiers(await Bun.file(file).text())) {
+        const target = specifier.startsWith(".") ? resolveModule(file, specifier) : null;
+        if (target !== null && REGISTRY_MODULES.has(relative(REPO_ROOT, target))) {
+          violations.push(`${from} imports ${relative(REPO_ROOT, target)}`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  test("core code reaches platforms only through web-safe files", async () => {
+    const files = CORE_FILES.map((file) => join(REPO_ROOT, file));
+    for (const root of CORE_ROOTS) files.push(...(await sourceFiles(join(REPO_ROOT, root))));
+    const violations: string[] = [];
+    for (const file of files) {
+      const from = relative(REPO_ROOT, file);
+      for (const specifier of moduleSpecifiers(await Bun.file(file).text())) {
+        const target = specifier.startsWith(".") ? resolveModule(file, specifier) : null;
+        if (target === null) continue;
+        const to = relative(REPO_ROOT, target);
+        if (to.startsWith("src/platforms/") && !isWebSafePlatformPath(to) && !CORE_IMPORTABLE_PLATFORM_FILES.has(to)) {
+          violations.push(`${from} imports ${to}`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  test("platform files core may import have only web-safe value imports", async () => {
+    const transpiler = new Bun.Transpiler({ loader: "ts" });
+    const violations: string[] = [];
+    for (const path of CORE_IMPORTABLE_PLATFORM_FILES) {
+      const file = join(REPO_ROOT, path);
+      for (const { path: specifier } of transpiler.scanImports(await Bun.file(file).text())) {
+        const target = resolveModule(file, specifier);
+        if (target === null || !isWebSafePlatformPath(relative(REPO_ROOT, target))) {
+          violations.push(`${path} imports ${specifier}`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  test("the service does not evaluate seed code", async () => {
+    const transpiler = new Bun.Transpiler({ loader: "ts" });
+    const isSeedModule = (path: string) => path.startsWith("src/seed/") || /^src\/platforms\/.+\/seed[^/]*\.ts$/.test(path);
+    const seen = new Set<string>();
+    const pending = SERVICE_ENTRY_POINTS.map((path) => join(REPO_ROOT, path));
+    const seedModules: string[] = [];
+    for (let file = pending.pop(); file !== undefined; file = pending.pop()) {
+      if (seen.has(file) || !/\.tsx?$/.test(file)) continue;
+      seen.add(file);
+      if (isSeedModule(relative(REPO_ROOT, file))) seedModules.push(relative(REPO_ROOT, file));
+      const code = (await Bun.file(file).text()).replace(/^#!.*/, "");
+      for (const { path, kind } of transpiler.scanImports(code)) {
+        const target = resolveModule(file, path);
+        if (target === null) continue;
+        // `loadSeeds` is the one sanctioned route, and it only runs for the seed runner.
+        const isLazySeed = kind === "dynamic-import" && isSeedModule(relative(REPO_ROOT, target));
+        if (!isLazySeed) pending.push(target);
+      }
+    }
+    expect(seen.has(join(SERVER_SRC, "platforms/index.ts"))).toBe(true);
+    expect(seedModules).toEqual([]);
+  });
+});
