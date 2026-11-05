@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { currentPidNamespace } from "../testing/run-directories";
 
 let workDir: string | null = null;
 
@@ -149,9 +150,13 @@ test("test preload removes only its own and dead runs' directories from TMPDIR",
   const scratch = join(workDir, ".scratch");
   const exited = Bun.spawn(["true"]);
   await exited.exited;
-  const deadRun = `timeline-test-run-${exited.pid}-dead`;
+  const namespace = currentPidNamespace();
+  const deadRun = `timeline-test-run-${namespace}-${exited.pid}-dead`;
   const kept = [
-    `timeline-test-run-${process.pid}-live`,
+    `timeline-test-run-${namespace}-${process.pid}-live`,
+    // Their owners can't be checked from here: another PID namespace, or none recorded.
+    `timeline-test-run-pidns1-${exited.pid}-foreign`,
+    `timeline-test-run-${exited.pid}-legacy`,
     "timeline-test-run-",
     "timeline-test-run-not-a-pid",
     "timeline-test-runner",
