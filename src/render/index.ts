@@ -7,7 +7,7 @@ export interface RendererRegistration {
 }
 
 const renderers: ReadonlyMap<string, RendererRegistration> = new Map([
-  ["discord", { version: 1, render: renderDiscordEvent }],
+  ["discord", { version: 2, render: renderDiscordEvent }],
 ]);
 
 export function getRenderer(source: string): EventRenderer | undefined {
