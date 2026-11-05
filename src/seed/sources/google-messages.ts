@@ -78,6 +78,17 @@ function reactionsFor(rng: Rng, t: Thread, message: GmMessage, legacyUntil: numb
   return [reaction, { ...other, participant_ids: [second] }];
 }
 
+function addReactions(rng: Rng, threads: Iterable<Thread>, chance: number, days: readonly SeedDay[]): void {
+  const firstDay = days[0];
+  if (!firstDay) throw new Error("google-messages needs at least one day");
+  const legacyUntil = new Date(`${firstDay.date}T00:00:00Z`).getTime() + (days.length / 3) * 24 * 60 * 60 * 1000;
+  for (const t of threads) {
+    for (const message of t.messages) {
+      if (message.direction !== "system" && rng.chance(chance)) message.reactions = reactionsFor(rng, t, message, legacyUntil);
+    }
+  }
+}
+
 /** Sunday brunch lives up to its name. */
 function groupChance(day: SeedDay): number {
   if (day.weekday === 0) return 0.75;
@@ -255,16 +266,8 @@ export const googleMessagesSeed: SeedSource = {
     }
 
     // A separate stream, so the messages themselves stay as they were.
-    const reactionRng = ctx.rng(`${NAME}-reactions`);
-    const firstDay = days[0];
-    if (!firstDay) throw new Error("google-messages needs at least one day");
-    const legacyUntil = ctx.localDate(firstDay.date, 0).getTime() + (GOOGLE_MESSAGES_DAYS / 3) * 24 * 60 * 60 * 1000;
-    for (const t of [...direct.values(), group]) {
-      for (const message of t.messages) {
-        if (message.direction === "system" || !reactionRng.chance(t === group ? 0.18 : 0.08)) continue;
-        message.reactions = reactionsFor(reactionRng, t, message, legacyUntil);
-      }
-    }
+    addReactions(ctx.rng(`${NAME}-reactions`), direct.values(), 0.08, days);
+    addReactions(ctx.rng(`${NAME}-group-reactions`), [group], 0.18, days);
 
     const records = toRecords(threads, contacts);
     const lines = records.map((record) => JSON.stringify(record));

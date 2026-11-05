@@ -380,14 +380,8 @@ async function handleMessage(ctx: ImportContext, record: GmMessage): Promise<voi
   // A re-fetched message (cursor overlap, reaction refresh, or a re-run to
   // backfill media) is skipped as an event, but its reactions may have changed
   // and its attachments still get recorded.
-  const existing = inserted ? null : existingEvent(ctx, record.id);
-  if (existing) refreshReactions(ctx, existing, record);
-
-  if (record.media && record.media.length > 0) {
-    const eventId = inserted?.id ?? existing?.id;
-    if (eventId === undefined) throw new Error(`Message ${record.id} was neither inserted nor already present`);
-    await storeMedia(ctx, eventId, record, conversationId);
-  }
+  const eventId = inserted?.id ?? refreshExisting(ctx, record);
+  if (record.media && record.media.length > 0) await storeMedia(ctx, eventId, record, conversationId);
 }
 
 interface ExistingEvent {
@@ -396,20 +390,18 @@ interface ExistingEvent {
   reactions: string | null;
 }
 
-function existingEvent(ctx: ImportContext, sourceId: string): ExistingEvent {
-  const row = ctx.findEvent.get(EVENT_SOURCE, sourceId, ctx.options.sourceAccount) as ExistingEvent | null;
-  if (!row) throw new Error(`Message ${sourceId} was neither inserted nor already present`);
-  return row;
-}
-
-/** Bring a stored row's reactions in line with the phone's current view of the message. */
-function refreshReactions(ctx: ImportContext, existing: ExistingEvent, record: GmMessage): void {
+/** Bring a stored row's reactions in line with the phone's current view of the message, returning its id. */
+function refreshExisting(ctx: ImportContext, record: GmMessage): number {
+  const existing = ctx.findEvent.get(EVENT_SOURCE, record.id, ctx.options.sourceAccount) as ExistingEvent | null;
+  if (!existing) throw new Error(`Message ${record.id} was neither inserted nor already present`);
   const current = record.reactions && record.reactions.length > 0 ? JSON.stringify(record.reactions) : null;
   const stored = existing.reactions === null ? null : JSON.stringify(JSON.parse(existing.reactions));
-  if (current === stored) return;
-  if (current === null) ctx.clearReactions.run(existing.id);
-  else ctx.setReactions.run(current, existing.id);
-  ctx.stats.reactionsUpdated++;
+  if (current !== stored) {
+    if (current === null) ctx.clearReactions.run(existing.id);
+    else ctx.setReactions.run(current, existing.id);
+    ctx.stats.reactionsUpdated++;
+  }
+  return existing.id;
 }
 
 const EXTENSION_BY_MIME: Record<string, string> = {
