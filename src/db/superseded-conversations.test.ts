@@ -18,6 +18,7 @@ import { getContactConversations } from "./contacts";
 import { listCodingAgentConversationProjects, listCodingAgentConversations, listConversationSources } from "./conversations";
 import { wrapDatabase } from "./pool";
 import { initDb } from "./schema";
+import { changedSupersededConversations, markConversationsSuperseded } from "./superseded-conversations";
 
 const TITLE_SESSION = "title-session-0001";
 
@@ -228,6 +229,22 @@ describe("superseded conversations", () => {
     );
     const conversations = await getContactConversations(wrapDatabase(db), 42);
     expect(conversations.map((c) => c.source)).toEqual(["t3code"]);
+  });
+
+  it("keeps the last canonical thread when one session is linked twice", () => {
+    const row = (conversationId: string) => ({
+      source: "codex",
+      sourceAccount: "alice",
+      conversationId: "shared-session",
+      reason: "orchestrated" as const,
+      canonical: { source: "t3code", sourceAccount: "alice", conversationId },
+    });
+    const rows = [row("thread-a"), row("thread-b")];
+    markConversationsSuperseded(db, rows);
+    expect(changedSupersededConversations(db, rows)).toEqual([]);
+    markConversationsSuperseded(db, changedSupersededConversations(db, rows));
+    expect(db.prepare("SELECT canonical_conversation_id AS id FROM superseded_conversations WHERE conversation_id = 'shared-session'").get())
+      .toEqual({ id: "thread-b" });
   });
 
   it("does not supersede transcripts of threads that were never imported", async () => {

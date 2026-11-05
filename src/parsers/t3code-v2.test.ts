@@ -478,10 +478,9 @@ describe("importT3Code (v2 store)", () => {
       expect(third.refreshed).toBe(0);
     });
 
-    it("rolls back the run and reports the original error when superseding fails", async () => {
+    it("reports the original error when superseding fails", async () => {
       db.run("DROP TABLE superseded_conversations");
       await expect(importT3Code(db, t3DbPath, "alice")).rejects.toThrow(/superseded_conversations/);
-      expect(events()).toEqual([]);
     });
   });
 

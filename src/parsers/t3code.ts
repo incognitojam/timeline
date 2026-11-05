@@ -28,11 +28,17 @@ import { Database } from "bun:sqlite";
 import { existsSync } from "fs";
 import { readFile } from "fs/promises";
 import { dirname, extname, join } from "path";
+import { type BoundedWriterLimits, createBoundedWriter, DEFAULT_BOUNDED_WRITER_LIMITS } from "../db/bounded-writes";
 import { extractConversationId } from "../db/conversation-id";
 import { onImportComplete } from "../db/queries";
 import { conversationTypeClause } from "../db/conversation-types";
-import { markConversationsSuperseded } from "../db/superseded-conversations";
+import {
+  changedSupersededConversations,
+  markConversationsSuperseded,
+  type SupersededConversation,
+} from "../db/superseded-conversations";
 import { getDb, initDb } from "../db/schema";
+import { upsertIdentities } from "../db/identities";
 import { insertStoredAttachment } from "../media/attachments";
 import { type StoreFileResult, storeFile } from "../media/storage";
 import {
@@ -204,11 +210,25 @@ export interface ImportStats {
    * from any thread.
    */
   supersededConversations: number;
+  /** Write transactions committed, and the longest time one held the lock. */
+  writeTransactions: number;
+  longestWriteHoldMs: number;
 }
+
+/** A run that failed after committing some of its work. */
+export class T3ImportError extends Error {
+  constructor(cause: unknown, readonly stats: ImportStats) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "T3ImportError";
+  }
+}
+
+type WrittenStat = "messages" | "toolCalls" | "plans" | "reasoning" | "refreshed" | "skipped" | "identitiesUpserted";
 
 export interface T3ImportOptions extends AiImportOptions {
   /** v2 only: `cursor` from a previous run's stats. */
   cursor?: string | null;
+  writeLimits?: BoundedWriterLimits;
 }
 
 function parseModelSelection(json: string | null): ModelSelection {
@@ -659,6 +679,8 @@ export async function importT3Code(
       pendingTranscriptThreads: 0,
       skippedByReason: {},
       supersededConversations: 0,
+      writeTransactions: 0,
+      longestWriteHoldMs: 0,
     };
     const v2Stats: T3V2ReadStats = { cursor: null, pendingTranscriptThreads: 0, skipped: {} };
 
@@ -677,8 +699,27 @@ export async function importT3Code(
         })
       : null;
 
+    // Counted once committed, so a failed run reports only what landed.
+    const written = new Map<WrittenStat, number>();
+    const countWritten = (key: WrittenStat) => written.set(key, (written.get(key) ?? 0) + 1);
+    // Stats are invalidated with each commit, so a run that dies after writing
+    // can't leave them stale for a retry that finds nothing left to write.
+    const writer = db && eventWriter
+      ? createBoundedWriter(db, options.writeLimits ?? DEFAULT_BOUNDED_WRITER_LIMITS, {
+          beforeCommit: () => onImportComplete(db),
+          afterCommit: () => {
+            for (const key of written.keys()) stats[key] += written.get(key) ?? 0;
+            written.clear();
+            if (writer) {
+              stats.writeTransactions = writer.stats.transactions;
+              stats.longestWriteHoldMs = Math.round(writer.stats.longestHoldMs);
+            }
+          },
+        })
+      : null;
+    const queuedIds = new Set<string>();
+
     t3Db.run("BEGIN");
-    if (db && eventWriter) db.run("BEGIN TRANSACTION");
     try {
       const providerSessions = store === "v2" ? readT3CodeV2ProviderSessions(t3Db) : [];
       const events =
@@ -686,9 +727,12 @@ export async function importT3Code(
           ? readT3CodeV2Events(t3Db, { cursor: options.cursor ?? null }, v2Stats)
           : readT3CodeV1Events(t3Db, stats);
 
+      // Compare first, without the write lock; only what differs is queued.
+      // A failed run commits what it got through and leaves the cursor alone,
+      // so the next run re-reads the same rows and writes the rest.
       for (const event of events) {
         stats.threads.add(event.raw.thread_id);
-        if (!eventWriter) {
+        if (!db || !eventWriter || !writer) {
           stats[STAT_BY_KIND[event.kind]]++;
           continue;
         }
@@ -700,7 +744,7 @@ export async function importT3Code(
         const conversationId = extractConversationId("t3code", event.raw);
         if (!conversationId) throw new Error(`T3 Code event ${event.sourceId} has no thread_id`);
 
-        const { outcome, eventId } = eventWriter.write({
+        const row = {
           sourceId: event.sourceId,
           eventType: `t3code:message:${event.role}`,
           timestamp: event.timestamp,
@@ -710,20 +754,35 @@ export async function importT3Code(
           tags: event.tags,
           rawData: JSON.stringify(event.raw),
           conversationId,
-        });
-        if (outcome === "inserted") stats[STAT_BY_KIND[event.kind]]++;
-        else if (outcome === "refreshed") stats.refreshed++;
-        else stats.skipped++;
+        };
+        // A row sharing a queued event's id must compare against that write,
+        // which hasn't landed yet, so it always queues behind it.
+        if (writer.queuedWrites === 0) queuedIds.clear();
+        if (!queuedIds.has(row.sourceId) && !eventWriter.needsWrite(row)) {
+          stats.skipped++;
+          await writer.breathe();
+          continue;
+        }
+        queuedIds.add(row.sourceId);
 
-        if (db && event.attachments && eventId !== null && outcome !== "skipped") {
-          const storedAttachments = await storeT3CodeImageAttachments({
-            attachments: event.attachments.items,
-            attachmentsDir,
-            sourceAccount,
-            threadId: event.raw.thread_id,
-            messageId: event.attachments.messageId,
-            eventSourceId: event.sourceId,
-          });
+        // Files are copied before queueing, so they never hold the lock, and
+        // their rows commit with the event: a retry can't lose them.
+        const storedAttachments = event.attachments
+          ? await storeT3CodeImageAttachments({
+              attachments: event.attachments.items,
+              attachmentsDir,
+              sourceAccount,
+              threadId: event.raw.thread_id,
+              messageId: event.attachments.messageId,
+              eventSourceId: event.sourceId,
+            })
+          : [];
+        await writer.add(() => {
+          const { outcome, eventId } = eventWriter.write(row);
+          countWritten(
+            outcome === "inserted" ? STAT_BY_KIND[event.kind] : outcome === "refreshed" ? "refreshed" : "skipped"
+          );
+          if (eventId === null || outcome === "skipped") return;
           for (const attachment of storedAttachments) {
             insertStoredAttachment(db, {
               eventId,
@@ -733,18 +792,32 @@ export async function importT3Code(
               mimeType: attachment.mimeType,
             }, attachment.stored);
           }
-        }
+        }, row.rawData.length + row.content.length);
       }
-      if (db && eventWriter) {
-        stats.supersededConversations = supersedeProviderSessions(db, sourceAccount, providerSessions);
-        db.run("COMMIT");
+
+      if (db && eventWriter && writer) {
+        await writer.flush();
+        // A run that wrote events refreshes last_seen on all of its identities.
+        const identities = writer.stats.writes > 0 ? identityCollector.all() : identityCollector.findStale(db);
+        const superseded = supersededRows(db, sourceAccount, providerSessions);
+        stats.supersededConversations = superseded.length;
+        for (const row of changedSupersededConversations(db, superseded)) {
+          await writer.add(() => markConversationsSuperseded(db, [row]));
+        }
+        for (const identity of identities) {
+          await writer.add(() => {
+            upsertIdentities(db, [identity]);
+            countWritten("identitiesUpserted");
+          });
+        }
+        await writer.flush();
       } else {
         stats.supersededConversations = providerSessions.filter(
           (session) => PROVIDER_DRIVER_SOURCES[session.driver]
         ).length;
       }
     } catch (error) {
-      if (db?.inTransaction) db.run("ROLLBACK");
+      if (writer && writer.stats.transactions > 0) throw new T3ImportError(error, stats);
       throw error;
     } finally {
       t3Db.run("COMMIT");
@@ -755,12 +828,7 @@ export async function importT3Code(
     stats.skippedByReason = v2Stats.skipped;
     stats.skipped += Object.values(v2Stats.skipped).reduce((sum, n) => sum + n, 0);
 
-    if (db && eventWriter) {
-      stats.identitiesUpserted = identityCollector.upsertAll(db);
-    }
-
     printSummary(stats, { dryRun, refreshRawData, importBatch });
-    if (db && eventWriter) onImportComplete(db);
     return stats;
   } finally {
     t3Db.close();
@@ -768,21 +836,21 @@ export async function importT3Code(
 }
 
 /**
- * Mark the provider-native transcripts of every imported thread as
- * superseded by it, under the same account: the claude-code/codex/opencode
- * importers on a machine use the account its T3 database is imported with. Covers all threads, not just those read this run, so
- * transcripts imported after their thread are still linked.
+ * The provider-native transcripts every imported thread supersedes, under the
+ * same account: the claude-code/codex/opencode importers on a machine use the
+ * account its T3 database is imported with. Covers all threads, not just those
+ * read this run, so transcripts imported after their thread are still linked.
  */
-function supersedeProviderSessions(
+function supersededRows(
   db: Database,
   sourceAccount: string,
   sessions: T3ProviderSession[]
-): number {
+): SupersededConversation[] {
   const mapped = sessions.flatMap((session) => {
     const source = PROVIDER_DRIVER_SOURCES[session.driver];
     return source ? [{ ...session, source }] : [];
   });
-  if (mapped.length === 0) return 0;
+  if (mapped.length === 0) return [];
 
   const imported = new Set(
     (db.prepare(`
@@ -793,7 +861,7 @@ function supersedeProviderSessions(
       conversation_id: string;
     }[]).map((row) => row.conversation_id)
   );
-  const rows = mapped
+  return mapped
     .filter((session) => imported.has(session.threadId))
     .map((session) => ({
       source: session.source,
@@ -802,8 +870,6 @@ function supersedeProviderSessions(
       reason: "orchestrated" as const,
       canonical: { source: "t3code", sourceAccount, conversationId: session.threadId },
     }));
-  markConversationsSuperseded(db, rows);
-  return rows.length;
 }
 
 function printSummary(
@@ -838,6 +904,9 @@ function printSummary(
     );
   }
   if (stats.cursor) console.log(`  Cursor: ${stats.cursor}`);
+  if (!run.dryRun) {
+    console.log(`  Write transactions: ${stats.writeTransactions}, longest ${stats.longestWriteHoldMs} ms`);
+  }
   if (!run.dryRun) console.log(`  Batch ID: ${run.importBatch}`);
 }
 

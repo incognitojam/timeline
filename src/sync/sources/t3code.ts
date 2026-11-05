@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { getAppStateDb, getSyncState, setSyncState } from "../../db/app-state";
-import { getDb, initDb } from "../../db/schema";
-import { importT3Code, DEFAULT_T3CODE_DB } from "../../parsers/t3code";
+import { getDb } from "../../db/schema";
+import { importT3Code, DEFAULT_T3CODE_DB, T3ImportError, type ImportStats } from "../../parsers/t3code";
 import type { SyncSource, SyncOptions, SyncResult } from "../types";
 
 /**
@@ -23,6 +23,10 @@ function expandPath(configPath: string | undefined): string {
   return configPath.startsWith("~")
     ? configPath.replace("~", process.env.HOME || "")
     : configPath;
+}
+
+function eventsAdded(stats: ImportStats): number {
+  return stats.messages + stats.toolCalls + stats.plans + stats.reasoning;
 }
 
 export const t3codeSyncSource: SyncSource = {
@@ -86,8 +90,9 @@ export const t3codeSyncSource: SyncSource = {
       const reconciledAt = state.reconciledAt?.[cursorKey];
       const reconcile = !reconciledAt || startTime - Date.parse(reconciledAt) >= RECONCILE_INTERVAL_MS;
 
+      // No initDb here: its immediate transaction would take the write lock on
+      // every sync, and the service and sync:once have already run it.
       const db = getDb();
-      initDb(db);
       let stats: Awaited<ReturnType<typeof importT3Code>>;
       try {
         stats = await importT3Code(db, dbPath, accountName, {
@@ -110,21 +115,24 @@ export const t3codeSyncSource: SyncSource = {
       return {
         source: "t3code",
         success: true,
-        eventsAdded: stats.messages + stats.toolCalls + stats.plans + stats.reasoning,
+        eventsAdded: eventsAdded(stats),
         eventsUpdated: stats.refreshed,
         durationMs: Date.now() - startTime,
         metadata: {
           store: stats.store,
           threads: stats.threads.size,
           pendingTranscriptThreads: stats.pendingTranscriptThreads,
+          writeTransactions: stats.writeTransactions,
+          longestWriteHoldMs: stats.longestWriteHoldMs,
         },
       };
     } catch (error) {
       return {
         source: "t3code",
         success: false,
-        eventsAdded: 0,
-        eventsUpdated: 0,
+        // A failed run keeps what it committed; the retry won't count it again.
+        eventsAdded: error instanceof T3ImportError ? eventsAdded(error.stats) : 0,
+        eventsUpdated: error instanceof T3ImportError ? error.stats.refreshed : 0,
         error: error instanceof Error ? error.message : String(error),
         durationMs: Date.now() - startTime,
       };
