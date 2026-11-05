@@ -6,7 +6,7 @@ import {
   formatIdentifier,
   type UpsertIdentityOptions,
 } from "../../db/queries";
-import { getRenderer } from "../../render";
+import { renderDiscordEvent } from "./render";
 
 // Default paths - can be overridden with env vars
 export const DEFAULT_DISCORD_DB = `${process.env.HOME}/.local/share/discord-chat/personal.db`;
@@ -74,14 +74,6 @@ interface Recipient {
 }
 
 type DiscordRawData = Record<string, unknown>;
-
-const discordRenderer = (() => {
-  const renderer = getRenderer("discord");
-  if (!renderer) {
-    throw new Error("Discord renderer is not registered");
-  }
-  return renderer;
-})();
 
 function getRawObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
@@ -346,7 +338,7 @@ export async function importDiscordDMs(
 
         // Determine more specific type based on content
         let specificType = eventType;
-        const { title, content } = discordRenderer(rawData);
+        const { title, content } = renderDiscordEvent(rawData);
 
         // Check for attachments, calls, etc in raw data
         if (hasRawArrayItems(rawData.attachments)) {
@@ -512,7 +504,7 @@ export async function importDiscordDMs(
 
       // Determine more specific type based on content
       let specificType = eventType;
-      const { title, content } = discordRenderer(rawData);
+      const { title, content } = renderDiscordEvent(rawData);
 
       // Check for attachments, calls, etc in raw data
       if (hasRawArrayItems(rawData.attachments)) {

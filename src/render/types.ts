@@ -6,3 +6,9 @@ export interface RenderedEvent {
 export interface EventRenderer {
   (rawData: Record<string, unknown>): RenderedEvent;
 }
+
+export interface RendererRegistration {
+  /** Bump to re-render stored events; the render sweep restarts from the first event. */
+  version: number;
+  render: EventRenderer;
+}

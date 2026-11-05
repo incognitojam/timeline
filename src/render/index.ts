@@ -1,14 +1,10 @@
-import { renderDiscordEvent } from "../platforms/discord/render";
-import type { EventRenderer } from "./types";
+import { PLATFORMS } from "../platforms";
+import { collectRenderers } from "../platforms/registry";
+import type { EventRenderer, RendererRegistration } from "./types";
 
-export interface RendererRegistration {
-  version: number;
-  render: EventRenderer;
-}
+export type { RendererRegistration } from "./types";
 
-const renderers: ReadonlyMap<string, RendererRegistration> = new Map([
-  ["discord", { version: 2, render: renderDiscordEvent }],
-]);
+const renderers = collectRenderers(PLATFORMS);
 
 export function getRenderer(source: string): EventRenderer | undefined {
   return renderers.get(source)?.render;

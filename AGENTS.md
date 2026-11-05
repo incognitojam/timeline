@@ -190,6 +190,16 @@ Single unified `events` table stores all data from all sources:
 
 FTS5 virtual table `events_fts` provides full-text search with automatic sync triggers.
 
+### Platform modules (`src/platforms/`)
+
+Discord and Google Messages each live in one module, and the other platforms are moving to the same layout. A platform owns one or more source ids.
+
+- `src/platforms/<p>/meta.ts` and `shared/` are web-safe, and the web app imports them through `@platforms/*`. Everything else in the module is server-only.
+- `src/platforms/<p>/index.ts` exports the platform's `PlatformModule` (`src/platforms/registry.ts`).
+- `web/src/platforms/<p>/` holds its icon and web components. Solid can't resolve from `src/`, so web code can't live there.
+
+To add a platform, list it in `PLATFORM_METAS` (`src/platforms/metas.ts`), `PLATFORMS` (`src/platforms/index.ts`) and `PLATFORM_DISPLAYS` (`web/src/platforms/index.ts`). The source, icon, renderer, sync and seed registries derive from these. `src/platforms/boundaries.test.ts` enforces the import rules.
+
 ### Parsers (`src/parsers/`)
 Each parser reads export files and inserts into the unified schema:
 - Parsers preserve original data in `raw_data` JSON field

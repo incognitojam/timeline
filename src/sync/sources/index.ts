@@ -15,8 +15,8 @@ import { claudeCodeSyncSource } from "./claude-code";
 import { codexSyncSource } from "./codex";
 import { conductorSyncSource } from "./conductor";
 import { embeddingsSyncSource } from "./embeddings";
-import { discordSyncSource } from "../../platforms/discord/sync";
-import { googleMessagesSyncSource } from "../../platforms/google-messages/sync";
+import { PLATFORMS } from "../../platforms";
+import { collectSyncSources } from "../../platforms/registry";
 import { githubSyncSource } from "./github";
 import { googleHealthSyncSource } from "./google-health";
 import { googlePlacesSyncSource } from "./google-places";
@@ -39,12 +39,10 @@ import { wakatimeSyncSource } from "./wakatime";
 
 /**
  * All available sync sources.
- * Add new sources here - they'll automatically be available to the
- * scheduler service.
+ * Platforms contribute theirs through `PLATFORMS`; add the rest here. Either
+ * way they're automatically available to the scheduler service.
  */
-export const SYNC_SOURCES: SyncSource[] = [
-  discordSyncSource,
-  googleMessagesSyncSource,
+export const SYNC_SOURCES: SyncSource[] = collectSyncSources(PLATFORMS, [
   monzoSyncSource,
   traktSyncSource,
   swarmSyncSource,
@@ -73,14 +71,12 @@ export const SYNC_SOURCES: SyncSource[] = [
   backupAppStateSyncSource, // Back up app-state.db before timeline.db
   backupSyncSource, // Keep local backups last - run after data syncs
   backupOffsiteSyncSource, // Offsite (R2) backup last - after local snapshots exist
-];
+]);
 
 // Re-export individual sources for direct imports if needed
 export {
   backupAppStateSyncSource,
   backupOffsiteSyncSource,
-  discordSyncSource,
-  googleMessagesSyncSource,
   googlePlacesSyncSource,
   inboxRcloneSyncSource,
   mediaEvictSyncSource,

@@ -1,3 +1,6 @@
+import { PLATFORM_METAS } from "../platforms/metas";
+import type { PlatformMeta } from "../platforms/types";
+
 export interface SourceDefinition {
   id: string;
   label: string;
@@ -13,9 +16,10 @@ export const DEFAULT_SOURCE_COLOR = "#9ca3af";
 
 /**
  * Source metadata shared by the service and web app. IDs are persisted in the
- * database and used in URLs; labels are presentation-only.
+ * database and used in URLs; labels are presentation-only. Platform modules
+ * declare their own sources in their `meta.ts`; these haven't moved yet.
  */
-const SOURCE_REGISTRATIONS = [
+const OTHER_SOURCE_REGISTRATIONS = [
   // Music and entertainment
   { id: "spotify", label: "Spotify", color: "#1DB954" },
   { id: "spotify-friends", label: "Spotify Friends", colorFrom: "spotify" },
@@ -24,7 +28,6 @@ const SOURCE_REGISTRATIONS = [
   { id: "trakt", label: "Trakt", color: "#ED1C24" },
 
   // Social and messaging
-  { id: "discord", label: "Discord", color: "#5865F2" },
   { id: "reddit", label: "Reddit", color: "#FF4500" },
   { id: "linkedin", label: "LinkedIn", color: "#0A66C2" },
   { id: "facebook", label: "Facebook", color: "#1877F2" },
@@ -43,7 +46,6 @@ const SOURCE_REGISTRATIONS = [
   { id: "google-location", label: "Google Location", colorFrom: "google" },
   { id: "google-playstore", label: "Google Play Store", color: "#01875f" },
   { id: "google-places", label: "Google Places", color: "#34A853" },
-  { id: "google-messages", label: "Google Messages", color: "#1A73E8" },
   { id: "google-takeout", label: "Google Takeout", colorFrom: "google" },
   { id: "google-timeline", label: "Google Timeline", colorFrom: "google" },
   { id: "chrome", label: "Chrome", color: "#D99200" },
@@ -89,24 +91,39 @@ const SOURCE_REGISTRATIONS = [
   { id: "media-evict", label: "Media Eviction", color: "#78716c" },
 ] as const satisfies readonly SourceRegistration[];
 
-const SOURCES_BY_ID = new Map<string, SourceDefinition>();
+export function buildSourceRegistry(
+  metas: readonly PlatformMeta[],
+  others: readonly SourceRegistration[],
+): readonly SourceDefinition[] {
+  const byId = new Map<string, SourceDefinition>();
+  const add = (definition: SourceDefinition) => {
+    if (byId.has(definition.id)) throw new Error(`Duplicate source id: ${definition.id}`);
+    byId.set(definition.id, definition);
+  };
 
-export const SOURCE_REGISTRY: readonly SourceDefinition[] = SOURCE_REGISTRATIONS.map((source) => {
-  let color: string;
-  if ("color" in source) {
-    color = source.color;
-  } else {
-    const parent = SOURCES_BY_ID.get(source.colorFrom);
-    if (!parent) {
-      throw new Error(`Source ${source.id} inherits color from unknown source ${source.colorFrom}`);
+  for (const meta of metas) {
+    for (const source of meta.sources) {
+      add({ id: source.id, label: source.label, color: source.color ?? meta.color });
     }
-    color = parent.color;
   }
+  for (const source of others) {
+    let color: string;
+    if (source.color !== undefined) {
+      color = source.color;
+    } else {
+      const parent = byId.get(source.colorFrom);
+      if (!parent) {
+        throw new Error(`Source ${source.id} inherits color from unknown source ${source.colorFrom}`);
+      }
+      color = parent.color;
+    }
+    add({ id: source.id, label: source.label, color });
+  }
+  return [...byId.values()];
+}
 
-  const definition = { id: source.id, label: source.label, color };
-  SOURCES_BY_ID.set(source.id, definition);
-  return definition;
-});
+export const SOURCE_REGISTRY = buildSourceRegistry(PLATFORM_METAS, OTHER_SOURCE_REGISTRATIONS);
+const SOURCES_BY_ID = new Map(SOURCE_REGISTRY.map((source) => [source.id, source]));
 const SOURCE_COLOR_FAMILIES = ["backup", "spotify", "steam", "google"] as const;
 
 export function getSourceDefinition(id: string): SourceDefinition | undefined {

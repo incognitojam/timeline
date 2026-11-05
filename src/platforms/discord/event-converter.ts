@@ -7,7 +7,7 @@
 
 import type { UpsertIdentityOptions } from "../../db/identities";
 import { formatIdentifier } from "../../db/identities";
-import { getRenderer } from "../../render";
+import { renderDiscordEvent } from "./render";
 import {
   getDiscordSnapshotAttachments,
   getDiscordStickerItems,
@@ -240,14 +240,6 @@ export function buildDiscordMessageRawData(msg: NormalizedMessage): Record<strin
   };
 }
 
-const discordRenderer = (() => {
-  const renderer = getRenderer("discord");
-  if (!renderer) {
-    throw new Error("Discord renderer is not registered");
-  }
-  return renderer;
-})();
-
 /**
  * Build a ChannelContext from a DiscordChannel and optional guild info.
  */
@@ -354,7 +346,7 @@ export function convertMessage(
       })) ?? [],
     },
   };
-  const { title, content } = discordRenderer(rawData);
+  const { title, content } = renderDiscordEvent(rawData);
   if (title === null) {
     throw new Error("Discord message raw data is missing _channel.name");
   }
