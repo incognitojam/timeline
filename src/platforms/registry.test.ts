@@ -41,6 +41,7 @@ const EXPECTED_SYNC_ORDER = [
   "google-messages",
   "trakt",
   "swarm",
+  "thriva",
   "google-health",
   "spotify",
   "spotify-friends",
@@ -51,7 +52,6 @@ const EXPECTED_SYNC_ORDER = [
   "github",
   "claude-code",
   "amp",
-  "thriva",
   "opencode",
   "conductor",
   "t3code",
@@ -75,6 +75,7 @@ const EXPECTED_SEED_ORDER = [
   "google-messages",
   "trakt",
   "swarm",
+  "thriva",
   "google-chat",
   "google-search",
   "google-youtube",
@@ -95,6 +96,7 @@ const EXPECTED_SEED_ORDER = [
   "linkedin",
   "reddit",
   "minecraft",
+  "amex",
   "sms-backup-restore",
   "claude",
   "chatgpt",
@@ -107,8 +109,6 @@ const EXPECTED_SEED_ORDER = [
   "wakatime",
   "github",
   "monzo",
-  "amex",
-  "thriva",
 ];
 
 const EXPECTED_IDENTITY_PLATFORMS = [

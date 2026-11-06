@@ -27,7 +27,6 @@ import { recallSyncSource } from "./recall";
 import { remoteAgentsSyncSource } from "./remote-agents";
 import { renderSweepSyncSource } from "./render-sweep";
 import { t3codeSyncSource } from "./t3code";
-import { thrivaSyncSource } from "../../platforms/thriva/sync";
 import { thumbhashSyncSource } from "./thumbhash";
 import { wakatimeSyncSource } from "./wakatime";
 
@@ -42,7 +41,6 @@ export const SYNC_SOURCES: SyncSource[] = collectSyncSources(PLATFORMS, [
   githubSyncSource,
   claudeCodeSyncSource,
   ampSyncSource,
-  thrivaSyncSource,
   opencodeSyncSource,
   conductorSyncSource,
   t3codeSyncSource,
@@ -73,7 +71,6 @@ export {
   githubSyncSource,
   claudeCodeSyncSource,
   ampSyncSource,
-  thrivaSyncSource,
   opencodeSyncSource,
   recallSyncSource,
   renderSweepSyncSource,
