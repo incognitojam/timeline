@@ -7,6 +7,7 @@ import { fitbitSources } from "./fitbit/meta";
 import { healthSources } from "./health/meta";
 import { keepSources } from "./keep/meta";
 import { locationSources } from "./location/meta";
+import { placesSources } from "./places/meta";
 import { playstoreSources } from "./playstore/meta";
 import { searchSources } from "./search/meta";
 import { youtubeSources } from "./youtube/meta";
@@ -28,6 +29,7 @@ export const googleMeta = {
     ...locationSources,
     ...fitbitSources,
     ...healthSources,
+    ...placesSources,
   ],
   identityPlatforms: ["google-calendar", "google-chat", "youtube"],
 } as const satisfies PlatformMeta;

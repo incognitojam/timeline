@@ -317,9 +317,9 @@ Google Places resolves Place IDs (from Google Timeline exports) to human-readabl
 
 **Standalone usage**:
 ```bash
-bun run src/scripts/resolve-places.ts --dry-run     # Preview unresolved count
-bun run src/scripts/resolve-places.ts --verbose      # Resolve all, showing each
-bun run src/scripts/resolve-places.ts --limit 50     # Resolve first 50 only
+bun run src/platforms/google/places/resolve.ts --dry-run     # Preview unresolved count
+bun run src/platforms/google/places/resolve.ts --verbose      # Resolve all, showing each
+bun run src/platforms/google/places/resolve.ts --limit 50     # Resolve first 50 only
 ```
 
 ## GitHub Setup

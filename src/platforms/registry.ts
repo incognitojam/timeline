@@ -26,9 +26,9 @@ function assertUnique(kind: string, names: readonly string[]): void {
 
 export function collectSyncSources(
   platforms: readonly PlatformModule[],
-  others: readonly SyncSource[],
+  systemJobs: readonly SyncSource[],
 ): SyncSource[] {
-  const sources = [...platforms.flatMap((platform) => platform.syncSources ?? []), ...others];
+  const sources = [...platforms.flatMap((platform) => platform.syncSources ?? []), ...systemJobs];
   assertUnique("sync source", sources.map((source) => source.name));
   return sources;
 }
@@ -43,10 +43,9 @@ export function collectRenderers(
 
 export async function collectSeedSources(
   platforms: readonly PlatformModule[],
-  others: readonly SeedSource[],
 ): Promise<readonly SeedSource[]> {
   const loaded = await Promise.all(platforms.map((platform) => platform.loadSeeds?.() ?? []));
-  const seeds = [...loaded.flat(), ...others];
+  const seeds = loaded.flat();
   assertUnique("seed generator", seeds.map((seed) => seed.name));
   return seeds;
 }

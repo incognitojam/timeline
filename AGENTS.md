@@ -75,7 +75,7 @@ bun run seed -- --anchor=2026-01-31  # Pin the last day of history (default: tod
 bun run seed -- --only=discord,spotify --out=.scratch/seed-x  # Iterate on one generator
 ```
 
-`src/seed/` generates three years of activity for Alex Rivera, a fictional person, by writing a synthetic export for every source and running it through that source's real importer. Event content is deterministic for a given `--anchor` (import times and sync history follow the clock), contains no personal data, and is safe to screenshot in pull requests. Re-running `bun run seed` is the reset: use it to discard schema experiments or a broken local DB, then restart `bun run dev`, which keeps the replaced database open. Seeded attachments live in `./media/`; start the app with `TIMELINE_MEDIA_PATH=./media bun run dev` to serve them. When adding a source, add a generator in `src/seed/sources/` (see `src/seed/context.ts`).
+`src/seed/` generates three years of activity for Alex Rivera, a fictional person, by writing a synthetic export for every source and running it through that source's real importer. Event content is deterministic for a given `--anchor` (import times and sync history follow the clock), contains no personal data, and is safe to screenshot in pull requests. Re-running `bun run seed` is the reset: use it to discard schema experiments or a broken local DB, then restart `bun run dev`, which keeps the replaced database open. Seeded attachments live in `./media/`; start the app with `TIMELINE_MEDIA_PATH=./media bun run dev` to serve them. When adding a source, add a generator in its platform's `seed.ts` (see `src/seed/context.ts`).
 
 **Owner's real data (opt-in)** — `prepare-sample`/`prepare-full` copy the Timeline host's database (no SSH). Existing caches can be copied to another machine and reused there without the host DB.
 
@@ -169,7 +169,7 @@ sqlite3 ./timeline.db "SELECT * FROM events WHERE id IN (SELECT rowid FROM event
 
 > **Syncs**: The scheduler in `bun run service` runs syncs automatically; the web UI's `/status` page can trigger any source on demand. To test one source in-process against scratch data, use `bun run sync:once <source>` ([Running one sync source](docs/operations/development.md#running-one-sync-source)) rather than booting the service.
 
-> **Note**: Commands use `./timeline.db` by default. Override with `TIMELINE_DB_PATH=<path>`. Utility scripts live in `src/scripts/` (backfills, verification, etc.).
+> **Note**: Commands use `./timeline.db` by default. Override with `TIMELINE_DB_PATH=<path>`. Utility scripts live in `src/scripts/`, or in `src/platforms/<p>/scripts/` when they belong to one platform (backfills, verification, etc.).
 
 ## Recall Tooling
 
@@ -192,20 +192,24 @@ FTS5 virtual table `events_fts` provides full-text search with automatic sync tr
 
 ### Platform modules (`src/platforms/`)
 
-Every platform declares its sources and event types in a `meta.ts`. Discord and Google Messages already live entirely in their module, and the others are moving to the same layout. A platform owns one or more source ids. Sources that belong to the app itself are in `src/shared/system-sources.ts`.
+Everything about a platform lives in its module. A platform owns one or more source ids, and `google` keeps one folder per product. Sources and jobs that belong to the app itself are in `src/shared/system-sources.ts` and `src/sync/sources/`. Helpers shared by parsers are in `src/ingest/`.
 
 - `src/platforms/<p>/meta.ts` and `shared/` are web-safe, and the web app imports them through `@platforms/*`. Everything else in the module is server-only.
 - `src/platforms/<p>/index.ts` exports the platform's `PlatformModule` (`src/platforms/registry.ts`).
 - `web/src/platforms/<p>/` holds its icon and web components. Solid can't resolve from `src/`, so web code can't live there.
+- `src/platforms/boundaries.test.ts` enforces the import rules.
 
-To add a platform, list it in `PLATFORM_METAS` (`src/platforms/metas.ts`), `PLATFORMS` (`src/platforms/index.ts`) and `PLATFORM_DISPLAYS` (`web/src/platforms/index.ts`). The source, icon, identity platform, renderer, sync and seed registries derive from these. `src/platforms/boundaries.test.ts` enforces the import rules.
+**Adding a platform:**
+1. Declare its sources, colour, event types and traits in `meta.ts`, and list it in `PLATFORM_METAS` (`src/platforms/metas.ts`).
+2. Write `parser.ts`, plus `sync.ts` if it syncs and `seed.ts` for its synthetic data (see `src/seed/context.ts`). In `index.ts`, export a `PlatformModule` with `syncSources` and a `loadSeeds` that imports the seed dynamically, so the service never evaluates it. List that module in `PLATFORMS` (`src/platforms/index.ts`), in the same order as `PLATFORM_METAS`.
+3. Add its icon in `web/src/platforms/<p>/index.ts` and list it in `PLATFORM_DISPLAYS` (`web/src/platforms/index.ts`).
+4. Run `bun run docs:sources`.
 
-Each source's `traits` decide which lists it belongs to, such as conversation groups, session gaps, noisy sources and the embedding corpus. `CODING_AGENT_SOURCES` is written into trigger SQL in `src/db/schema.ts`, so reordering `PLATFORM_METAS` or changing that trait rebuilds those triggers on every database at next startup.
+The source, icon, identity platform, renderer, sync and seed registries derive from these lists. Each source's `traits` decide which other lists it belongs to, such as conversation groups, session gaps, noisy sources and the embedding corpus. `CODING_AGENT_SOURCES` is written into trigger SQL in `src/db/schema.ts`, so reordering `PLATFORM_METAS` or changing that trait rebuilds those triggers on every database at next startup.
 
 `bun run seed` fails if an importer writes an event type its source doesn't declare. `bun run check-event-types [db-path]` checks a real database the same way. Declare types no importer writes any more as `legacyEventTypes`.
 
-### Parsers (`src/parsers/`)
-Each parser reads export files and inserts into the unified schema:
+**Parsers** read export files and insert into the unified schema:
 - Parsers preserve original data in `raw_data` JSON field
 - Use `source_account` to distinguish multiple accounts from same source
 - `import_batch` groups related imports for easy re-import
@@ -230,7 +234,7 @@ Automated data syncing from API-based sources. Structure: `config.ts`, `types.ts
 
 **Configuration**: Per-source sync settings live in the `sync_sources` table in `app-state.db` and are edited from the web UI. Legacy `[sync.<source>]` sections in `config.toml` are imported once at `bun run service` startup when the table is empty, then ignored with a warning until removed. Discord account is auto-detected.
 
-**Adding new sync sources**: Create a file in `src/sync/sources/` exporting a `SyncSource` object with `name`, `description`, `enabled`, `canSync()`, and `sync()` methods. A source with editable settings declares them through `configSchema`. Register it in `src/sync/sources/index.ts`. Test it with `runSourceOnce()` from `src/sync/once.ts` rather than hand-assembling `SyncOptions`.
+**Adding a sync source**: Export a `SyncSource` object with `name`, `description`, `enabled`, `canSync()`, and `sync()` methods from its platform's `sync.ts` and list it in that platform's `index.ts`. For an app-level job, add it to `src/sync/sources/` and register it in `src/sync/sources/index.ts`. A source with editable settings declares them through `configSchema`. Test it with `runSourceOnce()` from `src/sync/once.ts` rather than hand-assembling `SyncOptions`.
 
 ### Service Mode (`src/service.ts`)
 

@@ -1,10 +1,11 @@
 import type { PlatformModule } from "../registry";
 import { googleMeta } from "./meta";
 import { googleHealthSyncSource } from "./health/sync";
+import { googlePlacesSyncSource } from "./places/sync";
 
 export const googlePlatform: PlatformModule = {
   meta: googleMeta,
-  syncSources: [googleHealthSyncSource],
+  syncSources: [googleHealthSyncSource, googlePlacesSyncSource],
   loadSeeds: async () => [
     (await import("./chat/seed")).googleChatSeed,
     (await import("./search/seed")).googleSearchSeed,

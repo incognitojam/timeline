@@ -8,6 +8,7 @@ import {
   IconGoogleChrome,
   IconGoogleFit,
   IconGoogleKeep,
+  IconGoogleMaps,
   IconGooglePlay,
   IconLocationOn,
   IconSearch,
@@ -32,5 +33,6 @@ export const googleDisplay: PlatformDisplay<typeof googleMeta> = {
     "google-location-sharing": IconLocationOn,
     fitbit: IconFitbit,
     "google-health": IconFavorite,
+    "google-places": IconGoogleMaps,
   },
 };

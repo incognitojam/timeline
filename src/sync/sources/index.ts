@@ -13,7 +13,6 @@ import { backupOffsiteSyncSource } from "./backup-offsite";
 import { embeddingsSyncSource } from "./embeddings";
 import { PLATFORMS } from "../../platforms";
 import { collectSyncSources } from "../../platforms/registry";
-import { googlePlacesSyncSource } from "./google-places";
 import { inboxRcloneSyncSource } from "./inbox-rclone";
 import { mediaEvictSyncSource } from "./media-evict";
 import { remoteAgentsSyncSource } from "./remote-agents";
@@ -21,13 +20,11 @@ import { renderSweepSyncSource } from "./render-sweep";
 import { thumbhashSyncSource } from "./thumbhash";
 
 /**
- * All available sync sources.
- * Platforms contribute theirs through `PLATFORMS`; add the rest here. Either
- * way they're automatically available to the scheduler service.
+ * All available sync sources: each platform's, then the app's own jobs listed
+ * here. Either way they're automatically available to the scheduler service.
  */
 export const SYNC_SOURCES: SyncSource[] = collectSyncSources(PLATFORMS, [
   remoteAgentsSyncSource, // Pull and import agent logs from other machines
-  googlePlacesSyncSource, // Resolve place names before thumbhash/backup
   inboxRcloneSyncSource, // Pull files from cloud remotes into inbox dirs
   thumbhashSyncSource, // Process new images before backup
   attachmentDescriptionsSyncSource, // Describe new images after storage
@@ -38,18 +35,3 @@ export const SYNC_SOURCES: SyncSource[] = collectSyncSources(PLATFORMS, [
   backupSyncSource, // Keep local backups last - run after data syncs
   backupOffsiteSyncSource, // Offsite (R2) backup last - after local snapshots exist
 ]);
-
-// Re-export individual sources for direct imports if needed
-export {
-  backupAppStateSyncSource,
-  backupOffsiteSyncSource,
-  googlePlacesSyncSource,
-  inboxRcloneSyncSource,
-  mediaEvictSyncSource,
-  renderSweepSyncSource,
-  embeddingsSyncSource,
-  remoteAgentsSyncSource,
-  thumbhashSyncSource,
-  attachmentDescriptionsSyncSource,
-  backupSyncSource,
-};

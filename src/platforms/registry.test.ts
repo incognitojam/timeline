@@ -24,7 +24,6 @@ import { DEFAULT_HIDDEN_SOURCES } from "../shared/sources";
 import { PLATFORMS } from ".";
 import { PLATFORM_METAS } from "./metas";
 import { collectRenderers, collectSeedSources, collectSyncSources, type PlatformModule } from "./registry";
-import type { PlatformMeta } from "./types";
 
 const REPO_ROOT = resolve(import.meta.dir, "../..");
 
@@ -48,6 +47,7 @@ const EXPECTED_SYNC_ORDER = [
   "amp",
   "thriva",
   "google-health",
+  "google-places",
   "opencode",
   "spotify",
   "spotify-friends",
@@ -58,7 +58,6 @@ const EXPECTED_SYNC_ORDER = [
   "steam",
   "recall",
   "remote-agents",
-  "google-places",
   "inbox-rclone",
   "thumbhash",
   "attachment-descriptions",
@@ -285,11 +284,8 @@ describe("source groups derived from traits", () => {
 });
 
 describe("platform lists", () => {
-  test("server modules follow PLATFORM_METAS, which may list platforms whose code hasn't moved yet", () => {
-    const moved = new Set(PLATFORMS.map((platform) => platform.meta));
-    const metas: readonly PlatformMeta[] = PLATFORM_METAS;
-    expect(metas.filter((meta) => moved.has(meta))).toEqual(PLATFORMS.map((platform) => platform.meta));
-    expect(moved.size).toBe(PLATFORMS.length);
+  test("the server and web-safe lists name the same platforms in the same order", () => {
+    expect(PLATFORMS.map((platform) => platform.meta)).toEqual([...PLATFORM_METAS]);
   });
 
   test("every platform directory has a web directory, and the reverse", () => {
@@ -326,12 +322,12 @@ describe("collect functions", () => {
   const seed = (name: string) => ({ name, produces: {}, seed: async () => {} });
   const render = () => ({ title: null, content: null });
 
-  test("run platform contributions first, then the others", async () => {
+  test("run platform contributions first, then system jobs", async () => {
     const platforms: PlatformModule[] = [
       { meta, syncSources: [sync("alpha")], loadSeeds: async () => [seed("alpha")] },
     ];
     expect(collectSyncSources(platforms, [sync("job")]).map((source) => source.name)).toEqual(["alpha", "job"]);
-    expect((await collectSeedSources(platforms, [seed("other")])).map((source) => source.name)).toEqual(["alpha", "other"]);
+    expect((await collectSeedSources(platforms)).map((source) => source.name)).toEqual(["alpha"]);
   });
 
   test("accept a list extended at startup", () => {
@@ -345,7 +341,7 @@ describe("collect functions", () => {
     collectSyncSources(platforms, []);
     collectRenderers(platforms);
     expect(loaded).toBe(0);
-    await collectSeedSources(platforms, []);
+    await collectSeedSources(platforms);
     expect(loaded).toBe(1);
   });
 
@@ -355,6 +351,6 @@ describe("collect functions", () => {
     ];
     expect(() => collectSyncSources(twice, [sync("alpha")])).toThrow("Duplicate sync source: alpha");
     expect(() => collectRenderers([...twice, ...twice])).toThrow("Duplicate renderer: alpha");
-    await expect(collectSeedSources(twice, [seed("alpha")])).rejects.toThrow("Duplicate seed generator: alpha");
+    await expect(collectSeedSources([...twice, ...twice])).rejects.toThrow("Duplicate seed generator: alpha");
   });
 });

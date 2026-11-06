@@ -28,7 +28,7 @@ import { traktPlatform } from "./trakt";
 import { wakatimePlatform } from "./wakatime";
 import type { PlatformModule } from "./registry";
 
-/** Server-only list of platforms, in the same relative order as `PLATFORM_METAS` in `metas.ts`. */
+/** Server-only list of platforms, in the same order as `PLATFORM_METAS` in `metas.ts`. */
 export const PLATFORMS: readonly PlatformModule[] = [
   discordPlatform,
   googleMessagesPlatform,

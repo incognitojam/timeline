@@ -191,7 +191,7 @@ const REGISTRY_MODULES = new Set([
 ]);
 
 /** Code the platforms build on. It may reach platforms only through their web-safe files. */
-const CORE_ROOTS = ["src/db", "src/export", "src/lib", "src/media", "src/shared"];
+const CORE_ROOTS = ["src/db", "src/export", "src/ingest", "src/lib", "src/media", "src/shared"];
 const CORE_FILES = ["src/render/types.ts", "src/seed/context.ts", "src/sync/types.ts"];
 
 /**
