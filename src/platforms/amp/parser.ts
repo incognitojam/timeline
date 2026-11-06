@@ -13,7 +13,7 @@ import { getDb, initDb } from "../../db/schema";
 import {
   type ContentBlock,
   extractText,
-} from "../../parsers/shared/format-content";
+} from "../../ingest/ai/format-content";
 
 const DEFAULT_AMP_DIR = `${process.env.HOME}/.local/share/amp/threads`;
 

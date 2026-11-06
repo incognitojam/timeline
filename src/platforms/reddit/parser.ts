@@ -3,7 +3,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { parseCSV } from "../../lib/csv";
 import { extractConversationId } from "../../db/conversation-id";
-import { runParser } from "../../lib/parser-cli";
+import { runParser } from "../../ingest/cli";
 import { normalizeRedditParticipant } from "../../lib/reddit";
 import {
   upsertIdentities,

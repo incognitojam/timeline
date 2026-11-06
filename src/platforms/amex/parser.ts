@@ -19,7 +19,7 @@
 import { Database } from "bun:sqlite";
 import { basename } from "node:path";
 import { parseCSV } from "../../lib/csv";
-import { runParser } from "../../lib/parser-cli";
+import { runParser } from "../../ingest/cli";
 import { onImportComplete } from "../../db/import-hooks";
 
 /** Collapse runs of whitespace (including embedded newlines) to single spaces. */

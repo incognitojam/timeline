@@ -36,9 +36,9 @@ import { readdir } from "fs/promises";
 import { basename, join } from "path";
 import { onImportComplete } from "../../db/queries";
 import { getDb, initDb } from "../../db/schema";
-import { type AiImportOptions, createIdentityCollector } from "../../parsers/shared/ai-import";
-import { type ContentBlock, extractText } from "../../parsers/shared/format-content";
-import { recordFromUnknown } from "../../parsers/shared/image-blocks";
+import { type AiImportOptions, createIdentityCollector } from "../../ingest/ai/import";
+import { type ContentBlock, extractText } from "../../ingest/ai/format-content";
+import { recordFromUnknown } from "../../ingest/ai/image-blocks";
 
 export const DEFAULT_OPENCODE_DIR = `${process.env.HOME}/.local/share/opencode`;
 

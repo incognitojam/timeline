@@ -52,15 +52,15 @@ import {
   type UpsertIdentityOptions,
 } from "../../db/queries";
 import { insertStoredAttachment } from "../../media/attachments";
-import { formatModelName } from "../../parsers/shared/model-names";
-import type { ContentBlock } from "../../parsers/shared/format-content";
-import { createEventWriter, type WriteOutcome } from "../../parsers/shared/ai-import";
+import { formatModelName } from "../../ingest/ai/model-names";
+import type { ContentBlock } from "../../ingest/ai/format-content";
+import { createEventWriter, type WriteOutcome } from "../../ingest/ai/import";
 import {
   decodeBase64ImageData,
   errorMessage,
   storeDecodedImage,
   type StoredImageAttachment,
-} from "../../parsers/shared/image-blocks";
+} from "../../ingest/ai/image-blocks";
 
 export const DEFAULT_CODEX_SESSIONS_DIR = `${process.env.HOME}/.codex/sessions`;
 

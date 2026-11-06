@@ -38,7 +38,7 @@
 | Minecraft | Chat, joins, advancements | Server logs |
 | MacBook screen recall | OCR'd screen captures | Timeline.app |
 
-File exports are imported by dropping them into an inbox directory configured under `[inbox.sources.*]` in `config.toml` (see [`deploy/macos/config.toml.example`](../../deploy/macos/config.toml.example)), or by running a parser directly from a checkout: `bun run src/parsers/<name>.ts`. API and local-file sources sync on the schedule set on the web app's **Sync** page. The sections below cover sources that need credentials or extra setup.
+File exports are imported by dropping them into an inbox directory configured under `[inbox.sources.*]` in `config.toml` (see [`deploy/macos/config.toml.example`](../../deploy/macos/config.toml.example)), or by running a parser directly from a checkout: `bun run src/platforms/<platform>/parser.ts`. API and local-file sources sync on the schedule set on the web app's **Sync** page. The sections below cover sources that need credentials or extra setup.
 
 ## Credentials and settings
 

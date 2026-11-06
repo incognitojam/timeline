@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { runParser } from "../../lib/parser-cli";
+import { runParser } from "../../ingest/cli";
 
 interface SpotifyStreamingEntry {
   ts: string;

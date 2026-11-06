@@ -1,4 +1,4 @@
-// Mirror of `ContentBlock` from `src/parsers/shared/format-content.ts`.
+// Mirror of `ContentBlock` from `src/ingest/ai/format-content.ts`.
 // Kept in sync by convention; the parsers and the web app are in the same
 // repo so divergence is caught in review.
 

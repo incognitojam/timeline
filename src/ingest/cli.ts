@@ -2,7 +2,7 @@
  * Parser CLI Wrapper
  *
  * Reduces boilerplate for parsers that follow the standard CLI pattern:
- *   bun run src/parsers/foo.ts <import-path> [account-name]
+ *   bun run src/platforms/foo/parser.ts <import-path> [account-name]
  */
 
 import { Database } from "bun:sqlite";
