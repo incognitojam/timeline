@@ -13,7 +13,6 @@ import { backupOffsiteSyncSource } from "./backup-offsite";
 import { embeddingsSyncSource } from "./embeddings";
 import { PLATFORMS } from "../../platforms";
 import { collectSyncSources } from "../../platforms/registry";
-import { googlePlacesSyncSource } from "../../platforms/google/places/sync";
 import { inboxRcloneSyncSource } from "./inbox-rclone";
 import { mediaEvictSyncSource } from "./media-evict";
 import { remoteAgentsSyncSource } from "./remote-agents";
@@ -26,7 +25,6 @@ import { thumbhashSyncSource } from "./thumbhash";
  */
 export const SYNC_SOURCES: SyncSource[] = collectSyncSources(PLATFORMS, [
   remoteAgentsSyncSource, // Pull and import agent logs from other machines
-  googlePlacesSyncSource, // Resolve place names before thumbhash/backup
   inboxRcloneSyncSource, // Pull files from cloud remotes into inbox dirs
   thumbhashSyncSource, // Process new images before backup
   attachmentDescriptionsSyncSource, // Describe new images after storage
