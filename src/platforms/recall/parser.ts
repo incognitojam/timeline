@@ -17,10 +17,10 @@ import { Database } from "bun:sqlite";
 import { readdir, unlink } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
-import { onImportComplete } from "../db/import-hooks";
-import { getDb, initDb } from "../db/schema";
-import { insertStoredAttachment } from "../media/attachments";
-import { storeFile } from "../media/storage";
+import { onImportComplete } from "../../db/import-hooks";
+import { getDb, initDb } from "../../db/schema";
+import { insertStoredAttachment } from "../../media/attachments";
+import { storeFile } from "../../media/storage";
 
 const DEFAULT_RECALL_DIR = join(homedir(), ".local", "share", "timeline", "recall");
 

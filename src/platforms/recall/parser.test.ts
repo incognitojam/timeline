@@ -4,8 +4,8 @@ import { randomUUID } from "crypto";
 import { chmod, mkdir, readdir, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { initDb } from "../db/schema";
-import { importRecall } from "./recall";
+import { initDb } from "../../db/schema";
+import { importRecall } from "./parser";
 
 interface EventRow {
   id: number;

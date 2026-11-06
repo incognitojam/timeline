@@ -9,7 +9,7 @@ import { codexSeed } from "./codex";
 import { conductorSeed } from "./conductor";
 import { githubSeed } from "./github";
 import { opencodeSeed } from "./opencode";
-import { smsBackupRestoreSeed } from "./sms-backup-restore";
+import { smsBackupRestoreSeed } from "../../platforms/phone/seed";
 import { t3codeSeed } from "./t3code";
 import { wakatimeSeed } from "./wakatime";
 

@@ -5,7 +5,7 @@ import type { TimelineEvent } from "../../lib/types";
 import { getSourceColorStyle } from "../../lib/source-styles";
 import { getThumbhashUrl } from "../../lib/thumbhash";
 import { formatTime } from "../../lib/format";
-import SourceIcon from "../SourceIcon";
+import SourceIcon from "../../components/SourceIcon";
 
 interface Props {
   event: TimelineEvent;

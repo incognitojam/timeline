@@ -1,9 +1,9 @@
-import { importCalls, importMms, importSms } from "../../parsers/sms-backup-restore";
-import type { SeedContext, SeedDay, SeedSource } from "../context";
-import type { Person, PersonKey } from "../persona";
-import { PEOPLE, peopleOn, personByKey, SELF, TIME_ZONE } from "../persona";
-import type { Rng } from "../rng";
-import { type ChatLine, chatSession, chatStart, GOOGLE_MESSAGES_DAYS, type Topic } from "./messaging-b-data";
+import { importCalls, importMms, importSms } from "./parser";
+import type { SeedContext, SeedDay, SeedSource } from "../../seed/context";
+import type { Person, PersonKey } from "../../seed/persona";
+import { PEOPLE, peopleOn, personByKey, SELF, TIME_ZONE } from "../../seed/persona";
+import type { Rng } from "../../seed/rng";
+import { type ChatLine, chatSession, chatStart, GOOGLE_MESSAGES_DAYS, type Topic } from "../../seed/sources/messaging-b-data";
 
 const NAME = "sms-backup-restore";
 
