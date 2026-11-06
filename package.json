@@ -39,7 +39,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.7",
     "@changesets/cli": "^3.0.1",
-    "@effect/tsgo": "^0.32.1",
+    "@effect/tsgo": "^0.64.0",
     "@types/bun": "latest",
     "oxlint": "^1.80.0",
     "typescript": "^7.0.2"
