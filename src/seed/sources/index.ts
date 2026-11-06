@@ -8,7 +8,6 @@ import { claudeSeed } from "./claude";
 import { claudeCodeSeed } from "./claude-code";
 import { codexSeed } from "./codex";
 import { conductorSeed } from "./conductor";
-import { facebookSeed } from "../../platforms/facebook/seed";
 import { fitbitSeed } from "./fitbit";
 import { githubSeed } from "./github";
 import { googleCalendarSeed } from "./google-calendar";
@@ -22,27 +21,17 @@ import { googlePlaystoreSeed } from "./google-playstore";
 import { googleSearchSeed } from "./google-search";
 import { googleTimelineSeed } from "./google-timeline";
 import { googleYoutubeSeed } from "./google-youtube";
-import { instagramSeed } from "../../platforms/instagram/seed";
-import { linkedinSeed } from "../../platforms/linkedin/seed";
 import { monzoSeed } from "./monzo";
 import { opencodeSeed } from "./opencode";
-import { redditSeed } from "../../platforms/reddit/seed";
-import { skypeSeed } from "../../platforms/skype/seed";
 import { smsBackupRestoreSeed } from "./sms-backup-restore";
-import { swarmSeed } from "../../platforms/swarm/seed";
 import { t3codeSeed } from "./t3code";
 import { thrivaSeed } from "./thriva";
 import { wakatimeSeed } from "./wakatime";
 
 /** Every generator, in run order. */
 export const SEED_SOURCES: readonly SeedSource[] = await collectSeedSources(PLATFORMS, [
-  facebookSeed,
-  instagramSeed,
   googleChatSeed,
-  skypeSeed,
   smsBackupRestoreSeed,
-  linkedinSeed,
-  redditSeed,
   claudeSeed,
   chatgptSeed,
   claudeCodeSeed,
@@ -62,7 +51,6 @@ export const SEED_SOURCES: readonly SeedSource[] = await collectSeedSources(PLAT
   googleCalendarSeed,
   googleKeepSeed,
   googlePlaystoreSeed,
-  swarmSeed,
   monzoSeed,
   amexSeed,
   fitbitSeed,
