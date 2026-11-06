@@ -82,7 +82,7 @@ export const googleCalendarSeed: SeedSource = {
 
     ctx.writeStaged("google-calendar", `${SELF.email}.ics`, toIcs(ctx, kit.events, SELF.name));
     ctx.writeStaged("google-calendar", "Birthdays.ics", toIcs(ctx, birthdays, "Birthdays"));
-    await ctx.runParserCli("google-calendar.ts", [ctx.stage("google-calendar"), GOOGLE_ACCOUNT]);
+    await ctx.runParserCli("parsers/google-calendar.ts", [ctx.stage("google-calendar"), GOOGLE_ACCOUNT]);
 
     // The importer identifies attendees (not organizers) by email, and
     // birthdays by name.

@@ -342,7 +342,7 @@ async function processSpotifyZip(
   if (!sourceAccount) {
     throw new Error("Spotify parser requires 'account' to be specified in config");
   }
-  const { importSpotifyData } = await import("../parsers/spotify");
+  const { importSpotifyData } = await import("../platforms/spotify/parser");
   return await importSpotifyData(db, tempDir, sourceAccount);
 }
 

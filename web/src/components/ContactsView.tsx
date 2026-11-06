@@ -32,7 +32,7 @@ import { staleContentClass } from "../lib/stale-content";
 import type { Contact, ContactIdentity, ContactMemory as ContactMemoryType, ContactWithStats, UnlinkedIdentity } from "../lib/types";
 import Avatar from "./Avatar";
 import ContactConversations from "./ContactConversations";
-import ContactSpotifySummary from "./ContactSpotifySummary";
+import ContactSpotifySummary from "../platforms/spotify/ContactSpotifySummary";
 import { IconBolt, IconCheck, IconChevronRight, IconClose, IconEdit, IconProgress, IconRefresh } from "../ui/icons";
 
 // Virtual scrolling constants for suggestions list

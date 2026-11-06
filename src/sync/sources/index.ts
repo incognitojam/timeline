@@ -27,15 +27,15 @@ import { opencodeSyncSource } from "./opencode";
 import { recallSyncSource } from "./recall";
 import { remoteAgentsSyncSource } from "./remote-agents";
 import { renderSweepSyncSource } from "./render-sweep";
-import { spotifySyncSource } from "./spotify";
-import { spotifyFriendsSyncSource } from "./spotify-friends";
-import { spotifyPlaylistsSyncSource } from "./spotify-playlists";
-import { steamSyncSource } from "./steam";
+import { spotifySyncSource } from "../../platforms/spotify/sync";
+import { spotifyFriendsSyncSource } from "../../platforms/spotify/sync-friends";
+import { spotifyPlaylistsSyncSource } from "../../platforms/spotify/sync-playlists";
+import { steamSyncSource } from "../../platforms/steam/sync";
 import { swarmSyncSource } from "./swarm";
 import { t3codeSyncSource } from "./t3code";
 import { thrivaSyncSource } from "./thriva";
 import { thumbhashSyncSource } from "./thumbhash";
-import { traktSyncSource } from "./trakt";
+import { traktSyncSource } from "../../platforms/trakt/sync";
 import { wakatimeSyncSource } from "./wakatime";
 
 /**

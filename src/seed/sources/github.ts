@@ -207,7 +207,7 @@ export const githubSeed: SeedSource = {
     write("pull_request_reviews", reviews);
     write("commit_comments", commitComments);
 
-    await ctx.runParserCli("github.ts", [`${ctx.stage("github")}/export`, CODING_ACCOUNT]);
+    await ctx.runParserCli("parsers/github.ts", [`${ctx.stage("github")}/export`, CODING_ACCOUNT]);
     ctx.identify("alex", `github:${CODING_ACCOUNT}`);
   },
 };

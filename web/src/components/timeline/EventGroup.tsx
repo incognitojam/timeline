@@ -14,7 +14,7 @@ import { isSleepEvent } from "../../lib/sleep";
 import { getSourceColorStyle } from "../../lib/source-styles";
 import SourceIcon from "../SourceIcon";
 import { getSenderLabel, getDisplayName, getResolvedIdentity } from "../../lib/identities";
-import { getSessionAlbumArts, getEventAlbumArt, isSpotifyEvent } from "../../lib/spotify-art";
+import { getSessionAlbumArts, getEventAlbumArt, isSpotifyEvent } from "../../platforms/spotify/art";
 import { formatDuration, formatTime } from "../../lib/format";
 import { getConversationContent } from "../../lib/conversation";
 import { discordMentionsToPlainText } from "../../platforms/discord/mentions";

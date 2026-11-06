@@ -22,7 +22,7 @@ export type ParserFn = (
  * Options for the parser CLI wrapper
  */
 export interface ParserCliOptions {
-  /** Parser name used in usage message (e.g., "spotify") */
+  /** Script path under src/, without its extension, for the usage message. */
   name: string;
   /** Argument description (default: "<import-path> [account-name]") */
   usage?: string;
@@ -48,8 +48,8 @@ export interface ParserCliOptions {
  * ```typescript
  * // At the end of spotify.ts:
  * runParser(importSpotifyData, {
- *   name: "spotify",
- *   examples: ["bun run src/parsers/spotify.ts ./imports/spotify my-account"],
+ *   name: "platforms/spotify/parser",
+ *   examples: ["bun run src/platforms/spotify/parser.ts ./imports/spotify my-account"],
  * });
  * ```
  */
@@ -65,7 +65,7 @@ export function runParser(fn: ParserFn, options: ParserCliOptions): void {
   const args = process.argv.slice(2);
 
   if (args.length < minArgs) {
-    console.log(`Usage: bun run src/parsers/${name}.ts ${usage}`);
+    console.log(`Usage: bun run src/${name}.ts ${usage}`);
     if (examples.length > 0) {
       console.log("\nExamples:");
       for (const ex of examples) {

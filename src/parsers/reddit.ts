@@ -271,7 +271,7 @@ export async function importRedditData(
 // CLI
 if (import.meta.main) {
   runParser(importRedditData, {
-    name: "reddit",
+    name: "parsers/reddit",
     examples: ["bun run src/parsers/reddit.ts ./imports/reddit my-account"],
   });
 }

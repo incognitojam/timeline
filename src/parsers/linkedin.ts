@@ -303,7 +303,7 @@ export async function importLinkedInData(
 // CLI
 if (import.meta.main) {
   runParser(importLinkedInData, {
-    name: "linkedin",
+    name: "parsers/linkedin",
     examples: ["bun run src/parsers/linkedin.ts ./imports/linkedin my-account"],
   });
 }

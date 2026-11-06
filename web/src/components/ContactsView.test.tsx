@@ -57,7 +57,7 @@ vi.mock("./Avatar", () => ({
   default: (props: { name?: string | null }) => <span>{props.name}</span>,
 }));
 
-vi.mock("./ContactSpotifySummary", () => ({
+vi.mock("../platforms/spotify/ContactSpotifySummary", () => ({
   default: () => <div>Spotify Summary</div>,
 }));
 

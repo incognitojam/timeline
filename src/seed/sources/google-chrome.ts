@@ -250,6 +250,6 @@ export const googleChromeSeed: SeedSource = {
 
     entries.sort((a, b) => b.time_usec - a.time_usec);
     ctx.writeStaged("google-chrome", "Chrome/History.json", JSON.stringify({ "Browser History": entries }));
-    await ctx.runParserCli("google-chrome.ts", [ctx.stage("google-chrome"), GOOGLE_ACCOUNT]);
+    await ctx.runParserCli("parsers/google-chrome.ts", [ctx.stage("google-chrome"), GOOGLE_ACCOUNT]);
   },
 };

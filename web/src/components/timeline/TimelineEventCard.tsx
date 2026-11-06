@@ -5,12 +5,12 @@ import type { TimelineEvent } from "../../lib/types";
 import { getSourceColorStyle } from "../../lib/source-styles";
 import SourceIcon from "../SourceIcon";
 import { getResolvedIdentity, getSenderFromEvent, getSenderIdentifier, getSenderLabel, getPeopleFromEvent } from "../../lib/identities";
-import { getEventAlbumArt, isSpotifyEvent } from "../../lib/spotify-art";
+import { getEventAlbumArt, isSpotifyEvent } from "../../platforms/spotify/art";
 import { formatDuration, formatTime } from "../../lib/format";
 import { discordMentionsToPlainText } from "../../platforms/discord/mentions";
 import { viewerTimeZone } from "../../platforms/discord/timestamps";
 import { buildCodingProjectUrl } from "../../lib/routes";
-import { describeTraktSource } from "../../lib/trakt-source";
+import { describeTraktSource } from "../../platforms/trakt/source";
 import { IconDelete, IconEdit } from "../../ui/icons";
 
 interface WakaTimeRawData {

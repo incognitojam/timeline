@@ -1,5 +1,5 @@
 import type { ConversationRangeExportFormat } from "@shared/conversation-export";
-import type { MusicPeriod, MusicRankingsOverview, MusicRecentResponse } from "@shared/music";
+import type { MusicPeriod, MusicRankingsOverview, MusicRecentResponse } from "@platforms/spotify/shared/music";
 import type { NetworkSettings } from "@shared/network-settings";
 import type { ReleaseStatus } from "@shared/releases";
 import type { TimelineServiceStatus, VersionInfo } from "@shared/version";
@@ -2248,7 +2248,7 @@ export async function waitForJob(
 // Music / Playlists
 // ============================================================================
 
-export type { MusicPeriod, MusicRankingsOverview, MusicRecentResponse } from "@shared/music";
+export type { MusicPeriod, MusicRankingsOverview, MusicRecentResponse } from "@platforms/spotify/shared/music";
 
 export interface PlaylistPoint {
   date: string; // YYYY-MM-DD

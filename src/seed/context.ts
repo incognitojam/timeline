@@ -199,7 +199,7 @@ export class SeedContext {
 
   /** Run a parser that only exposes a CLI (`bun run src/parsers/<file>.ts ...`). */
   async runParserCli(script: string, args: readonly string[], env: Record<string, string> = {}): Promise<void> {
-    const path = resolve(import.meta.dir, "..", "parsers", script);
+    const path = resolve(import.meta.dir, "..", script);
     // Fold the WAL into the database from this fsync-free connection first, so
     // the subprocess's commits don't pay for checkpointing earlier generators.
     this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");

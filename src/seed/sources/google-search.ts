@@ -74,6 +74,6 @@ export const googleSearchSeed: SeedSource = {
       "Takeout/My Activity/Search/My Activity.html",
       myActivityPage(cells.map((c) => c.html)),
     );
-    await ctx.runParserCli("google-search.ts", [path, GOOGLE_ACCOUNT]);
+    await ctx.runParserCli("parsers/google-search.ts", [path, GOOGLE_ACCOUNT]);
   },
 };

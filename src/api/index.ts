@@ -21,8 +21,8 @@ import {
   getPlaylistImageUrl,
   getCachedJournalSession,
 } from "../db/app-state";
-import { getTrackedPlaylists, getPlaylistObservations, getPlaylistMeta } from "../db/playlist-follows";
-import { getMusicRankings, getRecentMusicPlays, isMusicPeriod } from "../db/music";
+import { getTrackedPlaylists, getPlaylistObservations, getPlaylistMeta } from "../platforms/spotify/playlist-follows";
+import { getMusicRankings, getRecentMusicPlays, isMusicPeriod } from "../platforms/spotify/music";
 import { streamJournalQuestions, streamJournalReflection } from "../journal/questions";
 import { clampLimit, clampOffset } from "./query-params";
 import { statusRoutes } from "./status";

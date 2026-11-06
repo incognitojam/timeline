@@ -22,7 +22,7 @@ the pinned version. To change a version, edit `packageManager` or `mise.toml`.
 bun run setup                # install dependencies and generate a synthetic ./timeline.db
 
 # Import data from an export
-bun run src/parsers/spotify.ts ./imports/spotify my-account
+bun run src/platforms/spotify/parser.ts ./imports/spotify my-account
 
 # Run the web app (API + frontend)
 bun run dev

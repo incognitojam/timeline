@@ -129,6 +129,6 @@ export const googleKeepSeed: SeedSource = {
       });
     }
 
-    await ctx.runParserCli("google-keep.ts", [`${ctx.stage("google-keep")}/Keep`, GOOGLE_ACCOUNT]);
+    await ctx.runParserCli("parsers/google-keep.ts", [`${ctx.stage("google-keep")}/Keep`, GOOGLE_ACCOUNT]);
   },
 };
