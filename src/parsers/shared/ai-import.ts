@@ -56,7 +56,29 @@ export function createIdentityCollector(platform: Platform, sourceAccount: strin
     return identities.size;
   };
 
-  return { userIdentifier, registerAssistant, upsertAll };
+  /** Every collected identity. */
+  const all = (): UpsertIdentityOptions[] => [...identities.values()];
+
+  /** Identities an upsert would add or change. Read-only, so it needs no write lock. */
+  const findStale = (db: Database): UpsertIdentityOptions[] => {
+    const stored = db.prepare(
+      "SELECT display_name, username, avatar_url FROM identities WHERE platform = ? AND platform_id = ?"
+    );
+    const differs = (next: string | null | undefined, current: string | null) => next != null && next !== current;
+    return all().filter((identity) => {
+      const row = stored.get(identity.platform, identity.platformId) as
+        | { display_name: string | null; username: string | null; avatar_url: string | null }
+        | null;
+      return (
+        row === null ||
+        differs(identity.displayName, row.display_name) ||
+        differs(identity.username, row.username) ||
+        differs(identity.avatarUrl, row.avatar_url)
+      );
+    });
+  };
+
+  return { userIdentifier, registerAssistant, upsertAll, all, findStale };
 }
 
 export interface AiEventRow {
@@ -72,6 +94,10 @@ export interface AiEventRow {
 }
 
 export type WriteOutcome = "inserted" | "refreshed" | "skipped";
+
+function serializeTags(tags: string[]): string | null {
+  return tags.length > 0 ? JSON.stringify(tags) : null;
+}
 
 /**
  * Prepared-statement bundle for event writes with duplicate handling.
@@ -133,14 +159,31 @@ export function createEventWriter(
     WHERE source = ? AND source_id = ? AND source_account = ?
   `);
 
+  const compareStmt = db.prepare(`
+    SELECT (title IS ? AND content IS ? AND people IS ? AND tags IS ?
+      AND raw_data IS ? AND conversation_id IS ?) AS same
+    FROM events
+    WHERE source = ? AND source_id = ? AND source_account = ?
+  `);
+
   const findExisting = (sourceId: string): number | null => {
     const row = findStmt.get(source, sourceId, sourceAccount) as { id: number } | undefined;
     return row?.id ?? null;
   };
 
+  /** Read-only: whether `write` would have anything to do for this event. */
+  const needsWrite = (event: AiEventRow): boolean => {
+    const row = compareStmt.get(
+      event.title, event.content, JSON.stringify(event.people), serializeTags(event.tags), event.rawData, event.conversationId,
+      source, event.sourceId, sourceAccount
+    ) as { same: number } | null;
+    if (row === null || refreshRawData) return true;
+    return updateChanged && row.same === 0;
+  };
+
   /** Insert one event row; on duplicate, refresh content+raw_data+conversation_id when enabled. */
   const write = (event: AiEventRow): { outcome: WriteOutcome; eventId: number | null } => {
-    const tags = event.tags.length > 0 ? JSON.stringify(event.tags) : null;
+    const tags = serializeTags(event.tags);
     const people = JSON.stringify(event.people);
     const inserted = insert.get(
       source,
@@ -184,5 +227,5 @@ export function createEventWriter(
     return { outcome: "skipped", eventId: existingId };
   };
 
-  return { write, findExisting };
+  return { write, needsWrite, findExisting };
 }

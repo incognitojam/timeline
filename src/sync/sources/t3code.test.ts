@@ -32,6 +32,9 @@ describe("t3code sync source", () => {
     t3Path = join(root, "statev2.sqlite");
     dbPath = join(root, "timeline.db");
     createT3CodeV2Fixture(t3Path).close();
+    const setup = new Database(dbPath);
+    schema.initDb(setup);
+    setup.close();
     getDbSpy = spyOn(schema, "getDb").mockImplementation(() => new Database(dbPath));
     priorState = getSyncState(getAppStateDb(), "t3code");
     setSyncState(getAppStateDb(), "t3code", {});
@@ -51,6 +54,38 @@ describe("t3code sync source", () => {
     expect(result.error).toBeUndefined();
     return result;
   }
+
+  it("syncs with nothing to write while another connection holds the write lock", async () => {
+    await sync();
+    const holder = new Database(dbPath);
+    holder.exec("BEGIN IMMEDIATE");
+    const result = await sync();
+    holder.exec("ROLLBACK");
+    holder.close();
+    expect(result.eventsUpdated).toBe(0);
+    expect(result.metadata?.writeTransactions).toBe(0);
+  });
+
+  it("reports what a failed run committed, once", async () => {
+    const setup = new Database(dbPath);
+    setup.exec(`CREATE TRIGGER fail_on_identity BEFORE INSERT ON identities
+      BEGIN SELECT RAISE(ABORT, 'simulated crash'); END`);
+    setup.close();
+    const config = { sources: { t3code: { path: t3Path, account: "alice" } } } as unknown as SyncOptions["config"];
+    const failed = await t3codeSyncSource.sync({ verbose: false, config });
+    expect(failed.success).toBe(false);
+    expect(failed.error).toContain("simulated crash");
+    const stored = new Database(dbPath);
+    const committed = (stored.prepare("SELECT COUNT(*) AS n FROM events").get() as { n: number }).n;
+    stored.close();
+    expect(committed).toBeGreaterThan(0);
+    expect(failed.eventsAdded).toBe(committed);
+
+    const repaired = new Database(dbPath);
+    repaired.exec("DROP TRIGGER fail_on_identity");
+    repaired.close();
+    expect((await sync()).eventsAdded).toBe(0);
+  });
 
   it("picks up a row older than the cursor overlap at the next full read", async () => {
     await sync();
