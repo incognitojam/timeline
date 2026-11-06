@@ -208,7 +208,7 @@ const SERVICE_ENTRY_POINTS = [
   "src/service-main.ts",
   "src/scheduler/worker.ts",
   "src/db/pool-worker.ts",
-  "src/parsers/monzo.ts",
+  "src/platforms/monzo/parser.ts",
 ];
 
 describe("platform layering", () => {

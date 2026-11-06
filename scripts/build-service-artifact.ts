@@ -139,7 +139,7 @@ async function buildArtifact(outputPath: string): Promise<void> {
         join(repoRoot, "src", "service.ts"),
         join(repoRoot, "src", "scheduler", "worker.ts"),
         join(repoRoot, "src", "db", "pool-worker.ts"),
-        join(repoRoot, "src", "parsers", "monzo.ts"),
+        join(repoRoot, "src", "platforms", "monzo", "parser.ts"),
       ],
       root: join(repoRoot, "src"),
       outdir: runtimeDir,

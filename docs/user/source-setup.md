@@ -132,7 +132,7 @@ Monzo uses OAuth2 (not file exports) and requires special setup:
 1. Create an app at https://developers.monzo.com/ with redirect URI `http://127.0.0.1:8742/callback`
 2. Run
    `~/Applications/Timeline.app/Contents/Resources/timeline-service/bin/timeline-service monzo auth`
-   on the host (or `bun run src/parsers/monzo.ts auth` from a development
+   on the host (or `bun run src/platforms/monzo/parser.ts auth` from a development
    checkout) — enter client ID/secret when prompted, approve in browser + Monzo app
 3. **Within 5 minutes**, run sync to get full transaction history (after 5 mins, only last 90 days)
 

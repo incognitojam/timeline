@@ -8,7 +8,7 @@ import { claudeCodeSeed } from "./claude-code";
 import { codexSeed } from "./codex";
 import { conductorSeed } from "./conductor";
 import { githubSeed } from "./github";
-import { monzoSeed } from "./monzo";
+import { monzoSeed } from "../../platforms/monzo/seed";
 import { opencodeSeed } from "./opencode";
 import { smsBackupRestoreSeed } from "./sms-backup-restore";
 import { t3codeSeed } from "./t3code";

@@ -52,11 +52,11 @@ export function getMonzoParserPath(): string {
   const resourceRoot = getPackagedResourceRoot();
   if (resourceRoot) {
     return requirePackagedPath(
-      join(resourceRoot, "runtime", "parsers", "monzo.js"),
+      join(resourceRoot, "runtime", "platforms", "monzo", "parser.js"),
       "Monzo parser",
     );
   }
-  return fileURLToPath(new URL("./parsers/monzo.ts", import.meta.url));
+  return fileURLToPath(new URL("./platforms/monzo/parser.ts", import.meta.url));
 }
 
 function quoteShellArgument(value: string): string {
@@ -69,7 +69,7 @@ export function getMonzoAuthCommand(): string {
     const launcher = join(dirname(resourceRoot), "bin", "timeline-service");
     return `${quoteShellArgument(launcher)} monzo auth`;
   }
-  return "bun run src/parsers/monzo.ts auth";
+  return "bun run src/platforms/monzo/parser.ts auth";
 }
 
 export function findWebDistPath(): string | null {
