@@ -1,3 +1,4 @@
+import { amexPlatform } from "./amex";
 import { discordPlatform } from "./discord";
 import { facebookPlatform } from "./facebook";
 import { googlePlatform } from "./google";
@@ -10,6 +11,7 @@ import { skypePlatform } from "./skype";
 import { spotifyPlatform } from "./spotify";
 import { steamPlatform } from "./steam";
 import { swarmPlatform } from "./swarm";
+import { thrivaPlatform } from "./thriva";
 import { traktPlatform } from "./trakt";
 import type { PlatformModule } from "./registry";
 
@@ -19,6 +21,7 @@ export const PLATFORMS: readonly PlatformModule[] = [
   googleMessagesPlatform,
   traktPlatform,
   swarmPlatform,
+  thrivaPlatform,
   googlePlatform,
   spotifyPlatform,
   steamPlatform,
@@ -28,4 +31,5 @@ export const PLATFORMS: readonly PlatformModule[] = [
   linkedinPlatform,
   redditPlatform,
   minecraftPlatform,
+  amexPlatform,
 ];
