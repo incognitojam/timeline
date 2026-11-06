@@ -5,13 +5,13 @@
  * found in Google Timeline events, inserts results into the places table, then
  * backfills events that currently show as just "Visit".
  *
- * Usage: bun run src/scripts/resolve-places.ts [--dry-run] [--verbose] [--limit N]
+ * Usage: bun run src/platforms/google/places/resolve.ts [--dry-run] [--verbose] [--limit N]
  *
  * Requires GOOGLE_PLACES_API_KEY env var.
  */
 
 import { Database } from "bun:sqlite";
-import { getDb, initDb } from "../db/schema";
+import { getDb, initDb } from "../../../db/schema";
 
 export interface ResolveResult {
   resolved: number;

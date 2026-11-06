@@ -6,12 +6,12 @@
  * event titles/location names.
  */
 
-import { getDb, initDb } from "../../db/schema";
+import { getDb, initDb } from "../../../db/schema";
 import {
   findUnresolvedPlaceIds,
   resolvePlaces,
-} from "../../scripts/resolve-places";
-import type { SyncOptions, SyncResult, SyncSource } from "../types";
+} from "./resolve";
+import type { SyncOptions, SyncResult, SyncSource } from "../../../sync/types";
 
 function getApiKey(): string | null {
   return process.env.GOOGLE_PLACES_API_KEY ?? null;

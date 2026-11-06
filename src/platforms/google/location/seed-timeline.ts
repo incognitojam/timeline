@@ -14,7 +14,7 @@ import {
  * On-device Google Maps Timeline export (Timeline.json, semanticSegments) for
  * the newer half of the range. Visits carry only place ids; the importer
  * names them from the `places` table, which a real install fills via
- * src/scripts/resolve-places.ts (Google Places API). That script needs the
+ * src/platforms/google/places/resolve.ts (Google Places API). That script needs the
  * network, so the same rows it would write are inserted directly.
  */
 export const googleTimelineSeed: SeedSource = {

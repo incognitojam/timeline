@@ -13,7 +13,7 @@ import { backupOffsiteSyncSource } from "./backup-offsite";
 import { embeddingsSyncSource } from "./embeddings";
 import { PLATFORMS } from "../../platforms";
 import { collectSyncSources } from "../../platforms/registry";
-import { googlePlacesSyncSource } from "./google-places";
+import { googlePlacesSyncSource } from "../../platforms/google/places/sync";
 import { inboxRcloneSyncSource } from "./inbox-rclone";
 import { mediaEvictSyncSource } from "./media-evict";
 import { remoteAgentsSyncSource } from "./remote-agents";
