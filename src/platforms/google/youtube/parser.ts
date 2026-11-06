@@ -310,7 +310,7 @@ export async function importYouTubeData(
         }
 
         try {
-          insert.run(
+          const { changes } = insert.run(
             "youtube",
             sourceId,
             sourceAccount,
@@ -323,8 +323,8 @@ export async function importYouTubeData(
             JSON.stringify(activity),
             importBatch
           );
-          totalImported++;
-          typeCounts[activity.type] = (typeCounts[activity.type] || 0) + 1;
+          totalImported += changes;
+          typeCounts[activity.type] = (typeCounts[activity.type] || 0) + changes;
         } catch {
           totalSkipped++;
         }
@@ -360,7 +360,7 @@ export async function importYouTubeData(
       }
 
       try {
-        insert.run(
+        const { changes } = insert.run(
           "youtube",
           `subscription-${channelId}`,
           sourceAccount,
@@ -373,8 +373,8 @@ export async function importYouTubeData(
           JSON.stringify({ channelId, channelUrl, channelTitle }),
           importBatch
         );
-        totalImported++;
-        typeCounts["subscription-csv"] = (typeCounts["subscription-csv"] || 0) + 1;
+        totalImported += changes;
+        typeCounts["subscription-csv"] = (typeCounts["subscription-csv"] || 0) + changes;
       } catch {
         totalSkipped++;
       }
@@ -397,24 +397,26 @@ export async function importYouTubeData(
 }
 
 // CLI
-const args = process.argv.slice(2);
-if (args.length < 1) {
-  console.log("Usage: bun run src/platforms/google/youtube/parser.ts <import-path> [account-name]");
-  console.log("");
-  console.log("Import path should contain:");
-  console.log("  - My Activity.html or My Activity/YouTube/My Activity.html");
-  console.log("  - subscriptions/subscriptions.csv (optional)");
-  console.log("");
-  console.log("Example: bun run src/platforms/google/youtube/parser.ts ./imports/youtube my-account");
-  process.exit(1);
+if (import.meta.main) {
+  const args = process.argv.slice(2);
+  if (args.length < 1) {
+    console.log("Usage: bun run src/platforms/google/youtube/parser.ts <import-path> [account-name]");
+    console.log("");
+    console.log("Import path should contain:");
+    console.log("  - My Activity.html or My Activity/YouTube/My Activity.html");
+    console.log("  - subscriptions/subscriptions.csv (optional)");
+    console.log("");
+    console.log("Example: bun run src/platforms/google/youtube/parser.ts ./imports/youtube my-account");
+    process.exit(1);
+  }
+
+  const importPath = args[0];
+  const accountName = args[1] || "default";
+
+  const db = getDb();
+  initDb(db);
+
+  await importYouTubeData(db, importPath, accountName);
+
+  db.close();
 }
-
-const importPath = args[0];
-const accountName = args[1] || "default";
-
-const db = getDb();
-initDb(db);
-
-await importYouTubeData(db, importPath, accountName);
-
-db.close();

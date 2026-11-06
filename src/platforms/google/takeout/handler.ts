@@ -129,18 +129,12 @@ async function processTakeoutService(
     }
 
     case "search": {
-      // Find Search activity directory
-      const searchFile = files.find(
-        (f) =>
-          f.toLowerCase().includes("my activity") &&
-          f.toLowerCase().includes("search") &&
-          f.endsWith(".html")
-      );
+      // Only web Search: My Activity also holds Image Search, Video Search, etc.
+      const searchFile = files.find((f) => /\/my activity\/search\/[^/]*\.html$/i.test(f));
       if (!searchFile) return { eventsAdded: 0, eventsUpdated: 0 };
 
-      const searchPath = dirname(searchFile);
       const { importGoogleSearch } = await import("../search/parser");
-      return { eventsAdded: await importGoogleSearch(db, searchPath, sourceAccount), eventsUpdated: 0 };
+      return { eventsAdded: await importGoogleSearch(db, searchFile, sourceAccount), eventsUpdated: 0 };
     }
 
     case "calendar": {
@@ -170,19 +164,20 @@ async function processTakeoutService(
     }
 
     case "location": {
-      // Find Location History directory
-      const recordsFile = files.find(
-        (f) =>
-          f.toLowerCase().includes("location history") &&
-          f.toLowerCase().includes("records.json")
-      );
-      if (!recordsFile) return { eventsAdded: 0, eventsUpdated: 0 };
+      // The parser reads monthly Semantic Location History files, not Records.json.
+      const semanticDirEnd = "/semantic location history";
+      const semanticFile = files.find((f) => f.toLowerCase().includes(`${semanticDirEnd}/`));
+      if (!semanticFile) {
+        console.log("    location: no Semantic Location History, skipping");
+        return { eventsAdded: 0, eventsUpdated: 0 };
+      }
 
-      const locationPath = dirname(recordsFile);
-      const { importGoogleLocation } = await import(
-        "../location/parser"
+      const semanticPath = semanticFile.slice(
+        0,
+        semanticFile.toLowerCase().lastIndexOf(`${semanticDirEnd}/`) + semanticDirEnd.length
       );
-      return { eventsAdded: await importGoogleLocation(db, locationPath, sourceAccount), eventsUpdated: 0 };
+      const { importSemanticLocationHistory } = await import("../location/parser");
+      return { eventsAdded: await importSemanticLocationHistory(db, semanticPath, sourceAccount), eventsUpdated: 0 };
     }
 
     case "timeline": {
@@ -218,6 +213,15 @@ async function processTakeoutService(
 
       const { importChatData } = await import("../chat/parser");
       return { eventsAdded: await importChatData(db, chatPath, sourceAccount), eventsUpdated: 0 };
+    }
+
+    case "fit": {
+      const fitFile = files.find((f) => f.toLowerCase().includes("/fit/"));
+      if (!fitFile) return { eventsAdded: 0, eventsUpdated: 0 };
+
+      const fitPath = fitFile.slice(0, fitFile.toLowerCase().lastIndexOf("/fit/") + "/fit".length);
+      const { importGoogleFit } = await import("../fit/parser");
+      return { eventsAdded: await importGoogleFit(db, fitPath, sourceAccount), eventsUpdated: 0 };
     }
 
     case "fitbit": {

@@ -180,7 +180,7 @@ export async function importChatData(
 
           try {
             const rawData = { ...msg, group: groupName, members: members.map(m => m.name) };
-            insert.run(
+            const { changes } = insert.run(
               "google-chat",
               msg.message_id,
               sourceAccount,
@@ -196,7 +196,7 @@ export async function importChatData(
               // matches what extractConversationId reads back off the row.
               extractConversationId("google-chat", rawData)
             );
-            totalImported++;
+            totalImported += changes;
           } catch (e) {
             totalSkipped++;
           }
@@ -279,7 +279,7 @@ export async function importChatData(
 
           try {
             const rawData = { ...msg, dm_with: userName, dm_with_email: userEmail };
-            insert.run(
+            const { changes } = insert.run(
               "google-chat",
               msg.message_id,
               sourceAccount,
@@ -293,7 +293,7 @@ export async function importChatData(
               importBatch,
               extractConversationId("google-chat", rawData)
             );
-            totalImported++;
+            totalImported += changes;
           } catch (e) {
             totalSkipped++;
           }

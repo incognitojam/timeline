@@ -57,11 +57,11 @@ function getActivityType(activityCode: number): string {
   return ACTIVITY_TYPES[activityCode] || `activity-${activityCode}`;
 }
 
-async function importGoogleFit(
+export async function importGoogleFit(
   db: Database,
   importPath: string,
   sourceAccount: string
-) {
+): Promise<number> {
   const importBatch = `google-fit-${sourceAccount}-${Date.now()}`;
 
   const insert = db.prepare(`
@@ -73,6 +73,7 @@ async function importGoogleFit(
 
   const stats: Record<string, number> = {};
   let skipped = 0;
+  let duplicates = 0;
   let errors = 0;
   const allFiles: string[] = [];
 
@@ -106,7 +107,7 @@ async function importGoogleFit(
   if (allFiles.length === 0) {
     console.log("\nNo Google Fit JSON files found.");
     console.log("Expected files like: derived_com.google.activity.segment_*.json");
-    return;
+    return 0;
   }
 
   for (const filePath of allFiles) {
@@ -161,7 +162,7 @@ async function importGoogleFit(
           const title = `${activityName.replace(/-/g, " ")} (${durationStr})`;
           const sourceId = `${activityName}-${point.startTimeNanos}`;
 
-          insert.run(
+          const { changes } = insert.run(
             "google-fit",
             sourceId,
             sourceAccount,
@@ -176,7 +177,11 @@ async function importGoogleFit(
             importBatch
           );
 
-          stats[eventType] = (stats[eventType] || 0) + 1;
+          if (changes > 0) {
+            stats[eventType] = (stats[eventType] || 0) + 1;
+          } else {
+            duplicates++;
+          }
         } catch {
           errors++;
         }
@@ -192,29 +197,39 @@ async function importGoogleFit(
   for (const [type, count] of sortedStats) {
     console.log(`    ${type}: ${count}`);
   }
-  console.log(`  Total events: ${Object.values(stats).reduce((a, b) => a + b, 0)}`);
+  const imported = Object.values(stats).reduce((a, b) => a + b, 0);
+  console.log(`  Total events: ${imported}`);
   console.log(`  Skipped: ${skipped} (short/still/unknown)`);
+  console.log(`  Already imported: ${duplicates}`);
   console.log(`  Errors: ${errors}`);
   console.log(`  Batch ID: ${importBatch}`);
+
+  if (errors > 0) {
+    throw new Error(`Google Fit import hit ${errors} unreadable file(s) or data point(s)`);
+  }
+
+  return imported;
 }
 
 // CLI
-const args = process.argv.slice(2);
-if (args.length < 1) {
-  console.log("Usage: bun run src/platforms/google/fit/parser.ts <import-path> [account-name]");
-  console.log("Example: bun run src/platforms/google/fit/parser.ts /tmp/fit-import my-account");
-  process.exit(1);
+if (import.meta.main) {
+  const args = process.argv.slice(2);
+  if (args.length < 1) {
+    console.log("Usage: bun run src/platforms/google/fit/parser.ts <import-path> [account-name]");
+    console.log("Example: bun run src/platforms/google/fit/parser.ts /tmp/fit-import my-account");
+    process.exit(1);
+  }
+
+  const importPath = args[0];
+  const accountName = args[1] || "default";
+
+  console.log(`Importing Google Fit data from ${importPath}`);
+  console.log(`Account: ${accountName}\n`);
+
+  const db = getDb();
+  initDb(db);
+
+  await importGoogleFit(db, importPath, accountName);
+
+  db.close();
 }
-
-const importPath = args[0];
-const accountName = args[1] || "default";
-
-console.log(`Importing Google Fit data from ${importPath}`);
-console.log(`Account: ${accountName}\n`);
-
-const db = getDb();
-initDb(db);
-
-await importGoogleFit(db, importPath, accountName);
-
-db.close();

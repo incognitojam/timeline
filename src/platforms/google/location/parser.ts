@@ -59,6 +59,18 @@ export async function importGoogleLocation(
   importPath: string,
   sourceAccount: string
 ) {
+  return importSemanticLocationHistory(
+    db,
+    join(importPath, "Takeout", "Location History (Timeline)", "Semantic Location History"),
+    sourceAccount
+  );
+}
+
+export async function importSemanticLocationHistory(
+  db: Database,
+  semanticPath: string,
+  sourceAccount: string
+) {
   const importBatch = `google-location-${sourceAccount}-${Date.now()}`;
 
   const insert = db.prepare(`
@@ -70,15 +82,11 @@ export async function importGoogleLocation(
 
   let stats = { visits: 0, transits: 0, skipped: 0 };
 
-  // Find Semantic Location History folder
-  const semanticPath = join(importPath, "Takeout", "Location History (Timeline)", "Semantic Location History");
-
   let years: string[];
   try {
     years = await readdir(semanticPath);
-  } catch {
-    console.error(`Could not find Semantic Location History at ${semanticPath}`);
-    process.exit(1);
+  } catch (error) {
+    throw new Error(`Could not find Semantic Location History at ${semanticPath}`, { cause: error });
   }
 
   for (const year of years) {
@@ -129,7 +137,7 @@ export async function importGoogleLocation(
                 ? `Visited ${locationName}`
                 : `Location visit`;
 
-              insert.run(
+              const { changes } = insert.run(
                 "google-location",
                 `visit:${dur.startTimestamp}:${loc.placeId || `${lat},${lng}`}`,
                 sourceAccount,
@@ -146,7 +154,7 @@ export async function importGoogleLocation(
                 JSON.stringify(visit),
                 importBatch
               );
-              stats.visits++;
+              stats.visits += changes;
             }
 
             if (obj.activitySegment) {
@@ -177,7 +185,7 @@ export async function importGoogleLocation(
               const startLat = e7ToDecimal(seg.startLocation.latitudeE7);
               const startLng = e7ToDecimal(seg.startLocation.longitudeE7);
 
-              insert.run(
+              const { changes } = insert.run(
                 "google-location",
                 `transit:${dur.startTimestamp}`,
                 sourceAccount,
@@ -194,7 +202,7 @@ export async function importGoogleLocation(
                 JSON.stringify(seg),
                 importBatch
               );
-              stats.transits++;
+              stats.transits += changes;
             }
           } catch (e) {
             stats.skipped++;

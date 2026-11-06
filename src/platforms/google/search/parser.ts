@@ -143,7 +143,7 @@ export async function importGoogleSearch(
       const sourceId = `search:${activity.timestamp}:${activity.query.slice(0, 50)}`;
 
       try {
-        insert.run(
+        const { changes } = insert.run(
           "google-search",
           sourceId,
           sourceAccount,
@@ -155,7 +155,8 @@ export async function importGoogleSearch(
           JSON.stringify(activity),
           importBatch
         );
-        imported++;
+        imported += changes;
+        skipped += 1 - changes;
       } catch {
         skipped++;
       }
@@ -199,30 +200,32 @@ export async function importGoogleSearch(
 }
 
 // CLI
-const args = process.argv.slice(2);
-if (args.length < 1) {
-  console.log(
-    "Usage: bun run src/platforms/google/search/parser.ts <my-activity.html> [account-name]"
-  );
-  console.log("");
-  console.log("Imports Google Search activity from My Activity HTML export.");
-  console.log("Path should be: My Activity/Search/My Activity.html");
-  console.log("");
-  console.log(
-    "Example: bun run src/platforms/google/search/parser.ts '/tmp/takeout/My Activity/Search/My Activity.html' my-account"
-  );
-  process.exit(1);
+if (import.meta.main) {
+  const args = process.argv.slice(2);
+  if (args.length < 1) {
+    console.log(
+      "Usage: bun run src/platforms/google/search/parser.ts <my-activity.html> [account-name]"
+    );
+    console.log("");
+    console.log("Imports Google Search activity from My Activity HTML export.");
+    console.log("Path should be: My Activity/Search/My Activity.html");
+    console.log("");
+    console.log(
+      "Example: bun run src/platforms/google/search/parser.ts '/tmp/takeout/My Activity/Search/My Activity.html' my-account"
+    );
+    process.exit(1);
+  }
+
+  const importPath = args[0];
+  const accountName = args[1] || "default";
+
+  console.log(`Importing Google Search activity from ${importPath}`);
+  console.log(`Account: ${accountName}\n`);
+
+  const db = getDb();
+  initDb(db);
+
+  await importGoogleSearch(db, importPath, accountName);
+
+  db.close();
 }
-
-const importPath = args[0];
-const accountName = args[1] || "default";
-
-console.log(`Importing Google Search activity from ${importPath}`);
-console.log(`Account: ${accountName}\n`);
-
-const db = getDb();
-initDb(db);
-
-await importGoogleSearch(db, importPath, accountName);
-
-db.close();

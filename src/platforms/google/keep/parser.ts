@@ -108,7 +108,7 @@ export async function importKeepData(
       const sourceId = basename(file, ".json");
 
       try {
-        insert.run(
+        const { changes } = insert.run(
           "google-keep",
           sourceId,
           sourceAccount,
@@ -120,7 +120,7 @@ export async function importKeepData(
           JSON.stringify(note),
           importBatch
         );
-        totalImported++;
+        totalImported += changes;
       } catch (e) {
         totalSkipped++;
       }
@@ -136,19 +136,21 @@ export async function importKeepData(
 }
 
 // CLI
-const args = process.argv.slice(2);
-if (args.length < 1) {
-  console.log("Usage: bun run src/platforms/google/keep/parser.ts <import-path> [account-name]");
-  console.log("Example: bun run src/platforms/google/keep/parser.ts ./imports/keep my-account");
-  process.exit(1);
+if (import.meta.main) {
+  const args = process.argv.slice(2);
+  if (args.length < 1) {
+    console.log("Usage: bun run src/platforms/google/keep/parser.ts <import-path> [account-name]");
+    console.log("Example: bun run src/platforms/google/keep/parser.ts ./imports/keep my-account");
+    process.exit(1);
+  }
+
+  const importPath = args[0];
+  const accountName = args[1] || "default";
+
+  const db = getDb();
+  initDb(db);
+
+  await importKeepData(db, importPath, accountName);
+
+  db.close();
 }
-
-const importPath = args[0];
-const accountName = args[1] || "default";
-
-const db = getDb();
-initDb(db);
-
-await importKeepData(db, importPath, accountName);
-
-db.close();
