@@ -325,7 +325,7 @@ export async function importCalendarData(
         }
 
         try {
-          insert.run(
+          const { changes } = insert.run(
             "google-calendar",
             event.uid,
             sourceAccount,
@@ -341,7 +341,7 @@ export async function importCalendarData(
             JSON.stringify(event),
             importBatch
           );
-          totalImported++;
+          totalImported += changes;
         } catch {
           totalSkipped++;
         }
@@ -377,22 +377,24 @@ export async function importCalendarData(
 }
 
 // CLI
-const args = process.argv.slice(2);
-if (args.length < 1) {
-  console.log("Usage: bun run src/platforms/google/calendar/parser.ts <import-path> [account-name]");
-  console.log("");
-  console.log("Import path should contain .ics files");
-  console.log("");
-  console.log("Example: bun run src/platforms/google/calendar/parser.ts ./imports/calendar my-account");
-  process.exit(1);
+if (import.meta.main) {
+  const args = process.argv.slice(2);
+  if (args.length < 1) {
+    console.log("Usage: bun run src/platforms/google/calendar/parser.ts <import-path> [account-name]");
+    console.log("");
+    console.log("Import path should contain .ics files");
+    console.log("");
+    console.log("Example: bun run src/platforms/google/calendar/parser.ts ./imports/calendar my-account");
+    process.exit(1);
+  }
+
+  const importPath = args[0];
+  const accountName = args[1] || "default";
+
+  const db = getDb();
+  initDb(db);
+
+  await importCalendarData(db, importPath, accountName);
+
+  db.close();
 }
-
-const importPath = args[0];
-const accountName = args[1] || "default";
-
-const db = getDb();
-initDb(db);
-
-await importCalendarData(db, importPath, accountName);
-
-db.close();

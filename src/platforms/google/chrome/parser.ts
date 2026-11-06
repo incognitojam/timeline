@@ -93,7 +93,7 @@ export async function importChromeHistory(
         const tags = getTags(entry);
 
         try {
-          insert.run(
+          const { changes } = insert.run(
             "chrome",
             sourceId,
             sourceAccount,
@@ -105,7 +105,7 @@ export async function importChromeHistory(
             JSON.stringify(entry),
             importBatch
           );
-          totalImported++;
+          totalImported += changes;
         } catch {
           totalSkipped++;
         }
@@ -124,23 +124,25 @@ export async function importChromeHistory(
 }
 
 // CLI
-const args = process.argv.slice(2);
-if (args.length < 1) {
-  console.log("Usage: bun run src/platforms/google/chrome/parser.ts <import-path> [account-name]");
-  console.log("");
-  console.log("Import path should contain:");
-  console.log("  - History.json or Chrome/History.json");
-  console.log("");
-  console.log("Example: bun run src/platforms/google/chrome/parser.ts ./imports/chrome my-account");
-  process.exit(1);
+if (import.meta.main) {
+  const args = process.argv.slice(2);
+  if (args.length < 1) {
+    console.log("Usage: bun run src/platforms/google/chrome/parser.ts <import-path> [account-name]");
+    console.log("");
+    console.log("Import path should contain:");
+    console.log("  - History.json or Chrome/History.json");
+    console.log("");
+    console.log("Example: bun run src/platforms/google/chrome/parser.ts ./imports/chrome my-account");
+    process.exit(1);
+  }
+
+  const importPath = args[0];
+  const accountName = args[1] || "default";
+
+  const db = getDb();
+  initDb(db);
+
+  await importChromeHistory(db, importPath, accountName);
+
+  db.close();
 }
-
-const importPath = args[0];
-const accountName = args[1] || "default";
-
-const db = getDb();
-initDb(db);
-
-await importChromeHistory(db, importPath, accountName);
-
-db.close();

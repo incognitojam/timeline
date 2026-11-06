@@ -12,7 +12,11 @@ export function detectTakeoutServices(files: string[]): string[] {
     if (lower.includes("/google keep/") || lower.includes("/keep/"))
       services.add("keep");
     if (lower.includes("/calendar/")) services.add("calendar");
-    if (lower.includes("/location history/") || lower.includes("records.json"))
+    if (
+      lower.includes("/location history/") ||
+      lower.includes("/semantic location history/") ||
+      lower.includes("records.json")
+    )
       services.add("location");
     if (lower.includes("/google chat/") || lower.includes("/chat/"))
       services.add("chat");
