@@ -6,27 +6,19 @@
  */
 
 import type { SyncSource } from "../types";
-import { ampSyncSource } from "../../platforms/amp/sync";
 import { attachmentDescriptionsSyncSource } from "./attachment-descriptions";
 import { backupSyncSource } from "./backup";
 import { backupAppStateSyncSource } from "./backup-app-state";
 import { backupOffsiteSyncSource } from "./backup-offsite";
-import { claudeCodeSyncSource } from "../../platforms/claude-code/sync";
-import { codexSyncSource } from "../../platforms/codex/sync";
-import { conductorSyncSource } from "../../platforms/conductor/sync";
 import { embeddingsSyncSource } from "./embeddings";
 import { PLATFORMS } from "../../platforms";
 import { collectSyncSources } from "../../platforms/registry";
-import { githubSyncSource } from "../../platforms/github/sync";
 import { googlePlacesSyncSource } from "./google-places";
 import { inboxRcloneSyncSource } from "./inbox-rclone";
 import { mediaEvictSyncSource } from "./media-evict";
-import { opencodeSyncSource } from "../../platforms/opencode/sync";
 import { remoteAgentsSyncSource } from "./remote-agents";
 import { renderSweepSyncSource } from "./render-sweep";
-import { t3codeSyncSource } from "../../platforms/t3code/sync";
 import { thumbhashSyncSource } from "./thumbhash";
-import { wakatimeSyncSource } from "../../platforms/wakatime/sync";
 
 /**
  * All available sync sources.
@@ -34,14 +26,6 @@ import { wakatimeSyncSource } from "../../platforms/wakatime/sync";
  * way they're automatically available to the scheduler service.
  */
 export const SYNC_SOURCES: SyncSource[] = collectSyncSources(PLATFORMS, [
-  wakatimeSyncSource,
-  githubSyncSource,
-  claudeCodeSyncSource,
-  ampSyncSource,
-  opencodeSyncSource,
-  conductorSyncSource,
-  t3codeSyncSource,
-  codexSyncSource,
   remoteAgentsSyncSource, // Pull and import agent logs from other machines
   googlePlacesSyncSource, // Resolve place names before thumbhash/backup
   inboxRcloneSyncSource, // Pull files from cloud remotes into inbox dirs
@@ -62,16 +46,8 @@ export {
   googlePlacesSyncSource,
   inboxRcloneSyncSource,
   mediaEvictSyncSource,
-  wakatimeSyncSource,
-  githubSyncSource,
-  claudeCodeSyncSource,
-  ampSyncSource,
-  opencodeSyncSource,
   renderSweepSyncSource,
   embeddingsSyncSource,
-  conductorSyncSource,
-  t3codeSyncSource,
-  codexSyncSource,
   remoteAgentsSyncSource,
   thumbhashSyncSource,
   attachmentDescriptionsSyncSource,
