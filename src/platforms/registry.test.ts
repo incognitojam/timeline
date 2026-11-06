@@ -35,12 +35,16 @@ function platformDirs(root: string): string[] {
     .sort();
 }
 
-/** Registry values as they stood before platforms contributed to them. Reorders must be deliberate. */
+/** Current registry values, so a reorder or a lost source shows up as a reviewed change here. */
 const EXPECTED_SYNC_ORDER = [
   "discord",
   "google-messages",
-  "monzo",
   "trakt",
+  "spotify",
+  "spotify-friends",
+  "spotify-playlists",
+  "steam",
+  "monzo",
   "swarm",
   "wakatime",
   "github",
@@ -49,14 +53,10 @@ const EXPECTED_SYNC_ORDER = [
   "thriva",
   "google-health",
   "opencode",
-  "spotify",
-  "spotify-friends",
-  "spotify-playlists",
   "conductor",
   "t3code",
   "codex",
   "remote-agents",
-  "steam",
   "google-places",
   "inbox-rclone",
   "recall",
@@ -73,6 +73,10 @@ const EXPECTED_SYNC_ORDER = [
 const EXPECTED_SEED_ORDER = [
   "discord",
   "google-messages",
+  "trakt",
+  "spotify",
+  "spotify-friends",
+  "minecraft",
   "facebook",
   "instagram",
   "google-chat",
@@ -99,10 +103,6 @@ const EXPECTED_SEED_ORDER = [
   "google-calendar",
   "google-keep",
   "google-playstore",
-  "minecraft",
-  "spotify",
-  "spotify-friends",
-  "trakt",
   "swarm",
   "monzo",
   "amex",

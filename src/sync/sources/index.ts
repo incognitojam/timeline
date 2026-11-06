@@ -27,15 +27,10 @@ import { opencodeSyncSource } from "./opencode";
 import { recallSyncSource } from "./recall";
 import { remoteAgentsSyncSource } from "./remote-agents";
 import { renderSweepSyncSource } from "./render-sweep";
-import { spotifySyncSource } from "../../platforms/spotify/sync";
-import { spotifyFriendsSyncSource } from "../../platforms/spotify/sync-friends";
-import { spotifyPlaylistsSyncSource } from "../../platforms/spotify/sync-playlists";
-import { steamSyncSource } from "../../platforms/steam/sync";
 import { swarmSyncSource } from "./swarm";
 import { t3codeSyncSource } from "./t3code";
 import { thrivaSyncSource } from "./thriva";
 import { thumbhashSyncSource } from "./thumbhash";
-import { traktSyncSource } from "../../platforms/trakt/sync";
 import { wakatimeSyncSource } from "./wakatime";
 
 /**
@@ -45,7 +40,6 @@ import { wakatimeSyncSource } from "./wakatime";
  */
 export const SYNC_SOURCES: SyncSource[] = collectSyncSources(PLATFORMS, [
   monzoSyncSource,
-  traktSyncSource,
   swarmSyncSource,
   wakatimeSyncSource,
   githubSyncSource,
@@ -54,14 +48,10 @@ export const SYNC_SOURCES: SyncSource[] = collectSyncSources(PLATFORMS, [
   thrivaSyncSource,
   googleHealthSyncSource,
   opencodeSyncSource,
-  spotifySyncSource,
-  spotifyFriendsSyncSource,
-  spotifyPlaylistsSyncSource,
   conductorSyncSource,
   t3codeSyncSource,
   codexSyncSource,
   remoteAgentsSyncSource, // Pull and import agent logs from other machines
-  steamSyncSource,
   googlePlacesSyncSource, // Resolve place names before thumbhash/backup
   inboxRcloneSyncSource, // Pull files from cloud remotes into inbox dirs
   recallSyncSource, // Import MacBook screen captures (before thumbhash so new images get hashed)
@@ -83,7 +73,6 @@ export {
   inboxRcloneSyncSource,
   mediaEvictSyncSource,
   monzoSyncSource,
-  traktSyncSource,
   wakatimeSyncSource,
   githubSyncSource,
   claudeCodeSyncSource,
@@ -94,14 +83,10 @@ export {
   recallSyncSource,
   renderSweepSyncSource,
   embeddingsSyncSource,
-  spotifySyncSource,
-  spotifyFriendsSyncSource,
-  spotifyPlaylistsSyncSource,
   conductorSyncSource,
   t3codeSyncSource,
   codexSyncSource,
   remoteAgentsSyncSource,
-  steamSyncSource,
   swarmSyncSource,
   thumbhashSyncSource,
   attachmentDescriptionsSyncSource,

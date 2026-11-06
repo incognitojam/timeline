@@ -24,18 +24,14 @@ import { googleTimelineSeed } from "./google-timeline";
 import { googleYoutubeSeed } from "./google-youtube";
 import { instagramSeed } from "./instagram";
 import { linkedinSeed } from "./linkedin";
-import { minecraftSeed } from "../../platforms/minecraft/seed";
 import { monzoSeed } from "./monzo";
 import { opencodeSeed } from "./opencode";
 import { redditSeed } from "./reddit";
 import { skypeSeed } from "./skype";
 import { smsBackupRestoreSeed } from "./sms-backup-restore";
-import { spotifySeed } from "../../platforms/spotify/seed";
-import { spotifyFriendsSeed } from "../../platforms/spotify/seed-friends";
 import { swarmSeed } from "./swarm";
 import { t3codeSeed } from "./t3code";
 import { thrivaSeed } from "./thriva";
-import { traktSeed } from "../../platforms/trakt/seed";
 import { wakatimeSeed } from "./wakatime";
 
 /** Every generator, in run order. */
@@ -66,10 +62,6 @@ export const SEED_SOURCES: readonly SeedSource[] = await collectSeedSources(PLAT
   googleCalendarSeed,
   googleKeepSeed,
   googlePlaystoreSeed,
-  minecraftSeed,
-  spotifySeed,
-  spotifyFriendsSeed,
-  traktSeed,
   swarmSeed,
   monzoSeed,
   amexSeed,
