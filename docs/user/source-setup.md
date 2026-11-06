@@ -336,7 +336,7 @@ GitHub uses a Personal Access Token (PAT) to access activity via the API. This s
      "token_expires": "2025-12-31"
    }
    ```
-3. Run `bun run src/parsers/github-api.ts` to sync
+3. Run `bun run src/platforms/github/parser-api.ts` to sync
 
 **Data synced:**
 - Issues you created
@@ -362,7 +362,7 @@ WakaTime/Wakapi uses the standard config file at `~/.wakatime.cfg` to access cod
    api_url = https://api.wakatime.com/api/v1  # or your Wakapi URL
    api_key = waka_...
    ```
-5. Run `bun run src/parsers/wakatime-api.ts` to sync
+5. Run `bun run src/platforms/wakatime/parser-api.ts` to sync
 
 **Data synced:**
 - Coding sessions with project, language, and editor info

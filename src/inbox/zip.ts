@@ -8,7 +8,7 @@ import { spawn } from "child_process";
 import { mkdtemp, rm, readdir, stat } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { findChatGPTConversationFiles } from "../shared/chatgpt-export";
+import { findChatGPTConversationFiles } from "../platforms/chatgpt/export";
 import { backgroundCommand } from "../lib/background-priority";
 
 export interface ExtractResult {

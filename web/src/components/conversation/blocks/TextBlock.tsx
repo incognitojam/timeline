@@ -1,7 +1,7 @@
 import { For, type JSX, Show } from "solid-js";
 import { Markdown } from "../../Markdown";
 import type { Citation } from "../../../lib/content-blocks";
-import { rewriteClaudeCodeMarkup } from "./claude-code-markup";
+import { rewriteClaudeCodeMarkup } from "../../../platforms/claude-code/markup";
 
 export function TextBlock(props: {
   text: string;

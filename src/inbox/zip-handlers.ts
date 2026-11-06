@@ -205,7 +205,7 @@ async function processClaudeZip(
   if (!sourceAccount) {
     throw new Error("Claude parser requires 'account' to be specified in config");
   }
-  const { importClaudeExport } = await import("../parsers/claude");
+  const { importClaudeExport } = await import("../platforms/claude/parser");
   return await importClaudeExport(db, zipPath, sourceAccount);
 }
 
@@ -221,6 +221,6 @@ async function processChatGPTZip(
   if (!sourceAccount) {
     throw new Error("ChatGPT parser requires 'account' to be specified in config");
   }
-  const { importChatGPTExport } = await import("../parsers/chatgpt");
+  const { importChatGPTExport } = await import("../platforms/chatgpt/parser");
   return await importChatGPTExport(db, zipPath, sourceAccount);
 }

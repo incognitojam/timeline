@@ -14,7 +14,7 @@
   },
   "overrides": [
     {
-      "includes": ["src/parsers/chatgpt.ts"],
+      "includes": ["src/platforms/chatgpt/parser.ts"],
       "linter": {
         "rules": {
           "suspicious": { "noExplicitAny": "error" }

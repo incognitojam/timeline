@@ -1,8 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { getAppStateDb, getSyncState, setSyncState } from "../../db/app-state";
 import { getDb, initDb } from "../../db/schema";
-import { importClaudeCode } from "../../parsers/claude-code";
-import { importCodex } from "../../parsers/codex";
+import { importClaudeCode } from "../../platforms/claude-code/parser";
+import { importCodex } from "../../platforms/codex/parser";
 import { getSyncSourceRow, parseSyncSourceSettings } from "../config";
 import {
   directorySize,

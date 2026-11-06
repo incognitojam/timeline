@@ -6,27 +6,27 @@
  */
 
 import type { SyncSource } from "../types";
-import { ampSyncSource } from "./amp";
+import { ampSyncSource } from "../../platforms/amp/sync";
 import { attachmentDescriptionsSyncSource } from "./attachment-descriptions";
 import { backupSyncSource } from "./backup";
 import { backupAppStateSyncSource } from "./backup-app-state";
 import { backupOffsiteSyncSource } from "./backup-offsite";
-import { claudeCodeSyncSource } from "./claude-code";
-import { codexSyncSource } from "./codex";
-import { conductorSyncSource } from "./conductor";
+import { claudeCodeSyncSource } from "../../platforms/claude-code/sync";
+import { codexSyncSource } from "../../platforms/codex/sync";
+import { conductorSyncSource } from "../../platforms/conductor/sync";
 import { embeddingsSyncSource } from "./embeddings";
 import { PLATFORMS } from "../../platforms";
 import { collectSyncSources } from "../../platforms/registry";
-import { githubSyncSource } from "./github";
+import { githubSyncSource } from "../../platforms/github/sync";
 import { googlePlacesSyncSource } from "./google-places";
 import { inboxRcloneSyncSource } from "./inbox-rclone";
 import { mediaEvictSyncSource } from "./media-evict";
-import { opencodeSyncSource } from "./opencode";
+import { opencodeSyncSource } from "../../platforms/opencode/sync";
 import { remoteAgentsSyncSource } from "./remote-agents";
 import { renderSweepSyncSource } from "./render-sweep";
-import { t3codeSyncSource } from "./t3code";
+import { t3codeSyncSource } from "../../platforms/t3code/sync";
 import { thumbhashSyncSource } from "./thumbhash";
-import { wakatimeSyncSource } from "./wakatime";
+import { wakatimeSyncSource } from "../../platforms/wakatime/sync";
 
 /**
  * All available sync sources.

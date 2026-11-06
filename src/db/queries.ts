@@ -6,7 +6,6 @@ export * from "./contacts";
 export * from "./skipped-identities";
 export * from "./identities";
 export * from "./event-people";
-export * from "./wakatime";
 export * from "./coding-projects";
 export * from "./sql";
 export * from "./health";
