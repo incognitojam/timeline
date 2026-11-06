@@ -4,7 +4,7 @@ import { sourceLabel } from "@shared/sources";
 import type { Attachment } from "../../lib/api";
 import type { TimelineEvent } from "../../lib/types";
 import { getSourceColorStyle } from "../../lib/source-styles";
-import SourceIcon from "../SourceIcon";
+import SourceIcon from "../../components/SourceIcon";
 import { getThumbhashUrl } from "../../lib/thumbhash";
 import { IconChevronDown } from "../../ui/icons";
 import { formatTime } from "../../lib/format";

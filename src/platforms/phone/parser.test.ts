@@ -4,8 +4,8 @@ import { mkdir, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { randomUUID } from "crypto";
-import { initDb } from "../db/schema";
-import { importCalls, importMms, importSms } from "./sms-backup-restore";
+import { initDb } from "../../db/schema";
+import { importCalls, importMms, importSms } from "./parser";
 
 interface EventRow {
   source_id: string;

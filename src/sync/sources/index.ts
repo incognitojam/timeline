@@ -22,7 +22,7 @@ import { googlePlacesSyncSource } from "./google-places";
 import { inboxRcloneSyncSource } from "./inbox-rclone";
 import { mediaEvictSyncSource } from "./media-evict";
 import { opencodeSyncSource } from "./opencode";
-import { recallSyncSource } from "./recall";
+import { recallSyncSource } from "../../platforms/recall/sync";
 import { remoteAgentsSyncSource } from "./remote-agents";
 import { renderSweepSyncSource } from "./render-sweep";
 import { t3codeSyncSource } from "./t3code";

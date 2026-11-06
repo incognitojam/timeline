@@ -5,21 +5,21 @@
  * Can be used as a CLI tool or imported as a library.
  *
  * CLI Usage:
- *   bun run src/parsers/sms-backup-restore.ts <sms.xml> <calls.xml> [account-name]
- *   bun run src/parsers/sms-backup-restore.ts --sms <sms.xml> [account-name]
- *   bun run src/parsers/sms-backup-restore.ts --calls <calls.xml> [account-name]
+ *   bun run src/platforms/phone/parser.ts <sms.xml> <calls.xml> [account-name]
+ *   bun run src/platforms/phone/parser.ts --sms <sms.xml> [account-name]
+ *   bun run src/platforms/phone/parser.ts --calls <calls.xml> [account-name]
  */
 
 import { Database } from "bun:sqlite";
-import { getDb, initDb } from "../db/schema";
-import { extractConversationId } from "../db/conversation-id";
+import { getDb, initDb } from "../../db/schema";
+import { extractConversationId } from "../../db/conversation-id";
 import {
   onImportComplete,
   upsertIdentities,
   formatIdentifier,
   type UpsertIdentityOptions,
-} from "../db/queries";
-import { isPhoneNumberLike, normalizePhoneNumber } from "../lib/phone";
+} from "../../db/queries";
+import { isPhoneNumberLike, normalizePhoneNumber } from "../../lib/phone";
 import { basename } from "path";
 
 // Call types from Android
@@ -582,20 +582,20 @@ if (import.meta.main) {
   const args = process.argv.slice(2);
   if (args.length < 2) {
     console.log(
-      "Usage: bun run src/parsers/sms-backup-restore.ts <sms.xml> <calls.xml> [account-name]"
+      "Usage: bun run src/platforms/phone/parser.ts <sms.xml> <calls.xml> [account-name]"
     );
     console.log(
-      "   or: bun run src/parsers/sms-backup-restore.ts --sms <sms.xml> [account-name]"
+      "   or: bun run src/platforms/phone/parser.ts --sms <sms.xml> [account-name]"
     );
     console.log(
-      "   or: bun run src/parsers/sms-backup-restore.ts --calls <calls.xml> [account-name]"
+      "   or: bun run src/platforms/phone/parser.ts --calls <calls.xml> [account-name]"
     );
     console.log("\nExamples:");
     console.log(
-      "  bun run src/parsers/sms-backup-restore.ts ./sms.xml ./calls.xml my-account"
+      "  bun run src/platforms/phone/parser.ts ./sms.xml ./calls.xml my-account"
     );
     console.log(
-      "  bun run src/parsers/sms-backup-restore.ts --sms ./sms.xml my-account"
+      "  bun run src/platforms/phone/parser.ts --sms ./sms.xml my-account"
     );
     process.exit(1);
   }

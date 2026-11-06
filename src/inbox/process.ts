@@ -69,7 +69,7 @@ type ParserFunction = (
 
 const PARSERS: Record<string, () => Promise<ParserFunction>> = {
   "sms-backup-restore": async () => {
-    const module = await import("../parsers/sms-backup-restore");
+    const module = await import("../platforms/phone/parser");
     return module.processSmsFile;
   },
   "google-takeout": async () => {

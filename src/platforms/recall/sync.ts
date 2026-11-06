@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { getDb, initDb } from "../../db/schema";
-import { importRecall } from "../../parsers/recall";
-import type { SyncOptions, SyncResult, SyncSource } from "../types";
+import { importRecall } from "./parser";
+import type { SyncOptions, SyncResult, SyncSource } from "../../sync/types";
 
 const RECALL_SYNC_BATCH_SIZE = 1_000;
 
