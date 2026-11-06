@@ -123,7 +123,7 @@ The `.no-local-db` marker file (in the repo root) prevents accidental writes whe
 ```bash
 bun install
 
-# Parsers: bun run src/parsers/<name>.ts [args...]
+# Parsers: bun run src/platforms/<platform>/parser.ts [args...]
 # Args vary by parser; check the CLI block near bottom of each file. Setup: docs/user/source-setup.md
 
 # Run the web app (uses T3 workspace ports when available, otherwise free ports)

@@ -13,7 +13,7 @@ import {
   type ContentBlock,
   extractText,
   toContentBlocks,
-} from "../../parsers/shared/format-content";
+} from "../../ingest/ai/format-content";
 import { backgroundCommand } from "../../lib/background-priority";
 
 interface ClaudeConversation {

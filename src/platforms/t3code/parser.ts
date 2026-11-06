@@ -45,14 +45,14 @@ import {
   type AiImportOptions,
   createEventWriter,
   createIdentityCollector,
-} from "../../parsers/shared/ai-import";
-import type { ContentBlock } from "../../parsers/shared/format-content";
+} from "../../ingest/ai/import";
+import type { ContentBlock } from "../../ingest/ai/format-content";
 import {
   errorMessage,
   imageExtensionsForMimeType,
   recordFromUnknown,
   safePathPart,
-} from "../../parsers/shared/image-blocks";
+} from "../../ingest/ai/image-blocks";
 import {
   asString,
   type PlannedT3Event,

@@ -16,8 +16,8 @@
  */
 
 import type { Database } from "bun:sqlite";
-import type { ContentBlock } from "../../parsers/shared/format-content";
-import { recordFromUnknown } from "../../parsers/shared/image-blocks";
+import type { ContentBlock } from "../../ingest/ai/format-content";
+import { recordFromUnknown } from "../../ingest/ai/image-blocks";
 import {
   asString,
   type PlannedT3Event,

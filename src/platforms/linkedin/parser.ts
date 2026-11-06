@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { parseCSV } from "../../lib/csv";
-import { runParser } from "../../lib/parser-cli";
+import { runParser } from "../../ingest/cli";
 import { extractConversationId } from "../../db/conversation-id";
 import {
   onImportComplete,

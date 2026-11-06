@@ -15,12 +15,12 @@ import {
   type ContentBlock,
   extractText,
   toContentBlocks,
-} from "../../parsers/shared/format-content";
+} from "../../ingest/ai/format-content";
 import {
   storeImageBlocks,
   storeImageRawContent,
   type StoredImageAttachment,
-} from "../../parsers/shared/image-blocks";
+} from "../../ingest/ai/image-blocks";
 
 const DEFAULT_CLAUDE_DIR = `${process.env.HOME}/.claude/projects`;
 

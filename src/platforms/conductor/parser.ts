@@ -22,13 +22,13 @@ import {
   type AiImportOptions,
   createEventWriter,
   createIdentityCollector,
-} from "../../parsers/shared/ai-import";
+} from "../../ingest/ai/import";
 import {
   type ContentBlock,
   extractText,
   toContentBlocks,
-} from "../../parsers/shared/format-content";
-import { storeImageBlocks } from "../../parsers/shared/image-blocks";
+} from "../../ingest/ai/format-content";
+import { storeImageBlocks } from "../../ingest/ai/image-blocks";
 
 export const DEFAULT_CONDUCTOR_DB = `${process.env.HOME}/Library/Application Support/com.conductor.app/conductor.db`;
 
