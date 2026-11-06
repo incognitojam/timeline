@@ -479,7 +479,7 @@ describe("computeSenderHeaderIds", () => {
       id,
       source: "discord",
       people,
-      timestamp: `2024-01-01T0${id}:00:00Z`,
+      timestamp: `2024-01-01T10:0${id}:00Z`,
       ...overrides,
     });
   }
@@ -497,8 +497,18 @@ describe("computeSenderHeaderIds", () => {
   it("headers the first message of a new date group", () => {
     const events = [
       message(1, alice, { timestamp: "2024-01-01T23:50:00Z" }),
-      message(2, alice, { timestamp: "2024-01-01T23:55:00Z" }),
+      message(2, alice, { timestamp: "2024-01-01T23:54:00Z" }),
       message(3, alice, { timestamp: "2024-01-03T00:05:00Z" }),
+    ];
+    expect(computeSenderHeaderIds(events)).toEqual(new Set([1, 3]));
+  });
+
+  it("breaks a same-sender run after a gap of five minutes or more", () => {
+    const events = [
+      message(1, alice, { timestamp: "2024-01-01T10:00:00Z" }),
+      message(2, alice, { timestamp: "2024-01-01T10:04:59Z" }),
+      message(3, alice, { timestamp: "2024-01-01T10:09:59Z" }),
+      message(4, alice, { timestamp: "2024-01-01T10:10:30Z" }),
     ];
     expect(computeSenderHeaderIds(events)).toEqual(new Set([1, 3]));
   });
