@@ -1874,10 +1874,10 @@ describe("embeddings index CLI exit contract", () => {
     }
   });
 
-  cliIt("rejects index-only filter flags on search", async () => {
+  cliIt("rejects index-only flags on search", async () => {
     const { exitCode, stderr } = await runCli(["search", "--include", "spotify", "cats"]);
 
     expect(exitCode).not.toBe(0);
-    expect(stderr).toContain("--include is only supported by the index command");
+    expect(stderr).toContain("Unrecognized flag: --include in command embeddings search");
   });
 });

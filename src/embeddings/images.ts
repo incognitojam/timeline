@@ -120,13 +120,15 @@ export function indexNewImages(
           ? fail(candidate.content_hash, "missing from media storage").pipe(Effect.as(null))
           : Effect.succeed({ contentHash: candidate.content_hash, image: result.image })
       ),
-      Effect.catchAll(cause => fail(candidate.content_hash, `could not read or decode: ${errorMessage(cause)}`).pipe(Effect.as(null))),
-      Effect.timeoutFail({
+      Effect.catch(cause => fail(candidate.content_hash, `could not read or decode: ${errorMessage(cause)}`).pipe(Effect.as(null))),
+      Effect.timeoutOrElse({
         duration: MEDIA_READ_TIMEOUT_MS,
-        onTimeout: () =>
-          new FatalEmbeddingError({
-            message: `Reading image ${candidate.content_hash} from media storage timed out after ${MEDIA_READ_TIMEOUT_MS / 1000}s`,
-          }),
+        orElse: () =>
+          Effect.fail(
+            new FatalEmbeddingError({
+              message: `Reading image ${candidate.content_hash} from media storage timed out after ${MEDIA_READ_TIMEOUT_MS / 1000}s`,
+            })
+          ),
       })
     );
 

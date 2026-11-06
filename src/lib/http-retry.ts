@@ -59,16 +59,17 @@ export async function httpRetry<T>(
   const baseDelayMs = options.baseDelayMs ?? DEFAULT_HTTP_RETRY.baseDelayMs;
   const isTransient = options.isTransient ?? isTransientHttpError;
 
-  const schedule = Schedule.recurs(maxRetries).pipe(
-    Schedule.intersect(Schedule.exponential(Duration.millis(baseDelayMs), 2)),
-    Schedule.jittered,
-  );
-
   const exit = await Effect.runPromiseExit(
     Effect.tryPromise({
       try: operation,
       catch: (error) => error,
-    }).pipe(Effect.retry({ while: isTransient, schedule })),
+    }).pipe(
+      Effect.retry({
+        while: isTransient,
+        times: maxRetries,
+        schedule: Schedule.exponential(Duration.millis(baseDelayMs), 2).pipe(Schedule.jittered),
+      }),
+    ),
   );
 
   if (Exit.isSuccess(exit)) return exit.value;

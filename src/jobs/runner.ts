@@ -66,10 +66,10 @@ class HandlerError extends Data.TaggedError("HandlerError")<{
 }> {}
 
 /** The per-kind handler map, injected so the program is testable without the real worker. */
-export class Handlers extends Context.Tag("jobs/Handlers")<
+export class Handlers extends Context.Service<
   Handlers,
   Partial<Record<JobKind, JobHandler>>
->() {}
+>()("jobs/Handlers") {}
 
 function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
@@ -114,9 +114,7 @@ const dispatch = (job: Job, config: RunnerConfig, localWork: LocalWorkGate, infe
       catch: (cause) => new HandlerError({ jobId: job.id, cause }),
     }).pipe(
       Effect.onInterrupt(() =>
-        Effect.flatMap(JobStore, (s) => s.requeue(job.id, "Requeued after runner stop")).pipe(
-          Effect.ignore
-        )
+        store.requeue(job.id, "Requeued after runner stop").pipe(Effect.ignore)
       )
     );
 
@@ -125,14 +123,14 @@ const dispatch = (job: Job, config: RunnerConfig, localWork: LocalWorkGate, infe
       yield* Effect.sync(() => console.log(`[JobRunner] Completed job #${job.id}`));
     }
   }).pipe(
-    Effect.catchAll((err) =>
+    Effect.catch((err) =>
       Effect.gen(function* () {
         const store = yield* JobStore;
         yield* Effect.sync(() =>
           console.error(`[JobRunner] Job #${job.id} (${job.kind}) failed:`, err.cause)
         );
         yield* store.fail(job.id, messageOf(err.cause)).pipe(
-          Effect.catchAll((storeErr) =>
+          Effect.catch((storeErr) =>
             Effect.sync(() =>
               console.error(`[JobRunner] Failed to record failure for job #${job.id}:`, storeErr.cause)
             )
@@ -158,7 +156,7 @@ const claimAndRun = (
   }).pipe(
     // `dispatch` already records its own failures, so only a claim error reaches
     // here. Log and keep polling rather than crash the loop.
-    Effect.catchAll((err) =>
+    Effect.catch((err) =>
       Effect.sync(() => console.error("[JobRunner] claimNextJob failed:", err.cause)).pipe(
         Effect.as(false)
       )
@@ -183,13 +181,13 @@ export const makeWorkLoop = (
 export const makeReclaimLoop = (config: RunnerConfig) =>
   // Exclude our own workerId: a job this runner is actively holding must not be
   // reclaimed by our own reclaim fiber just because its handler outran the lease.
-  Effect.flatMap(JobStore, (store) => store.reclaimExpired(config.workerId)).pipe(
+  JobStore.use((store) => store.reclaimExpired(config.workerId)).pipe(
     Effect.tap((reclaimed) =>
       reclaimed > 0 && config.verbose
         ? Effect.sync(() => console.log(`[JobRunner] Reclaimed ${reclaimed} stale lease(s)`))
         : Effect.void
     ),
-    Effect.catchAll((err) =>
+    Effect.catch((err) =>
       Effect.sync(() => console.error("[JobRunner] reclaimExpiredLeases failed:", err.cause))
     ),
     Effect.repeat(Schedule.spaced(Duration.millis(config.reclaimEveryMs)))
@@ -205,9 +203,9 @@ const makeRunnerProgram = (
   inferenceWork: LocalWorkGate,
 ): Effect.Effect<void, never, JobStore | Handlers> =>
   Effect.gen(function* () {
-    yield* Effect.fork(makeReclaimLoop(config));
+    yield* Effect.forkChild(makeReclaimLoop(config));
     if (config.overlapSyncSource !== undefined) {
-      yield* Effect.fork(makeWorkLoop(config, localWork, inferenceWork, { syncSource: config.overlapSyncSource }));
+      yield* Effect.forkChild(makeWorkLoop(config, localWork, inferenceWork, { syncSource: config.overlapSyncSource }));
     }
     return yield* makeWorkLoop(config, localWork, inferenceWork, { excludeSyncSource: config.overlapSyncSource });
   });
@@ -222,7 +220,7 @@ export class JobRunner {
 
   private running = false;
   private runtime: RunnerRuntime | null = null;
-  private fiber: Fiber.RuntimeFiber<void, never> | null = null;
+  private fiber: Fiber.Fiber<void, never> | null = null;
 
   constructor(options: RunnerOptions) {
     this.config = {

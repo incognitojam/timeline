@@ -8,7 +8,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { Duration, Effect, Fiber, TestClock, TestContext } from "effect";
+import { Duration, Effect, Fiber } from "effect";
+import { TestClock } from "effect/testing";
 import { JobStore } from "./job-store";
 import { Handlers, makeReclaimLoop, makeWorkLoop, type RunnerConfig } from "./runner";
 import type { Job } from "./types";
@@ -53,7 +54,7 @@ describe("jobs/runner Effect internals", () => {
       resolveFirst = resolve;
     });
 
-    const store: JobStore["Type"] = {
+    const store: JobStore["Service"] = {
       claimNext: () => Effect.succeed(null),
       complete: () => Effect.void,
       fail: () => Effect.void,
@@ -70,7 +71,7 @@ describe("jobs/runner Effect internals", () => {
     const snapshots: number[] = [];
     await Effect.runPromise(
       Effect.gen(function* () {
-        const fiber = yield* Effect.fork(
+        const fiber = yield* Effect.forkChild(
           makeReclaimLoop(config({ workerId: "worker-A", reclaimEveryMs: 30_000 })).pipe(
             Effect.provideService(JobStore, store)
           )
@@ -83,7 +84,7 @@ describe("jobs/runner Effect internals", () => {
         yield* TestClock.adjust(Duration.millis(30_000));
         snapshots.push(reclaimCount);
         yield* Fiber.interrupt(fiber);
-      }).pipe(Effect.provide(TestContext.TestContext))
+      }).pipe(Effect.provide(TestClock.layer()))
     );
 
     expect(snapshots).toEqual([1, 2, 3]);
@@ -101,7 +102,7 @@ describe("jobs/runner Effect internals", () => {
     // First poll claims a job; the rest come back empty. No handler is
     // registered on purpose: the no-handler path is fully synchronous, so the
     // loop's cadence is driven solely by the TestClock (no stray microtasks).
-    const store: JobStore["Type"] = {
+    const store: JobStore["Service"] = {
       claimNext: () =>
         Effect.sync(() => {
           claimCount += 1;
@@ -117,7 +118,7 @@ describe("jobs/runner Effect internals", () => {
     const snapshots: number[] = [];
     await Effect.runPromise(
       Effect.gen(function* () {
-        const fiber = yield* Effect.fork(
+        const fiber = yield* Effect.forkChild(
           makeWorkLoop(config({ pollActiveMs: 500, pollIdleMs: 2000 })).pipe(
             Effect.provideService(JobStore, store),
             Effect.provideService(Handlers, {})
@@ -132,7 +133,7 @@ describe("jobs/runner Effect internals", () => {
         yield* TestClock.adjust(Duration.millis(1500));
         snapshots.push(claimCount); // idle delay elapsed -> poll #3
         yield* Fiber.interrupt(fiber);
-      }).pipe(Effect.provide(TestContext.TestContext))
+      }).pipe(Effect.provide(TestClock.layer()))
     );
 
     expect(snapshots).toEqual([1, 2, 2, 3]);
@@ -148,7 +149,7 @@ describe("jobs/runner Effect internals", () => {
       resolveStarted = resolve;
     });
 
-    const store: JobStore["Type"] = {
+    const store: JobStore["Service"] = {
       claimNext: () =>
         Effect.sync(() => {
           if (claimedOnce) return null;
@@ -167,7 +168,7 @@ describe("jobs/runner Effect internals", () => {
       reclaimExpired: () => Effect.succeed(0),
     };
 
-    const handlers: Handlers["Type"] = {
+    const handlers: Handlers["Service"] = {
       sync: (_job, signal) =>
         new Promise((_resolve, reject) => {
           resolveStarted();
@@ -185,7 +186,7 @@ describe("jobs/runner Effect internals", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const fiber = yield* Effect.fork(
+        const fiber = yield* Effect.forkChild(
           makeWorkLoop(config()).pipe(
             Effect.provideService(JobStore, store),
             Effect.provideService(Handlers, handlers)

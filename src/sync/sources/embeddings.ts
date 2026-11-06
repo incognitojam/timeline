@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { Effect, Either } from "effect";
+import { Effect, Result } from "effect";
 import { loadConfig } from "../../config";
 import { openReadonlyTimelineDb } from "../../db/readonly";
 import { errorMessage } from "../../embeddings/client";
@@ -177,12 +177,12 @@ export const embeddingsSyncSource: SyncSource = {
           timelineDb,
           { batchSize: readEmbeddingBatchSize(), concurrency: settings.concurrency, deadline },
           counts
-        ).pipe(Effect.either),
+        ).pipe(Effect.result),
         { signal: options.signal }
       );
       // A fatal error (dead provider, bad config) stops the run at the last complete cursor step.
-      if (Either.isLeft(outcome)) return failure(outcome.left.message, startedAt, { ...counts });
-      if (!settings.indexImages) return embeddingsSyncResult(counts, outcome.right, startedAt);
+      if (Result.isFailure(outcome)) return failure(outcome.failure.message, startedAt, { ...counts });
+      if (!settings.indexImages) return embeddingsSyncResult(counts, outcome.success, startedAt);
 
       // Photos take whatever budget the new events left.
       imageCounts = { embedded: 0, failed: 0 };
@@ -193,13 +193,13 @@ export const embeddingsSyncSource: SyncSource = {
           await getMediaStore(),
           { concurrency: settings.concurrency, deadline },
           imageCounts
-        ).pipe(Effect.either),
+        ).pipe(Effect.result),
         { signal: options.signal }
       );
-      if (Either.isLeft(imageOutcome)) {
-        return failure(imageOutcome.left.message, startedAt, { ...counts, images: { ...imageCounts } });
+      if (Result.isFailure(imageOutcome)) {
+        return failure(imageOutcome.failure.message, startedAt, { ...counts, images: { ...imageCounts } });
       }
-      return embeddingsSyncResult(counts, outcome.right, startedAt, { counts: imageCounts, outcome: imageOutcome.right });
+      return embeddingsSyncResult(counts, outcome.success, startedAt, { counts: imageCounts, outcome: imageOutcome.success });
     } catch (error) {
       // Shutdown interrupts the run at the last complete cursor step; the next run resumes there.
       if (options.signal?.aborted) {

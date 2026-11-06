@@ -46,7 +46,7 @@ const chatGPTConversationSchema = Schema.Struct({
   id: Schema.String,
   title: Schema.String,
   create_time: Schema.Number,
-  mapping: Schema.Record({ key: Schema.String, value: chatGPTNodeSchema }),
+  mapping: Schema.Record(Schema.String, chatGPTNodeSchema),
   default_model_slug: Schema.optional(Schema.NullOr(Schema.String)),
   is_archived: Schema.optional(Schema.NullOr(Schema.Boolean)),
   is_starred: Schema.optional(Schema.NullOr(Schema.Boolean)),

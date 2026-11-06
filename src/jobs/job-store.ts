@@ -32,7 +32,7 @@ export class StoreError extends Data.TaggedError("StoreError")<{
   readonly cause: unknown;
 }> {}
 
-export class JobStore extends Context.Tag("jobs/JobStore")<
+export class JobStore extends Context.Service<
   JobStore,
   {
     readonly claimNext: (opts: ClaimOptions) => Effect.Effect<Job | null, ClaimError>;
@@ -44,7 +44,7 @@ export class JobStore extends Context.Tag("jobs/JobStore")<
     readonly requeue: (id: number, reason: string) => Effect.Effect<void, StoreError>;
     readonly reclaimExpired: (excludeWorkerId: string) => Effect.Effect<number, StoreError>;
   }
->() {}
+>()("jobs/JobStore") {}
 
 /** Backs `JobStore` with the real app-state database via `store.ts`. */
 export const JobStoreLive = Layer.succeed(JobStore, {

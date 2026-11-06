@@ -56,16 +56,17 @@ export async function retryMediaUpload<T>(
 ): Promise<T> {
   const { retryBaseMs, retryMax } = resolveMediaUploadRetryOptions(options);
 
-  const schedule = Schedule.recurs(retryMax).pipe(
-    Schedule.intersect(Schedule.exponential(Duration.millis(retryBaseMs), 2)),
-    Schedule.jittered,
-  );
-
   const exit = await Effect.runPromiseExit(
     Effect.tryPromise({
       try: operation,
       catch: (error) => error,
-    }).pipe(Effect.retry({ while: isTransientMediaUploadError, schedule })),
+    }).pipe(
+      Effect.retry({
+        while: isTransientMediaUploadError,
+        times: retryMax,
+        schedule: Schedule.exponential(Duration.millis(retryBaseMs), 2).pipe(Schedule.jittered),
+      }),
+    ),
   );
 
   if (Exit.isSuccess(exit)) return exit.value;
