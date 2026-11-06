@@ -1,0 +1,5 @@
+# GitHub hosts ubuntu-26.04, but actionlint 1.7.12 rejects the label. Remove this
+# file once a release knows it: https://github.com/rhysd/actionlint/issues/682
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
