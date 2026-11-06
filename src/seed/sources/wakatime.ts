@@ -111,6 +111,6 @@ export const wakatimeSeed: SeedSource = {
         days,
       }),
     );
-    await ctx.runParserCli("wakatime.ts", [exportPath, CODING_ACCOUNT]);
+    await ctx.runParserCli("parsers/wakatime.ts", [exportPath, CODING_ACCOUNT]);
   },
 };

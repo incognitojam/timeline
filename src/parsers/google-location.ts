@@ -218,7 +218,7 @@ export async function importGoogleLocation(
 // CLI
 if (import.meta.main) {
   runParser(importGoogleLocation, {
-    name: "google-location",
+    name: "parsers/google-location",
     examples: ["bun run src/parsers/google-location.ts ./imports/google my-account"],
   });
 }

@@ -253,7 +253,7 @@ export async function importAmexData(
 // CLI
 if (import.meta.main) {
   runParser(importAmexData, {
-    name: "amex",
+    name: "parsers/amex",
     defaultAccount: "personal",
     examples: [
       "bun run src/parsers/amex.ts ./activity.csv",

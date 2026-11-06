@@ -1,5 +1,5 @@
 import type { HealthWindow } from "@shared/health-periods";
-import type { MusicPeriod } from "@shared/music";
+import type { MusicPeriod } from "@platforms/spotify/shared/music";
 import type { NetworkSettings } from "@shared/network-settings";
 import {
   createInfiniteQuery,

@@ -162,8 +162,8 @@ account = "your-username"
 interval = "2h"
 
 # Track the public follower/save count of specific playlists over time.
-# Reuses your Spotify API auth (run: bun run src/parsers/spotify-api.ts auth).
-# Backfill history first with src/scripts/seed-playlist-follows.ts (optional).
+# Reuses your Spotify API auth (run: bun run src/platforms/spotify/parser-api.ts auth).
+# Backfill history first with src/platforms/spotify/scripts/seed-playlist-follows.ts (optional).
 # Accepts playlist IDs, spotify: URIs, or open.spotify.com URLs.
 # [sync.spotify-playlists]
 # interval = "12h"

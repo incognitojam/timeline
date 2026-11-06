@@ -687,7 +687,7 @@ describe("SyncSourceDetailView configuration form", () => {
   });
 
   it("renders blocked and deferred skipped runs differently", () => {
-    const reason = "Spotify missing refresh token. Run: bun run src/parsers/spotify-api.ts auth";
+    const reason = "Spotify missing refresh token. Run: bun run src/platforms/spotify/parser-api.ts auth";
     testState.historyQuery = loadedQuery({
       entries: [
         historyEntry(2, "2026-07-10 13:05:00", 0, {

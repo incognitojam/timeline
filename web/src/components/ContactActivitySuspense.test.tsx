@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { Suspense } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import ContactConversations from "./ContactConversations";
-import ContactSpotifySummary from "./ContactSpotifySummary";
+import ContactSpotifySummary from "../platforms/spotify/ContactSpotifySummary";
 
 vi.mock("../lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/api")>();

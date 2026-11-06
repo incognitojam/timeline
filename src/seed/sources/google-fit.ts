@@ -87,6 +87,6 @@ export const googleFitSeed: SeedSource = {
       "Takeout/Fit/All Data/derived_com.google.activity.segment_com.google.android.gms_merge_activity_segm.json",
       JSON.stringify({ "Data Source": { dataType: { name: "com.google.activity.segment" } }, "Data Points": points }, null, 1),
     );
-    await ctx.runParserCli("google-fit.ts", [ctx.stage("google-fit"), GOOGLE_ACCOUNT]);
+    await ctx.runParserCli("parsers/google-fit.ts", [ctx.stage("google-fit"), GOOGLE_ACCOUNT]);
   },
 };

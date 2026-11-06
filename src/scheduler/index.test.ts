@@ -204,7 +204,7 @@ describe("scheduler", () => {
 
   test("a canSync refusal records a skipped sync_log row with its reason", async () => {
     const source = `scheduler-test-${crypto.randomUUID()}`;
-    const reason = "Spotify missing refresh token. Run: bun run src/parsers/spotify-api.ts auth";
+    const reason = "Spotify missing refresh token. Run: bun run src/platforms/spotify/parser-api.ts auth";
     insertSyncSource(source);
     const db = getAppStateDb();
 

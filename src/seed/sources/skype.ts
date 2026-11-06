@@ -160,7 +160,7 @@ export const skypeSeed: SeedSource = {
       conversations,
     };
     ctx.writeStaged(NAME, "export/messages.json", JSON.stringify(exportData));
-    await ctx.runParserCli("skype.ts", [`${ctx.stage(NAME)}/export`, ACCOUNT]);
+    await ctx.runParserCli("parsers/skype.ts", [`${ctx.stage(NAME)}/export`, ACCOUNT]);
 
     for (const [key, id] of Object.entries(SKYPE_IDS) as [PersonKey, string][]) {
       const rest = id.slice(2);

@@ -18,7 +18,7 @@ import { upsertIdentity } from "../db/identities";
 import {
   recordPlaylistCreatedAt,
   recordPlaylistObservation,
-} from "../db/playlist-follows";
+} from "../platforms/spotify/playlist-follows";
 import { getDb } from "../db/schema";
 import { seed } from "../testing/seed";
 import { MANUAL_ATTACHMENT_DESCRIPTION_TIMEOUT_MS, type AttachmentsStats } from "../shared/attachments";

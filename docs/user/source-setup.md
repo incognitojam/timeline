@@ -183,7 +183,7 @@ Trakt uses OAuth2 to sync watch history (movies and TV episodes).
    { "client_id": "...", "client_secret": "..." }
    ```
    Alternatively, set `TRAKT_CLIENT_ID` and `TRAKT_CLIENT_SECRET` environment variables.
-3. Run `bun run src/parsers/trakt-api.ts auth` - opens browser for OAuth
+3. Run `bun run src/platforms/trakt/parser-api.ts auth` - opens browser for OAuth
 4. Token auto-refreshes
 
 **Data synced:**
@@ -219,7 +219,7 @@ Spotify uses OAuth2 to sync recently played tracks via the Web API. This supplem
    }
    ```
    Note: `client_secret` is optional if using PKCE-only flow.
-3. Run `bun run src/parsers/spotify-api.ts auth` - opens browser for OAuth
+3. Run `bun run src/platforms/spotify/parser-api.ts auth` - opens browser for OAuth
 4. Token auto-refreshes (1-hour access token, long-lived refresh token)
 
 **Data synced:**
@@ -256,7 +256,7 @@ Tracks the public follower count (the "saves"/likes number shown in the Spotify 
 3. (Optional) Backfill history from a manually-kept log. Spotify's API only exposes the *current* count, so historical data must be seeded:
 
    ```bash
-   bun run src/scripts/seed-playlist-follows.ts \
+   bun run src/platforms/spotify/scripts/seed-playlist-follows.ts \
      --playlist 0123456789ABCDEFGHIJKL \
      --csv <path-or-google-sheet-url> \
      [--name "Playlist Name"] [--date-col Date] [--count-col Likes] [--dry-run]
@@ -291,8 +291,8 @@ Syncs friends' listening activity using Spotify's unofficial internal API (the l
      "totp_version": 1
    }
    ```
-6. Run `bun run src/parsers/spotify-friends.ts status` to verify
-7. Run `bun run src/parsers/spotify-friends.ts` to sync
+6. Run `bun run src/platforms/spotify/parser-friends.ts status` to verify
+7. Run `bun run src/platforms/spotify/parser-friends.ts` to sync
 
 **Data stored:**
 - Event type: `listen:track:friend`
@@ -377,8 +377,8 @@ Steam uses a simple API key (no OAuth) to access gaming activity.
    - Requires a Steam account with a purchase (any game)
    - Domain name can be anything (e.g., `localhost`)
 2. Find your Steam ID at https://steamid.io/ (the 17-digit `steamID64`)
-3. Run `bun run src/parsers/steam-api.ts auth` — enter API key and Steam ID when prompted
-4. Run `bun run src/parsers/steam-api.ts` to sync
+3. Run `bun run src/platforms/steam/parser.ts auth` — enter API key and Steam ID when prompted
+4. Run `bun run src/platforms/steam/parser.ts` to sync
 
 **Data synced:**
 - Game library with playtime (`steam:game:added`)

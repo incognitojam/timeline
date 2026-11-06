@@ -6,7 +6,7 @@ import { dayHasGoogleHealthSleep, isDailyHealthMetric, isFitbitSleep } from "../
 import { hiddenSources } from "../../lib/hiddenSourcesStore";
 import { navigateToIdentity } from "../../lib/identities";
 import { useDayEvents } from "../../lib/queries";
-import { getAlbumArtUrl, getTrackUri } from "../../lib/spotify-art";
+import { getAlbumArtUrl, getTrackUri } from "../../platforms/spotify/art";
 import { staleContentClass } from "../../lib/stale-content";
 import type { TimelineEvent } from "../../lib/types";
 import { IconAdd, IconAutoAwesome, IconChevronLeft, IconChevronRight, IconEditNote, IconMap, IconMenuBook, IconTrain } from "../../ui/icons";

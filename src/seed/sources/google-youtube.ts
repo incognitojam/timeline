@@ -115,6 +115,6 @@ export const googleYoutubeSeed: SeedSource = {
     ].join("\n");
     ctx.writeStaged("google-youtube", "subscriptions/subscriptions.csv", csv);
 
-    await ctx.runParserCli("google-youtube.ts", [ctx.stage("google-youtube"), GOOGLE_ACCOUNT]);
+    await ctx.runParserCli("parsers/google-youtube.ts", [ctx.stage("google-youtube"), GOOGLE_ACCOUNT]);
   },
 };
