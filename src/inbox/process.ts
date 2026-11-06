@@ -90,7 +90,7 @@ const PARSERS: Record<string, () => Promise<ParserFunction>> = {
     };
   },
   "claude": async () => {
-    const { importClaudeExport } = await import("../parsers/claude");
+    const { importClaudeExport } = await import("../platforms/claude/parser");
     return (db, filePath, sourceAccount) => {
       if (!sourceAccount) {
         throw new Error("claude parser requires a source account");

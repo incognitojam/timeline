@@ -42,6 +42,7 @@ import {
   resolveDiscordReplyTargets,
 } from "../platforms/discord/reply-references";
 import { getDiscordServer, listDiscordServers } from "../platforms/discord/servers";
+import { getWakaTimeProject, getWakaTimeProjectSessions, getWakaTimeStats } from "../platforms/wakatime/stats";
 import { mcpRoutes } from "./mcp";
 import { generateStatusMarkdown, renderMarkdownToHtml } from "./status-md";
 import { authMiddleware, authRoutes, isAuthEnabled, assertApiAuthConfigured } from "./auth";
@@ -152,9 +153,6 @@ import {
   getIdentityByIdentifier,
   pickBestAvatar,
   // WakaTime / Coding Activity
-  getWakaTimeStats,
-  getWakaTimeProject,
-  getWakaTimeProjectSessions,
   // Coding project AI conversations (cross-source)
   getCodingProjectConversations,
   getCodingProjects,

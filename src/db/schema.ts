@@ -392,7 +392,7 @@ function createSchema(db: Database) {
   // (the bug that bit the Amex and LinkedIn parsers), and a bare `end_timestamp`
   // breaks the lexicographic comparisons that assume the column is ISO (e.g.
   // wakatime's `excluded.end_timestamp > events.end_timestamp` tie-break in
-  // wakatime-api.ts). Fail fast at the write boundary instead. INSERT-only on
+  // platforms/wakatime/parser-api.ts). Fail fast at the write boundary instead. INSERT-only on
   // purpose: the guard polices new writes, so any legacy bare-date row that
   // predates it stays updatable rather than being locked out of repair.
   ensureTrigger(

@@ -1,16 +1,16 @@
 import { PLATFORMS } from "../../platforms";
 import { collectSeedSources } from "../../platforms/registry";
 import type { SeedSource } from "../context";
-import { ampSeed } from "./amp";
-import { chatgptSeed } from "./chatgpt";
-import { claudeSeed } from "./claude";
-import { claudeCodeSeed } from "./claude-code";
-import { codexSeed } from "./codex";
-import { conductorSeed } from "./conductor";
-import { githubSeed } from "./github";
-import { opencodeSeed } from "./opencode";
-import { t3codeSeed } from "./t3code";
-import { wakatimeSeed } from "./wakatime";
+import { ampSeed } from "../../platforms/amp/seed";
+import { chatgptSeed } from "../../platforms/chatgpt/seed";
+import { claudeSeed } from "../../platforms/claude/seed";
+import { claudeCodeSeed } from "../../platforms/claude-code/seed";
+import { codexSeed } from "../../platforms/codex/seed";
+import { conductorSeed } from "../../platforms/conductor/seed";
+import { githubSeed } from "../../platforms/github/seed";
+import { opencodeSeed } from "../../platforms/opencode/seed";
+import { t3codeSeed } from "../../platforms/t3code/seed";
+import { wakatimeSeed } from "../../platforms/wakatime/seed";
 
 /** Every generator, in run order. */
 export const SEED_SOURCES: readonly SeedSource[] = await collectSeedSources(PLATFORMS, [
