@@ -1,5 +1,13 @@
 # Timeline
 
+## 0.17.1
+
+### Patch Changes
+
+- 951e73d: `bun run embeddings search` now rejects unrecognized flags instead of searching for them as text; put query text that starts with a dash after `--`. Invalid `embeddings` flags now print the error with the command's usage instead of a raw JSON error, `--version` prints `embeddings v<version>`, and a `SIGTERM` during `embeddings index` exits with 130 instead of 0.
+- b39fd62: Conversation views now show the sender and timestamp again when someone sends a message five minutes or more after the previous one, instead of only when the sender changes.
+- 805cced: Google Takeout zips no longer stop the background worker, and Search, Location History and Google Fit now import from them.
+
 ## 0.17.0
 
 ### Minor Changes
