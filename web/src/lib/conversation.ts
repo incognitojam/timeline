@@ -34,6 +34,8 @@ export interface ForwardedMessageSource {
 
 export const CONVERSATION_AUTO_REFETCH_INTERVAL_MS = 5_000;
 
+const SENDER_RUN_BREAK_MS = 5 * 60_000;
+
 export function reverseEventsChronologically(events: readonly TimelineEvent[]): TimelineEvent[] {
   return [...events].reverse();
 }
@@ -178,6 +180,11 @@ export function getMessageCallInfo(event: TimelineEvent): MessageCallInfo | null
   return { missed, durationMs: missed ? null : event.duration_ms };
 }
 
+function followsBreak(prev: TimelineEvent, curr: TimelineEvent): boolean {
+  if (!prev.timestamp || !curr.timestamp) return false;
+  return new Date(curr.timestamp).getTime() - new Date(prev.timestamp).getTime() >= SENDER_RUN_BREAK_MS;
+}
+
 /**
  * The ids of events that render a sender header (avatar, name, timestamp);
  * every other event continues the run above it and renders bare content, the
@@ -187,6 +194,8 @@ export function getMessageCallInfo(event: TimelineEvent): MessageCallInfo | null
  *  - is the first of the conversation, or changes sender, or opens a new date
  *    group (a single sender's run straddling midnight must re-label under the
  *    sticky date header);
+ *  - follows the previous event by `SENDER_RUN_BREAK_MS` or more, so a sender
+ *    picking the conversation back up gets a visible timestamp;
  *  - is a reply (its quoted preview needs its own attribution);
  *  - carries a message type badge (call, photo, …) which renders on the header
  *    line and would otherwise be dropped;
@@ -207,6 +216,7 @@ export function computeSenderHeaderIds(
       forcedHeaderIds?.has(curr.id) ||
       getSenderIdentifier(curr) !== getSenderIdentifier(prev) ||
       formatDateSeparator(curr.timestamp) !== formatDateSeparator(prev.timestamp) ||
+      followsBreak(prev, curr) ||
       getReplyTarget(curr) !== null ||
       getMessageTypeInfo(curr) !== null
     ) {
