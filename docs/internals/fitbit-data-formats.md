@@ -135,6 +135,6 @@ Events are tagged to distinguish formats:
 ## Files
 
 - Parser: `src/parsers/fitbit.ts`
-- Inbox detection: `src/inbox/zip.ts` (`detectTakeoutServices`)
+- Inbox detection: `src/platforms/google/takeout/services.ts` (`detectTakeoutServices`)
 - Inbox handler: `src/inbox/zip-handlers.ts` (`case "fitbit":`)
 - This doc: `docs/internals/fitbit-data-formats.md`

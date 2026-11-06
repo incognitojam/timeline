@@ -73,7 +73,7 @@ const PARSERS: Record<string, () => Promise<ParserFunction>> = {
     return module.processSmsFile;
   },
   "google-takeout": async () => {
-    const { processGoogleTakeoutZip } = await import("./zip-handlers");
+    const { processGoogleTakeoutZip } = await import("../platforms/google/takeout/handler");
     // Wrap to pass context as options
     return (db, filePath, sourceAccount, context) =>
       processGoogleTakeoutZip(db, filePath, sourceAccount, {
