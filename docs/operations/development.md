@@ -80,7 +80,7 @@ progress; `--help` lists every option. Tests call the same path through
 
 Run `./test.sh` before pushing. Screenshot comparisons run in the same Ubuntu
 Playwright container locally and in CI. CI runs each chart resize sweep directly
-on Ubuntu 24.04 with the locked Chromium version and its system dependencies.
+on the hosted Ubuntu runner with the locked Chromium version and its system dependencies.
 Install the [toolchain](#toolchain) and Docker (Docker Desktop on macOS), and start Docker before running
 the suite. Apple Silicon Macs use the same `linux/amd64` image through emulation.
 

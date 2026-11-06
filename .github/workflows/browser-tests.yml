@@ -14,7 +14,7 @@ permissions:
 jobs:
   browser:
     name: browser (${{ matrix.project }} ${{ matrix.dpr || matrix.shard }})
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
