@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { getDb, initDb } from "../db/schema";
+import { getDb, initDb } from "../../../db/schema";
 
 interface PlayStoreInstall {
   install: {
@@ -139,14 +139,14 @@ async function importPlayStoreInstalls(
 const args = process.argv.slice(2);
 if (args.length < 1) {
   console.log(
-    "Usage: bun run src/parsers/google-playstore.ts <installs.json> [account-name]"
+    "Usage: bun run src/platforms/google/playstore/parser.ts <installs.json> [account-name]"
   );
   console.log("");
   console.log("Imports Google Play Store install history.");
   console.log("Path should be: Google Play Store/Installs.json");
   console.log("");
   console.log(
-    "Example: bun run src/parsers/google-playstore.ts '/tmp/takeout/Google Play Store/Installs.json' my-account"
+    "Example: bun run src/platforms/google/playstore/parser.ts '/tmp/takeout/Google Play Store/Installs.json' my-account"
   );
   process.exit(1);
 }

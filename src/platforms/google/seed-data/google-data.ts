@@ -3,9 +3,9 @@
  * YouTube, Chrome) — the same searches and videos show up in several exports,
  * as they would for a real Takeout.
  */
-import type { SeedContext, SeedDay } from "../context";
-import { SELF } from "../persona";
-import type { Rng } from "../rng";
+import type { SeedContext, SeedDay } from "../../../seed/context";
+import { SELF } from "../../../seed/persona";
+import type { Rng } from "../../../seed/rng";
 
 /** Account label passed to the Google importers. */
 export const GOOGLE_ACCOUNT = SELF.email;

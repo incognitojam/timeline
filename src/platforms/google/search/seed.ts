@@ -1,4 +1,4 @@
-import type { SeedSource } from "../context";
+import type { SeedSource } from "../../../seed/context";
 import {
   activityHour,
   atLocalHour,
@@ -8,7 +8,7 @@ import {
   myActivityPage,
   pickSearch,
   recencyFactor,
-} from "./google-data";
+} from "../seed-data/google-data";
 
 /**
  * Takeout "My Activity/Search/My Activity.html": "Searched for" entries plus
@@ -74,6 +74,6 @@ export const googleSearchSeed: SeedSource = {
       "Takeout/My Activity/Search/My Activity.html",
       myActivityPage(cells.map((c) => c.html)),
     );
-    await ctx.runParserCli("parsers/google-search.ts", [path, GOOGLE_ACCOUNT]);
+    await ctx.runParserCli("platforms/google/search/parser.ts", [path, GOOGLE_ACCOUNT]);
   },
 };

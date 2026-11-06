@@ -6,7 +6,7 @@
 import type { Database } from "bun:sqlite";
 import { basename, dirname, join } from "path";
 import { cleanupExtract, extractZip, findFiles } from "../../../inbox/zip";
-import { detectFromRclone, detectGoogleAccount } from "../../../inbox/account-detection";
+import { detectFromRclone, detectGoogleAccount } from "./account-detection";
 import { detectTakeoutServices } from "./services";
 
 /**
@@ -111,7 +111,7 @@ async function processTakeoutService(
         .join("/")
         .replace(/\/history$/, "");
 
-      const { importYouTubeData } = await import("../../../parsers/google-youtube");
+      const { importYouTubeData } = await import("../youtube/parser");
       return { eventsAdded: await importYouTubeData(db, youtubePath, sourceAccount), eventsUpdated: 0 };
     }
 
@@ -124,7 +124,7 @@ async function processTakeoutService(
       if (!chromeFile) return { eventsAdded: 0, eventsUpdated: 0 };
 
       const chromePath = dirname(chromeFile);
-      const { importChromeHistory } = await import("../../../parsers/google-chrome");
+      const { importChromeHistory } = await import("../chrome/parser");
       return { eventsAdded: await importChromeHistory(db, chromePath, sourceAccount), eventsUpdated: 0 };
     }
 
@@ -139,7 +139,7 @@ async function processTakeoutService(
       if (!searchFile) return { eventsAdded: 0, eventsUpdated: 0 };
 
       const searchPath = dirname(searchFile);
-      const { importGoogleSearch } = await import("../../../parsers/google-search");
+      const { importGoogleSearch } = await import("../search/parser");
       return { eventsAdded: await importGoogleSearch(db, searchPath, sourceAccount), eventsUpdated: 0 };
     }
 
@@ -149,7 +149,7 @@ async function processTakeoutService(
       if (!icsFile) return { eventsAdded: 0, eventsUpdated: 0 };
 
       const calendarPath = dirname(icsFile);
-      const { importCalendarData } = await import("../../../parsers/google-calendar");
+      const { importCalendarData } = await import("../calendar/parser");
       return { eventsAdded: await importCalendarData(db, calendarPath, sourceAccount), eventsUpdated: 0 };
     }
 
@@ -165,7 +165,7 @@ async function processTakeoutService(
       if (!keepFile) return { eventsAdded: 0, eventsUpdated: 0 };
 
       const keepPath = dirname(keepFile);
-      const { importKeepData } = await import("../../../parsers/google-keep");
+      const { importKeepData } = await import("../keep/parser");
       return { eventsAdded: await importKeepData(db, keepPath, sourceAccount), eventsUpdated: 0 };
     }
 
@@ -180,7 +180,7 @@ async function processTakeoutService(
 
       const locationPath = dirname(recordsFile);
       const { importGoogleLocation } = await import(
-        "../../../parsers/google-location"
+        "../location/parser"
       );
       return { eventsAdded: await importGoogleLocation(db, locationPath, sourceAccount), eventsUpdated: 0 };
     }
@@ -192,7 +192,7 @@ async function processTakeoutService(
       );
       if (!timelineFile) return { eventsAdded: 0, eventsUpdated: 0 };
 
-      const { importTimelineData } = await import("../../../parsers/google-timeline");
+      const { importTimelineData } = await import("../location/parser-timeline");
       return await importTimelineData(db, timelineFile, sourceAccount);
     }
 
@@ -216,7 +216,7 @@ async function processTakeoutService(
         chatPath = dirname(chatPath);
       }
 
-      const { importChatData } = await import("../../../parsers/google-chat");
+      const { importChatData } = await import("../chat/parser");
       return { eventsAdded: await importChatData(db, chatPath, sourceAccount), eventsUpdated: 0 };
     }
 

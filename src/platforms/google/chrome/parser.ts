@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
-import { getDb, initDb } from "../db/schema";
+import { getDb, initDb } from "../../../db/schema";
 
 interface ChromeHistoryEntry {
   favicon_url: string;
@@ -126,12 +126,12 @@ export async function importChromeHistory(
 // CLI
 const args = process.argv.slice(2);
 if (args.length < 1) {
-  console.log("Usage: bun run src/parsers/google-chrome.ts <import-path> [account-name]");
+  console.log("Usage: bun run src/platforms/google/chrome/parser.ts <import-path> [account-name]");
   console.log("");
   console.log("Import path should contain:");
   console.log("  - History.json or Chrome/History.json");
   console.log("");
-  console.log("Example: bun run src/parsers/google-chrome.ts ./imports/chrome my-account");
+  console.log("Example: bun run src/platforms/google/chrome/parser.ts ./imports/chrome my-account");
   process.exit(1);
 }
 

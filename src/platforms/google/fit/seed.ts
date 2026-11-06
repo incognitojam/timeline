@@ -1,8 +1,8 @@
-import type { SeedSource } from "../context";
-import { GOOGLE_ACCOUNT } from "./google-data";
-import { locationPlan, type MoveMode, timelineSplitIndex } from "./google-location-plan";
+import type { SeedSource } from "../../../seed/context";
+import { GOOGLE_ACCOUNT } from "../seed-data/google-data";
+import { locationPlan, type MoveMode, timelineSplitIndex } from "../seed-data/location-plan";
 
-/** Google Fit activity codes (see ACTIVITY_TYPES in src/parsers/google-fit.ts). */
+/** Google Fit activity codes (see ACTIVITY_TYPES in src/platforms/google/fit/parser.ts). */
 const CODE = { biking: 1, still: 3, inVehicle: 5, walking: 7, running: 8, hiking: 42, strength: 89, yoga: 112 } as const;
 
 const MOVE_CODES: Partial<Record<MoveMode, number>> = {
@@ -87,6 +87,6 @@ export const googleFitSeed: SeedSource = {
       "Takeout/Fit/All Data/derived_com.google.activity.segment_com.google.android.gms_merge_activity_segm.json",
       JSON.stringify({ "Data Source": { dataType: { name: "com.google.activity.segment" } }, "Data Points": points }, null, 1),
     );
-    await ctx.runParserCli("parsers/google-fit.ts", [ctx.stage("google-fit"), GOOGLE_ACCOUNT]);
+    await ctx.runParserCli("platforms/google/fit/parser.ts", [ctx.stage("google-fit"), GOOGLE_ACCOUNT]);
   },
 };

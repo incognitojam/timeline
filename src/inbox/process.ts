@@ -81,7 +81,7 @@ const PARSERS: Record<string, () => Promise<ParserFunction>> = {
       });
   },
   "google-timeline": async () => {
-    const { importTimelineData } = await import("../parsers/google-timeline");
+    const { importTimelineData } = await import("../platforms/google/location/parser-timeline");
     return (db, filePath, sourceAccount) => {
       if (!sourceAccount) {
         throw new Error("google-timeline parser requires a source account");

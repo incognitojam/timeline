@@ -4,9 +4,9 @@
  * Google Calendar all read from this one plan so commutes, hikes, and trips
  * line up across sources.
  */
-import type { SeedContext, SeedDay } from "../context";
-import { HOME, OFFICE, PLACES, type PersonKey, type Place, VENUES } from "../persona";
-import type { Rng } from "../rng";
+import type { SeedContext, SeedDay } from "../../../seed/context";
+import { HOME, OFFICE, PLACES, type PersonKey, type Place, VENUES } from "../../../seed/persona";
+import type { Rng } from "../../../seed/rng";
 import { stableHash } from "./google-data";
 
 export interface PlanPlace extends Place {

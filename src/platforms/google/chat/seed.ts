@@ -1,8 +1,8 @@
-import { importChatData } from "../../parsers/google-chat";
-import type { SeedSource } from "../context";
-import type { Person } from "../persona";
-import { GROUP_CHATS, peopleOn, personByKey, SELF } from "../persona";
-import type { Rng } from "../rng";
+import { importChatData } from "./parser";
+import type { SeedSource } from "../../../seed/context";
+import type { Person } from "../../../seed/persona";
+import { GROUP_CHATS, peopleOn, personByKey, SELF } from "../../../seed/persona";
+import type { Rng } from "../../../seed/rng";
 import {
   HOURS,
   type PlannedMessage,
@@ -10,7 +10,7 @@ import {
   WORK_GROUP_SCRIPTS,
   weekdaysOnly,
   workDmScripts,
-} from "./messaging-a-data";
+} from "../../../seed/sources/messaging-a-data";
 
 const NAME = "google-chat";
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];

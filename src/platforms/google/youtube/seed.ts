@@ -1,4 +1,4 @@
-import type { SeedSource } from "../context";
+import type { SeedSource } from "../../../seed/context";
 import {
   activityHour,
   atLocalHour,
@@ -12,7 +12,7 @@ import {
   type YouTubeChannel,
   type YouTubeVideo,
   YOUTUBE_SEARCHES,
-} from "./google-data";
+} from "../seed-data/google-data";
 
 /** Evenings and weekends; a little at lunch. */
 const WATCH_HOURS = [0.6, 0.3, 0.05, 0, 0, 0, 0.1, 0.5, 0.4, 0.2, 0.2, 0.3, 1.2, 0.6, 0.3, 0.3, 0.4, 0.7, 1.4, 2.2, 2.6, 2.6, 2, 1.2];
@@ -115,6 +115,6 @@ export const googleYoutubeSeed: SeedSource = {
     ].join("\n");
     ctx.writeStaged("google-youtube", "subscriptions/subscriptions.csv", csv);
 
-    await ctx.runParserCli("parsers/google-youtube.ts", [ctx.stage("google-youtube"), GOOGLE_ACCOUNT]);
+    await ctx.runParserCli("platforms/google/youtube/parser.ts", [ctx.stage("google-youtube"), GOOGLE_ACCOUNT]);
   },
 };

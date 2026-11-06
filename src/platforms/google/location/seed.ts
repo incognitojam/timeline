@@ -1,7 +1,7 @@
-import { importGoogleLocation } from "../../parsers/google-location";
-import type { SeedSource } from "../context";
-import { GOOGLE_ACCOUNT } from "./google-data";
-import { locationPlan, type PlanSegment, timelineSplitIndex } from "./google-location-plan";
+import { importGoogleLocation } from "./parser";
+import type { SeedSource } from "../../../seed/context";
+import { GOOGLE_ACCOUNT } from "../seed-data/google-data";
+import { locationPlan, type PlanSegment, timelineSplitIndex } from "../seed-data/location-plan";
 
 const MONTH_NAMES = [
   "JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE",

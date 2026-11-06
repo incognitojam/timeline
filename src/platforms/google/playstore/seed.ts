@@ -1,5 +1,5 @@
-import type { SeedSource } from "../context";
-import { GOOGLE_ACCOUNT } from "./google-data";
+import type { SeedSource } from "../../../seed/context";
+import { GOOGLE_ACCOUNT } from "../seed-data/google-data";
 
 type DocType = "Android Apps" | "GAME";
 
@@ -102,6 +102,6 @@ export const googlePlaystoreSeed: SeedSource = {
     }
 
     const path = ctx.writeStaged("google-playstore", "Takeout/Google Play Store/Installs.json", JSON.stringify(installs, null, 1));
-    await ctx.runParserCli("parsers/google-playstore.ts", [path, GOOGLE_ACCOUNT]);
+    await ctx.runParserCli("platforms/google/playstore/parser.ts", [path, GOOGLE_ACCOUNT]);
   },
 };
