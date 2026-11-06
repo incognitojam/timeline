@@ -1,5 +1,19 @@
 # Timeline
 
+## 0.17.0
+
+### Minor Changes
+
+- 9a44849: Import Claude Code and Codex sessions from another machine with the new **Remote agents** sync source. Timeline generates its own SSH key from the source's settings page, shows the `authorized_keys` line to install on the remote machine alongside the read-only `tools/timeline-export` wrapper, and asks you to confirm the host key fingerprint on **Test connection**. Imported sessions use the account you set (for example `alice@laptop`), so they stay separate from the Timeline host's own. A remote machine that is asleep or offline is recorded as a deferred run until its last successful pull is older than the configured limit (24 hours by default), after which the run fails.
+- 2fb8a34: A T3 Code or styal thread is now the single listed conversation for the agent sessions it drove: the matching Claude Code, Codex and OpenCode transcripts stay stored and searchable but no longer appear as separate conversations or as worktree-named projects on the Coding page. T3's throwaway title-generation Claude sessions are no longer imported, and ones already imported are hidden the same way.
+- 2fb8a34: T3 Code sync now reads current T3 Code and styal databases (`statev2.sqlite`): threads import with per-turn provider and model, tool calls, proposed plans, reasoning, image attachments, and subagent threads linked to their parent. Scheduled syncs read only what changed since the previous run, with a full read once a day to catch rows that landed late, and an unrecognised database schema fails the sync instead of importing part of it.
+
+### Patch Changes
+
+- 75f9dc7: Events from the retired Steam Friends and Google Location Sharing sources now show readable names instead of raw ids, and Google Location Sharing uses the location icon.
+- 9a44849: Deferred sync runs now say why they were deferred, such as a blocked Wi-Fi network: `/status.md` shows the reason next to the run, and the run history in the web app shows it when you hover over **Deferred**.
+- 2b269dd: T3 Code sync no longer holds the database write lock for a whole run. It compares rows without the lock, so a sync with nothing new takes no write lock, and writes what changed in short transactions, so other sources and writers keep working during a long rename, archive or first import. A run that fails partway is finished by the next one.
+
 ## 0.16.1
 
 ### Patch Changes
