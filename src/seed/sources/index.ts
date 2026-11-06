@@ -1,7 +1,7 @@
 import { PLATFORMS } from "../../platforms";
 import { collectSeedSources } from "../../platforms/registry";
 import type { SeedSource } from "../context";
-import { amexSeed } from "./amex";
+import { amexSeed } from "../../platforms/amex/seed";
 import { ampSeed } from "./amp";
 import { chatgptSeed } from "./chatgpt";
 import { claudeSeed } from "./claude";
@@ -13,7 +13,7 @@ import { monzoSeed } from "./monzo";
 import { opencodeSeed } from "./opencode";
 import { smsBackupRestoreSeed } from "./sms-backup-restore";
 import { t3codeSeed } from "./t3code";
-import { thrivaSeed } from "./thriva";
+import { thrivaSeed } from "../../platforms/thriva/seed";
 import { wakatimeSeed } from "./wakatime";
 
 /** Every generator, in run order. */

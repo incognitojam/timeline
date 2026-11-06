@@ -43,7 +43,7 @@ import { normalizeRouteParam } from "../lib/route-params";
 import { staleContentClass } from "../lib/stale-content";
 import { IconChevronLeft, IconChevronRight, IconSettingsBackupRestore } from "../ui/icons";
 import SegmentedControl from "../ui/SegmentedControl";
-import BiomarkerDetailModal from "./BiomarkerDetailModal";
+import BiomarkerDetailModal from "../platforms/thriva/BiomarkerDetailModal";
 
 export type View = Extract<HealthWindowView, "week" | "month" | "year">;
 type DashboardHealthWindow = Omit<HealthWindow, "view"> & { view: View };

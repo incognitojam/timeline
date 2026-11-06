@@ -5,9 +5,9 @@
  * Uses password-based authentication to get a JWT token.
  *
  * Usage:
- *   bun run src/parsers/thriva.ts [account-name]    # Sync biomarker results
- *   bun run src/parsers/thriva.ts status            # Check auth status
- *   bun run src/parsers/thriva.ts reset             # Clear stored tokens
+ *   bun run src/platforms/thriva/parser.ts [account-name]    # Sync biomarker results
+ *   bun run src/platforms/thriva/parser.ts status            # Check auth status
+ *   bun run src/platforms/thriva/parser.ts reset             # Clear stored tokens
  *
  * Setup:
  *   Create ~/.config/timeline/thriva.json with:
@@ -17,10 +17,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { getDb, initDb } from "../db/schema";
-import { deleteSyncState, getAppStateDb } from "../db/app-state";
-import { createTokenManager, type OAuthTokens } from "../lib/oauth-tokens";
-import { getBiomarkerInfo } from "./thriva-biomarkers";
+import { getDb, initDb } from "../../db/schema";
+import { deleteSyncState, getAppStateDb } from "../../db/app-state";
+import { createTokenManager, type OAuthTokens } from "../../lib/oauth-tokens";
+import { getBiomarkerInfo } from "./biomarkers";
 
 // API Types
 interface ThrivaBiomarkerResult {

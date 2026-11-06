@@ -1,16 +1,16 @@
 import { Show, For, createMemo } from "solid-js";
-import { EChartsAutoSize } from "../ui/echarts";
-import Dialog from "../ui/Dialog";
+import { EChartsAutoSize } from "../../ui/echarts";
+import Dialog from "../../ui/Dialog";
 import type { EChartsOption } from "echarts";
-import type { BiomarkerData, BiomarkerReferenceRange } from "../lib/api";
-import { useChartTheme } from "../lib/echarts-theme";
+import type { BiomarkerData, BiomarkerReferenceRange } from "../../lib/api";
+import { useChartTheme } from "../../lib/echarts-theme";
 import {
   getBiomarkerLevelColor,
   normalizeRangePosition,
   referenceRangeExtent,
   sortReferenceRanges,
   type BiomarkerLevel,
-} from "../lib/health-utils";
+} from "../../lib/health-utils";
 
 interface Props {
   biomarker: BiomarkerData | null;

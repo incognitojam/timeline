@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { sync as syncThriva } from "../../parsers/thriva";
-import type { SyncSource, SyncOptions, SyncResult } from "../types";
+import { sync as syncThriva } from "./parser";
+import type { SyncSource, SyncOptions, SyncResult } from "../../sync/types";
 
 const CONFIG_PATH = join(homedir(), ".config", "timeline", "thriva.json");
 

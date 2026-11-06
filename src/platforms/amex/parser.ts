@@ -13,14 +13,14 @@
  * idempotent (INSERT OR IGNORE on (source, source_id, source_account)).
  *
  * CLI Usage:
- *   bun run src/parsers/amex.ts <activity.csv> [account-name]
+ *   bun run src/platforms/amex/parser.ts <activity.csv> [account-name]
  */
 
 import { Database } from "bun:sqlite";
 import { basename } from "node:path";
-import { parseCSV } from "../lib/csv";
-import { runParser } from "../lib/parser-cli";
-import { onImportComplete } from "../db/import-hooks";
+import { parseCSV } from "../../lib/csv";
+import { runParser } from "../../lib/parser-cli";
+import { onImportComplete } from "../../db/import-hooks";
 
 /** Collapse runs of whitespace (including embedded newlines) to single spaces. */
 function tidy(value: string): string {
@@ -253,11 +253,11 @@ export async function importAmexData(
 // CLI
 if (import.meta.main) {
   runParser(importAmexData, {
-    name: "parsers/amex",
+    name: "platforms/amex/parser",
     defaultAccount: "personal",
     examples: [
-      "bun run src/parsers/amex.ts ./activity.csv",
-      "bun run src/parsers/amex.ts ./activity.csv personal",
+      "bun run src/platforms/amex/parser.ts ./activity.csv",
+      "bun run src/platforms/amex/parser.ts ./activity.csv personal",
     ],
   });
 }

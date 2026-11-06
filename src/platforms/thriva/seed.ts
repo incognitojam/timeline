@@ -1,7 +1,7 @@
-import { getBiomarkerInfo } from "../../parsers/thriva-biomarkers";
-import { getProfileInfo } from "../../parsers/thriva-profiles";
-import type { SeedContext, SeedSource } from "../context";
-import type { Rng } from "../rng";
+import { getBiomarkerInfo } from "./biomarkers";
+import { getProfileInfo } from "./profiles";
+import type { SeedContext, SeedSource } from "../../seed/context";
+import type { Rng } from "../../seed/rng";
 
 /**
  * Thriva home blood tests. The parser's sync logs in with a password from
@@ -97,7 +97,7 @@ function referenceRanges(marker: Marker) {
   return ranges;
 }
 
-// Mirrors getLevelIndicator in src/parsers/thriva.ts.
+// Mirrors getLevelIndicator in src/platforms/thriva/parser.ts.
 const LEVEL_INDICATOR: Record<Level, string> = { optimal: "++", normal: "", abnormal: "!", highly_abnormal: "!!" };
 
 /** Local date of a test's order; every test falls inside the seeded range. */

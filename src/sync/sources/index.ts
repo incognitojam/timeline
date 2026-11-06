@@ -27,7 +27,7 @@ import { recallSyncSource } from "./recall";
 import { remoteAgentsSyncSource } from "./remote-agents";
 import { renderSweepSyncSource } from "./render-sweep";
 import { t3codeSyncSource } from "./t3code";
-import { thrivaSyncSource } from "./thriva";
+import { thrivaSyncSource } from "../../platforms/thriva/sync";
 import { thumbhashSyncSource } from "./thumbhash";
 import { wakatimeSyncSource } from "./wakatime";
 

@@ -99,7 +99,7 @@ const PARSERS: Record<string, () => Promise<ParserFunction>> = {
     };
   },
   "amex": async () => {
-    const { importAmexData } = await import("../parsers/amex");
+    const { importAmexData } = await import("../platforms/amex/parser");
     return (db, filePath, sourceAccount) => {
       if (!sourceAccount) {
         throw new Error("amex parser requires a source account");

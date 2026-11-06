@@ -5,7 +5,7 @@
  * Each profile contains one or more biomarker measurements.
  */
 
-import { getBiomarkerInfo } from "./thriva-biomarkers";
+import { getBiomarkerInfo } from "./biomarkers";
 
 export interface TestProfile {
   name: string;
