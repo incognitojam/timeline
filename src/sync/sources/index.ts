@@ -18,7 +18,6 @@ import { embeddingsSyncSource } from "./embeddings";
 import { PLATFORMS } from "../../platforms";
 import { collectSyncSources } from "../../platforms/registry";
 import { githubSyncSource } from "./github";
-import { googleHealthSyncSource } from "../../platforms/google/health/sync";
 import { googlePlacesSyncSource } from "./google-places";
 import { inboxRcloneSyncSource } from "./inbox-rclone";
 import { mediaEvictSyncSource } from "./media-evict";
@@ -44,7 +43,6 @@ export const SYNC_SOURCES: SyncSource[] = collectSyncSources(PLATFORMS, [
   claudeCodeSyncSource,
   ampSyncSource,
   thrivaSyncSource,
-  googleHealthSyncSource,
   opencodeSyncSource,
   conductorSyncSource,
   t3codeSyncSource,
@@ -76,7 +74,6 @@ export {
   claudeCodeSyncSource,
   ampSyncSource,
   thrivaSyncSource,
-  googleHealthSyncSource,
   opencodeSyncSource,
   recallSyncSource,
   renderSweepSyncSource,

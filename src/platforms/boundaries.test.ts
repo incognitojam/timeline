@@ -263,7 +263,8 @@ describe("platform layering", () => {
 
   test("the service does not evaluate seed code", async () => {
     const transpiler = new Bun.Transpiler({ loader: "ts" });
-    const isSeedModule = (path: string) => path.startsWith("src/seed/") || /^src\/platforms\/.+\/seed[^/]*\.ts$/.test(path);
+    const isSeedModule = (path: string) =>
+      path.startsWith("src/seed/") || /^src\/platforms\/.+\/seed[^/]*(\.ts$|\/)/.test(path);
     const seen = new Set<string>();
     const pending = SERVICE_ENTRY_POINTS.map((path) => join(REPO_ROOT, path));
     const seedModules: string[] = [];
