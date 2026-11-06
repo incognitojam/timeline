@@ -7,6 +7,8 @@ import { instagramPlatform } from "./instagram";
 import { linkedinPlatform } from "./linkedin";
 import { minecraftPlatform } from "./minecraft";
 import { monzoPlatform } from "./monzo";
+import { phonePlatform } from "./phone";
+import { recallPlatform } from "./recall";
 import { redditPlatform } from "./reddit";
 import { skypePlatform } from "./skype";
 import { spotifyPlatform } from "./spotify";
@@ -30,8 +32,10 @@ export const PLATFORMS: readonly PlatformModule[] = [
   facebookPlatform,
   instagramPlatform,
   skypePlatform,
+  phonePlatform,
   linkedinPlatform,
   redditPlatform,
   minecraftPlatform,
   amexPlatform,
+  recallPlatform,
 ];
