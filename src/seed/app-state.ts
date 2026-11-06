@@ -81,7 +81,6 @@ export function seedAppState(
   seeded: readonly SeedSource[],
   imports: ReadonlyMap<string, GeneratorImport>,
 ): void {
-  const rng = ctx.rng("app-state");
   const seededNames = new Set(seeded.map((source) => source.name));
   const syncNames = SYNC_SOURCES.map((source) => source.name).filter(
     (name) => (seededNames.has(name) && !NO_SYNC_HISTORY.has(name)) || MAINTENANCE_SOURCES.includes(name),
@@ -101,6 +100,8 @@ export function seedAppState(
 
   db.transaction(() => {
     for (const name of syncNames) {
+      // One stream per source, so this history doesn't depend on the order of SYNC_SOURCES.
+      const rng = ctx.rng(`app-state:${name}`);
       const interval = INTERVALS[name] ?? "1h";
       const intervalMs = parseInterval(interval);
       upsertSyncSourcePatch(name, { enabled: false, interval }, db);
@@ -142,7 +143,6 @@ function seedProcessedFiles(
   imports: ReadonlyMap<string, GeneratorImport>,
   now: number,
 ): void {
-  const rng = ctx.rng("app-state:inbox");
   const insert = db.prepare(`
     INSERT INTO processed_files (source, file_path, file_hash, file_size, processed_at, import_batch, detected_type, events_added)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -150,6 +150,7 @@ function seedProcessedFiles(
   for (const generator of seeded) {
     const file = INBOX_EXPORTS[generator.name];
     if (!file) continue;
+    const rng = ctx.rng(`app-state:inbox:${generator.name}`);
     const imported = imports.get(generator.name);
     if (!imported?.newest) throw new Error(`No import recorded for inbox export ${generator.name}`);
     // Inbox history is keyed by the events.source the import writes.
