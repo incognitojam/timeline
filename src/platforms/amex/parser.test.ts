@@ -4,14 +4,14 @@ import { mkdir, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { randomUUID } from "crypto";
-import { initDb } from "../db/schema";
+import { initDb } from "../../db/schema";
 import {
   importAmexData,
   parseAmexAmount,
   parseAmexDate,
   cleanReference,
   classifyAmexType,
-} from "./amex";
+} from "./parser";
 
 const HEADER =
   "Date,Description,Card Member,Account #,Amount,Extended Details,Appears On Your Statement As,Address,Town/City,Postcode,Country,Reference,Category";

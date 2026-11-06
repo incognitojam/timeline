@@ -1,6 +1,6 @@
-import { importAmexData } from "../../parsers/amex";
-import type { SeedDay, SeedSource } from "../context";
-import type { Rng } from "../rng";
+import { importAmexData } from "./parser";
+import type { SeedDay, SeedSource } from "../../seed/context";
+import type { Rng } from "../../seed/rng";
 
 /**
  * Alex's UK American Express card (kept from before the move), used for bigger

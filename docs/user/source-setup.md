@@ -146,7 +146,7 @@ Thriva uses password authentication to access blood test biomarker results.
    ```json
    { "email": "alice@example.com", "password": "your-password" }
    ```
-2. Run `bun run src/parsers/thriva.ts` to sync biomarker results
+2. Run `bun run src/platforms/thriva/parser.ts` to sync biomarker results
 3. Token (JWT) is cached for ~24 hours, auto-refreshes on next sync
 
 Account name is derived automatically from email (e.g., `alice@example.com` → `alice`).
