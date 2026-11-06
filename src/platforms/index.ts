@@ -1,5 +1,6 @@
 import { discordPlatform } from "./discord";
 import { facebookPlatform } from "./facebook";
+import { googlePlatform } from "./google";
 import { googleMessagesPlatform } from "./google-messages";
 import { instagramPlatform } from "./instagram";
 import { linkedinPlatform } from "./linkedin";
@@ -18,6 +19,7 @@ export const PLATFORMS: readonly PlatformModule[] = [
   googleMessagesPlatform,
   traktPlatform,
   swarmPlatform,
+  googlePlatform,
   spotifyPlatform,
   steamPlatform,
   facebookPlatform,
