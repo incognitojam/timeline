@@ -116,7 +116,8 @@ describe("bun run seed", () => {
     expect(output).toContain("Ready in");
     expect(code).toBe(0);
 
-    const db = new Database(join(out, "timeline.db"), { readonly: true });
+    // Not read-only: macOS's system SQLite can't read a WAL database with no -wal that way.
+    const db = new Database(join(out, "timeline.db"));
     const rows = db
       .query("SELECT source, COUNT(*) AS n, MAX(timestamp) AS newest FROM events GROUP BY source ORDER BY source")
       .all() as { source: string; n: number; newest: string }[];
