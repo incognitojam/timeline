@@ -1,4 +1,4 @@
-import type { TimelineEvent } from "./types";
+import type { TimelineEvent } from "../../lib/types";
 
 // google-health (the Fitbit successor) records the same sleep nights as the
 // legacy `fitbit` source. Both are ingested, so the timeline must prefer one to

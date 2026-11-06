@@ -1,15 +1,15 @@
 import { For, Show } from "solid-js";
 import { sourceLabel } from "@shared/sources";
-import { formatDuration, formatTime } from "../../lib/format";
+import { formatDuration, formatTime } from "../../../lib/format";
 import {
   parseSleepEvent,
   SLEEP_STAGE_LABELS,
   type SleepStage,
   type SleepStageTotal,
-} from "../../lib/sleep";
-import { getSourceColorStyle } from "../../lib/source-styles";
-import type { TimelineEvent } from "../../lib/types";
-import { IconBedtime } from "../../ui/icons";
+} from "./sleep";
+import { getSourceColorStyle } from "../../../lib/source-styles";
+import type { TimelineEvent } from "../../../lib/types";
+import { IconBedtime } from "../../../ui/icons";
 
 interface Props {
   event: TimelineEvent;

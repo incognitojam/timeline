@@ -1,7 +1,7 @@
-import { importFitbitData } from "../../parsers/fitbit";
-import type { SeedDay, SeedSource } from "../context";
-import { SELF } from "../persona";
-import { GOOGLE_HEALTH_DAYS, type HealthDay, healthDay, type SleepLevel, type SleepPeriod, wallClock } from "./life-health";
+import { importFitbitData } from "./parser";
+import type { SeedDay, SeedSource } from "../../../seed/context";
+import { SELF } from "../../../seed/persona";
+import { GOOGLE_HEALTH_DAYS, type HealthDay, healthDay, type SleepLevel, type SleepPeriod, wallClock } from "../seed-data/life-health";
 
 /**
  * Fitbit's Google Takeout export (the older "Global Export Data" layout) for

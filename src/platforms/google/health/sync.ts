@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { getAppStateDb, getSyncState } from "../../db/app-state";
-import { deriveOAuthAuthStatus } from "../../lib/oauth-tokens";
-import { syncGoogleHealth } from "../../parsers/google-health-api";
-import type { SyncOptions, SyncResult, SyncSource } from "../types";
+import { getAppStateDb, getSyncState } from "../../../db/app-state";
+import { deriveOAuthAuthStatus } from "../../../lib/oauth-tokens";
+import { syncGoogleHealth } from "./parser";
+import type { SyncOptions, SyncResult, SyncSource } from "../../../sync/types";
 
 const CONFIG_PATH = join(homedir(), ".config", "timeline", "google-health.json");
 
@@ -45,10 +45,10 @@ export const googleHealthSyncSource: SyncSource = {
     }
     const tokens = loadTokens();
     if (!tokens) {
-      return "Google Health not authenticated. Run: bun run src/parsers/google-health-api.ts auth";
+      return "Google Health not authenticated. Run: bun run src/platforms/google/health/parser.ts auth";
     }
     if (!tokens.refresh_token) {
-      return "Google Health missing refresh token. Re-run: bun run src/parsers/google-health-api.ts auth";
+      return "Google Health missing refresh token. Re-run: bun run src/platforms/google/health/parser.ts auth";
     }
     return null;
   },

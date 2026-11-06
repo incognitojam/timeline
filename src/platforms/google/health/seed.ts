@@ -7,11 +7,11 @@ import {
   parseHeightSamples,
   toLocalIso,
   weightEvent,
-} from "../../parsers/google-health-api";
-import { formatDuration } from "../../lib/format";
-import type { SeedContext, SeedSource } from "../context";
-import type { Rng } from "../rng";
-import { GOOGLE_HEALTH_DAYS, type HealthDay, healthDay, type SleepLevel, type SleepPeriod } from "./life-health";
+} from "./parser";
+import { formatDuration } from "../../../lib/format";
+import type { SeedContext, SeedSource } from "../../../seed/context";
+import type { Rng } from "../../../seed/rng";
+import { GOOGLE_HEALTH_DAYS, type HealthDay, healthDay, type SleepLevel, type SleepPeriod } from "../seed-data/life-health";
 
 /**
  * Google Health API (Fitbit's replacement) for the most recent year. The sync

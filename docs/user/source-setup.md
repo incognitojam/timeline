@@ -170,7 +170,7 @@ Google Health replaces the Fitbit Web API sync for current health metrics. Exist
    ```json
    { "client_id": "YOUR_ID", "client_secret": "YOUR_SECRET" }
    ```
-3. Run `TIMELINE_DB_PATH=~/.local/share/timeline/timeline.db bun run src/parsers/google-health-api.ts auth` to authorize access, then enable Google Health on the Sync page. Point to the service database so the token is stored in its `app-state.db`, rather than the checkout's.
+3. Run `TIMELINE_DB_PATH=~/.local/share/timeline/timeline.db bun run src/platforms/google/health/parser.ts auth` to authorize access, then enable Google Health on the Sync page. Point to the service database so the token is stored in its `app-state.db`, rather than the checkout's.
 
 ## Trakt Setup
 

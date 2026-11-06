@@ -11,7 +11,7 @@ import {
   resolveProbeDailySummaryDataType,
   toLocalIso,
   weightEvent,
-} from "./google-health-api";
+} from "./parser";
 
 describe("toLocalIso", () => {
   test("applies a positive offset and formats a numeric zone", () => {
