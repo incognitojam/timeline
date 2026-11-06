@@ -22,7 +22,7 @@
     "media-upload": "bun run src/scripts/media-upload.ts",
     "media-evict": "bun run src/scripts/media-evict.ts",
     "media-recover-discord": "bun run src/platforms/discord/scripts/media-recover.ts",
-    "media-recover-facebook": "bun run src/scripts/media-recover-facebook.ts",
+    "media-recover-facebook": "bun run src/platforms/facebook/scripts/media-recover.ts",
     "lint": "bunx biome lint src/ web/src/ && oxlint src/ web/src/",
     "test": "bun test",
     "test:api": "bun test src/api/",

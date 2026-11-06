@@ -9,7 +9,7 @@ import JournalCard from "./JournalCard";
 import RecallCard from "./RecallCard";
 import RecallSessionCard from "./RecallSessionCard";
 import SleepCard from "./SleepCard";
-import CheckinCard from "./CheckinCard";
+import CheckinCard from "../../platforms/swarm/CheckinCard";
 import { isSleepEvent } from "../../lib/sleep";
 import { getSourceColorStyle } from "../../lib/source-styles";
 import SourceIcon from "../SourceIcon";
