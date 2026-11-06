@@ -87,7 +87,7 @@ import { test } from "bun:test";
 import { homedir, tmpdir } from "node:os";
 import { loadConfig } from ${JSON.stringify(join(process.cwd(), "src/config/index.ts"))};
 import { getEmbeddingsDbPath } from ${JSON.stringify(join(process.cwd(), "src/embeddings/db.ts"))};
-import { getRcloneConfigPath } from ${JSON.stringify(join(process.cwd(), "src/inbox/account-detection.ts"))};
+import { getRcloneConfigPath } from ${JSON.stringify(join(process.cwd(), "src/platforms/google/takeout/account-detection.ts"))};
 
 test("probe", async () => {
   const config = await loadConfig();

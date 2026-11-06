@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { getDb, initDb } from "../db/schema";
-import { upsertIdentities, type UpsertIdentityOptions } from "../db/queries";
+import { getDb, initDb } from "../../../db/schema";
+import { upsertIdentities, type UpsertIdentityOptions } from "../../../db/queries";
 
 interface Attendee {
   email?: string;
@@ -379,11 +379,11 @@ export async function importCalendarData(
 // CLI
 const args = process.argv.slice(2);
 if (args.length < 1) {
-  console.log("Usage: bun run src/parsers/google-calendar.ts <import-path> [account-name]");
+  console.log("Usage: bun run src/platforms/google/calendar/parser.ts <import-path> [account-name]");
   console.log("");
   console.log("Import path should contain .ics files");
   console.log("");
-  console.log("Example: bun run src/parsers/google-calendar.ts ./imports/calendar my-account");
+  console.log("Example: bun run src/platforms/google/calendar/parser.ts ./imports/calendar my-account");
   process.exit(1);
 }
 

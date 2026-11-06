@@ -1,11 +1,11 @@
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
-import { getDb, initDb, type Platform } from "../db/schema";
+import { getDb, initDb, type Platform } from "../../../db/schema";
 import {
   upsertIdentities,
   formatIdentifier,
   type UpsertIdentityOptions,
-} from "../db/queries";
+} from "../../../db/queries";
 
 interface YouTubeActivity {
   type: "watch" | "search" | "like" | "subscribe" | "view" | "comment";
@@ -399,13 +399,13 @@ export async function importYouTubeData(
 // CLI
 const args = process.argv.slice(2);
 if (args.length < 1) {
-  console.log("Usage: bun run src/parsers/google-youtube.ts <import-path> [account-name]");
+  console.log("Usage: bun run src/platforms/google/youtube/parser.ts <import-path> [account-name]");
   console.log("");
   console.log("Import path should contain:");
   console.log("  - My Activity.html or My Activity/YouTube/My Activity.html");
   console.log("  - subscriptions/subscriptions.csv (optional)");
   console.log("");
-  console.log("Example: bun run src/parsers/google-youtube.ts ./imports/youtube my-account");
+  console.log("Example: bun run src/platforms/google/youtube/parser.ts ./imports/youtube my-account");
   process.exit(1);
 }
 

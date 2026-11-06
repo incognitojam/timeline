@@ -1,6 +1,6 @@
-import { importTimelineData } from "../../parsers/google-timeline";
-import type { SeedContext, SeedSource } from "../context";
-import { GOOGLE_ACCOUNT } from "./google-data";
+import { importTimelineData } from "./parser-timeline";
+import type { SeedContext, SeedSource } from "../../../seed/context";
+import { GOOGLE_ACCOUNT } from "../seed-data/google-data";
 import {
   latLngString,
   localIsoWithOffset,
@@ -8,7 +8,7 @@ import {
   planPlaces,
   type PlanSegment,
   timelineSplitIndex,
-} from "./google-location-plan";
+} from "../seed-data/location-plan";
 
 /**
  * On-device Google Maps Timeline export (Timeline.json, semanticSegments) for

@@ -1,14 +1,14 @@
 import { Database } from "bun:sqlite";
 import { readdir, stat } from "node:fs/promises";
 import { join, basename } from "node:path";
-import { getDb, initDb } from "../db/schema";
-import { extractConversationId } from "../db/conversation-id";
+import { getDb, initDb } from "../../../db/schema";
+import { extractConversationId } from "../../../db/conversation-id";
 import {
   onImportComplete,
   upsertIdentities,
   formatIdentifier,
   type UpsertIdentityOptions,
-} from "../db/queries";
+} from "../../../db/queries";
 
 interface ChatMember {
   name: string;
@@ -337,8 +337,8 @@ export async function importChatData(
 if (import.meta.main) {
   const args = process.argv.slice(2);
   if (args.length < 1) {
-    console.log("Usage: bun run src/parsers/google-chat.ts <import-path> [account-name]");
-    console.log("Example: bun run src/parsers/google-chat.ts './imports/Google Chat' my-account");
+    console.log("Usage: bun run src/platforms/google/chat/parser.ts <import-path> [account-name]");
+    console.log("Example: bun run src/platforms/google/chat/parser.ts './imports/Google Chat' my-account");
     process.exit(1);
   }
 

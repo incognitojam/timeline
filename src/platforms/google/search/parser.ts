@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { getDb, initDb } from "../db/schema";
+import { getDb, initDb } from "../../../db/schema";
 
 interface SearchActivity {
   query: string;
@@ -202,14 +202,14 @@ export async function importGoogleSearch(
 const args = process.argv.slice(2);
 if (args.length < 1) {
   console.log(
-    "Usage: bun run src/parsers/google-search.ts <my-activity.html> [account-name]"
+    "Usage: bun run src/platforms/google/search/parser.ts <my-activity.html> [account-name]"
   );
   console.log("");
   console.log("Imports Google Search activity from My Activity HTML export.");
   console.log("Path should be: My Activity/Search/My Activity.html");
   console.log("");
   console.log(
-    "Example: bun run src/parsers/google-search.ts '/tmp/takeout/My Activity/Search/My Activity.html' my-account"
+    "Example: bun run src/platforms/google/search/parser.ts '/tmp/takeout/My Activity/Search/My Activity.html' my-account"
   );
   process.exit(1);
 }

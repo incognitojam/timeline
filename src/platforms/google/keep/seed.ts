@@ -1,6 +1,6 @@
-import type { SeedSource } from "../context";
-import type { Rng } from "../rng";
-import { GOOGLE_ACCOUNT } from "./google-data";
+import type { SeedSource } from "../../../seed/context";
+import type { Rng } from "../../../seed/rng";
+import { GOOGLE_ACCOUNT } from "../seed-data/google-data";
 
 interface KeepNote {
   color: string;
@@ -129,6 +129,6 @@ export const googleKeepSeed: SeedSource = {
       });
     }
 
-    await ctx.runParserCli("parsers/google-keep.ts", [`${ctx.stage("google-keep")}/Keep`, GOOGLE_ACCOUNT]);
+    await ctx.runParserCli("platforms/google/keep/parser.ts", [`${ctx.stage("google-keep")}/Keep`, GOOGLE_ACCOUNT]);
   },
 };

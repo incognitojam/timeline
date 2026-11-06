@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { runParser } from "../lib/parser-cli";
+import { runParser } from "../../../lib/parser-cli";
 
 interface PlaceVisit {
   location: {
@@ -218,7 +218,7 @@ export async function importGoogleLocation(
 // CLI
 if (import.meta.main) {
   runParser(importGoogleLocation, {
-    name: "parsers/google-location",
-    examples: ["bun run src/parsers/google-location.ts ./imports/google my-account"],
+    name: "platforms/google/location/parser",
+    examples: ["bun run src/platforms/google/location/parser.ts ./imports/google my-account"],
   });
 }

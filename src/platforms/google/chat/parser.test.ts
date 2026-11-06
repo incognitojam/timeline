@@ -4,8 +4,8 @@ import { mkdir, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { randomUUID } from "crypto";
-import { initDb } from "../db/schema";
-import { importChatData } from "./google-chat";
+import { initDb } from "../../../db/schema";
+import { importChatData } from "./parser";
 
 describe("google-chat parser", () => {
   let db: Database;

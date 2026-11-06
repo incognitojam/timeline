@@ -9,7 +9,7 @@ Fitbit data is included in Google Takeout exports. The export format changed sig
 **Implemented** (`src/parsers/fitbit.ts`):
 - Parses both **Aug 2024 format** (old) and **Jan 2026 format** (new)
 - Format is auto-detected based on files present
-- Integrated with inbox auto-processing (`src/inbox/zip-handlers.ts`)
+- Integrated with inbox auto-processing (`src/platforms/google/takeout/handler.ts`)
 
 **Event types created**:
 
@@ -135,6 +135,6 @@ Events are tagged to distinguish formats:
 ## Files
 
 - Parser: `src/parsers/fitbit.ts`
-- Inbox detection: `src/inbox/zip.ts` (`detectTakeoutServices`)
-- Inbox handler: `src/inbox/zip-handlers.ts` (`case "fitbit":`)
+- Inbox detection: `src/platforms/google/takeout/services.ts` (`detectTakeoutServices`)
+- Inbox handler: `src/platforms/google/takeout/handler.ts` (`case "fitbit":`)
 - This doc: `docs/internals/fitbit-data-formats.md`

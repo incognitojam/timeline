@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { getDb, initDb } from "../db/schema";
+import { getDb, initDb } from "../../../db/schema";
 
 interface LatLng {
   latLng: string; // "50.0000000°, -1.0000000°"
@@ -278,8 +278,8 @@ export async function importTimelineData(
 if (import.meta.main) {
   const args = process.argv.slice(2);
   if (args.length < 1) {
-    console.log("Usage: bun run src/parsers/google-timeline.ts <Timeline.json> [account-name]");
-    console.log("Example: bun run src/parsers/google-timeline.ts ~/Downloads/Timeline.json my-account");
+    console.log("Usage: bun run src/platforms/google/location/parser-timeline.ts <Timeline.json> [account-name]");
+    console.log("Example: bun run src/platforms/google/location/parser-timeline.ts ~/Downloads/Timeline.json my-account");
     process.exit(1);
   }
 

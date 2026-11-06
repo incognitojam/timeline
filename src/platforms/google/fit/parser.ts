@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { readdir } from "node:fs/promises";
 import { join, basename } from "node:path";
-import { getDb, initDb } from "../db/schema";
-import { formatDuration } from "../lib/format";
+import { getDb, initDb } from "../../../db/schema";
+import { formatDuration } from "../../../lib/format";
 
 interface FitValue {
   intVal?: number;
@@ -201,8 +201,8 @@ async function importGoogleFit(
 // CLI
 const args = process.argv.slice(2);
 if (args.length < 1) {
-  console.log("Usage: bun run src/parsers/google-fit.ts <import-path> [account-name]");
-  console.log("Example: bun run src/parsers/google-fit.ts /tmp/fit-import my-account");
+  console.log("Usage: bun run src/platforms/google/fit/parser.ts <import-path> [account-name]");
+  console.log("Example: bun run src/platforms/google/fit/parser.ts /tmp/fit-import my-account");
   process.exit(1);
 }
 

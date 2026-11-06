@@ -1,8 +1,8 @@
-import type { SeedContext, SeedDay, SeedSource } from "../context";
-import { EVERYONE, type Person, PEOPLE, type PersonKey, personByKey, SELF, VENUES } from "../persona";
-import type { Rng } from "../rng";
-import { GOOGLE_ACCOUNT } from "./google-data";
-import { type LocationPlan, locationPlan } from "./google-location-plan";
+import type { SeedContext, SeedDay, SeedSource } from "../../../seed/context";
+import { EVERYONE, type Person, PEOPLE, type PersonKey, personByKey, SELF, VENUES } from "../../../seed/persona";
+import type { Rng } from "../../../seed/rng";
+import { GOOGLE_ACCOUNT } from "../seed-data/google-data";
+import { type LocationPlan, locationPlan } from "../seed-data/location-plan";
 
 interface Attendee {
   name: string;
@@ -82,7 +82,7 @@ export const googleCalendarSeed: SeedSource = {
 
     ctx.writeStaged("google-calendar", `${SELF.email}.ics`, toIcs(ctx, kit.events, SELF.name));
     ctx.writeStaged("google-calendar", "Birthdays.ics", toIcs(ctx, birthdays, "Birthdays"));
-    await ctx.runParserCli("parsers/google-calendar.ts", [ctx.stage("google-calendar"), GOOGLE_ACCOUNT]);
+    await ctx.runParserCli("platforms/google/calendar/parser.ts", [ctx.stage("google-calendar"), GOOGLE_ACCOUNT]);
 
     // The importer identifies attendees (not organizers) by email, and
     // birthdays by name.

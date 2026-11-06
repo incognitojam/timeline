@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { readdir } from "node:fs/promises";
 import { join, basename } from "node:path";
-import { getDb, initDb } from "../db/schema";
+import { getDb, initDb } from "../../../db/schema";
 
 interface KeepListItem {
   text: string;
@@ -138,8 +138,8 @@ export async function importKeepData(
 // CLI
 const args = process.argv.slice(2);
 if (args.length < 1) {
-  console.log("Usage: bun run src/parsers/google-keep.ts <import-path> [account-name]");
-  console.log("Example: bun run src/parsers/google-keep.ts ./imports/keep my-account");
+  console.log("Usage: bun run src/platforms/google/keep/parser.ts <import-path> [account-name]");
+  console.log("Example: bun run src/platforms/google/keep/parser.ts ./imports/keep my-account");
   process.exit(1);
 }
 
