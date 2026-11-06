@@ -2,7 +2,7 @@ import { type EventGroupData, groupEvents } from "@shared/grouping";
 import { useNavigate } from "@solidjs/router";
 import { createEffect, createResource, createSignal, For, on, onCleanup, Show, Suspense } from "solid-js";
 import { fetchTrackImages } from "../../lib/api";
-import { dayHasGoogleHealthSleep, isDailyHealthMetric, isFitbitSleep } from "../../lib/health-events";
+import { dayHasGoogleHealthSleep, isDailyHealthMetric, isFitbitSleep } from "../../platforms/google/health-events";
 import { hiddenSources } from "../../lib/hiddenSourcesStore";
 import { navigateToIdentity } from "../../lib/identities";
 import { useDayEvents } from "../../lib/queries";

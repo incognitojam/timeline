@@ -4,8 +4,8 @@
  * and Google Health (its replacement) the most recent year, so both draw from
  * the same model and the charts read as one continuous person.
  */
-import type { SeedContext, SeedDay } from "../context";
-import type { Rng } from "../rng";
+import type { SeedContext, SeedDay } from "../../../seed/context";
+import type { Rng } from "../../../seed/rng";
 
 /** Most recent days, recorded by Google Health; Fitbit covers everything older. */
 export const GOOGLE_HEALTH_DAYS = 365;

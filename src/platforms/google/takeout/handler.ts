@@ -238,7 +238,7 @@ async function processTakeoutService(
         fitbitPath = dirname(fitbitPath);
       }
 
-      const { importFitbitData } = await import("../../../parsers/fitbit");
+      const { importFitbitData } = await import("../fitbit/parser");
       return { eventsAdded: await importFitbitData(db, fitbitPath), eventsUpdated: 0 };
     }
 

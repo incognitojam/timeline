@@ -1,4 +1,4 @@
-import type { TimelineEvent } from "./types";
+import type { TimelineEvent } from "../../../lib/types";
 
 /**
  * Sleep stages as google-health reports them. Older records (and short naps)

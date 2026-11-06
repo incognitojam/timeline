@@ -6,7 +6,7 @@ Fitbit data is included in Google Takeout exports. The export format changed sig
 
 ## Current Parser Status
 
-**Implemented** (`src/parsers/fitbit.ts`):
+**Implemented** (`src/platforms/google/fitbit/parser.ts`):
 - Parses both **Aug 2024 format** (old) and **Jan 2026 format** (new)
 - Format is auto-detected based on files present
 - Integrated with inbox auto-processing (`src/platforms/google/takeout/handler.ts`)
@@ -112,7 +112,7 @@ timestamp,deep sleep stats - milli breaths per minute,deep sleep stats - standar
 
 ## Implementation Notes
 
-### Current parser (`src/parsers/fitbit.ts`)
+### Current parser (`src/platforms/google/fitbit/parser.ts`)
 
 - Exports `importFitbitData(db, importPath, sourceAccount)` for inbox integration
 - Uses `INSERT OR IGNORE` with `source_id` for deduplication
@@ -134,7 +134,7 @@ Events are tagged to distinguish formats:
 
 ## Files
 
-- Parser: `src/parsers/fitbit.ts`
+- Parser: `src/platforms/google/fitbit/parser.ts`
 - Inbox detection: `src/platforms/google/takeout/services.ts` (`detectTakeoutServices`)
 - Inbox handler: `src/platforms/google/takeout/handler.ts` (`case "fitbit":`)
 - This doc: `docs/internals/fitbit-data-formats.md`

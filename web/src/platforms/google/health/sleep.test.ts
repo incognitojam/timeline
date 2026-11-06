@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { isSleepEvent, parseSleepEvent } from "./sleep";
-import type { TimelineEvent } from "./types";
+import type { TimelineEvent } from "../../../lib/types";
 
 function makeEvent(raw: unknown, overrides: Partial<TimelineEvent> = {}): TimelineEvent {
   return {

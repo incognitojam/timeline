@@ -19,26 +19,26 @@
  * ~/.config/timeline/google-health.json).
  *
  * CLI:
- *   bun run src/parsers/google-health-api.ts auth            # interactive consent
- *   bun run src/parsers/google-health-api.ts probe [healthMetricsDailyDataType] [since] [until]
+ *   bun run src/platforms/google/health/parser.ts auth            # interactive consent
+ *   bun run src/platforms/google/health/parser.ts probe [healthMetricsDailyDataType] [since] [until]
  *       # identity + profile + sleep sample + daily summary sample
- *   bun run src/parsers/google-health-api.ts sync            # last 30 days
- *   bun run src/parsers/google-health-api.ts sync 2025-07-01 2025-10-01   # explicit window
+ *   bun run src/platforms/google/health/parser.ts sync            # last 30 days
+ *   bun run src/platforms/google/health/parser.ts sync 2025-07-01 2025-10-01   # explicit window
  */
 
 import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { getDb, initDb } from "../db/schema";
-import { sanitizeAccountName } from "../lib/account";
-import { formatDuration } from "../lib/format";
+import { getDb, initDb } from "../../../db/schema";
+import { sanitizeAccountName } from "../../../lib/account";
+import { formatDuration } from "../../../lib/format";
 import {
   createOAuth2Client,
   type OAuth2ProviderConfig,
   type OAuth2TokenResponse,
-} from "../lib/oauth2-client";
-import { createTokenManager, type OAuthTokens } from "../lib/oauth-tokens";
+} from "../../../lib/oauth2-client";
+import { createTokenManager, type OAuthTokens } from "../../../lib/oauth-tokens";
 
 const SOURCE = "google-health";
 const CONFIG_PATH = join(homedir(), ".config", "timeline", "google-health.json");
@@ -1009,12 +1009,12 @@ export async function syncGoogleHealth(
   const tokens = await client.ensureValidToken({ headless: options.headless });
   if (!tokenHasScope(tokens, HEALTH_METRICS_SCOPE)) {
     throw new Error(
-      `Google Health token lacks ${HEALTH_METRICS_SCOPE}. Re-run: bun run src/parsers/google-health-api.ts auth`,
+      `Google Health token lacks ${HEALTH_METRICS_SCOPE}. Re-run: bun run src/platforms/google/health/parser.ts auth`,
     );
   }
   if (!tokenHasScope(tokens, ACTIVITY_AND_FITNESS_SCOPE)) {
     throw new Error(
-      `Google Health token lacks ${ACTIVITY_AND_FITNESS_SCOPE}. Re-run: bun run src/parsers/google-health-api.ts auth`,
+      `Google Health token lacks ${ACTIVITY_AND_FITNESS_SCOPE}. Re-run: bun run src/platforms/google/health/parser.ts auth`,
     );
   }
   const account = await ensureAccountName(tokens);
@@ -1135,7 +1135,7 @@ if (import.meta.main) {
     const hasHealthMetricsScope = tokenHasScope(tokens, HEALTH_METRICS_SCOPE);
     if (!hasHealthMetricsScope) {
       console.log(
-        `stored token does not list ${HEALTH_METRICS_SCOPE}; run "bun run src/parsers/google-health-api.ts auth" before probing daily summaries.`,
+        `stored token does not list ${HEALTH_METRICS_SCOPE}; run "bun run src/platforms/google/health/parser.ts auth" before probing daily summaries.`,
       );
       if (dataType) process.exit(1);
     }

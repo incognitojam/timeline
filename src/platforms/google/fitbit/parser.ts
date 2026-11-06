@@ -1,10 +1,10 @@
 import { Database } from "bun:sqlite";
 import { readdir } from "node:fs/promises";
 import { join, basename } from "node:path";
-import { parseCSV as parseCSVShared } from "../lib/csv";
-import { getDb, initDb } from "../db/schema";
-import { sanitizeAccountName } from "../lib/account";
-import { formatDuration } from "../lib/format";
+import { parseCSV as parseCSVShared } from "../../../lib/csv";
+import { getDb, initDb } from "../../../db/schema";
+import { sanitizeAccountName } from "../../../lib/account";
+import { formatDuration } from "../../../lib/format";
 
 // ============================================================================
 // Profile Parsing
@@ -859,7 +859,7 @@ export async function importFitbitData(
 if (import.meta.main) {
 const args = process.argv.slice(2);
 if (args.length < 1) {
-  console.log("Usage: bun run src/parsers/fitbit.ts <import-path>");
+  console.log("Usage: bun run src/platforms/google/fitbit/parser.ts <import-path>");
   console.log("");
   console.log("Import path should contain Fitbit folder structure from Google Takeout.");
   console.log("");
@@ -882,7 +882,7 @@ if (args.length < 1) {
   console.log("");
   console.log("Format is auto-detected based on files present.");
   console.log("");
-  console.log("Example: bun run src/parsers/fitbit.ts ./imports/fitbit");
+  console.log("Example: bun run src/platforms/google/fitbit/parser.ts ./imports/fitbit");
   process.exit(1);
 }
 

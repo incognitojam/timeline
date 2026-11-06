@@ -1,6 +1,6 @@
 import { render } from "@solidjs/testing-library";
 import { describe, expect, it } from "vitest";
-import type { TimelineEvent } from "../../lib/types";
+import type { TimelineEvent } from "../../../lib/types";
 import SleepCard from "./SleepCard";
 
 function makeSleepEvent(raw: unknown, overrides: Partial<TimelineEvent> = {}): TimelineEvent {
