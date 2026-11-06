@@ -358,7 +358,7 @@ async function processRedditZip(
   if (!sourceAccount) {
     throw new Error("Reddit parser requires 'account' to be specified in config");
   }
-  const { importRedditData } = await import("../parsers/reddit");
+  const { importRedditData } = await import("../platforms/reddit/parser");
   return await importRedditData(db, tempDir, sourceAccount);
 }
 
@@ -374,7 +374,7 @@ async function processFacebookZip(
   if (!sourceAccount) {
     throw new Error("Facebook parser requires 'account' to be specified in config");
   }
-  const { importFacebookData } = await import("../parsers/facebook");
+  const { importFacebookData } = await import("../platforms/facebook/parser");
   return await importFacebookData(db, tempDir, sourceAccount);
 }
 
@@ -390,7 +390,7 @@ async function processLinkedInZip(
   if (!sourceAccount) {
     throw new Error("LinkedIn parser requires 'account' to be specified in config");
   }
-  const { importLinkedInData } = await import("../parsers/linkedin");
+  const { importLinkedInData } = await import("../platforms/linkedin/parser");
   return await importLinkedInData(db, tempDir, sourceAccount);
 }
 
@@ -429,7 +429,7 @@ async function processInstagramZip(
   // Go up one more to get the messages folder (parent of inbox)
   messagesPath = dirname(messagesPath);
 
-  const { importInstagramData } = await import("../parsers/instagram");
+  const { importInstagramData } = await import("../platforms/instagram/parser");
   return await importInstagramData(db, messagesPath, sourceAccount);
 }
 

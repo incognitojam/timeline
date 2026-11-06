@@ -200,7 +200,7 @@ Swarm uses OAuth2 to sync your Foursquare check-ins as location visits.
    ```json
    { "client_id": "...", "client_secret": "..." }
    ```
-3. Run `bun run src/parsers/swarm-api.ts auth` and complete the OAuth prompt.
+3. Run `bun run src/platforms/swarm/parser.ts auth` and complete the OAuth prompt.
 
 **Data synced:**
 - Check-ins as `location:visit` events, including venue, coordinates, categories, and optional comments

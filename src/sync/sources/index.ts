@@ -27,7 +27,7 @@ import { opencodeSyncSource } from "./opencode";
 import { recallSyncSource } from "./recall";
 import { remoteAgentsSyncSource } from "./remote-agents";
 import { renderSweepSyncSource } from "./render-sweep";
-import { swarmSyncSource } from "./swarm";
+import { swarmSyncSource } from "../../platforms/swarm/sync";
 import { t3codeSyncSource } from "./t3code";
 import { thrivaSyncSource } from "./thriva";
 import { thumbhashSyncSource } from "./thumbhash";
