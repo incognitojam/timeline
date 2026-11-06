@@ -27,7 +27,6 @@ import { opencodeSyncSource } from "./opencode";
 import { recallSyncSource } from "./recall";
 import { remoteAgentsSyncSource } from "./remote-agents";
 import { renderSweepSyncSource } from "./render-sweep";
-import { swarmSyncSource } from "../../platforms/swarm/sync";
 import { t3codeSyncSource } from "./t3code";
 import { thrivaSyncSource } from "./thriva";
 import { thumbhashSyncSource } from "./thumbhash";
@@ -40,7 +39,6 @@ import { wakatimeSyncSource } from "./wakatime";
  */
 export const SYNC_SOURCES: SyncSource[] = collectSyncSources(PLATFORMS, [
   monzoSyncSource,
-  swarmSyncSource,
   wakatimeSyncSource,
   githubSyncSource,
   claudeCodeSyncSource,
@@ -87,7 +85,6 @@ export {
   t3codeSyncSource,
   codexSyncSource,
   remoteAgentsSyncSource,
-  swarmSyncSource,
   thumbhashSyncSource,
   attachmentDescriptionsSyncSource,
   backupSyncSource,
