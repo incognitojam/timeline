@@ -6,6 +6,7 @@ import { googleMessagesPlatform } from "./google-messages";
 import { instagramPlatform } from "./instagram";
 import { linkedinPlatform } from "./linkedin";
 import { minecraftPlatform } from "./minecraft";
+import { monzoPlatform } from "./monzo";
 import { redditPlatform } from "./reddit";
 import { skypePlatform } from "./skype";
 import { spotifyPlatform } from "./spotify";
@@ -19,6 +20,7 @@ import type { PlatformModule } from "./registry";
 export const PLATFORMS: readonly PlatformModule[] = [
   discordPlatform,
   googleMessagesPlatform,
+  monzoPlatform,
   traktPlatform,
   swarmPlatform,
   thrivaPlatform,

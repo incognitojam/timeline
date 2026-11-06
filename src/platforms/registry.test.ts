@@ -39,6 +39,7 @@ function platformDirs(root: string): string[] {
 const EXPECTED_SYNC_ORDER = [
   "discord",
   "google-messages",
+  "monzo",
   "trakt",
   "swarm",
   "thriva",
@@ -47,7 +48,6 @@ const EXPECTED_SYNC_ORDER = [
   "spotify-friends",
   "spotify-playlists",
   "steam",
-  "monzo",
   "wakatime",
   "github",
   "claude-code",
@@ -73,6 +73,7 @@ const EXPECTED_SYNC_ORDER = [
 const EXPECTED_SEED_ORDER = [
   "discord",
   "google-messages",
+  "monzo",
   "trakt",
   "swarm",
   "thriva",
@@ -108,7 +109,6 @@ const EXPECTED_SEED_ORDER = [
   "codex",
   "wakatime",
   "github",
-  "monzo",
 ];
 
 const EXPECTED_IDENTITY_PLATFORMS = [

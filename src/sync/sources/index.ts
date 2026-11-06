@@ -21,7 +21,6 @@ import { githubSyncSource } from "./github";
 import { googlePlacesSyncSource } from "./google-places";
 import { inboxRcloneSyncSource } from "./inbox-rclone";
 import { mediaEvictSyncSource } from "./media-evict";
-import { monzoSyncSource } from "../../platforms/monzo/sync";
 import { opencodeSyncSource } from "./opencode";
 import { recallSyncSource } from "./recall";
 import { remoteAgentsSyncSource } from "./remote-agents";
@@ -36,7 +35,6 @@ import { wakatimeSyncSource } from "./wakatime";
  * way they're automatically available to the scheduler service.
  */
 export const SYNC_SOURCES: SyncSource[] = collectSyncSources(PLATFORMS, [
-  monzoSyncSource,
   wakatimeSyncSource,
   githubSyncSource,
   claudeCodeSyncSource,
@@ -66,7 +64,6 @@ export {
   googlePlacesSyncSource,
   inboxRcloneSyncSource,
   mediaEvictSyncSource,
-  monzoSyncSource,
   wakatimeSyncSource,
   githubSyncSource,
   claudeCodeSyncSource,
