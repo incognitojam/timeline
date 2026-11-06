@@ -26,7 +26,7 @@ jobs:
   # CI must not register the SMAppService agent or touch the runner user's live
   # launchd/Login Items state. Uses only throwaway local credentials; macOS-only.
   macos-service:
-    runs-on: macos-15
+    runs-on: macos-26
     env:
       NO_COLOR: "1"
       VITE_MAPTILER_API_KEY: ${{ secrets.VITE_MAPTILER_API_KEY }}
