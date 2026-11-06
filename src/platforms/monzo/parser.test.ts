@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { extractCounterpartyIdentity, type MonzoTransaction } from "./monzo";
+import { extractCounterpartyIdentity, type MonzoTransaction } from "./parser";
 
 function makeTx(counterparty: MonzoTransaction["counterparty"]): MonzoTransaction {
   return {

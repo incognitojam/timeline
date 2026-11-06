@@ -1,9 +1,9 @@
 import { upsertIdentities } from "../../db/queries";
 import type { UpsertIdentityOptions } from "../../db/identities";
-import { extractCounterpartyIdentity, type MonzoTransaction } from "../../parsers/monzo";
-import type { SeedContext, SeedDay, SeedSource } from "../context";
-import { type PersonKey, personByKey, PLACES, type Place, VENUES } from "../persona";
-import type { Rng } from "../rng";
+import { extractCounterpartyIdentity, type MonzoTransaction } from "./parser";
+import type { SeedContext, SeedDay, SeedSource } from "../../seed/context";
+import { type PersonKey, personByKey, PLACES, type Place, VENUES } from "../../seed/persona";
+import type { Rng } from "../../seed/rng";
 
 /**
  * Alex kept a Monzo (GBP) account from before moving to Seattle and uses it as
@@ -85,7 +85,7 @@ function monzoId(rng: Rng, prefix: string): string {
   return out;
 }
 
-// Mirrors formatAmount/getTransactionTitle/getTransactionType in src/parsers/monzo.ts.
+// Mirrors formatAmount/getTransactionTitle/getTransactionType in src/platforms/monzo/parser.ts.
 function formatAmount(amount: number, currency: string): string {
   return new Intl.NumberFormat("en-GB", { style: "currency", currency }).format(Math.abs(amount) / 100);
 }

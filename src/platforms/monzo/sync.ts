@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { getAppStateDb, getSyncState } from "../../db/app-state";
 import { deriveOAuthAuthStatus } from "../../lib/oauth-tokens";
 import { getMonzoAuthCommand, getMonzoParserPath } from "../../runtime-paths";
-import type { SyncSource, SyncOptions, SyncResult } from "../types";
+import type { SyncSource, SyncOptions, SyncResult } from "../../sync/types";
 import { backgroundCommand } from "../../lib/background-priority";
 
 const CONFIG_PATH = join(homedir(), ".config", "timeline", "monzo.json");

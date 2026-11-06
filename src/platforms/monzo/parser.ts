@@ -1,18 +1,18 @@
 import { Database } from "bun:sqlite";
-import { getDb, initDb } from "../db/schema";
+import { getDb, initDb } from "../../db/schema";
 import {
   upsertIdentities,
   formatIdentifier,
   type UpsertIdentityOptions,
-} from "../db/queries";
-import { createTokenManager, type OAuthTokens } from "../lib/oauth-tokens";
+} from "../../db/queries";
+import { createTokenManager, type OAuthTokens } from "../../lib/oauth-tokens";
 import {
   createOAuth2Client,
   type OAuth2Client,
   type OAuth2ProviderConfig,
-} from "../lib/oauth2-client";
-import { OAUTH_CALLBACK_PORT } from "../lib/oauth-callback";
-import { getMonzoAuthCommand } from "../runtime-paths";
+} from "../../lib/oauth2-client";
+import { OAUTH_CALLBACK_PORT } from "../../lib/oauth-callback";
+import { getMonzoAuthCommand } from "../../runtime-paths";
 import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";

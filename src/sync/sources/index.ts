@@ -21,7 +21,7 @@ import { githubSyncSource } from "./github";
 import { googlePlacesSyncSource } from "./google-places";
 import { inboxRcloneSyncSource } from "./inbox-rclone";
 import { mediaEvictSyncSource } from "./media-evict";
-import { monzoSyncSource } from "./monzo";
+import { monzoSyncSource } from "../../platforms/monzo/sync";
 import { opencodeSyncSource } from "./opencode";
 import { recallSyncSource } from "./recall";
 import { remoteAgentsSyncSource } from "./remote-agents";

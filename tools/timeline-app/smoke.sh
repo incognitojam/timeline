@@ -49,7 +49,7 @@ test ! -e "$RESOURCES/capture.sh"
 test -x "$RESOURCES/run-tailscale.sh"
 test -f "$RESOURCES/timeline-service/Resources/version.json"
 test -f "$RESOURCES/timeline-service/Resources/web/index.html"
-test -f "$RESOURCES/timeline-service/Resources/runtime/parsers/monzo.js"
+test -f "$RESOURCES/timeline-service/Resources/runtime/platforms/monzo/parser.js"
 
 for name in service recall tailscale; do
   plist="$APP/Contents/Library/LaunchAgents/dev.incognitojam.timeline-$name.plist"
