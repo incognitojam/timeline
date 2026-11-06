@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
-import { Args, Command, HelpDoc, Options } from "@effect/cli";
-import { BunContext, BunRuntime } from "@effect/platform-bun";
+import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { Cause, Effect, Exit, Fiber, Option } from "effect";
+import { Argument, Command, Flag } from "effect/cli";
 import { getTimelineDbPath } from "../db/paths";
 import { PRODUCT_VERSION } from "../product-version";
 import { loadConfig } from "../config";
@@ -40,10 +40,6 @@ function reportIndexCounts(counts: CliIndexCounts): Effect.Effect<void> {
 type SinceFilter =
   | { kind: "date"; value: string }
   | { kind: "timestamp"; value: string };
-
-function asHelpDoc(error: unknown): HelpDoc.HelpDoc {
-  return HelpDoc.p(errorMessage(error));
-}
 
 function positiveInteger(flag: string): (value: number) => number {
   return value => {
@@ -86,30 +82,30 @@ function parseFilterTerms(value: string | undefined, flag: string): FilterTerm[]
   });
 }
 
-const limitOption = Options.integer("limit").pipe(
-  Options.withDefault(25),
-  Options.mapTryCatch(positiveInteger("--limit"), asHelpDoc),
-  Options.withDescription("Maximum number of events or results")
+const limitFlag = Flag.Int("limit").pipe(
+  Flag.withDefault(25),
+  Flag.mapTryCatch(positiveInteger("--limit"), errorMessage),
+  Flag.withDescription("Maximum number of events or results")
 );
 
-const concurrencyOption = Options.integer("concurrency").pipe(
-  Options.withDefault(8),
-  Options.mapTryCatch(positiveInteger("--concurrency"), asHelpDoc),
-  Options.withDescription("Embedding requests to keep in flight at once")
+const concurrencyFlag = Flag.Int("concurrency").pipe(
+  Flag.withDefault(8),
+  Flag.mapTryCatch(positiveInteger("--concurrency"), errorMessage),
+  Flag.withDescription("Embedding requests to keep in flight at once")
 );
 
-const sinceOption = Options.text("since").pipe(
-  Options.mapTryCatch(parseSince, asHelpDoc),
-  Options.optional,
-  Options.withDescription("Only index events on or after YYYY-MM-DD or an ISO timestamp with timezone")
+const sinceFlag = Flag.String("since").pipe(
+  Flag.mapTryCatch(parseSince, errorMessage),
+  Flag.optional,
+  Flag.withDescription("Only index events on or after YYYY-MM-DD or an ISO timestamp with timezone")
 );
 
-function filterTermsOption(name: "include" | "exclude"): Options.Options<FilterTerm[]> {
+function filterTermsFlag(name: "include" | "exclude"): Flag.Flag<FilterTerm[]> {
   const flag = `--${name}`;
-  return Options.text(name).pipe(
-    Options.repeated,
-    Options.mapTryCatch(values => values.flatMap(value => parseFilterTerms(value, flag)), asHelpDoc),
-    Options.withDescription("SOURCE or SOURCE:TYPE, repeatable and comma-separated")
+  return Flag.String(name).pipe(
+    Flag.atLeast(0),
+    Flag.mapTryCatch(values => values.flatMap(value => parseFilterTerms(value, flag)), errorMessage),
+    Flag.withDescription("SOURCE or SOURCE:TYPE, repeatable and comma-separated")
   );
 }
 
@@ -205,7 +201,7 @@ function search(modelConfig: EmbeddingProfileConfig, query: string | undefined, 
   }).pipe(
     Effect.scoped,
     // Either error kind means the query could not be embedded; report and exit nonzero.
-    Effect.catchAll(error =>
+    Effect.catch(error =>
       Effect.sync(() => {
         console.error(error.message);
         process.exitCode = 1;
@@ -228,7 +224,7 @@ async function runWithSigintReport(effect: Effect.Effect<void>): Promise<void> {
   process.once("SIGINT", onSigint);
   try {
     const exit = await Effect.runPromise(Fiber.await(fiber));
-    if (Exit.isInterrupted(exit)) {
+    if (Exit.hasInterrupts(exit)) {
       process.exit(130);
     }
     if (Exit.isFailure(exit)) {
@@ -240,17 +236,14 @@ async function runWithSigintReport(effect: Effect.Effect<void>): Promise<void> {
   }
 }
 
-const includeOption = filterTermsOption("include");
-const excludeOption = filterTermsOption("exclude");
-
 const indexCommand = Command.make(
   "index",
   {
-    limit: limitOption,
-    concurrency: concurrencyOption,
-    since: sinceOption,
-    include: includeOption,
-    exclude: excludeOption,
+    limit: limitFlag,
+    concurrency: concurrencyFlag,
+    since: sinceFlag,
+    include: filterTermsFlag("include"),
+    exclude: filterTermsFlag("exclude"),
   },
   ({ limit, concurrency, since, include, exclude }) => {
     return Effect.promise(async () =>
@@ -263,46 +256,23 @@ const indexCommand = Command.make(
   }
 );
 
-const queryArgs = Args.text({ name: "query" }).pipe(
-  Args.repeated,
-  Args.withDescription("Text to embed and search for")
+const queryArgument = Argument.String("query").pipe(
+  Argument.variadic,
+  Argument.withDescription("Text to embed and search for")
 );
-
-function validateSearchQueryTokens(query: string[]): Effect.Effect<boolean> {
-  if (query.includes("--since")) return reportSearchOnlyIndexToken("--since only applies to index");
-  if (query.includes("--concurrency")) return reportSearchOnlyIndexToken("--concurrency only applies to index");
-  if (query.includes("--include")) return reportSearchOnlyIndexToken("--include is only supported by the index command");
-  if (query.includes("--exclude")) return reportSearchOnlyIndexToken("--exclude is only supported by the index command");
-  return Effect.succeed(true);
-}
-
-function reportSearchOnlyIndexToken(message: string): Effect.Effect<boolean> {
-  return Effect.sync(() => {
-    console.error(message);
-    process.exitCode = 1;
-    return false;
-  });
-}
 
 const searchCommand = Command.make(
   "search",
   {
-    limit: limitOption,
-    query: queryArgs,
+    limit: limitFlag,
+    query: queryArgument,
   },
   ({ limit, query }) =>
-    validateSearchQueryTokens(query).pipe(
-      Effect.flatMap(valid =>
-        valid
-          ? Effect.promise(loadEmbeddingProfile).pipe(
-              Effect.flatMap(modelConfig => search(modelConfig, query.join(" ") || undefined, limit))
-            )
-          : Effect.void
-      )
+    Effect.promise(loadEmbeddingProfile).pipe(
+      Effect.flatMap(modelConfig => search(modelConfig, query.join(" ") || undefined, limit))
     )
 );
 
 const command = Command.make("embeddings").pipe(Command.withSubcommands([indexCommand, searchCommand]));
-const cli = Command.run(command, { name: "Timeline Embeddings", version: `v${PRODUCT_VERSION}` });
 
-Effect.suspend(() => cli(Bun.argv)).pipe(Effect.provide(BunContext.layer), BunRuntime.runMain);
+Command.run(command, { version: PRODUCT_VERSION }).pipe(Effect.provide(BunServices.layer), BunRuntime.runMain);

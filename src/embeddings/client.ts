@@ -129,9 +129,9 @@ export class OpenAIEmbeddingClient {
       catch: cause =>
         new FatalEmbeddingError({ message: `Could not read image support from ${propsUrl.href}: ${errorMessage(cause)}` }),
     }).pipe(
-      Effect.timeoutFail({
+      Effect.timeoutOrElse({
         duration: this.config.timeoutMs,
-        onTimeout: () => new FatalEmbeddingError({ message: `Reading ${propsUrl.href} timed out` }),
+        orElse: () => Effect.fail(new FatalEmbeddingError({ message: `Reading ${propsUrl.href} timed out` })),
       }),
       Effect.flatMap(props => {
         const marker = props.media_marker;
@@ -167,7 +167,7 @@ export class OpenAIEmbeddingClient {
         const body = yield* Effect.tryPromise({
           try: () => response.text(),
           catch: cause => errorMessage(cause),
-        }).pipe(Effect.catchAll(cause => Effect.succeed(`could not read response body: ${cause}`)));
+        }).pipe(Effect.catch(cause => Effect.succeed(`could not read response body: ${cause}`)));
         // Surface the throttling signal so the operator knows when to resume.
         const retryAfter = response.headers.get("retry-after");
         const message = `Embedding request failed with HTTP ${response.status}: ${body}${retryAfter ? ` (retry-after: ${retryAfter})` : ""}`;
@@ -233,10 +233,12 @@ export class OpenAIEmbeddingClient {
     // A provider that accepts the connection but never answers would otherwise
     // hold the caller forever. Interrupting the request aborts the fetch.
     return request.pipe(
-      Effect.timeoutFail({
+      Effect.timeoutOrElse({
         duration: timeoutMs,
-        onTimeout: () =>
-          new FatalEmbeddingError({ message: `Embedding request to ${endpoint.host} timed out after ${timeoutMs / 1000}s` }),
+        orElse: () =>
+          Effect.fail(
+            new FatalEmbeddingError({ message: `Embedding request to ${endpoint.host} timed out after ${timeoutMs / 1000}s` })
+          ),
       })
     );
   }

@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { Chunk, Effect, Sink, Stream } from "effect";
+import { Effect, Stream } from "effect";
 import { errorMessage, EventEmbeddingError, type FatalEmbeddingError, type OpenAIEmbeddingClient } from "./client";
 import { contentHash, EVENT_FOR_EMBEDDING_COLUMNS, type EventForEmbedding, MAX_RENDERED_BYTES, renderEventLean } from "./content";
 import { buildCorpusSourceWhere, buildCorpusWhere } from "./corpus";
@@ -53,6 +53,11 @@ interface PendingEmbedding {
   documentId: number;
   renderedContent: string;
   renderedBytes: number;
+}
+
+interface PendingBatch {
+  items: PendingEmbedding[];
+  bytes: number;
 }
 
 type EmbeddingResult =
@@ -188,18 +193,22 @@ export function indexEvents(
     Stream.mapEffect(prepare),
     Stream.filter((item): item is PendingEmbedding => item !== null),
     // Close a batch at batchSize documents or MAX_BATCH_BYTES, whichever comes first.
-    Stream.transduce(
-      Sink.foldWeighted({
-        initial: Chunk.empty<PendingEmbedding>(),
-        maxCost: MAX_BATCH_BYTES,
-        cost: (batch, item) => (batch.length >= options.batchSize ? Number.POSITIVE_INFINITY : item.renderedBytes),
-        body: (batch, item) => Chunk.append(batch, item),
-      })
+    Stream.mapAccum(
+      (): PendingBatch => ({ items: [], bytes: 0 }),
+      (batch, item) => {
+        const closes =
+          batch.items.length >= options.batchSize ||
+          (batch.items.length > 0 && batch.bytes + item.renderedBytes > MAX_BATCH_BYTES);
+        return closes
+          ? [{ items: [item], bytes: item.renderedBytes }, [batch.items]]
+          : [{ items: [...batch.items, item], bytes: batch.bytes + item.renderedBytes }, []];
+      },
+      { onHalt: batch => (batch.items.length > 0 ? [batch.items] : []) }
     ),
     // Up to `concurrency` requests are in flight, but results are emitted in
     // batch order, so vectors are written in event order. A FatalEmbeddingError
     // fails the stream and interrupts the requests still in flight.
-    Stream.mapEffect(batch => embedBatch(client, Chunk.toReadonlyArray(batch)), { concurrency: options.concurrency }),
+    Stream.mapEffect(batch => embedBatch(client, batch), { concurrency: options.concurrency }),
     Stream.runForEach(results => writeEmbeddingResults(embeddingsDb, modelProfile.id, results, counts))
   );
 }

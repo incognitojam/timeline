@@ -148,6 +148,7 @@ bun run embeddings index --limit 100 --include discord,spotify --exclude spotify
 
 # Semantic search
 bun run embeddings search --limit 10 "music I listened to last winter"
+bun run embeddings search -- --literal query text starting with a dash
 ```
 
 `index` defaults to `--limit 25`; pass a larger limit for broader indexing runs.
