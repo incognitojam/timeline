@@ -39,6 +39,7 @@ final class RecallController: ObservableObject {
     private let logURL: URL
     private var watch: DispatchSourceFileSystemObject?
     private var scheduler: RefreshScheduler?
+    private var ageMenu: RecallAgeMenu?
 
     init() {
         watchDirURL = timelineDataDirectory()
@@ -63,6 +64,7 @@ final class RecallController: ObservableObject {
             },
             onActivation: { [weak self] in Task { @MainActor in self?.tick() } }
         )
+        ageMenu = RecallAgeMenu(lastCapture: { [weak self] in self?.lastCapture })
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification] {
             sleepObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -206,8 +208,7 @@ final class RecallController: ObservableObject {
 
     // "Last capture 2 min. ago", or nil when no capture has been seen.
     var lastCaptureAgeString: String? {
-        guard let last = lastCapture else { return nil }
-        return "Last capture " + Self.ageFormatter.localizedString(for: last, relativeTo: now)
+        lastCaptureAge(lastCapture, relativeTo: Date())
     }
 
     // Set whether recall is recording. recording == flag absent.
@@ -266,12 +267,6 @@ final class RecallController: ObservableObject {
               let data = try? handle.readToEnd() else { return nil }
         return lastCaptureDate(inLogTail: String(decoding: data, as: UTF8.self))
     }
-
-    private static let ageFormatter: RelativeDateTimeFormatter = {
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .abbreviated
-        return f
-    }()
 
     // Watch the parent directory so the icon tracks an external touch/rm of the
     // flag (e.g. the documented `touch …/recall.pause` operational command).

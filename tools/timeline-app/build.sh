@@ -32,7 +32,7 @@ swiftc -target "$(uname -m)-apple-macos14.0" -O -parse-as-library \
   TimelineApp.swift LaunchAgentConfig.swift RefreshScheduler.swift \
   RecallController.swift LoginItemController.swift ServiceAgentController.swift \
   ServiceController.swift RecallNotifier.swift RemoteAccess.swift \
-  RecallLog.swift RecallCapture.swift RecallPipeline.swift RecallMigration.swift \
+  RecallLog.swift RecallAgeMenu.swift RecallCapture.swift RecallPipeline.swift RecallMigration.swift \
   TimelineServiceConfig.swift LaunchAgentIdentity.swift Subprocess.swift \
   UpdateController.swift UpdateMaintenance.swift -o Timeline
 

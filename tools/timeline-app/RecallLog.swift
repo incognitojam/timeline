@@ -76,3 +76,20 @@ struct CaptureFailureStreak {
 
     mutating func recordSuccess() { count = 0 }
 }
+
+let recallCaptureAgePrefix = "Last capture "
+
+private let recallAgeFormatter: RelativeDateTimeFormatter = {
+    let formatter = RelativeDateTimeFormatter()
+    formatter.unitsStyle = .abbreviated
+    return formatter
+}()
+
+func lastCaptureAge(_ lastCapture: Date?, relativeTo now: Date,
+                    formatter: RelativeDateTimeFormatter = recallAgeFormatter) -> String? {
+    guard let lastCapture else { return nil }
+    // Foundation can render subsecond past dates as "in 0 sec". Clock changes
+    // can also put a previous capture ahead of now; neither is a future capture.
+    guard now.timeIntervalSince(lastCapture) >= 1 else { return recallCaptureAgePrefix + "just now" }
+    return recallCaptureAgePrefix + formatter.localizedString(for: lastCapture, relativeTo: now)
+}
