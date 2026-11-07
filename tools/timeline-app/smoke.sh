@@ -29,7 +29,7 @@ mkdir "$TMP/config-check-home"
 env -u TIMELINE_CONFIG -u TIMELINE_DB_PATH -u AUTH_PASSWORD HOME="$TMP/config-check-home" \
   "$TMP/service-configuration-check-tests" "$RESOURCES/timeline-service/bin/timeline-service" "$TMP"
 
-swiftc -target "$(uname -m)-apple-macos14.0" -parse-as-library RecallTests.swift RecallCapture.swift RecallPipeline.swift RecallMigration.swift RecallLog.swift Subprocess.swift -o "$TMP/recall-tests"
+swiftc -target "$(uname -m)-apple-macos14.0" -parse-as-library RecallTests.swift RecallCapture.swift RecallPipeline.swift RecallMigration.swift RecallLog.swift RecallAgeMenu.swift Subprocess.swift -o "$TMP/recall-tests"
 if command -v cwebp >/dev/null 2>&1; then
   "$TMP/recall-tests" "$TMP" "$(command -v cwebp)"
 else

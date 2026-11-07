@@ -1,10 +1,13 @@
 import Foundation
 import CoreGraphics
+import AppKit
 
 @main
 struct RecallTests {
     static func main() async throws {
         guard CommandLine.arguments.count >= 2 else { throw RecallError("Pass a scratch directory.") }
+        ageTests()
+        menuTests()
         let fm = FileManager.default
         let root = URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("recall-tests-\(UUID().uuidString)")
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
@@ -144,6 +147,63 @@ struct RecallTests {
 
         try migrationTests(home: home)
         print("OK: Recall OCR timeout, failure streak, publication, cancellation, retention, and migration.")
+    }
+
+    static func ageTests() {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: "en_GB")
+        formatter.unitsStyle = .abbreviated
+        let last = lastCaptureDate(inLogTail: "2026-01-01T12:00:00+0000 wrote 1 window(s) for app capture")!
+        precondition(lastCaptureAge(nil, relativeTo: last, formatter: formatter) == nil)
+        for age in [-30.0, 0, 0.1, 0.4, 0.6, 0.999] {
+            precondition(lastCaptureAge(last, relativeTo: last.addingTimeInterval(age), formatter: formatter)
+                         == "Last capture just now")
+        }
+        for (age, expected) in [(1.0, "1 sec ago"), (5, "5 sec ago"), (30, "30 sec ago"),
+                                (780, "13 min ago"), (3600, "1 hr ago")] {
+            precondition(lastCaptureAge(last, relativeTo: last.addingTimeInterval(age), formatter: formatter)
+                         == "Last capture " + expected)
+        }
+        let later = last.addingTimeInterval(3600)
+        precondition(captureStatus(isPaused: true, lastCapture: last, recordingSince: nil, now: later) == .paused)
+        precondition(captureStatus(isPaused: false, lastCapture: last, recordingSince: nil, now: later) == .notCapturing)
+        // Wake and resume grant fresh grace without changing the last capture.
+        precondition(captureStatus(isPaused: false, lastCapture: last, recordingSince: later, now: later) == .recording)
+        print("OK: Capture ages handle subsecond timestamps, elapsed time, clock rollback, pause, and resume grace.")
+    }
+
+    @MainActor
+    static func menuTests() {
+        _ = NSApplication.shared
+        let last = Date().addingTimeInterval(-30)
+        var updater: RecallAgeMenu? = RecallAgeMenu(lastCapture: { last })
+        let menu = NSMenu()
+        NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: menu)
+        // A stale SwiftUI snapshot must be reconciled on the first tracking turn.
+        let item = NSMenuItem(title: "Last capture just now", action: nil, keyEquivalent: "")
+        menu.addItem(item)
+        let unrelated = NSMenuItem(title: "Recall: paused", action: nil, keyEquivalent: "")
+        menu.addItem(unrelated)
+        let deadline = Date().addingTimeInterval(3)
+        while item.title == "Last capture just now" && Date() < deadline {
+            RunLoop.main.run(mode: .eventTracking, before: Date().addingTimeInterval(0.01))
+        }
+        precondition(item.title.hasPrefix("Last capture ") && item.title != "Last capture just now")
+        precondition(unrelated.title == "Recall: paused")
+        item.title = "Last capture stale snapshot"
+        let nextDeadline = Date().addingTimeInterval(3)
+        while item.title == "Last capture stale snapshot" && Date() < nextDeadline {
+            RunLoop.main.run(mode: .eventTracking, before: Date().addingTimeInterval(0.01))
+        }
+        precondition(item.title != "Last capture stale snapshot", "Open menus must keep refreshing")
+        NotificationCenter.default.post(name: NSMenu.didEndTrackingNotification, object: menu)
+        item.title = "Last capture closed"
+        _ = withExtendedLifetime(updater) {
+            RunLoop.main.run(mode: .eventTracking, before: Date().addingTimeInterval(1.1))
+        }
+        precondition(item.title == "Last capture closed", "Closed menus must stop refreshing")
+        updater = nil
+        print("OK: Native capture-age item refreshes during tracking and stops when closed.")
     }
 
     static func migrationTests(home: URL) throws {
