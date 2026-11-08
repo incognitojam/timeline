@@ -42,7 +42,7 @@
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/jest-dom": "^7.0.0",
     "@types/hast": "^3.0.4",
-    "jsdom": "^30.0.1",
+    "jsdom": "^31.0.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "unplugin-icons": "^24.0.0",
