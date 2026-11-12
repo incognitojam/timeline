@@ -180,9 +180,15 @@ describe("scheduled inference overlap", () => {
   test("a description waiting to be written still separates the failures around it", async () => {
     const gate = new LocalWorkGate();
     const finishImport = Promise.withResolvers<void>();
+    const firstRequest = Promise.withResolvers<void>();
+    const answerRequests = Promise.withResolvers<void>();
+    const lastRequest = Promise.withResolvers<void>();
     let requests = 0;
     const fetchImpl: typeof fetch = Object.assign(async () => {
       requests++;
+      firstRequest.resolve();
+      if (requests === 9) lastRequest.resolve();
+      await answerRequests.promise;
       return requests === 5
         ? new Response(JSON.stringify({
           id: "test", created: 0, model: "vision",
@@ -193,24 +199,26 @@ describe("scheduled inference overlap", () => {
     }, { preconnect: (() => {}) as typeof fetch.preconnect });
     const nine = Array.from({ length: 9 }, (_, index) => ({ ...candidates[0], content_hash: `hash-${index}` }));
     const errors = spyOn(console, "error").mockImplementation(() => {});
-    const prepared = spyOn(descriptionDb, "prepare");
     const running = describeAttachments({
       db: descriptionDb, mediaStore, modelRef: "vision", candidates: nine, localWork: gate,
       languageModel: createOpenAICompatible({ name: "test", baseURL: "http://example.test/v1", fetch: fetchImpl })("vision"),
     });
     let importer: Promise<void> | undefined;
     try {
-      // Take local work once the run has prepared its statement, before any write.
-      await waitFor(() => prepared.mock.calls.length > 0);
+      // The importer owns local work before any request is answered, so the
+      // fifth image's description cannot be written until the import finishes.
+      await firstRequest.promise;
       importer = gate.run(() => finishImport.promise);
-      await waitFor(() => requests === nine.length);
+      answerRequests.resolve();
+      await lastRequest.promise;
       expect(descriptionDb.query("SELECT COUNT(*) AS n FROM attachment_descriptions").get()).toEqual({ n: 0 });
       finishImport.resolve();
       const stats = await running;
       expect(stats).toMatchObject({ described: 1, failed: 8, remaining: 0 });
       expect(stats.stoppedReason).toBeUndefined();
     } finally {
-      for (const spy of [errors, prepared]) spy.mockRestore();
+      errors.mockRestore();
+      answerRequests.resolve();
       finishImport.resolve();
       await Promise.all([importer, running]);
     }
