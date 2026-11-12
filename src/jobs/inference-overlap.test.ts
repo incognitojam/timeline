@@ -7,7 +7,7 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import sharp from "sharp";
 import { getAppStateDb } from "../db/app-state";
 import { initDb } from "../db/schema";
-import { describeAttachments } from "../media/describe-attachments";
+import { describeAttachments, MAX_PENDING_ATTACHMENT_DESCRIPTIONS } from "../media/describe-attachments";
 import type { getMediaStore } from "../media/storage";
 import { LocalWorkGate } from "./local-work";
 import { JobRunner } from "./runner";
@@ -18,8 +18,7 @@ const candidates = ["one", "two"].map((hash) => ({
   content_hash: hash, source: "test", filename: null, storage_path: `${hash}.png`, mime_type: "image/png",
 }));
 const mediaStore = {
-  readFile: async () => ({ content: image }),
-  restoreFromRemote: async () => null,
+  readUncached: async () => image,
 } as unknown as Awaited<ReturnType<typeof getMediaStore>>;
 
 function pendingModel() {
@@ -80,105 +79,142 @@ describe("scheduled inference overlap", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
-  test("stored duration excludes media and persistence ownership waits", async () => {
+  test("stored duration excludes the wait to write", async () => {
     const model = pendingModel();
     const gate = new LocalWorkGate();
-    const run = gate.run.bind(gate);
-    const releaseMedia = Promise.withResolvers<void>();
-    const releasePersistence = Promise.withResolvers<void>();
-    const mediaQueued = Promise.withResolvers<void>();
-    const persistenceQueued = Promise.withResolvers<void>();
-    let mediaOwner = Promise.resolve();
-    let persistenceOwner = Promise.resolve();
-    let requests = 0;
+    const finishImport = Promise.withResolvers<void>();
     let now = Date.now();
     const clock = spyOn(Date, "now").mockImplementation(() => now);
-    const guard = spyOn(gate, "run").mockImplementation((work, signal) => {
-      requests++;
-      if (requests === 2) {
-        mediaOwner = run(() => releaseMedia.promise);
-        mediaQueued.resolve();
-      }
-      if (requests === 3) persistenceQueued.resolve();
-      return run(work, signal);
-    });
-    const read = spyOn(mediaStore, "readFile").mockImplementation(async () => {
+    const read = spyOn(mediaStore, "readUncached").mockImplementation(async () => {
       now += 20;
-      return { content: Uint8Array.from(image).buffer, absolutePath: join(directory, "one.png"), fileSize: image.byteLength };
+      return image;
     });
     const running = describeAttachments({
       db: descriptionDb, mediaStore, languageModel: model.model, modelRef: "vision",
       candidates: candidates.slice(0, 1), localWork: gate,
     });
+    let importer: Promise<void> | undefined;
     try {
-      await mediaQueued.promise;
-      now += 120_000;
-      releaseMedia.resolve();
       await model.started.promise;
-      persistenceOwner = run(() => releasePersistence.promise);
+      importer = gate.run(() => finishImport.promise);
       now += 80;
+      const writeQueued = spyOn(gate, "run");
       model.answer.resolve();
-      await persistenceQueued.promise;
+      await waitFor(() => writeQueued.mock.calls.length > 0);
+      writeQueued.mockRestore();
       expect(descriptionDb.prepare("SELECT * FROM attachment_descriptions").all()).toEqual([]);
       now += 180_000;
-      releasePersistence.resolve();
+      finishImport.resolve();
       expect(await running).toMatchObject({ described: 1, failed: 0 });
       expect(descriptionDb.prepare("SELECT duration_ms FROM attachment_descriptions").get()).toEqual({ duration_ms: 100 });
     } finally {
-      releaseMedia.resolve();
-      releasePersistence.resolve();
+      finishImport.resolve();
       model.answer.resolve();
-      await Promise.all([mediaOwner, persistenceOwner, running]);
-      for (const spy of [clock, guard, read]) spy.mockRestore();
+      await Promise.all([importer, running]);
+      for (const spy of [clock, read]) spy.mockRestore();
     }
   });
 
-  for (const expiry of ["while-waiting", "at-acquisition"] as const) {
-    test(`expired media work does not read or restore: ${expiry}`, async () => {
-      const model = pendingModel();
-      const gate = new LocalWorkGate();
-      const run = gate.run.bind(gate);
-      const finishImport = Promise.withResolvers<void>();
-      const mediaQueued = Promise.withResolvers<void>();
-      let importer = Promise.resolve();
-      let requests = 0;
-      const guard = spyOn(gate, "run").mockImplementation((work, signal) => {
-        requests++;
-        if (requests === 2) {
-          importer = run(() => finishImport.promise);
-          mediaQueued.resolve();
-        }
-        return run(work, signal);
-      });
-      const read = spyOn(mediaStore, "readFile");
-      const restore = spyOn(mediaStore, "restoreFromRemote");
-      const deadline = Date.now() + (expiry === "while-waiting" ? 50 : 60_000);
-      let clock: ReturnType<typeof spyOn<typeof Date, "now">> | undefined;
-      const running = describeAttachments({
-        db: descriptionDb, mediaStore, languageModel: model.model, modelRef: "vision",
-        candidates, deadline, localWork: gate,
-      });
-      try {
-        await mediaQueued.promise;
-        if (expiry === "at-acquisition") {
-          clock = spyOn(Date, "now").mockReturnValue(deadline + 1);
-          finishImport.resolve();
-        }
-        const stats = await running;
-        expect(stats).toMatchObject({ described: 0, failed: 0, skipped: 0, remaining: 2, stoppedReason: "time-budget" });
-        expect(read).not.toHaveBeenCalled();
-        expect(restore).not.toHaveBeenCalled();
-        expect(model.calls()).toBe(0);
-      } finally {
-        finishImport.resolve();
-        model.answer.resolve();
-        await importer;
-        await running;
-        clock?.mockRestore();
-        for (const spy of [guard, read, restore]) spy.mockRestore();
-      }
+  test("images are read and described while an importer owns local work, then written together", async () => {
+    const model = pendingModel();
+    const gate = new LocalWorkGate();
+    const finishImport = Promise.withResolvers<void>();
+    const many = Array.from({ length: MAX_PENDING_ATTACHMENT_DESCRIPTIONS + 1 }, (_, index) => ({
+      ...candidates[0], content_hash: `hash-${index}`,
+    }));
+    const running = describeAttachments({
+      db: descriptionDb, mediaStore, languageModel: model.model, modelRef: "vision", candidates: many, localWork: gate,
     });
-  }
+    let importer: Promise<void> | undefined;
+    try {
+      await model.started.promise;
+      importer = gate.run(() => finishImport.promise);
+      model.answer.resolve();
+      // The queue is full: the next image waits for the write.
+      await waitFor(() => model.calls() === MAX_PENDING_ATTACHMENT_DESCRIPTIONS);
+      await Bun.sleep(20);
+      expect(model.calls()).toBe(MAX_PENDING_ATTACHMENT_DESCRIPTIONS);
+      expect(descriptionDb.prepare("SELECT * FROM attachment_descriptions").all()).toEqual([]);
+      finishImport.resolve();
+      expect(await running).toMatchObject({ described: many.length, failed: 0, remaining: 0 });
+      expect(descriptionDb.prepare("SELECT COUNT(*) AS n FROM attachment_descriptions").get()).toEqual({ n: many.length });
+    } finally {
+      model.answer.resolve();
+      finishImport.resolve();
+      await Promise.all([importer, running]);
+    }
+  });
+
+  test("a failed write fails every queued description and trips the failure breaker", async () => {
+    const model = pendingModel();
+    const gate = new LocalWorkGate();
+    const finishImport = Promise.withResolvers<void>();
+    const five = Array.from({ length: 5 }, (_, index) => ({ ...candidates[0], content_hash: `hash-${index}` }));
+    descriptionDb.exec(`
+      CREATE TRIGGER reject_descriptions BEFORE INSERT ON attachment_descriptions
+      BEGIN SELECT RAISE(ABORT, 'disk is full'); END
+    `);
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    const running = describeAttachments({
+      db: descriptionDb, mediaStore, languageModel: model.model, modelRef: "vision", candidates: five, localWork: gate,
+    });
+    let importer: Promise<void> | undefined;
+    try {
+      await model.started.promise;
+      importer = gate.run(() => finishImport.promise);
+      model.answer.resolve();
+      await waitFor(() => model.calls() === five.length);
+      finishImport.resolve();
+      const stats = await running;
+      // All five were described before the one write that failed them.
+      expect(stats).toMatchObject({ described: 0, failed: 5, firstFailure: "disk is full", stoppedReason: "consecutive-failures" });
+      expect(stats.failureSamples?.map((sample) => sample.contentHash)).toEqual(five.map((candidate) => candidate.content_hash));
+    } finally {
+      errors.mockRestore();
+      model.answer.resolve();
+      finishImport.resolve();
+      await Promise.all([importer, running]);
+    }
+  });
+
+  test("a description waiting to be written still separates the failures around it", async () => {
+    const gate = new LocalWorkGate();
+    const finishImport = Promise.withResolvers<void>();
+    let requests = 0;
+    const fetchImpl: typeof fetch = Object.assign(async () => {
+      requests++;
+      return requests === 5
+        ? new Response(JSON.stringify({
+          id: "test", created: 0, model: "vision",
+          choices: [{ message: { role: "assistant", content: "A white square." }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }), { headers: { "content-type": "application/json" } })
+        : new Response(JSON.stringify({ error: { message: "image request rejected" } }), { status: 400, headers: { "content-type": "application/json" } });
+    }, { preconnect: (() => {}) as typeof fetch.preconnect });
+    const nine = Array.from({ length: 9 }, (_, index) => ({ ...candidates[0], content_hash: `hash-${index}` }));
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    const prepared = spyOn(descriptionDb, "prepare");
+    const running = describeAttachments({
+      db: descriptionDb, mediaStore, modelRef: "vision", candidates: nine, localWork: gate,
+      languageModel: createOpenAICompatible({ name: "test", baseURL: "http://example.test/v1", fetch: fetchImpl })("vision"),
+    });
+    let importer: Promise<void> | undefined;
+    try {
+      // Take local work once the run has prepared its statement, before any write.
+      await waitFor(() => prepared.mock.calls.length > 0);
+      importer = gate.run(() => finishImport.promise);
+      await waitFor(() => requests === nine.length);
+      expect(descriptionDb.query("SELECT COUNT(*) AS n FROM attachment_descriptions").get()).toEqual({ n: 0 });
+      finishImport.resolve();
+      const stats = await running;
+      expect(stats).toMatchObject({ described: 1, failed: 8, remaining: 0 });
+      expect(stats.stoppedReason).toBeUndefined();
+    } finally {
+      for (const spy of [errors, prepared]) spy.mockRestore();
+      finishImport.resolve();
+      await Promise.all([importer, running]);
+    }
+  });
 
   for (const expireBudget of [false, true]) {
     test(`an import commits before description persistence without starving it (expired budget: ${expireBudget})`, async () => {
@@ -235,12 +271,13 @@ describe("scheduled inference overlap", () => {
         const next = enqueueJob({ kind: "sync", source: "next", priority: 100 });
         if (!localWork) throw new Error("No local-work guard received");
         requests = spyOn(localWork, "run");
+        // The budget ends once the first image is described and queued.
+        if (expireBudget) clock = spyOn(Date, "now").mockReturnValue(deadline + 1);
         model.answer.resolve();
         await waitFor(() => (requests?.mock.calls.length ?? 0) > 0);
         expect(getJob(description.jobId)?.status).toBe("running");
         expect(getJob(importer.jobId)?.status).toBe("running");
         expect(descriptionDb.prepare("SELECT * FROM attachment_descriptions WHERE content_hash = 'one'").get()).toBeNull();
-        if (expireBudget) clock = spyOn(Date, "now").mockReturnValue(deadline + 1);
         finishImport.resolve();
         await waitFor(() => getJob(next.jobId)?.status === "succeeded" && getJob(description.jobId)?.status === "succeeded");
         expect(getJob(importer.jobId)?.status).toBe("succeeded");
@@ -258,46 +295,56 @@ describe("scheduled inference overlap", () => {
     });
   }
 
-  for (const abortPhase of ["inference", "persistence"] as const) {
-    test(`cancellation during ${abortPhase} causes no late write or model failure`, async () => {
-      const model = pendingModel();
-      const localWork = new LocalWorkGate();
-      const controller = new AbortController();
-      const finishLocal = Promise.withResolvers<void>();
-      let local: Promise<void> | undefined;
-      let requests: ReturnType<typeof spyOn<LocalWorkGate, "run">> | undefined;
-      const describing = describeAttachments({
-        db: descriptionDb, mediaStore, languageModel: model.model, modelRef: "vision",
-        candidates, signal: controller.signal, localWork,
-      });
-      try {
-        await model.started.promise;
-        if (abortPhase === "persistence") {
-          const localStarted = Promise.withResolvers<void>();
-          local = localWork.run(async () => { localStarted.resolve(); await finishLocal.promise; });
-          await localStarted.promise;
-          requests = spyOn(localWork, "run");
-          model.answer.resolve();
-          await waitFor(() => (requests?.mock.calls.length ?? 0) > 0);
-        }
-        controller.abort();
-        model.answer.resolve();
-        const stats = await describing;
-        expect(stats).toMatchObject({ described: 0, failed: 0, remaining: 2, failureSamples: [] });
-        finishLocal.resolve();
-        await local;
-        await localWork.run(() => {});
-        expect(descriptionDb.prepare("SELECT * FROM attachment_descriptions").all()).toEqual([]);
-        expect(model.calls()).toBe(1);
-      } finally {
-        requests?.mockRestore();
-        model.answer.resolve();
-        finishLocal.resolve();
-        await local;
-        await describing;
-      }
+  test("cancellation during inference writes nothing and is not a model failure", async () => {
+    const model = pendingModel();
+    const controller = new AbortController();
+    const describing = describeAttachments({
+      db: descriptionDb, mediaStore, languageModel: model.model, modelRef: "vision",
+      candidates, signal: controller.signal, localWork: new LocalWorkGate(),
     });
-  }
+    try {
+      await model.started.promise;
+      controller.abort();
+      model.answer.resolve();
+      expect(await describing).toMatchObject({ described: 0, failed: 0, remaining: 2, failureSamples: [] });
+      expect(descriptionDb.prepare("SELECT * FROM attachment_descriptions").all()).toEqual([]);
+      expect(model.calls()).toBe(1);
+    } finally {
+      model.answer.resolve();
+      await describing;
+    }
+  });
+
+  test("cancellation while a description waits to be written still writes it", async () => {
+    const model = pendingModel();
+    const localWork = new LocalWorkGate();
+    const controller = new AbortController();
+    const finishImport = Promise.withResolvers<void>();
+    const describing = describeAttachments({
+      db: descriptionDb, mediaStore, languageModel: model.model, modelRef: "vision",
+      candidates: candidates.slice(0, 1), signal: controller.signal, localWork,
+    });
+    let importer: Promise<void> | undefined;
+    try {
+      await model.started.promise;
+      importer = localWork.run(() => finishImport.promise);
+      const writeQueued = spyOn(localWork, "run");
+      model.answer.resolve();
+      await waitFor(() => writeQueued.mock.calls.length > 0);
+      writeQueued.mockRestore();
+      controller.abort();
+      // The importer still owns local work, so nothing is written under it.
+      await Bun.sleep(10);
+      expect(descriptionDb.prepare("SELECT * FROM attachment_descriptions").all()).toEqual([]);
+      finishImport.resolve();
+      expect(await describing).toMatchObject({ described: 1, failed: 0, failureSamples: [] });
+      expect(descriptionDb.prepare("SELECT content_hash FROM attachment_descriptions").all()).toEqual([{ content_hash: "one" }]);
+    } finally {
+      model.answer.resolve();
+      finishImport.resolve();
+      await Promise.all([importer, describing]);
+    }
+  });
 
   test("stop preserves both active jobs and their follow-ups without admitting extra work", async () => {
     let restarted = false;
@@ -340,24 +387,22 @@ describe("scheduled inference overlap", () => {
     }
   });
 
-  test("media restore retains local ownership, then ordinary work proceeds during inference", async () => {
+  test("ordinary work proceeds during a remote media read", async () => {
     const model = pendingModel();
     const restoreStarted = Promise.withResolvers<void>();
     const finishRestore = Promise.withResolvers<void>();
-    let ordinaryEntered = false;
     const runner = new JobRunner({
       overlapSyncSource: "vision", pollIdleMs: 1, pollActiveMs: 1,
       handlers: {
         sync: async (job, signal, localWork) => {
-          if (job.source !== "vision") { ordinaryEntered = true; return; }
+          if (job.source !== "vision") return;
           const stats = await describeAttachments({
             db: descriptionDb, languageModel: model.model, modelRef: "vision", candidates: candidates.slice(0, 1), signal, localWork,
             mediaStore: {
-              readFile: async () => null,
-              restoreFromRemote: async () => {
+              readUncached: async () => {
                 restoreStarted.resolve();
                 await finishRestore.promise;
-                return { content: image };
+                return image;
               },
             } as unknown as Awaited<ReturnType<typeof getMediaStore>>,
           });
@@ -370,14 +415,12 @@ describe("scheduled inference overlap", () => {
     try {
       await restoreStarted.promise;
       const ordinary = enqueueJob({ kind: "sync", source: "ordinary" });
-      await waitFor(() => getJob(ordinary.jobId)?.status === "running");
-      expect(ordinaryEntered).toBe(false);
-      finishRestore.resolve();
-      await model.started.promise;
       await waitFor(() => getJob(ordinary.jobId)?.status === "succeeded");
-      expect(getJob(vision.jobId)?.status).toBe("running");
+      expect(model.calls()).toBe(0);
+      finishRestore.resolve();
       model.answer.resolve();
       await waitFor(() => getJob(vision.jobId)?.status === "succeeded");
+      expect(getJob(vision.jobId)?.result).toMatchObject({ described: 1 });
     } finally {
       finishRestore.resolve();
       model.answer.resolve();
@@ -410,26 +453,23 @@ describe("scheduled inference overlap", () => {
     }
   });
 
-  test("stopping a stalled restore requeues both jobs without releasing active local work", async () => {
+  test("stopping during a stalled remote media read requeues the job and describes nothing", async () => {
     const model = pendingModel();
     const restoring = Promise.withResolvers<void>();
     const finishRestore = Promise.withResolvers<void>();
     const handlerFinished = Promise.withResolvers<void>();
-    let ordinaryEntered = false;
     const runner = new JobRunner({
       overlapSyncSource: "vision", pollIdleMs: 1, pollActiveMs: 1,
       handlers: {
-        sync: async (job, signal, localWork) => {
-          if (job.source !== "vision") { ordinaryEntered = true; return; }
+        sync: async (_job, signal, localWork) => {
           try {
             return { ...await describeAttachments({
               db: descriptionDb, languageModel: model.model, modelRef: "vision", candidates, signal, localWork,
               mediaStore: {
-                readFile: async () => null,
-                restoreFromRemote: async () => {
+                readUncached: async () => {
                   restoring.resolve();
                   await finishRestore.promise;
-                  return { content: image };
+                  return image;
                 },
               } as unknown as Awaited<ReturnType<typeof getMediaStore>>,
             }) };
@@ -441,15 +481,10 @@ describe("scheduled inference overlap", () => {
     runner.start();
     try {
       await restoring.promise;
-      const ordinary = enqueueJob({ kind: "sync", source: "ordinary" });
-      await waitFor(() => getJob(ordinary.jobId)?.status === "running");
       await runner.stop(1000);
       expect(getJob(vision.jobId)?.status).toBe("queued");
-      expect(getJob(ordinary.jobId)?.status).toBe("queued");
-      expect(ordinaryEntered).toBe(false);
       finishRestore.resolve();
       await handlerFinished.promise;
-      expect(ordinaryEntered).toBe(false);
       expect(model.calls()).toBe(0);
       expect(descriptionDb.prepare("SELECT * FROM attachment_descriptions").all()).toEqual([]);
     } finally {
