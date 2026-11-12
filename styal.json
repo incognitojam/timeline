@@ -1,21 +1,31 @@
 {
-  "$schema": "https://t3.codes/schema/t3.json",
-  "scripts": [
+  "$schema": "https://styal.build/schema/styal.json",
+  "actions": [
     {
+      "id": "setup",
       "name": "Setup Worktree",
       "command": "./scripts/setup.sh",
       "icon": "configure",
       "runOnWorktreeCreate": true
     },
     {
+      "id": "dev",
       "name": "Dev Server",
       "command": "bun run dev -- --open",
       "icon": "play"
     },
     {
+      "id": "test",
       "name": "Test",
       "command": "./test.sh",
       "icon": "test"
+    },
+    {
+      "id": "settle",
+      "name": "Settle Worktree",
+      "command": "./scripts/settle.sh",
+      "icon": "database",
+      "runOnSettle": true
     }
   ]
 }
