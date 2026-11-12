@@ -11,7 +11,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { getAppStateDb, setSyncState } from "../db/app-state";
 import { getDb, initDb } from "../db/schema";
-import { loadSyncConfig, upsertSyncSourcePatch, validateSettingsPatch } from "./config";
+import { loadConfig } from "../config";
+import { loadSyncConfig, resolveSyncIntervalMs, upsertSyncSourcePatch, validateSettingsPatch } from "./config";
 import { runSyncSource } from "./run";
 import { SYNC_SOURCES } from "./sources";
 import type { SyncLogEntry, SyncResult, SyncSource, SyncSourceConfigField } from "./types";
@@ -270,6 +271,11 @@ export async function runSourceOnce(
         appDb,
         source,
         config,
+        intervalMs: resolveSyncIntervalMs(
+          config.sources[source.name],
+          source,
+          (await loadConfig()).scheduler.default_interval,
+        ),
         signal: options.signal,
         verbose: options.verbose,
       });

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, test, expect } from "bun:test";
+import { afterAll, beforeAll, describe, test, expect, setSystemTime } from "bun:test";
 import { randomUUID } from "crypto";
 import { mkdir, rm } from "fs/promises";
 import { tmpdir } from "os";
@@ -12,8 +12,10 @@ import {
   loadKnownGuildThreadIds,
   migrateRescanCursors,
   shouldProbeKnownThread,
-  shouldRunActiveThreadFullSweep,
+  activeThreadSearchBudget,
+  dueActiveThreadParents,
   type DiscordApiSyncState,
+  type LegacyActiveThreadSweepFields,
   type LegacyRescanCursorFields,
 } from "./sync";
 import { deleteSyncState, getAppStateDb, getSyncState, setSyncState } from "../../db/app-state";
@@ -23,6 +25,8 @@ import {
   setDiscordClientSleepForTests,
 } from "./client";
 import { getDb, initDb } from "../../db/schema";
+
+const HOUR_MS = 60 * 60 * 1000;
 
 // Sync tests fully mock fetch, so the DiscordClient's retry/rate-limit backoff
 // should never fire. But if a real request ever escapes the mock (cross-test
@@ -228,6 +232,7 @@ describe("discord full guild thread discovery gates", () => {
     try {
       const result = await discordSyncSource.sync({
         verbose: false,
+        intervalMs: HOUR_MS,
         config: {
           sources: {
             discord: {
@@ -292,25 +297,28 @@ describe("discord full guild thread discovery gates", () => {
     }
   });
 
-  test("uses fresh sweep and forbidden caches to decide what can be skipped", () => {
+  test("uses search and forbidden caches to decide what can be skipped", () => {
     const now = Date.parse("2026-06-22T12:00:00Z");
     const fresh = new Date(now - 23 * 60 * 60 * 1000).toISOString();
     const stale = new Date(now - 25 * 60 * 60 * 1000).toISOString();
+    const hoursAgo = (h: number) => new Date(now - h * 60 * 60 * 1000).toISOString();
+    const parent = (channelId: string) => ({ guildId: "guild-1", channelId });
 
+    // Due at half the 24h max age; never-searched first, then oldest first.
     expect(
-      shouldRunActiveThreadFullSweep(
-        baseState({ activeThreadFullSweepAt: { "guild-1": fresh } }),
-        "guild-1",
+      dueActiveThreadParents(
+        baseState({
+          activeThreadSearchAt: { "guild-1": { a: hoursAgo(11), b: hoursAgo(13), c: hoursAgo(20) } },
+        }),
+        [parent("a"), parent("b"), parent("c"), parent("d")],
         now,
-      ),
-    ).toBe(false);
-    expect(
-      shouldRunActiveThreadFullSweep(
-        baseState({ activeThreadFullSweepAt: { "guild-1": stale } }),
-        "guild-1",
-        now,
-      ),
-    ).toBe(true);
+      ).map((p) => p.channelId),
+    ).toEqual(["d", "c", "b"]);
+    // A full rotation of the parents fits in the 12h due age.
+    expect(activeThreadSearchBudget(0, 30 * 60 * 1000)).toBe(0);
+    expect(activeThreadSearchBudget(271, 30 * 60 * 1000)).toBe(12);
+    expect(activeThreadSearchBudget(3, 30 * 60 * 1000)).toBe(1);
+    expect(activeThreadSearchBudget(10, 24 * 60 * 60 * 1000)).toBe(20);
     expect(
       isForbiddenChannelCached(
         baseState({ forbiddenChannelIds: { "chan-1": fresh } }),
@@ -339,7 +347,7 @@ describe("discord full guild thread discovery gates", () => {
         "200000000000000001": "200000000000000100",
       },
       threadsDiscoveredGuilds: ["guild-1"],
-      activeThreadFullSweepAt: { "guild-1": new Date().toISOString() },
+      activeThreadSearchAt: { "guild-1": { "100000000000000001": new Date().toISOString() } },
     }));
     const db = getDb();
     initDb(db);
@@ -411,7 +419,7 @@ describe("discord full guild thread discovery gates", () => {
           : []);
       }
       if (url.pathname.endsWith("/threads/search")) {
-        throw new Error("fresh full sweep should not search threads");
+        throw new Error("recently searched parent should not search threads");
       }
       return responseJson(null, 404);
     });
@@ -419,6 +427,7 @@ describe("discord full guild thread discovery gates", () => {
     try {
       const result = await discordSyncSource.sync({
         verbose: false,
+        intervalMs: HOUR_MS,
         config: {
           sources: {
             discord: {
@@ -471,7 +480,7 @@ describe("discord full guild thread discovery gates", () => {
       },
       threadsDiscoveredGuilds: ["guild-2"],
       knownGuildThreadIds: { "guild-2": ["400000000000000001"] },
-      activeThreadFullSweepAt: { "guild-2": new Date().toISOString() },
+      activeThreadSearchAt: { "guild-2": { "300000000000000001": new Date().toISOString() } },
     }));
     process.env.DISCORD_TOKEN = "test-token";
     globalThis.fetch = mockFetch(async (input) => {
@@ -499,7 +508,7 @@ describe("discord full guild thread discovery gates", () => {
         return responseJson(null, 403);
       }
       if (url.pathname.endsWith("/threads/search")) {
-        throw new Error("fresh full sweep should not search threads");
+        throw new Error("recently searched parent should not search threads");
       }
       return responseJson(null, 404);
     });
@@ -507,6 +516,7 @@ describe("discord full guild thread discovery gates", () => {
     try {
       const result = await discordSyncSource.sync({
         verbose: false,
+        intervalMs: HOUR_MS,
         config: {
           sources: {
             discord: {
@@ -551,7 +561,7 @@ describe("discord full guild thread discovery gates", () => {
       threadsDiscoveredGuilds: ["guild-3"],
       knownGuildThreadIds: { "guild-3": ["600000000000000001"] },
       rescanCursors: { "24h": { "600000000000000001": "600000000000000050" } },
-      activeThreadFullSweepAt: { "guild-3": new Date().toISOString() },
+      activeThreadSearchAt: { "guild-3": { "500000000000000001": new Date().toISOString() } },
     }));
     process.env.DISCORD_TOKEN = "test-token";
     globalThis.fetch = mockFetch(async (input) => {
@@ -579,7 +589,7 @@ describe("discord full guild thread discovery gates", () => {
         return responseJson(null, 404);
       }
       if (url.pathname.endsWith("/threads/search")) {
-        throw new Error("fresh full sweep should not search threads");
+        throw new Error("recently searched parent should not search threads");
       }
       return responseJson(null, 404);
     });
@@ -587,6 +597,7 @@ describe("discord full guild thread discovery gates", () => {
     try {
       const result = await discordSyncSource.sync({
         verbose: false,
+        intervalMs: HOUR_MS,
         config: {
           sources: {
             discord: {
@@ -626,7 +637,7 @@ describe("discord full guild thread discovery gates", () => {
     setSyncState(appDb, "discord-api", baseState({
       channelCursors: { "parent-1": "100" },
       threadsDiscoveredGuilds: ["guild-1"],
-      activeThreadFullSweepAt: { "guild-1": new Date().toISOString() },
+      activeThreadSearchAt: { "guild-1": { "parent-1": new Date().toISOString() } },
     }));
     process.env.DISCORD_TOKEN = "test-token";
     globalThis.fetch = mockFetch(async (input) => {
@@ -662,6 +673,7 @@ describe("discord full guild thread discovery gates", () => {
     try {
       const result = await discordSyncSource.sync({
         verbose: false,
+        intervalMs: HOUR_MS,
         config: {
           sources: {
             discord: {
@@ -699,7 +711,7 @@ describe("discord full guild thread discovery gates", () => {
     setSyncState(appDb, "discord-api", baseState({
       channelCursors: { "parent-1": "100" },
       threadsDiscoveredGuilds: ["guild-1"],
-      activeThreadFullSweepAt: { "guild-1": "2026-06-20T00:00:00.000Z" },
+      activeThreadSearchAt: { "guild-1": { "parent-1": "2026-06-20T00:00:00.000Z" } },
     }));
     process.env.DISCORD_TOKEN = "test-token";
     globalThis.fetch = mockFetch(async (input) => {
@@ -732,6 +744,7 @@ describe("discord full guild thread discovery gates", () => {
     try {
       const result = await discordSyncSource.sync({
         verbose: false,
+        intervalMs: HOUR_MS,
         config: {
           sources: {
             discord: {
@@ -772,6 +785,7 @@ describe("discordSyncSource auth telemetry", () => {
     try {
       const result = await discordSyncSource.sync({
         verbose: false,
+        intervalMs: HOUR_MS,
         config: { sources: { discord: {} } },
       });
       const metadata = result.metadata as {
@@ -808,6 +822,7 @@ describe("discordSyncSource auth telemetry", () => {
     try {
       const result = await discordSyncSource.sync({
         verbose: false,
+        intervalMs: HOUR_MS,
         config: { sources: { discord: {} } },
       });
       const metadata = result.metadata as {
@@ -993,7 +1008,7 @@ describe("known thread probe backoff", () => {
       threadsDiscoveredGuilds: ["guild-4"],
       knownGuildThreadIds: { "guild-4": [threadId] },
       threadProbeAt: { [threadId]: new Date().toISOString() },
-      activeThreadFullSweepAt: { "guild-4": new Date().toISOString() },
+      activeThreadSearchAt: { "guild-4": { "710000000000000001": new Date().toISOString() } },
     }));
     process.env.DISCORD_TOKEN = "test-token";
     globalThis.fetch = mockFetch(async (input) => {
@@ -1021,7 +1036,7 @@ describe("known thread probe backoff", () => {
         throw new Error("recently probed dormant thread must not be probed again");
       }
       if (url.pathname.endsWith("/threads/search")) {
-        throw new Error("fresh full sweep should not search threads");
+        throw new Error("recently searched parent should not search threads");
       }
       return responseJson(null, 404);
     });
@@ -1029,6 +1044,7 @@ describe("known thread probe backoff", () => {
     try {
       const result = await discordSyncSource.sync({
         verbose: false,
+        intervalMs: HOUR_MS,
         config: {
           sources: {
             discord: {
@@ -1103,6 +1119,7 @@ describe("guild metadata TTL", () => {
     try {
       const result = await discordSyncSource.sync({
         verbose: false,
+        intervalMs: HOUR_MS,
         config: {
           sources: {
             discord: {
@@ -1165,6 +1182,7 @@ describe("guild metadata TTL", () => {
     try {
       const result = await discordSyncSource.sync({
         verbose: false,
+        intervalMs: HOUR_MS,
         config: {
           sources: {
             discord: {
@@ -1221,6 +1239,7 @@ describe("guild metadata TTL", () => {
     try {
       const result = await discordSyncSource.sync({
         verbose: false,
+        intervalMs: HOUR_MS,
         config: {
           sources: {
             discord: {
@@ -1330,6 +1349,7 @@ describe("initial reaction author capture", () => {
     try {
       const result = await discordSyncSource.sync({
         verbose: false,
+        intervalMs: HOUR_MS,
         config: { sources: { discord: {} } },
       });
 
@@ -1396,6 +1416,7 @@ describe("initial reaction author capture", () => {
     try {
       const result = await discordSyncSource.sync({
         verbose: false,
+        intervalMs: HOUR_MS,
         config: { sources: { discord: {} } },
       });
 
@@ -1445,6 +1466,7 @@ describe("initial reaction author capture", () => {
     try {
       const result = await discordSyncSource.sync({
         verbose: false,
+        intervalMs: HOUR_MS,
         config: { sources: { discord: {} } },
       });
 
@@ -1540,6 +1562,7 @@ describe("initial sticker attachment capture", () => {
     try {
       const result = await discordSyncSource.sync({
         verbose: false,
+        intervalMs: HOUR_MS,
         config: { sources: { discord: {} } },
       });
 
@@ -1719,7 +1742,7 @@ describe("Discord attachment recovery sweep", () => {
     });
 
     try {
-      const result = await discordSyncSource.sync({ verbose: false, config: { sources: { discord: {} } } });
+      const result = await discordSyncSource.sync({ verbose: false, intervalMs: HOUR_MS, config: { sources: { discord: {} } } });
       expect(result.success).toBe(true);
       expect(result.metadata?.attachmentRecoveryAttempted).toBe(1);
       expect(result.metadata?.attachmentRecoveryStored).toBe(1);
@@ -1819,7 +1842,7 @@ describe("Discord attachment recovery sweep", () => {
     });
 
     try {
-      const result = await discordSyncSource.sync({ verbose: false, config: { sources: { discord: {} } } });
+      const result = await discordSyncSource.sync({ verbose: false, intervalMs: HOUR_MS, config: { sources: { discord: {} } } });
       expect(result.success).toBe(true);
       expect(result.metadata?.attachmentRecoveryAttempted).toBe(2);
       expect(result.metadata?.attachmentRecoveryStored).toBe(2);
@@ -1890,7 +1913,7 @@ describe("Discord attachment recovery sweep", () => {
     });
 
     try {
-      const result = await discordSyncSource.sync({ verbose: false, config: { sources: { discord: {} } } });
+      const result = await discordSyncSource.sync({ verbose: false, intervalMs: HOUR_MS, config: { sources: { discord: {} } } });
       expect(result.success).toBe(true);
       expect(result.metadata?.attachmentRecoveryAttempted).toBe(1);
       expect(result.metadata?.attachmentRecoveryStored).toBe(1);
@@ -1960,7 +1983,7 @@ describe("Discord attachment recovery sweep", () => {
     });
 
     try {
-      const result = await discordSyncSource.sync({ verbose: false, config: { sources: { discord: {} } } });
+      const result = await discordSyncSource.sync({ verbose: false, intervalMs: HOUR_MS, config: { sources: { discord: {} } } });
       expect(result.success).toBe(true);
       expect(result.metadata?.attachmentRecoveryAttempted).toBe(1);
       expect(result.metadata?.attachmentRecoveryStored).toBe(1);
@@ -2028,7 +2051,7 @@ describe("Discord attachment recovery sweep", () => {
     });
 
     try {
-      const result = await discordSyncSource.sync({ verbose: false, config: { sources: { discord: {} } } });
+      const result = await discordSyncSource.sync({ verbose: false, intervalMs: HOUR_MS, config: { sources: { discord: {} } } });
       expect(result.success).toBe(true);
       expect(result.metadata?.attachmentRecoveryAttempted).toBe(2);
       expect(result.metadata?.attachmentRecoveryStored).toBe(2);
@@ -2096,7 +2119,7 @@ describe("Discord attachment recovery sweep", () => {
     });
 
     try {
-      const first = await discordSyncSource.sync({ verbose: false, config: { sources: { discord: {} } } });
+      const first = await discordSyncSource.sync({ verbose: false, intervalMs: HOUR_MS, config: { sources: { discord: {} } } });
       expect(first.success).toBe(true);
       expect(first.metadata?.attachmentRecoveryUnrecoverable).toBe(2);
       expect(recoveryFetches).toBe(2);
@@ -2114,7 +2137,7 @@ describe("Discord attachment recovery sweep", () => {
         { source_id: missingAttachmentId, status: "unrecoverable" },
       ]);
 
-      await discordSyncSource.sync({ verbose: false, config: { sources: { discord: {} } } });
+      await discordSyncSource.sync({ verbose: false, intervalMs: HOUR_MS, config: { sources: { discord: {} } } });
       expect(recoveryFetches).toBe(2);
     } finally {
       globalThis.fetch = originalFetch;
@@ -2158,7 +2181,7 @@ describe("Discord attachment recovery sweep", () => {
     });
 
     try {
-      const result = await discordSyncSource.sync({ verbose: false, config: { sources: { discord: {} } } });
+      const result = await discordSyncSource.sync({ verbose: false, intervalMs: HOUR_MS, config: { sources: { discord: {} } } });
       expect(result.success).toBe(true);
       expect(result.metadata?.attachmentRecoveryAttempted).toBe(0);
       expect(recoveryFetches).toBe(0);
@@ -2205,7 +2228,7 @@ describe("Discord attachment recovery sweep", () => {
     });
 
     try {
-      const result = await discordSyncSource.sync({ verbose: false, config: { sources: { discord: {} } } });
+      const result = await discordSyncSource.sync({ verbose: false, intervalMs: HOUR_MS, config: { sources: { discord: {} } } });
       expect(result.success).toBe(true);
       expect(result.metadata?.attachmentRecoveryAttempted).toBe(25);
       expect(recoveryFetches).toBe(25);
@@ -2216,5 +2239,240 @@ describe("Discord attachment recovery sweep", () => {
       clearMessages(messageIds);
       deleteSyncState(appDb, "discord-api");
     }
+  });
+});
+
+test("refuses to sync without the schedule interval that sizes the search budget", async () => {
+  const originalToken = process.env.DISCORD_TOKEN;
+  process.env.DISCORD_TOKEN = "test-token";
+  try {
+    const result = await discordSyncSource.sync({ verbose: false, config: { sources: { discord: {} } } });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("intervalMs");
+  } finally {
+    if (originalToken === undefined) delete process.env.DISCORD_TOKEN;
+    else process.env.DISCORD_TOKEN = originalToken;
+  }
+});
+
+describe("active-thread search rotation", () => {
+  const HOUR = 60 * 60 * 1000;
+  const T0 = Date.parse("2026-06-22T00:00:00.000Z");
+  // Uneven guilds: 30 parents in total, so a 30m interval allows
+  // ceil(30 * 30m / 12h) = 2 searches per sync.
+  const PARENTS: Record<string, string[]> = {
+    "guild-a": Array.from({ length: 25 }, (_, i) => `a-parent-${String(i).padStart(2, "0")}`),
+    "guild-b": Array.from({ length: 5 }, (_, i) => `b-parent-${i}`),
+  };
+  const ALL_PARENTS = Object.values(PARENTS).flat();
+
+  interface Search {
+    channelId: string;
+    archived: boolean;
+  }
+
+  function rotationState(overrides: Partial<DiscordApiSyncState> = {}): DiscordApiSyncState {
+    return baseState({
+      // Cursor at each channel's last message, so only searches make requests.
+      channelCursors: Object.fromEntries(ALL_PARENTS.map((id) => [id, "100"])),
+      threadsDiscoveredGuilds: Object.keys(PARENTS),
+      ...overrides,
+    });
+  }
+
+  function installFetch(searches: Search[], onSearch?: (count: number) => void): void {
+    globalThis.fetch = mockFetch(async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname.endsWith("/users/@me")) return responseJson({ id: "user-1", username: "alice" });
+      if (url.pathname.endsWith("/users/@me/channels")) return responseJson([]);
+      for (const [guildId, parents] of Object.entries(PARENTS)) {
+        if (url.pathname.endsWith(`/guilds/${guildId}`)) {
+          return responseJson({ id: guildId, name: guildId, icon: null });
+        }
+        if (url.pathname.endsWith(`/guilds/${guildId}/channels`)) {
+          return responseJson(parents.map((id) => ({
+            id,
+            type: CHANNEL_TYPE.GUILD_TEXT,
+            name: id,
+            last_message_id: "100",
+          })));
+        }
+      }
+      const search = url.pathname.match(/\/channels\/([^/]+)\/threads\/search$/);
+      if (search) {
+        searches.push({ channelId: search[1], archived: url.searchParams.get("archived") === "true" });
+        onSearch?.(searches.length);
+        return responseJson({ threads: [], has_more: false, total_results: 0 });
+      }
+      return responseJson(null, 404);
+    });
+  }
+
+  async function runSync(intervalMs: number, signal?: AbortSignal) {
+    return discordSyncSource.sync({
+      verbose: false,
+      intervalMs,
+      signal,
+      config: {
+        sources: {
+          discord: {
+            guilds: Object.fromEntries(Object.keys(PARENTS).map((id) => [id, { mode: "full" }])),
+          },
+        },
+      },
+    });
+  }
+
+  type RotationMetadata = {
+    optimization: { activeThreadSearchBudget: number; activeThreadParentsChecked: number };
+    phaseTimings: Record<string, { routeCounts: Record<string, number> }>;
+  };
+
+  let originalFetch: typeof fetch;
+  let originalToken: string | undefined;
+  beforeAll(() => {
+    originalFetch = globalThis.fetch;
+    originalToken = process.env.DISCORD_TOKEN;
+    process.env.DISCORD_TOKEN = "test-token";
+  });
+  afterAll(() => {
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) delete process.env.DISCORD_TOKEN;
+    else process.env.DISCORD_TOKEN = originalToken;
+    setSystemTime();
+    deleteSyncState(getAppStateDb(), "discord-api");
+  });
+
+  test("spreads the sweep across syncs and searches every parent within 24h", async () => {
+    const appDb = getAppStateDb();
+    deleteSyncState(appDb, "discord-api");
+    setSyncState(appDb, "discord-api", rotationState());
+    const searchedAt = new Map<string, number[]>(ALL_PARENTS.map((id) => [id, []]));
+
+    // Two days of 30-minute syncs from a state with no search history.
+    for (let run = 0; run < 96; run++) {
+      const now = T0 + run * 30 * 60 * 1000;
+      setSystemTime(new Date(now));
+      const searches: Search[] = [];
+      installFetch(searches);
+
+      const result = await runSync(30 * 60 * 1000);
+      const metadata = result.metadata as RotationMetadata;
+
+      expect(result.success).toBe(true);
+      expect(metadata.optimization.activeThreadSearchBudget).toBe(2);
+      expect(searches.length).toBeLessThanOrEqual(2);
+      expect(searches.every((s) => !s.archived)).toBe(true);
+      expect(metadata.phaseTimings["full-guilds"].routeCounts["/channels/:id/threads/search"]).toBeUndefined();
+      for (const search of searches) searchedAt.get(search.channelId)?.push(now);
+    }
+
+    const end = T0 + 96 * 30 * 60 * 1000;
+    for (const [channelId, times] of searchedAt) {
+      // From the start of history, between searches, and up to the end of the
+      // simulation, no parent goes 24h without an active-thread search.
+      const gaps = [T0, ...times, end].slice(1).map((t, i) => t - [T0, ...times][i]);
+      expect({ channelId, maxGap: Math.max(...gaps) <= 24 * HOUR }).toEqual({ channelId, maxGap: true });
+      // Once the initial backlog drains each parent rotates about twice a day.
+      expect(times.length).toBeGreaterThanOrEqual(3);
+    }
+    // 30 parents cost ~2 searches/sync rather than 30 in one sync per day.
+    const total = [...searchedAt.values()].reduce((sum, times) => sum + times.length, 0);
+    expect(total).toBeLessThanOrEqual(96 * 2);
+  });
+
+  test("migrates the legacy whole-guild sweep timestamp without sweeping everything at once", async () => {
+    const appDb = getAppStateDb();
+    deleteSyncState(appDb, "discord-api");
+    const legacyA = new Date(T0 - 2 * HOUR).toISOString();
+    const legacyB = new Date(T0 - 25 * HOUR).toISOString();
+    const legacy: DiscordApiSyncState & LegacyActiveThreadSweepFields = rotationState();
+    legacy.activeThreadFullSweepAt = { "guild-a": legacyA, "guild-b": legacyB, "guild-gone": legacyA };
+    setSyncState(appDb, "discord-api", legacy);
+
+    setSystemTime(new Date(T0));
+    const first: Search[] = [];
+    installFetch(first);
+    const result = await runSync(30 * 60 * 1000);
+    const migrated = getSyncState<DiscordApiSyncState & LegacyActiveThreadSweepFields>(appDb, "discord-api");
+
+    expect(result.success).toBe(true);
+    // Only the budget, taken from the overdue guild, not every parent.
+    expect(first.map((s) => s.channelId)).toEqual(["b-parent-0", "b-parent-1"]);
+    expect(migrated?.activeThreadFullSweepAt).toBeUndefined();
+    expect(Object.keys(migrated?.activeThreadSearchAt ?? {}).sort()).toEqual(["guild-a", "guild-b"]);
+    expect(Object.values(migrated?.activeThreadSearchAt?.["guild-a"] ?? {})).toEqual(
+      Array(25).fill(legacyA),
+    );
+    expect(migrated?.activeThreadSearchAt?.["guild-b"]?.["b-parent-4"]).toBe(legacyB);
+
+    // Every guild-a parent is still searched within 24h of its legacy sweep.
+    const firstSearchAt = new Map<string, number>();
+    for (let run = 1; run < 48; run++) {
+      const now = T0 + run * 30 * 60 * 1000;
+      setSystemTime(new Date(now));
+      const searches: Search[] = [];
+      installFetch(searches);
+      await runSync(30 * 60 * 1000);
+      expect(searches.length).toBeLessThanOrEqual(2);
+      for (const search of searches) {
+        if (!firstSearchAt.has(search.channelId)) firstSearchAt.set(search.channelId, now);
+      }
+    }
+    for (const channelId of PARENTS["guild-a"]) {
+      expect(firstSearchAt.get(channelId)).toBeLessThanOrEqual(Date.parse(legacyA) + 24 * HOUR);
+    }
+  });
+
+  test("an interrupted sync keeps the searches it completed", async () => {
+    const appDb = getAppStateDb();
+    deleteSyncState(appDb, "discord-api");
+    setSyncState(appDb, "discord-api", rotationState());
+    setSystemTime(new Date(T0));
+
+    // A one-day interval gives a budget covering every due parent, so the
+    // first sync would search all 30 if it were not interrupted.
+    const controller = new AbortController();
+    const interrupted: Search[] = [];
+    installFetch(interrupted, (count) => {
+      if (count === 4) controller.abort();
+    });
+    await runSync(24 * HOUR, controller.signal);
+    const afterAbort = getSyncState<DiscordApiSyncState>(appDb, "discord-api");
+    const completed = interrupted.slice(0, 3).map((s) => s.channelId);
+
+    expect(interrupted.length).toBe(4);
+    expect(Object.keys(afterAbort?.activeThreadSearchAt?.["guild-a"] ?? {}).sort()).toEqual(completed.sort());
+
+    setSystemTime(new Date(T0 + 30 * 60 * 1000));
+    const resumed: Search[] = [];
+    installFetch(resumed);
+    const result = await runSync(24 * HOUR);
+
+    expect(result.success).toBe(true);
+    expect(resumed.length).toBe(ALL_PARENTS.length - completed.length);
+    expect(resumed.some((s) => completed.includes(s.channelId))).toBe(false);
+  });
+
+  test("first discovery of a guild still searches every parent, active and archived", async () => {
+    const appDb = getAppStateDb();
+    deleteSyncState(appDb, "discord-api");
+    setSyncState(appDb, "discord-api", rotationState({ threadsDiscoveredGuilds: ["guild-b"] }));
+    setSystemTime(new Date(T0));
+    const searches: Search[] = [];
+    installFetch(searches);
+
+    const result = await runSync(30 * 60 * 1000);
+    const nextState = getSyncState<DiscordApiSyncState>(appDb, "discord-api");
+    const guildA = new Set(PARENTS["guild-a"]);
+
+    expect(result.success).toBe(true);
+    expect(searches.filter((s) => guildA.has(s.channelId) && !s.archived).length).toBe(25);
+    expect(searches.filter((s) => guildA.has(s.channelId) && s.archived).length).toBe(25);
+    expect(nextState?.threadsDiscoveredGuilds).toContain("guild-a");
+    expect(Object.keys(nextState?.activeThreadSearchAt?.["guild-a"] ?? {}).length).toBe(25);
+    // guild-b was discovered earlier and rotates through the budget sized
+    // from its own 5 parents: ceil(5 * 30m / 12h) = 1.
+    expect(searches.filter((s) => !guildA.has(s.channelId)).length).toBe(1);
   });
 });

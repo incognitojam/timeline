@@ -14,7 +14,13 @@ import { getDb } from "../db/schema";
 import { enqueueJob } from "../jobs/store";
 import type { JobTrigger } from "../jobs/types";
 import { getVisionAvailability, type VisionAvailability } from "../llm";
-import { isSyncSourceEnabled, listSyncSourceRows, loadSyncConfig, loadSyncSourcesConfig } from "../sync/config";
+import {
+  isSyncSourceEnabled,
+  listSyncSourceRows,
+  loadSyncConfig,
+  loadSyncSourcesConfig,
+  resolveSyncIntervalMs,
+} from "../sync/config";
 import {
   checkNetworkGuard,
   meteredFromStatus,
@@ -224,7 +230,8 @@ export class Scheduler {
   }
 
   private async scheduleConfiguredSources(): Promise<void> {
-    const defaultInterval = parseInterval(this.config.scheduler.default_interval);
+    // Validate the default even when no configured source falls back to it.
+    parseInterval(this.config.scheduler.default_interval);
 
     // Get all configured sync sources
     const configuredSources = Object.entries(loadSyncSourcesConfig(this.db, this.registeredSourceNames));
@@ -241,7 +248,7 @@ export class Scheduler {
       if (!syncSource) {
         throw new Error(`Registered sync source "${sourceName}" is missing from the scheduler`);
       }
-      const intervalMs = this.configuredIntervalMs(sourceConfig, syncSource, defaultInterval);
+      const intervalMs = resolveSyncIntervalMs(sourceConfig, syncSource, this.config.scheduler.default_interval);
 
       if (!syncSource.enabled) {
         this.updateSourceState(sourceName, intervalMs, false);
@@ -458,23 +465,6 @@ export class Scheduler {
 
   // Private methods
 
-  private configuredIntervalMs(
-    sourceConfig: SyncSourceConfig,
-    syncSource: SyncSource,
-    schedulerDefaultInterval: number,
-  ): number {
-    const sourceDefaultInterval = syncSource.defaultInterval
-      ? parseInterval(syncSource.defaultInterval)
-      : schedulerDefaultInterval;
-    const intervalMs = sourceConfig.interval
-      ? parseInterval(sourceConfig.interval)
-      : sourceDefaultInterval;
-    if (intervalMs <= 0 || !isValidTimeoutDelay(intervalMs)) {
-      throw new Error("Scheduler interval must be greater than 0ms and within the timer delay limit");
-    }
-    return intervalMs;
-  }
-
   private scheduleSource(
     sourceName: string,
     syncSource: SyncSource,
@@ -626,6 +616,11 @@ export class Scheduler {
         appDb: this.db,
         source: syncSource,
         config: syncConfig,
+        intervalMs: resolveSyncIntervalMs(
+          syncConfig.sources[sourceName],
+          syncSource,
+          this.config.scheduler.default_interval,
+        ),
         jobId,
         signal: abortController.signal,
         localWork,

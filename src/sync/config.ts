@@ -7,9 +7,9 @@
 
 import type { Database } from "bun:sqlite";
 import { getAppStateDb, migrateSourceBlockedNetworks } from "../db/app-state";
-import type { ServiceConfig, SyncSourceConfig } from "../config/types";
+import { isValidTimeoutDelay, parseInterval, type ServiceConfig, type SyncSourceConfig } from "../config/types";
 import { isPlainJsonObject } from "../shared/guards";
-import type { SyncSourceConfigField } from "./types";
+import type { SyncSource, SyncSourceConfigField } from "./types";
 
 export interface SyncConfig {
   /** Source configurations keyed by source name */
@@ -83,6 +83,28 @@ export async function loadSyncConfig(
   return {
     sources: loadSyncSourcesConfig(db, registeredSources),
   };
+}
+
+/**
+ * A source's schedule interval: its stored interval, else the source's
+ * defaultInterval, else the scheduler's default_interval.
+ */
+export function resolveSyncIntervalMs(
+  sourceConfig: SyncSourceConfig | undefined,
+  syncSource: Pick<SyncSource, "defaultInterval">,
+  schedulerDefaultInterval: string,
+): number {
+  // Defaults are parsed even when overridden, so an invalid one fails at
+  // startup rather than when the setting that hides it is cleared.
+  const schedulerDefaultMs = parseInterval(schedulerDefaultInterval);
+  const sourceDefaultInterval = syncSource.defaultInterval
+    ? parseInterval(syncSource.defaultInterval)
+    : schedulerDefaultMs;
+  const intervalMs = sourceConfig?.interval ? parseInterval(sourceConfig.interval) : sourceDefaultInterval;
+  if (intervalMs <= 0 || !isValidTimeoutDelay(intervalMs)) {
+    throw new Error("Scheduler interval must be greater than 0ms and within the timer delay limit");
+  }
+  return intervalMs;
 }
 
 export function getSourceConfig(

@@ -14,6 +14,8 @@ export interface SyncRunInput {
   appDb: Database;
   source: SyncSource;
   config: SyncConfig;
+  /** The source's schedule interval (resolveSyncIntervalMs), passed to sync(). */
+  intervalMs: number;
   jobId?: number | null;
   signal?: AbortSignal;
   localWork?: LocalWorkGate;
@@ -66,6 +68,7 @@ export async function runSyncSource(input: SyncRunInput): Promise<SyncRunOutcome
     config,
     signal: input.signal,
     localWork: input.localWork,
+    intervalMs: input.intervalMs,
   });
   completeSyncLog(appDb, logId, result);
   report(result);
