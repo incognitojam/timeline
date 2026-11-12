@@ -120,11 +120,10 @@ describe("attachmentDescriptionsSyncSource", () => {
       });
       const resolveModel = spyOn(llm, "resolveLanguageModel").mockReturnValue(model);
       const media = spyOn(storage, "getMediaStore").mockResolvedValue({
-        readFile: async () => {
-          expect(ownsLocalWork).toBe(true);
-          return { content: image };
+        readUncached: async () => {
+          expect(ownsLocalWork).toBe(false);
+          return image;
         },
-        restoreFromRemote: async () => null,
       } as unknown as Awaited<ReturnType<typeof storage.getMediaStore>>);
       const logSource = "scheduler-test-description-progress";
       try {

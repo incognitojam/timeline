@@ -388,6 +388,22 @@ function stopDescriptionRun(
   return false;
 }
 
+/**
+ * Finished descriptions held in memory while an importer owns local work. A
+ * hard kill loses at most this many, and the next run describes them again.
+ */
+export const MAX_PENDING_ATTACHMENT_DESCRIPTIONS = 32;
+const MAX_CONSECUTIVE_DESCRIPTION_FAILURES = 5;
+
+interface PendingDescription {
+  /** Index of this attempt among the run's attempts. */
+  attempt: number;
+  candidate: AttachmentDescriptionCandidate;
+  label: string;
+  description: string;
+  durationMs: number;
+}
+
 export async function describeAttachments(options: {
   db: Database;
   mediaStore: Awaited<ReturnType<typeof getMediaStore>>;
@@ -419,102 +435,156 @@ export async function describeAttachments(options: {
     remaining: 0,
     failureSamples: [],
   };
-  let consecutiveFailures = 0;
-  for (let index = 0; index < candidates.length; index++) {
-    if (stopDescriptionRun(options, stats, candidates.length - index)) break;
-    const candidate = candidates[index];
-    let started = Date.now();
-    const label = `${candidate.content_hash.slice(0, 12)} ${candidate.source} ${displayName(candidate)}`;
-    const abortSignals = descriptionAbortSignals(options.signal, options.deadline);
+  // One entry per attempt, in attempt order. A queued description counts as a
+  // success until its write fails, so the breaker follows the order of attempts
+  // and not the order in which their outcomes arrive.
+  const attemptFailed: boolean[] = [];
+  const tooManyConsecutiveFailures = () => {
+    let run = 0;
+    for (const failed of attemptFailed) {
+      run = failed ? run + 1 : 0;
+      if (run >= MAX_CONSECUTIVE_DESCRIPTION_FAILURES) return true;
+    }
+    return false;
+  };
+  const recordFailure = (candidate: AttachmentDescriptionCandidate, label: string, durationMs: number, error: unknown) => {
+    const normalizedError = normalizeError(error);
+    stats.failed++;
+    if (!stats.firstFailure) {
+      stats.firstFailure = normalizedError.message;
+    }
+    if ((stats.failureSamples?.length ?? 0) < ATTACHMENT_DESCRIPTION_FAILURE_SAMPLE_LIMIT) {
+      stats.failureSamples?.push({
+        contentHash: candidate.content_hash,
+        source: candidate.source,
+        filename: candidate.filename,
+        durationMs,
+        error: normalizedError,
+      });
+    }
+    console.error(
+      `failed ${label} ${durationMs}ms: ${normalizedError.name}: ${normalizedError.message}`,
+    );
+  };
+
+  const pending: PendingDescription[] = [];
+  const insertAll = options.db.transaction((batch: PendingDescription[]) => {
+    for (const item of batch) {
+      insert.run(item.candidate.content_hash, options.modelRef, item.description, item.durationMs);
+    }
+  });
+  const writePending = () => {
+    const batch = pending.splice(0);
+    if (batch.length === 0) return;
     try {
-      if (!candidate.storage_path) {
-        stats.skipped++;
-        console.warn(`skip ${label}: missing storage_path`);
-        continue;
-      }
-
-      const storagePath = candidate.storage_path;
-      const file = await runLocalWork(options.localWork, abortSignals.abortSignal, async () => {
-        if (stopDescriptionRun(options, stats, candidates.length - index)) return null;
-        // Model comparisons include media preparation, but not scheduler waits.
-        started = Date.now();
-        const stored = await options.mediaStore.readFile(storagePath);
-        if (stopDescriptionRun(options, stats, candidates.length - index)) return null;
-        return stored ?? await options.mediaStore.restoreFromRemote(storagePath, candidate.content_hash);
-      });
-      options.signal?.throwIfAborted();
-      if (stopDescriptionRun(options, stats, candidates.length - index)) break;
-      if (!file) {
-        stats.skipped++;
-        console.warn(`skip ${label}: media file is missing`);
-        continue;
-      }
-
-      const description = await generateAttachmentDescription({
-        model: options.languageModel,
-        image: Buffer.from(file.content),
-        mediaType: candidate.mime_type,
-        reasoningEffort: options.reasoningEffort,
-        maxImageDimension: options.maxImageDimension,
-        abortSignal: abortSignals.abortSignal,
-      });
-      options.signal?.throwIfAborted();
-      if (!description) {
-        stats.skipped++;
-        console.warn(`skip ${label}: model returned an empty description`);
-        continue;
-      }
-
-      // Only explicit cancellation cancels persistence. A result completed
-      // within budget must survive a wait for an importer's local-work permit.
-      const durationMs = Date.now() - started;
-      await runLocalWork(options.localWork, options.signal, () => {
-        insert.run(candidate.content_hash, options.modelRef, description, durationMs);
-      });
-      stats.described++;
-      consecutiveFailures = 0;
-      console.log(`described ${label} ${durationMs}ms`);
+      insertAll(batch);
     } catch (error) {
-      if (options.signal?.aborted) {
-        stats.remaining = candidates.length - index;
-        break;
+      for (const item of batch) {
+        attemptFailed[item.attempt] = true;
+        recordFailure(item.candidate, item.label, item.durationMs, error);
       }
-      if (deadlineCausedAbort(abortSignals)) {
-        stats.remaining = candidates.length - index;
-        stats.stoppedReason = "time-budget";
-        break;
-      }
+      return;
+    }
+    stats.described += batch.length;
+    for (const item of batch) console.log(`described ${item.label} ${item.durationMs}ms`);
+  };
+  let writing: Promise<void> | undefined;
+  /**
+   * Write every queued description the next time local work is free. The wait
+   * takes no signal: a result completed within budget must survive a wait for
+   * an importer's local-work permit, and so must one queued before cancellation.
+   */
+  const flush = (): Promise<void> => {
+    if (!writing && pending.length > 0) {
+      writing = runLocalWork(options.localWork, undefined, writePending).finally(() => {
+        writing = undefined;
+      });
+    }
+    return writing ?? Promise.resolve();
+  };
 
-      const durationMs = Date.now() - started;
-      const normalizedError = normalizeError(error);
-      stats.failed++;
-      consecutiveFailures++;
-      if (!stats.firstFailure) {
-        stats.firstFailure = normalizedError.message;
-      }
-      if ((stats.failureSamples?.length ?? 0) < ATTACHMENT_DESCRIPTION_FAILURE_SAMPLE_LIMIT) {
-        stats.failureSamples?.push({
-          contentHash: candidate.content_hash,
-          source: candidate.source,
-          filename: candidate.filename,
-          durationMs,
-          error: normalizedError,
-        });
-      }
-      console.error(
-        `failed ${label} ${durationMs}ms: ${normalizedError.name}: ${normalizedError.message}`,
-      );
-      if (isModelUnavailableError(error)) {
-        stats.remaining = candidates.length - index - 1;
-        stats.stoppedReason = "model-unavailable";
-        break;
-      }
-      if (consecutiveFailures >= 5) {
-        stats.remaining = candidates.length - index - 1;
+  try {
+    for (let index = 0; index < candidates.length; index++) {
+      // Inference continues while writes wait, until the queue is full.
+      if (pending.length >= MAX_PENDING_ATTACHMENT_DESCRIPTIONS) await flush();
+      // A failed write can trip the breaker between attempts.
+      if (tooManyConsecutiveFailures()) {
+        stats.remaining = candidates.length - index;
         stats.stoppedReason = "consecutive-failures";
         break;
       }
+      if (stopDescriptionRun(options, stats, candidates.length - index)) break;
+      const candidate = candidates[index];
+      const started = Date.now();
+      const label = `${candidate.content_hash.slice(0, 12)} ${candidate.source} ${displayName(candidate)}`;
+      const abortSignals = descriptionAbortSignals(options.signal, options.deadline);
+      try {
+        if (!candidate.storage_path) {
+          stats.skipped++;
+          console.warn(`skip ${label}: missing storage_path`);
+          continue;
+        }
+
+        // Read without owning local work. A media file is complete before its
+        // row is stored, and an eviction that unlinks this one mid-read costs
+        // one failed attempt, retried next run. Reading uncached writes nothing
+        // to the media store: a restore could re-link a file between eviction's
+        // two unlink passes and leave it where eviction no longer finds it.
+        const image = await options.mediaStore.readUncached(candidate.storage_path, candidate.content_hash);
+        options.signal?.throwIfAborted();
+        if (stopDescriptionRun(options, stats, candidates.length - index)) break;
+        if (!image) {
+          stats.skipped++;
+          console.warn(`skip ${label}: media file is missing`);
+          continue;
+        }
+
+        const description = await generateAttachmentDescription({
+          model: options.languageModel,
+          image,
+          mediaType: candidate.mime_type,
+          reasoningEffort: options.reasoningEffort,
+          maxImageDimension: options.maxImageDimension,
+          abortSignal: abortSignals.abortSignal,
+        });
+        options.signal?.throwIfAborted();
+        if (!description) {
+          stats.skipped++;
+          console.warn(`skip ${label}: model returned an empty description`);
+          continue;
+        }
+
+        pending.push({ attempt: attemptFailed.push(false) - 1, candidate, label, description, durationMs: Date.now() - started });
+        void flush();
+      } catch (error) {
+        if (options.signal?.aborted) {
+          stats.remaining = candidates.length - index;
+          break;
+        }
+        if (deadlineCausedAbort(abortSignals)) {
+          stats.remaining = candidates.length - index;
+          stats.stoppedReason = "time-budget";
+          break;
+        }
+
+        attemptFailed.push(true);
+        recordFailure(candidate, label, Date.now() - started, error);
+        if (isModelUnavailableError(error)) {
+          stats.remaining = candidates.length - index - 1;
+          stats.stoppedReason = "model-unavailable";
+          break;
+        }
+        if (tooManyConsecutiveFailures()) {
+          stats.remaining = candidates.length - index - 1;
+          stats.stoppedReason = "consecutive-failures";
+          break;
+        }
+      }
     }
+  } finally {
+    await flush();
   }
+  // The last write can fail after the loop has ended.
+  if (!stats.stoppedReason && tooManyConsecutiveFailures()) stats.stoppedReason = "consecutive-failures";
   return stats;
 }

@@ -475,8 +475,7 @@ describe("describeAttachments", () => {
       const stats = await describeAttachments({
         db,
         mediaStore: {
-          readFile: async () => ({ content: image }),
-          restoreFromRemote: async () => null,
+          readUncached: async () => image,
         } as unknown as Awaited<ReturnType<typeof import("../media/storage").getMediaStore>>,
         languageModel: provider("vision-model"),
         modelRef: "model-x",
@@ -549,8 +548,7 @@ describe("describeAttachments", () => {
       const stats = await describeAttachments({
         db,
         mediaStore: {
-          readFile: async () => ({ content: TEST_IMAGE }),
-          restoreFromRemote: async () => null,
+          readUncached: async () => TEST_IMAGE,
         } as unknown as Awaited<ReturnType<typeof import("../media/storage").getMediaStore>>,
         languageModel: provider("vision-model"),
         modelRef: "model-x",
@@ -594,8 +592,7 @@ describe("describeAttachments", () => {
       const stats = await describeAttachments({
         db,
         mediaStore: {
-          readFile: async () => ({ content: TEST_IMAGE }),
-          restoreFromRemote: async () => null,
+          readUncached: async () => TEST_IMAGE,
         } as unknown as Awaited<ReturnType<typeof import("../media/storage").getMediaStore>>,
         languageModel: provider("vision-model"),
         modelRef: "model-x",
@@ -653,8 +650,7 @@ describe("describeAttachments", () => {
       const stats = await describeAttachments({
         db,
         mediaStore: {
-          readFile: async () => ({ content: TEST_IMAGE }),
-          restoreFromRemote: async () => null,
+          readUncached: async () => TEST_IMAGE,
         } as unknown as Awaited<ReturnType<typeof import("../media/storage").getMediaStore>>,
         languageModel: provider("vision-model"),
         modelRef: "model-x",
@@ -700,8 +696,7 @@ describe("describeAttachments", () => {
       const stats = await describeAttachments({
         db,
         mediaStore: {
-          readFile: async () => ({ content: TEST_IMAGE }),
-          restoreFromRemote: async () => null,
+          readUncached: async () => TEST_IMAGE,
         } as unknown as Awaited<ReturnType<typeof import("../media/storage").getMediaStore>>,
         languageModel: provider("vision-model"),
         modelRef: "model-x",
@@ -759,8 +754,7 @@ describe("describeAttachments", () => {
       const stats = await describeAttachments({
         db,
         mediaStore: {
-          readFile: async () => ({ content: TEST_IMAGE }),
-          restoreFromRemote: async () => null,
+          readUncached: async () => TEST_IMAGE,
         } as unknown as Awaited<ReturnType<typeof import("../media/storage").getMediaStore>>,
         languageModel: provider("vision-model"),
         modelRef: "model-x",
@@ -813,8 +807,7 @@ describe("describeAttachments", () => {
       const stats = await describeAttachments({
         db,
         mediaStore: {
-          readFile: async () => ({ content: TEST_IMAGE }),
-          restoreFromRemote: async () => null,
+          readUncached: async () => TEST_IMAGE,
         } as unknown as Awaited<ReturnType<typeof import("../media/storage").getMediaStore>>,
         languageModel: provider("vision-model"),
         modelRef: "model-x",
@@ -875,8 +868,7 @@ describe("describeAttachments", () => {
       const stats = await describeAttachments({
         db,
         mediaStore: {
-          readFile: async () => ({ content: TEST_IMAGE }),
-          restoreFromRemote: async () => null,
+          readUncached: async () => TEST_IMAGE,
         } as unknown as Awaited<ReturnType<typeof import("../media/storage").getMediaStore>>,
         languageModel: provider("vision-model"),
         modelRef: "model-x",
