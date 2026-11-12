@@ -1,11 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dir, "..");
 const decoder = new TextDecoder();
+
+// The linters start through `#!/usr/bin/env node`. A `node` resolved from PATH
+// may be a version-manager shim that reads its configuration from the test HOME,
+// so the hook gets one that is this Bun.
+const nodeDirectory = mkdtempSync(join(tmpdir(), "timeline-pre-commit-node-"));
+symlinkSync(process.execPath, join(nodeDirectory, "node"));
 
 function git(
   args: string[],
@@ -44,7 +50,7 @@ async function runHook(index: string, env: NodeJS.ProcessEnv = process.env): Pro
 }> {
   const child = Bun.spawn([join(repoRoot, ".githooks", "pre-commit")], {
     cwd: repoRoot,
-    env: { ...env, GIT_INDEX_FILE: index },
+    env: { ...env, GIT_INDEX_FILE: index, PATH: `${nodeDirectory}:${env.PATH}` },
     stdout: "pipe",
     stderr: "pipe",
   });
