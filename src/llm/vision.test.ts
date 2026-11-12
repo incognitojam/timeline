@@ -28,7 +28,7 @@ describe("getVisionAvailability", () => {
       { preconnect: (() => {}) as typeof fetch.preconnect },
     ) as typeof fetch;
     expect(await getVisionAvailability(config, "model", unreachable)).toBe("unavailable");
-    expect(await getVisionAvailability(config, "model", mocked({ models: [] }))).toBe("not-vision");
+    expect(await getVisionAvailability(config, "model", mocked({ models: [] }))).toBe("not-listed");
     expect(await getVisionAvailability(config, "model", mocked({ models: [{ key: "model", capabilities: { vision: false } }] }))).toBe("not-vision");
     expect(await getVisionAvailability(config, "model", mocked({ models: [{ key: "model", capabilities: { vision: true } }] }))).toBe("available");
     expect(await getVisionAvailability(config, "model", mocked({ models: [{ key: "model" }] }))).toBe("unknown");

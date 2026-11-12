@@ -233,7 +233,11 @@ interface LmStudioModelsResponse {
   }>;
 }
 
-export type VisionAvailability = "unavailable" | "not-vision" | "available" | "unknown";
+/**
+ * `not-listed`: the provider answered but does not list the model. That is a
+ * model served through the provider by a machine that is offline, or a wrong id.
+ */
+export type VisionAvailability = "unavailable" | "not-listed" | "not-vision" | "available" | "unknown";
 
 interface LmStudioVisionModelsResponse {
   models?: Array<{ key?: unknown; capabilities?: { vision?: unknown } }>;
@@ -271,7 +275,7 @@ export async function getVisionAvailability(
   try { json = await response.json() as LmStudioVisionModelsResponse; } catch { return "unknown"; }
   if (!Array.isArray(json.models)) return "unknown";
   const model = json.models.find((item) => item.key === modelId);
-  if (!model) return "not-vision";
+  if (!model) return "not-listed";
   if (!model.capabilities || typeof model.capabilities.vision !== "boolean") return "unknown";
   return model.capabilities.vision ? "available" : "not-vision";
 }

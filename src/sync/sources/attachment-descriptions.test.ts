@@ -252,23 +252,29 @@ describe("attachmentDescriptionsSyncSource", () => {
     const probed: string[] = [];
     const selection = await selectAttachmentDescriptionModel(
       { providers: {} },
-      ["offline/model", "not-vision/model", "fallback/model", "later/model"],
+      ["offline/model", "unlisted/model", "not-vision/model", "fallback/model", "later/model"],
       async (_config, model) => {
         probed.push(model);
-        return {
+        return ({
           "offline/model": "unavailable",
+          "unlisted/model": "not-listed",
           "not-vision/model": "not-vision",
           "fallback/model": "unknown",
           "later/model": "available",
-        }[model] as "unavailable" | "not-vision" | "unknown" | "available";
+        } as const)[model] ?? "unknown";
       },
     );
 
-    expect(probed).toEqual(["offline/model", "not-vision/model", "fallback/model"]);
+    expect(probed).toEqual(["offline/model", "unlisted/model", "not-vision/model", "fallback/model"]);
     expect(selection).toEqual({
       status: "selected",
       model: "fallback/model",
       warnings: [
+        {
+          model: "unlisted/model",
+          availability: "not-listed",
+          message: "Configured model unlisted/model is not listed by its provider",
+        },
         {
           model: "not-vision/model",
           availability: "not-vision",
@@ -287,10 +293,18 @@ describe("attachmentDescriptionsSyncSource", () => {
   it("reports all-unavailable models as a failure and distinguishes invalid candidates", async () => {
     const unavailable = await selectAttachmentDescriptionModel(
       { providers: {} },
-      ["offline/one", "offline/two"],
-      async () => "unavailable",
+      ["offline/one", "unlisted/two"],
+      async (_config, model) => model === "offline/one" ? "unavailable" : "not-listed",
     );
-    expect(unavailable).toEqual({ status: "unavailable", warnings: [] });
+    if (unavailable.status !== "unavailable") throw new Error(`Unexpected selection: ${unavailable.status}`);
+    expect(unavailable).toEqual({
+      status: "unavailable",
+      unavailable: [
+        { model: "offline/one", availability: "unavailable" },
+        { model: "unlisted/two", availability: "not-listed" },
+      ],
+      warnings: [{ model: "unlisted/two", availability: "not-listed", message: "Configured model unlisted/two is not listed by its provider" }],
+    });
 
     const notVision = await selectAttachmentDescriptionModel(
       { providers: {} },
@@ -302,17 +316,22 @@ describe("attachmentDescriptionsSyncSource", () => {
       warnings: [{ model: "invalid/model", availability: "not-vision" }],
     });
 
-    expect(attachmentDescriptionAllUnavailableFailure(["offline/one", "offline/two"], Date.now())).toMatchObject({
+    expect(attachmentDescriptionAllUnavailableFailure(unavailable.unavailable, Date.now())).toMatchObject({
       success: false,
-      error: "Configured attachment description models are unavailable: offline/one, offline/two",
+      error: "Configured attachment description models are unavailable: the provider for offline/one is unavailable; " +
+        "unlisted/two is not listed by its provider (the machine serving it may be offline, or the model id may be wrong)",
     });
-    expect(attachmentDescriptionNotVisionResult(
-      notVision.warnings,
-      Date.now(),
-    )).toMatchObject({
+    if (notVision.status !== "not-vision") throw new Error(`Unexpected selection: ${notVision.status}`);
+    expect(attachmentDescriptionNotVisionResult(notVision.warnings, [], Date.now())).toMatchObject({
       success: false,
       error: "No configured attachment description model is vision-capable: invalid/model",
       metadata: { modelWarnings: [{ model: "invalid/model", availability: "not-vision" }] },
+    });
+    // A model that could not be checked is not reported as lacking vision.
+    expect(attachmentDescriptionNotVisionResult(notVision.warnings, notVision.unavailable, Date.now())).toMatchObject({
+      success: false,
+      error: "No configured attachment description model can run: invalid/model is not vision-capable; " +
+        "the provider for offline/model is unavailable",
     });
   });
 

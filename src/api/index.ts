@@ -680,6 +680,9 @@ app.post("/api/attachments/:id/describe", async (c) => {
   if (visionAvailability === "unavailable") {
     return c.json({ error: `Model ${model} is unavailable` }, 503);
   }
+  if (visionAvailability === "not-listed") {
+    return c.json({ error: `Model ${model} is not listed by its provider` }, 503);
+  }
 
   let mediaFile: Awaited<ReturnType<typeof readOrRestore>>;
   try {
