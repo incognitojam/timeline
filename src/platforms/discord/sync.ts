@@ -84,13 +84,25 @@ interface DiscordOptimizationStats {
   forbiddenThreadSearchParentsSkipped: number;
   activeThreadParentsChecked: number;
   activeThreadFullSweeps: number;
+  activeThreadSearchBudget: number;
+  activeThreadParentsDue: number;
+  activeThreadParentsOverdue: number;
   knownThreadsChecked: number;
   knownThreadsSkipped: number;
   knownThreadsDeferred: number;
   guildMetaSkipped: number;
 }
 
-const ACTIVE_THREAD_FULL_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+// Every parent channel of a discovering full guild is searched for active
+// threads (GET /channels/:id/threads/search?archived=false) at most this long
+// after its previous search. The search route has a hidden Discord sub-limit,
+// so searches are spread across syncs: a parent becomes due at half this age,
+// and each sync searches at most the share of parents that keeps the due
+// queue draining (activeThreadSearchBudget). The other half is headroom for
+// late or skipped syncs and for draining a backlog of parents that all became
+// due at once (a newly configured guild's later rotation, migrated state).
+const ACTIVE_THREAD_SEARCH_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const ACTIVE_THREAD_SEARCH_DUE_AGE_MS = ACTIVE_THREAD_SEARCH_MAX_AGE_MS / 2;
 const FORBIDDEN_CHANNEL_RETRY_MS = 24 * 60 * 60 * 1000;
 
 // Reaction authors (who reacted, not just the emoji + count the message fetch
@@ -111,17 +123,17 @@ const GUILD_META_TTL_MS = 24 * 60 * 60 * 1000;
 
 // Known-thread probe backoff: how often to getChannel-probe a known thread,
 // by how long the thread has been inactive (age of its cursor snowflake).
-// A dormant thread that wakes is caught no later than the daily active-thread
-// full sweep (posting to an archived thread unarchives it, so it appears in
+// A dormant thread that wakes is caught no later than the next active-thread
+// search of its parent (posting to an archived thread unarchives it, so it appears in
 // the archived=false search), so the slowest probe interval matches
-// ACTIVE_THREAD_FULL_SWEEP_INTERVAL_MS rather than risking unbounded staleness.
+// ACTIVE_THREAD_SEARCH_MAX_AGE_MS rather than risking unbounded staleness.
 // (Probes and the sweep are gated by the same !skip_discovery block, so every
 // guild that probes also sweeps — the safety net can't be configured away
 // independently.)
 export const THREAD_PROBE_TIERS = [
   { maxInactiveMs: 24 * 60 * 60 * 1000, probeIntervalMs: 0 },              // active today: every sync
   { maxInactiveMs: 7 * 24 * 60 * 60 * 1000, probeIntervalMs: 4 * 60 * 60 * 1000 }, // active this week: 4h
-  { maxInactiveMs: Number.POSITIVE_INFINITY, probeIntervalMs: ACTIVE_THREAD_FULL_SWEEP_INTERVAL_MS },
+  { maxInactiveMs: Number.POSITIVE_INFINITY, probeIntervalMs: ACTIVE_THREAD_SEARCH_MAX_AGE_MS },
 ] as const;
 const THREAD_CHANNEL_TYPE_NAMES = THREAD_CHANNEL_TYPES.map(getChannelTypeName);
 
@@ -134,7 +146,7 @@ export interface DiscordApiSyncState {
   knownGuildThreadIds?: Record<string, string[]>; // guild_id -> thread channel IDs with cursors
   knownDMChannelIds: string[];                  // includes hidden/closed DMs
   backfilledDMChannelIds: string[];             // DMs where initial backfill completed
-  activeThreadFullSweepAt?: Record<string, string>; // guild_id -> last active-thread full sweep
+  activeThreadSearchAt?: Record<string, Record<string, string>>; // guild_id -> parent channel_id -> last active-thread search
   threadProbeAt?: Record<string, string>;       // thread channel_id -> last getChannel probe
   guildMetaAt?: Record<string, { name: string; at: string }>; // guild_id -> cached API name + last refresh
   forbiddenChannelIds?: Record<string, string>; // channel_id -> last message-fetch 403
@@ -148,6 +160,15 @@ export interface DiscordApiSyncState {
   // remembered here avoid repeating fetches for unavailable messages.
   callDetailUnavailableMessageIds?: string[];
 }
+
+/**
+ * Guild-level sweep timestamps written before active-thread searches were
+ * spread per parent channel. rememberActiveThreadParents() seeds each parent's
+ * timestamp from its guild's entry and drops the entry.
+ */
+export type LegacyActiveThreadSweepFields = {
+  activeThreadFullSweepAt?: Record<string, string>;
+};
 
 /**
  * Legacy per-tier cursor fields that predated the unified `rescanCursors` map.
@@ -214,6 +235,9 @@ function emptyOptimizationStats(): DiscordOptimizationStats {
     forbiddenThreadSearchParentsSkipped: 0,
     activeThreadParentsChecked: 0,
     activeThreadFullSweeps: 0,
+    activeThreadSearchBudget: 0,
+    activeThreadParentsDue: 0,
+    activeThreadParentsOverdue: 0,
     knownThreadsChecked: 0,
     knownThreadsSkipped: 0,
     knownThreadsDeferred: 0,
@@ -277,21 +301,112 @@ function markForbiddenThreadSearchParent(state: DiscordApiSyncState, channelId: 
   cache[channelId] = new Date(nowMs).toISOString();
 }
 
-export function shouldRunActiveThreadFullSweep(
-  state: DiscordApiSyncState,
-  guildId: string,
-  nowMs: number,
-): boolean {
-  return !isFreshTimestamp(
-    state.activeThreadFullSweepAt?.[guildId],
-    nowMs,
-    ACTIVE_THREAD_FULL_SWEEP_INTERVAL_MS,
-  );
+/**
+ * Most active-thread searches one sync may make: enough that every parent due
+ * within ACTIVE_THREAD_SEARCH_DUE_AGE_MS is searched across that window's
+ * syncs, so a full rotation of `parentCount` parents fits in the due age.
+ * An interval of 12h or longer leaves no later sync to defer to, so the
+ * budget then covers every parent.
+ */
+export function activeThreadSearchBudget(parentCount: number, syncIntervalMs: number): number {
+  if (parentCount === 0) return 0;
+  return Math.max(1, Math.ceil((parentCount * syncIntervalMs) / ACTIVE_THREAD_SEARCH_DUE_AGE_MS));
 }
 
-function markActiveThreadFullSweep(state: DiscordApiSyncState, guildId: string, nowMs: number): void {
-  const sweeps = (state.activeThreadFullSweepAt ??= {});
-  sweeps[guildId] = new Date(nowMs).toISOString();
+function activeThreadSearchedAt(
+  state: DiscordApiSyncState,
+  guildId: string,
+  channelId: string,
+): number | null {
+  const iso = state.activeThreadSearchAt?.[guildId]?.[channelId];
+  if (!iso) return null;
+  const parsed = Date.parse(iso);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Parents due an active-thread search (never searched, or searched at least
+ * ACTIVE_THREAD_SEARCH_DUE_AGE_MS ago), never-searched first and then least
+ * recently searched, in a stable order.
+ */
+export function dueActiveThreadParents<T extends { guildId: string; channelId: string }>(
+  state: DiscordApiSyncState,
+  parents: readonly T[],
+  nowMs: number,
+): T[] {
+  const searchedAt = (p: T) => activeThreadSearchedAt(state, p.guildId, p.channelId) ?? Number.NEGATIVE_INFINITY;
+  return parents
+    .filter((p) => nowMs - searchedAt(p) >= ACTIVE_THREAD_SEARCH_DUE_AGE_MS)
+    .sort((a, b) =>
+      searchedAt(a) - searchedAt(b) ||
+      a.guildId.localeCompare(b.guildId) ||
+      a.channelId.localeCompare(b.channelId)
+    );
+}
+
+export function isActiveThreadSearchOverdue(
+  state: DiscordApiSyncState,
+  guildId: string,
+  channelId: string,
+  nowMs: number,
+): boolean {
+  const searchedAt = activeThreadSearchedAt(state, guildId, channelId);
+  return searchedAt === null || nowMs - searchedAt >= ACTIVE_THREAD_SEARCH_MAX_AGE_MS;
+}
+
+function markActiveThreadSearched(
+  state: DiscordApiSyncState,
+  guildId: string,
+  channelId: string,
+  nowMs: number,
+): void {
+  const byGuild = (state.activeThreadSearchAt ??= {});
+  const parents = (byGuild[guildId] ??= {});
+  parents[channelId] = new Date(nowMs).toISOString();
+}
+
+/**
+ * Record a guild's current parent channels: keeps their search timestamps,
+ * drops parents that no longer exist, and seeds parents with no timestamp
+ * from the guild's legacy whole-guild sweep (then forgets that entry), so
+ * migrated state rotates through the budget instead of counting every parent
+ * as never searched.
+ */
+export function rememberActiveThreadParents(
+  state: DiscordApiSyncState,
+  guildId: string,
+  parentIds: readonly string[],
+): void {
+  const legacy = state as DiscordApiSyncState & LegacyActiveThreadSweepFields;
+  const legacyAt = legacy.activeThreadFullSweepAt?.[guildId];
+  const previous = state.activeThreadSearchAt?.[guildId] ?? {};
+  const next: Record<string, string> = {};
+  for (const id of parentIds) {
+    const at = previous[id] ?? legacyAt;
+    if (at) next[id] = at;
+  }
+  (state.activeThreadSearchAt ??= {})[guildId] = next;
+  if (legacy.activeThreadFullSweepAt) {
+    delete legacy.activeThreadFullSweepAt[guildId];
+    if (Object.keys(legacy.activeThreadFullSweepAt).length === 0) delete legacy.activeThreadFullSweepAt;
+  }
+}
+
+/** Drop active-thread search state (current and legacy) for guilds that no longer discover threads. */
+export function pruneActiveThreadSearchGuilds(
+  state: DiscordApiSyncState,
+  discoveringGuildIds: ReadonlySet<string>,
+): void {
+  const legacy = state as DiscordApiSyncState & LegacyActiveThreadSweepFields;
+  for (const map of [state.activeThreadSearchAt, legacy.activeThreadFullSweepAt]) {
+    if (!map) continue;
+    for (const guildId of Object.keys(map)) {
+      if (!discoveringGuildIds.has(guildId)) delete map[guildId];
+    }
+  }
+  if (legacy.activeThreadFullSweepAt && Object.keys(legacy.activeThreadFullSweepAt).length === 0) {
+    delete legacy.activeThreadFullSweepAt;
+  }
 }
 
 export function shouldProbeKnownThread(
@@ -483,6 +598,18 @@ export const discordSyncSource: SyncSource = {
 
     // Parse guild configs
     const guilds = parseGuildConfigs(sourceConfig);
+    // Sizes the per-sync active-thread search budget.
+    const syncIntervalMs = options.intervalMs;
+    if (!syncIntervalMs) {
+      return {
+        source: "discord",
+        success: false,
+        eventsAdded: 0,
+        eventsUpdated: 0,
+        error: "Discord sync needs the schedule interval (SyncOptions.intervalMs)",
+        durationMs: Date.now() - startTime,
+      };
+    }
 
     const signal = options.signal;
 
@@ -637,6 +764,14 @@ export const discordSyncSource: SyncSource = {
         if (!guilds[gid]) delete state.guildMetaAt[gid];
       }
     }
+    pruneActiveThreadSearchGuilds(
+      state,
+      new Set(
+        Object.entries(guilds)
+          .filter(([, g]) => g.mode === "full" && !g.skip_discovery && !(g.channels && g.channels.length > 0))
+          .map(([gid]) => gid),
+      ),
+    );
 
     const db = getDb();
     initDb(db);
@@ -976,6 +1111,64 @@ export const discordSyncSource: SyncSource = {
       const fullGuilds = Object.entries(guilds).filter(([_, g]) => g.mode === "full");
       const sparseGuilds = Object.entries(guilds).filter(([_, g]) => g.mode === "sparse");
 
+      // Search one parent channel for active threads and sync any with new
+      // messages. Records the search only when it ran to completion, so an
+      // aborted run leaves the parent due for the next sync.
+      const searchActiveThreadParent = async (parent: {
+        guildId: string;
+        guildName: string;
+        channel: DiscordChannel;
+        category: string;
+      }): Promise<{ synced: number; skipped: number }> => {
+        const counts = { synced: 0, skipped: 0 };
+        if (isForbiddenThreadSearchParentCached(state, parent.channel.id, Date.now())) {
+          optimizationStats.forbiddenThreadSearchParentsSkipped++;
+          counts.skipped++;
+          return counts;
+        }
+
+        optimizationStats.activeThreadParentsChecked++;
+        for await (const batch of client.searchThreads(parent.channel.id, false, {
+          onForbidden: (channelId) => {
+            if (!isForbiddenThreadSearchParentCached(state, channelId, Date.now())) {
+              optimizationStats.forbiddenThreadSearchParentsMarked++;
+            }
+            markForbiddenThreadSearchParent(state, channelId, Date.now());
+          },
+        })) {
+          for (const thread of batch) {
+            if (signal?.aborted) break;
+            rememberKnownGuildThread(state, thread.guild_id ?? parent.guildId, thread.id);
+            if (canSkipChannel(thread.id, thread.last_message_id)) {
+              counts.skipped++;
+              continue;
+            }
+            await syncChannel({
+              id: thread.id,
+              type: thread.type,
+              name: thread.name,
+              guildId: parent.guildId,
+              guildName: parent.guildName,
+              category: parent.category,
+            });
+            counts.synced++;
+          }
+        }
+        if (!signal?.aborted) {
+          markActiveThreadSearched(state, parent.guildId, parent.channel.id, Date.now());
+        }
+        return counts;
+      };
+      // Parents of already-discovered guilds, searched after the guild loop
+      // within this sync's budget (see ACTIVE_THREAD_SEARCH_MAX_AGE_MS).
+      const activeThreadParents: {
+        guildId: string;
+        channelId: string;
+        guildName: string;
+        channel: DiscordChannel;
+        category: string;
+      }[] = [];
+
       const finishFullGuildsPhase = startPhase("full-guilds");
       for (const [guildId, guildConfig] of fullGuilds) {
         if (signal?.aborted) break;
@@ -1172,55 +1365,30 @@ export const discordSyncSource: SyncSource = {
             guildSynced++;
           }
 
-          const runActiveThreadFullSweep = shouldRunActiveThreadFullSweep(state, guildId, Date.now());
-          if (runActiveThreadFullSweep) {
+          // fetchGuildChannels returns [] when the request fails; keep the
+          // guild's search timestamps rather than forgetting every parent.
+          if (parentChannels.length > 0) {
+            rememberActiveThreadParents(state, guildId, parentChannels.map((ch) => ch.id));
+          }
+          const parents = parentChannels.map((ch) => ({
+            guildId,
+            channelId: ch.id,
+            guildName,
+            channel: ch,
+            category: ch.parent_id ? categories.get(ch.parent_id) || "" : "",
+          }));
+          if (needsFullDiscovery) {
+            // First run for this guild: search every parent now, alongside the
+            // archived discovery below. Later syncs rotate through the budget.
             optimizationStats.activeThreadFullSweeps++;
-          }
-
-          // Active-thread search is expensive and rate-limited by a hidden
-          // Discord sub-limit. Regular freshness comes from probing known
-          // threads above; search is only a periodic discovery pass.
-          for (const ch of runActiveThreadFullSweep ? parentChannels : []) {
-            if (signal?.aborted) break;
-
-            if (isForbiddenThreadSearchParentCached(state, ch.id, Date.now())) {
-              optimizationStats.forbiddenThreadSearchParentsSkipped++;
-              guildSkipped++;
-              continue;
+            for (const parent of parents) {
+              if (signal?.aborted) break;
+              const counts = await searchActiveThreadParent(parent);
+              guildSynced += counts.synced;
+              guildSkipped += counts.skipped;
             }
-
-            optimizationStats.activeThreadParentsChecked++;
-            for await (const batch of client.searchThreads(ch.id, false, {
-              onForbidden: (channelId) => {
-                if (!isForbiddenThreadSearchParentCached(state, channelId, Date.now())) {
-                  optimizationStats.forbiddenThreadSearchParentsMarked++;
-                }
-                markForbiddenThreadSearchParent(state, channelId, Date.now());
-              },
-            })) {
-              for (const thread of batch) {
-                if (signal?.aborted) break;
-                rememberKnownGuildThread(state, thread.guild_id ?? guildId, thread.id);
-                if (canSkipChannel(thread.id, thread.last_message_id)) {
-                  guildSkipped++;
-                  continue;
-                }
-                const category = ch.parent_id ? categories.get(ch.parent_id) || "" : "";
-                const ctx: ChannelContext = {
-                  id: thread.id,
-                  type: thread.type,
-                  name: thread.name,
-                  guildId,
-                  guildName,
-                  category,
-                };
-                await syncChannel(ctx);
-                guildSynced++;
-              }
-            }
-          }
-          if (runActiveThreadFullSweep && !signal?.aborted) {
-            markActiveThreadFullSweep(state, guildId, Date.now());
+          } else {
+            activeThreadParents.push(...parents);
           }
 
           // Full archived thread discovery on first run only
@@ -1276,6 +1444,35 @@ export const discordSyncSource: SyncSource = {
         flushIdentities();
       }
       finishFullGuildsPhase();
+
+      // ========== Phase 2b: Active-thread search ==========
+      // Regular freshness comes from probing known threads in Phase 2; this
+      // search is the discovery safety net for threads the probes don't know.
+      const finishActiveThreadSearchPhase = startPhase("active-thread-search");
+      if (!signal?.aborted) {
+        const searchable = activeThreadParents.filter(
+          (p) => !isForbiddenThreadSearchParentCached(state, p.channelId, Date.now()),
+        );
+        const budget = activeThreadSearchBudget(searchable.length, syncIntervalMs);
+        const due = dueActiveThreadParents(state, searchable, Date.now());
+        optimizationStats.activeThreadSearchBudget = budget;
+        optimizationStats.activeThreadParentsDue = due.length;
+        let synced = 0;
+        for (const parent of due.slice(0, budget)) {
+          if (signal?.aborted) break;
+          synced += (await searchActiveThreadParent(parent)).synced;
+        }
+        optimizationStats.activeThreadParentsOverdue = searchable.filter((p) =>
+          isActiveThreadSearchOverdue(state, p.guildId, p.channelId, Date.now())
+        ).length;
+        log(
+          options.verbose,
+          `Active-thread search: ${Math.min(budget, due.length)}/${due.length} due parent(s) searched ` +
+            `(budget ${budget}), ${synced} thread(s) synced`,
+        );
+        flushIdentities();
+      }
+      finishActiveThreadSearchPhase();
 
       // ========== Phase 3: Sparse Guilds ==========
       const finishSparseGuildsPhase = startPhase("sparse-guilds");

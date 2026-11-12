@@ -8,6 +8,8 @@ export interface SyncOptions {
   config: SyncConfig;
   signal?: AbortSignal;
   localWork?: LocalWorkGate;
+  /** The source's resolved schedule interval (see resolveSyncIntervalMs). */
+  intervalMs?: number;
 }
 
 export interface SyncResult {

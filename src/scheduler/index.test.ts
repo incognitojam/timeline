@@ -83,6 +83,31 @@ describe("scheduler", () => {
     }
   });
 
+  test("passes the resolved schedule interval to the source", async () => {
+    const source = "scheduler-test-interval";
+    getAppStateDb()
+      .prepare("INSERT INTO sync_sources (source, enabled, interval, settings) VALUES (?, 1, NULL, '{}')")
+      .run(source);
+    const seen: Array<number | undefined> = [];
+    const syncSource: SyncSource = {
+      name: source, description: "Interval forwarding test", enabled: true,
+      canSync: async () => null,
+      sync: async (options) => {
+        seen.push(options.intervalMs);
+        return { source, success: true, eventsAdded: 0, eventsUpdated: 0, durationMs: 1 };
+      },
+    };
+    const config = testConfig(source);
+    config.scheduler.default_interval = "20m";
+
+    await new Scheduler(config, { syncSources: [syncSource] }).runNow(source, null, undefined, "manual");
+    await new Scheduler(config, { syncSources: [{ ...syncSource, defaultInterval: "4h" }] })
+      .runNow(source, null, undefined, "manual");
+
+    // No stored interval: the scheduler default, unless the source declares its own.
+    expect(seen).toEqual([20 * 60 * 1000, 4 * 60 * 60 * 1000]);
+  });
+
   test("worker dispatch passes local ownership through the scheduler to the source", async () => {
     const source = "scheduler-test-local-work";
     insertSyncSource(source);
@@ -672,6 +697,18 @@ describe("scheduler", () => {
       });
 
       await expect(scheduler.start()).rejects.toThrow("Invalid interval format: soon");
+      scheduler.stop();
+    });
+
+    test("refuses to start on an invalid scheduler default a source default overrides", async () => {
+      const source = `scheduler-test-${crypto.randomUUID()}`;
+      insertSyncSource(source, true, "2h");
+      const config = testConfig(source);
+      config.scheduler.default_interval = "later";
+
+      const scheduler = new Scheduler(config, { syncSources: [createSyncSource(source, "20m")] });
+
+      await expect(scheduler.start()).rejects.toThrow("Invalid interval format: later");
       scheduler.stop();
     });
   });
