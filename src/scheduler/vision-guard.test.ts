@@ -2,12 +2,27 @@ import { describe, expect, it } from "bun:test";
 import { visionGuardDecision } from "./index";
 
 describe("vision guard", () => {
-  it("skips only when every configured attachment description provider is unavailable", () => {
+  it("skips only when every configured attachment description model is unreachable or unlisted", () => {
     expect(visionGuardDecision(
       "attachment-descriptions",
       { models: ["preferred/model", "fallback/model"] },
       ["unavailable", "unavailable"],
     )).toMatchObject({ guard: "vision" });
+    expect(visionGuardDecision(
+      "attachment-descriptions",
+      { models: ["preferred/model", "fallback/model"] },
+      ["not-listed", "unavailable"],
+    )).toEqual({
+      guard: "vision",
+      reason: "No vision model is available: preferred/model is not listed by its provider " +
+        "(the machine serving it may be offline, or the model id may be wrong); the provider for fallback/model is unavailable",
+      detail: { vision: { availability: "unavailable" } },
+    });
+    expect(visionGuardDecision(
+      "attachment-descriptions",
+      { models: ["preferred/model", "fallback/model"] },
+      ["not-listed", "not-vision"],
+    )).toBeNull();
     expect(visionGuardDecision(
       "attachment-descriptions",
       { models: ["preferred/model", "fallback/model"] },

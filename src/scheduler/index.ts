@@ -28,7 +28,11 @@ import {
 } from "../sync/network-guard";
 import { detectPowerStatus, evaluatePowerGuard, parsePowerGuardConfig } from "../sync/power-guard";
 import { SYNC_SOURCES } from "../sync/sources";
-import { attachmentDescriptionModelRefs } from "../sync/sources/attachment-descriptions";
+import {
+  attachmentDescriptionModelRefs,
+  unavailableAttachmentDescriptionModelsReason,
+  type UnavailableAttachmentDescriptionModel,
+} from "../sync/sources/attachment-descriptions";
 import { runSyncSource } from "../sync/run";
 import type { SyncResult, SyncSource } from "../sync/types";
 
@@ -112,20 +116,18 @@ async function powerGuard(sourceConfig: Record<string, unknown> | undefined): Pr
 export function visionGuardDecision(
   source: string,
   sourceConfig: Record<string, unknown> | undefined,
-  availabilities: Array<"unavailable" | "not-vision" | "available" | "unknown">,
+  availabilities: VisionAvailability[],
 ): GuardSkip | null {
   const models = attachmentDescriptionModelRefs(sourceConfig);
-  if (
-    source !== "attachment-descriptions" ||
-    !models ||
-    availabilities.length !== models.length ||
-    !availabilities.every((availability) => availability === "unavailable")
-  ) {
-    return null;
+  if (source !== "attachment-descriptions" || !models || availabilities.length !== models.length) return null;
+  const unavailable: UnavailableAttachmentDescriptionModel[] = [];
+  for (const [index, availability] of availabilities.entries()) {
+    if (availability !== "unavailable" && availability !== "not-listed") return null;
+    unavailable.push({ model: models[index], availability });
   }
   return {
     guard: "vision",
-    reason: `Vision providers for ${models.join(", ")} are unavailable`,
+    reason: `No vision model is available: ${unavailableAttachmentDescriptionModelsReason(unavailable)}`,
     detail: { vision: { availability: "unavailable" } },
   };
 }
@@ -138,7 +140,7 @@ async function visionGuard(source: string, sourceConfig: Record<string, unknown>
   for (const model of models) {
     const availability = await getVisionAvailability(config.llm, model);
     availabilities.push(availability);
-    if (availability !== "unavailable") break;
+    if (availability !== "unavailable" && availability !== "not-listed") break;
   }
   return visionGuardDecision(
     source,

@@ -30,14 +30,29 @@ export interface AttachmentDescriptionsSettings {
 
 export interface AttachmentDescriptionModelWarning {
   model: string;
-  availability: "not-vision";
+  availability: Extract<VisionAvailability, "not-vision" | "not-listed">;
   message: string;
+}
+
+/** A configured model that cannot run now but may later, so a scheduled run waits for it. */
+export interface UnavailableAttachmentDescriptionModel {
+  model: string;
+  availability: Extract<VisionAvailability, "unavailable" | "not-listed">;
 }
 
 export type AttachmentDescriptionModelSelection =
   | { status: "selected"; model: string; warnings: AttachmentDescriptionModelWarning[] }
-  | { status: "unavailable"; warnings: AttachmentDescriptionModelWarning[] }
-  | { status: "not-vision"; warnings: AttachmentDescriptionModelWarning[] };
+  | { status: "unavailable"; unavailable: UnavailableAttachmentDescriptionModel[]; warnings: AttachmentDescriptionModelWarning[] }
+  | { status: "not-vision"; unavailable: UnavailableAttachmentDescriptionModel[]; warnings: AttachmentDescriptionModelWarning[] };
+
+/** Why each model cannot run now, for a deferred run's reason and a forced run's error. */
+export function unavailableAttachmentDescriptionModelsReason(
+  unavailable: UnavailableAttachmentDescriptionModel[],
+): string {
+  return unavailable.map(({ model, availability }) => availability === "not-listed"
+    ? `${model} is not listed by its provider (the machine serving it may be offline, or the model id may be wrong)`
+    : `the provider for ${model} is unavailable`).join("; ");
+}
 
 export const DEFAULT_ATTACHMENT_DESCRIPTION_TIME_BUDGET_MS = 5 * 60_000;
 export const DEFAULT_ATTACHMENT_DESCRIPTION_SELECTION_LIMIT = 500;
@@ -136,6 +151,7 @@ export async function selectAttachmentDescriptionModel(
   ) => Promise<VisionAvailability> = getVisionAvailability,
 ): Promise<AttachmentDescriptionModelSelection> {
   const warnings: AttachmentDescriptionModelWarning[] = [];
+  const unavailable: UnavailableAttachmentDescriptionModel[] = [];
   for (const model of models) {
     const availability = await getAvailability(llmConfig, model);
     if (availability === "available" || availability === "unknown") {
@@ -147,15 +163,25 @@ export async function selectAttachmentDescriptionModel(
         availability,
         message: `Configured model ${model} is not vision-capable`,
       });
+    } else {
+      unavailable.push({ model, availability });
+      // A fallback may run instead, so keep an unlisted preference visible.
+      if (availability === "not-listed") {
+        warnings.push({
+          model,
+          availability,
+          message: `Configured model ${model} is not listed by its provider`,
+        });
+      }
     }
   }
-  return warnings.length > 0
-    ? { status: "not-vision", warnings }
-    : { status: "unavailable", warnings };
+  return warnings.some(({ availability }) => availability === "not-vision")
+    ? { status: "not-vision", unavailable, warnings }
+    : { status: "unavailable", unavailable, warnings };
 }
 
 export function attachmentDescriptionAllUnavailableFailure(
-  models: string[],
+  unavailable: UnavailableAttachmentDescriptionModel[],
   startedAt: number,
 ): SyncResult {
   return {
@@ -163,21 +189,25 @@ export function attachmentDescriptionAllUnavailableFailure(
     success: false,
     eventsAdded: 0,
     eventsUpdated: 0,
-    error: `Configured attachment description models are unavailable: ${models.join(", ")}`,
+    error: `Configured attachment description models are unavailable: ${unavailableAttachmentDescriptionModelsReason(unavailable)}`,
     durationMs: Date.now() - startedAt,
   };
 }
 
 export function attachmentDescriptionNotVisionResult(
   warnings: AttachmentDescriptionModelWarning[],
+  unavailable: UnavailableAttachmentDescriptionModel[],
   startedAt: number,
 ): SyncResult {
+  const notVision = warnings.filter(({ availability }) => availability === "not-vision").map(({ model }) => model);
   return {
     source: "attachment-descriptions",
     success: false,
     eventsAdded: 0,
     eventsUpdated: 0,
-    error: `No configured attachment description model is vision-capable: ${warnings.map(({ model }) => model).join(", ")}`,
+    error: unavailable.length === 0
+      ? `No configured attachment description model is vision-capable: ${notVision.join(", ")}`
+      : `No configured attachment description model can run: ${notVision.map((model) => `${model} is not vision-capable`).join("; ")}; ${unavailableAttachmentDescriptionModelsReason(unavailable)}`,
     durationMs: Date.now() - startedAt,
     metadata: { modelWarnings: warnings },
   };
@@ -327,10 +357,10 @@ export const attachmentDescriptionsSyncSource: SyncSource = {
         // Scheduled runs are deferred by visionGuard before reaching sync. This only
         // occurs for a forced manual run or an availability race, both of which need
         // an honest failure record.
-        return attachmentDescriptionAllUnavailableFailure(settings.models, startedAt);
+        return attachmentDescriptionAllUnavailableFailure(selection.unavailable, startedAt);
       }
       if (selection.status === "not-vision") {
-        return attachmentDescriptionNotVisionResult(selection.warnings, startedAt);
+        return attachmentDescriptionNotVisionResult(selection.warnings, selection.unavailable, startedAt);
       }
       await initProviders(config.llm);
       const { candidates, mediaStore } = await runLocalWork(options.localWork, options.signal, async () => ({
