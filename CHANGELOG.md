@@ -1,5 +1,12 @@
 # Timeline
 
+## 0.17.3
+
+### Patch Changes
+
+- a1a9468: Stop the image description job failing every run while the machine serving its model is offline. When the provider answers but no longer lists the model, scheduled runs are now skipped with a reason on the sync page and resume when the model is listed again. A manual run still fails, and says the model is not listed instead of claiming it is not vision-capable.
+- edf2ae2: Image descriptions no longer stall while another sync or import is running. The description job keeps describing images and writes the finished descriptions together as soon as the other job finishes.
+
 ## 0.17.2
 
 ### Patch Changes
