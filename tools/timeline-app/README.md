@@ -83,9 +83,8 @@ General → Login Items.
 For a build-only local bundle, run `./build.sh` without `--install`; it still
 writes `Timeline.app` in this directory.
 Set `TIMELINE_CODESIGN_IDENTITY=-` to force ad-hoc signing for build-only CI.
-The product version comes from the repository root `package.json`. Local builds
-use `CFBundleVersion` from `Info.plist`; packaging CI can set the monotonic
-numeric `TIMELINE_BUILD_NUMBER` override. Local builds sign the app and its agent launcher. Distribution packaging also
+The product version comes from the repository root `package.json`. Build numbering for local
+builds and CI follows [the release process](../../docs/operations/releases.md). Local builds sign the app and its agent launcher. Distribution packaging also
 re-signs the embedded runtime and native libraries.
 
 ## Verifying
