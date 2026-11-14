@@ -12,6 +12,7 @@ import { spawn } from "node:child_process";
 import { accessSync, constants, existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
+import { getGoogleMessagesBinaryPath, GOOGLE_MESSAGES_STATE_DIR } from "../../runtime-paths";
 import { expandPath } from "../../config";
 import { getAppStateDb, getSyncState, setSyncState } from "../../db/app-state";
 import { getDb, initDb } from "../../db/schema";
@@ -20,8 +21,7 @@ import { EVENT_SOURCE, importGoogleMessages, type ImportStats } from "./parser";
 import { existingMediaManifest } from "./existing-media";
 import { backgroundCommand } from "../../lib/background-priority";
 
-export const DEFAULT_STATE_DIR = "~/.local/share/timeline-gmessages";
-export const DEFAULT_BINARY = `${DEFAULT_STATE_DIR}/timeline-gmessages`;
+export const DEFAULT_STATE_DIR = GOOGLE_MESSAGES_STATE_DIR;
 export const SESSION_FILE = "session.json";
 /**
  * Re-fetch this far behind a conversation's cursor so messages that land with
@@ -64,10 +64,10 @@ interface ResolvedConfig {
   stateDir: string;
 }
 
-function resolveConfig(config: Record<string, unknown> | undefined): ResolvedConfig | string {
+export function resolveGoogleMessagesConfig(config: Record<string, unknown> | undefined): ResolvedConfig | string {
   const account = typeof config?.account === "string" ? config.account.trim() : "";
   if (!account) return `Missing 'account' in ${EVENT_SOURCE} sync config`;
-  const binary = expandPath(typeof config?.binary === "string" && config.binary !== "" ? config.binary : DEFAULT_BINARY);
+  const binary = expandPath(typeof config?.binary === "string" && config.binary !== "" ? config.binary : getGoogleMessagesBinaryPath());
   const stateDir = expandPath(typeof config?.state_dir === "string" && config.state_dir !== "" ? config.state_dir : DEFAULT_STATE_DIR);
   return { account, binary, stateDir };
 }
@@ -186,8 +186,8 @@ export const googleMessagesSyncSource: SyncSource = {
       type: "string",
       format: "path",
       label: "Sidecar binary",
-      default: DEFAULT_BINARY,
-      description: "Built from tools/timeline-gmessages",
+      get default() { return getGoogleMessagesBinaryPath(); },
+      description: "Bundled with Timeline.app; override only to use a custom sidecar.",
     },
     {
       key: "state_dir",
@@ -200,7 +200,7 @@ export const googleMessagesSyncSource: SyncSource = {
   ],
 
   async canSync(config?: Record<string, unknown>): Promise<string | null> {
-    const resolved = resolveConfig(config);
+    const resolved = resolveGoogleMessagesConfig(config);
     if (typeof resolved === "string") return resolved;
     try {
       accessSync(resolved.binary, constants.X_OK);
@@ -225,7 +225,7 @@ export const googleMessagesSyncSource: SyncSource = {
       ...(stats ? { metadata: metadataFor(stats) } : {}),
     });
 
-    const resolved = resolveConfig(options.config.sources[EVENT_SOURCE]);
+    const resolved = resolveGoogleMessagesConfig(options.config.sources[EVENT_SOURCE]);
     if (typeof resolved === "string") return fail(resolved);
 
     const appState = getAppStateDb();

@@ -181,6 +181,8 @@ async function buildArtifact(outputPath: string): Promise<void> {
     cpSync(join(repoRoot, "scripts", "artifact", "timeline-service"), join(binDir, "timeline-service"));
     chmodSync(join(binDir, "timeline-service"), 0o755);
 
+    await run(["bash", join(repoRoot, "tools", "timeline-gmessages", "build-bundled.sh"), stage]);
+
     cpSync(join(repoRoot, "web", "dist"), join(resourcesDir, "web"), { recursive: true });
 
     const builtAt = process.env.TIMELINE_BUILT_AT ?? new Date().toISOString();

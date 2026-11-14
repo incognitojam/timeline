@@ -35,7 +35,7 @@ For a first installation, drag the app to `/Applications`, then configure the se
 
 The app supports both Applications locations. Bundled LaunchAgents use `BundleProgram` and a small native launcher that resolves scripts relative to the running bundle and opens logs in the current user's home directory. The signed bundle contains no build-user LaunchAgent paths and requires no plist edits after signing.
 
-The DMG includes the service, web UI, Bun, and native service libraries. Existing source setup, config and authentication requirements still apply. Recall capture runs inside the app and requires Screen Recording permission for Timeline plus the external `cwebp` encoder; see [Recall setup](../user/recall-setup.md). Tailscale remains an optional external installation. Neither external tool is silently downloaded by the DMG.
+The DMG includes the service, web UI, Bun, the Google Messages sidecar, and native service libraries. Existing source setup, config and authentication requirements still apply. Recall capture runs inside the app and requires Screen Recording permission for Timeline plus the external `cwebp` encoder; see [Recall setup](../user/recall-setup.md). Tailscale remains an optional external installation. Neither external tool is silently downloaded by the DMG.
 
 ## Native updates
 
@@ -58,3 +58,11 @@ A GitHub source release may appear before its DMGs. Packaging fails if the relea
 For a packaging failure, rerun the failed jobs. The macOS DMG workflow also supports **Run workflow** on `main`, with the existing release tag and its full expected commit SHA, to retry after correcting credentials or external failures. After a workflow-only fix lands on `main`, use **Run workflow** to package the existing tag with the updated workflow; rerunning the original run retains its old workflow. A defect in the tagged build scripts needs a new release containing the fix. Retries do not overwrite existing release assets; replacing an already uploaded DMG is a separate maintainer decision.
 
 The current Changesets action publishes the source release before assets are attached. Repository release immutability must therefore remain disabled for this flow; enabling immutable releases requires switching to a draft-release publication sequence first.
+
+## Google Messages sidecar
+
+Local builds, PR and trusted macOS CI, DMG packaging and the signing-check workflow use the exact Go compiler in `mise.toml`. `build.sh` fails before compilation if Go is missing or differs from that pin. The service artifact builder compiles `tools/timeline-gmessages` for the app's native architecture with CGO disabled, trimmed paths and pinned, vendored dependencies. The resulting executable lives in `Contents/Resources/timeline-service/bin/timeline-gmessages` beside Bun.
+
+The local app build signs it with the hardened runtime. `package-dmg.sh`'s nested Mach-O pass re-signs it with Developer ID and the hardened runtime before app sealing and notarization. It needs no entitlements: it has no JIT, dynamic native addons, app sandbox or protected macOS resource access; ordinary outbound networking and files in the user's state directory require none. `smoke.sh` verifies its signature and runtime flag, executes session-free `--help`, checks the media-contract flag and source archive, and checks the service's default-path resolver against the bundle. No pairing or message dump is part of this check.
+
+The sidecar is AGPL v3 or later. Its license, notice and corresponding-source archive ship under `Contents/Resources/timeline-service/Resources/licenses/timeline-gmessages/`. The archive contains the source actually compiled, vendored dependencies with their notices, and rebuild instructions; the notice also links to `tools/timeline-gmessages` at the release tag (or commit for development builds). This ships source alongside the executable even if the repository link is unavailable. Timeline's separate MIT components retain their license. This describes the distribution measures, not legal advice.

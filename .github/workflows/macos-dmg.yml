@@ -40,7 +40,7 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@v5
         with:
-          install_args: bun
+          install_args: bun go
           # Restore no cached binaries into a job holding write or signing credentials.
           cache: false
       - uses: actions/setup-python@v7

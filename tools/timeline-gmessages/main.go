@@ -92,6 +92,7 @@ dump flags:
   -cursors PATH     JSON {"<conversation id>": <unix ms>} overriding -since per conversation ("-" = stdin)
   -max-messages N   Stop paging each conversation after ~N messages (0 = all, default 0)
   -media DIR        Download message media into DIR (default: skip media)
+  -existing-media PATH  JSON manifest of stored attachments to verify and reuse
   -folder inbox|archive|spam|all   Which folders to dump (default all, including spam & blocked)
 
 Files (in the working directory):

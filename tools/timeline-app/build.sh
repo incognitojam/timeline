@@ -23,6 +23,8 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+"$REPO_ROOT/tools/timeline-gmessages/build-bundled.sh" --check
+
 source "$PWD/sparkle.sh"
 
 # Compile the SwiftUI app. -parse-as-library makes @main the entry point (the
@@ -76,6 +78,7 @@ else
   echo "      (run ../timeline-recall/create-signing-identity.sh for a stable identity)" >&2
   SIGNING_IDENTITY="-"
 fi
+codesign --force --options runtime --sign "$SIGNING_IDENTITY" "$SERVICE_ARTIFACT/bin/timeline-gmessages"
 codesign --force --sign "$SIGNING_IDENTITY" "$APP/Contents/MacOS/TimelineAgent"
 codesign --force --identifier com.incognitojam.timeline --sign "$SIGNING_IDENTITY" "$APP"
 codesign --verify --deep --strict "$APP"

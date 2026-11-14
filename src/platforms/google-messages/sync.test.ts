@@ -8,7 +8,7 @@ import { runSourceOnce } from "../../sync/once";
 import { existingMediaManifest, mediaCopyUri } from "./existing-media";
 import { EVENT_SOURCE } from "./parser";
 import { deleteSyncState, getAppStateDb, getSyncState, setSyncState } from "../../db/app-state";
-import { FULL_LISTING_INTERVAL_MS, googleMessagesSyncSource, MEDIA_STAGING_PREFIX, REACTION_REFRESH_MS, SYNC_OVERLAP_MS, type GoogleMessagesSyncState } from "./sync";
+import { FULL_LISTING_INTERVAL_MS, resolveGoogleMessagesConfig, DEFAULT_STATE_DIR, googleMessagesSyncSource, MEDIA_STAGING_PREFIX, REACTION_REFRESH_MS, SYNC_OVERLAP_MS, type GoogleMessagesSyncState } from "./sync";
 
 // Ofcom drama-range numbers, one per fixture conversation.
 const CONTACT_NUMBERS: Record<string, string> = { "1": "+447700900001", "2": "+447700900002" };
@@ -333,5 +333,42 @@ describe("google-messages sync source", () => {
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/exited with code 3: boom/);
     expect(state()).toBeNull();
+  });
+});
+
+
+describe("Google Messages binary defaults", () => {
+  const previousRoot = process.env.TIMELINE_RESOURCE_ROOT;
+  let root: string;
+  beforeEach(() => {
+    root = join(tmpdir(), `gmessages-bundle-${randomUUID()}`);
+    mkdirSync(join(root, "Resources"), { recursive: true });
+    mkdirSync(join(root, "bin"));
+    delete process.env.TIMELINE_RESOURCE_ROOT;
+  });
+  afterEach(() => {
+    if (previousRoot === undefined) delete process.env.TIMELINE_RESOURCE_ROOT;
+    else process.env.TIMELINE_RESOURCE_ROOT = previousRoot;
+    rmSync(root, { recursive: true, force: true });
+  });
+  it("uses the documented standalone path outside the bundle", () => {
+    const config = resolveGoogleMessagesConfig({ account: "Owner" });
+    expect(config).toEqual({ account: "Owner", binary: `${process.env.HOME}/.local/share/timeline-gmessages/timeline-gmessages`, stateDir: `${process.env.HOME}/.local/share/timeline-gmessages` });
+  });
+  it("uses a relocated bundle while preserving the state directory", () => {
+    const binary = join(root, "bin", "timeline-gmessages");
+    writeFileSync(binary, "#!/bin/sh\nexit 0\n");
+    chmodSync(binary, 0o755);
+    process.env.TIMELINE_RESOURCE_ROOT = join(root, "Resources");
+    expect(resolveGoogleMessagesConfig({ account: "Owner" })).toEqual({ account: "Owner", binary, stateDir: `${process.env.HOME}/.local/share/timeline-gmessages` });
+    expect(googleMessagesSyncSource.configSchema?.find((field) => field.key === "binary")?.default).toBe(binary);
+    expect(googleMessagesSyncSource.configSchema?.find((field) => field.key === "state_dir")?.default).toBe(DEFAULT_STATE_DIR);
+  });
+  it("fails on a missing packaged binary without falling back, and honors explicit overrides", () => {
+    process.env.TIMELINE_RESOURCE_ROOT = join(root, "Resources");
+    expect(() => resolveGoogleMessagesConfig({ account: "Owner" })).toThrow("Packaged Google Messages sidecar is missing");
+    const binary = join(root, "custom-sidecar");
+    expect(resolveGoogleMessagesConfig({ account: "Owner", binary })).toMatchObject({ binary });
+    expect(resolveGoogleMessagesConfig({ account: "Owner", binary: "~/.local/share/timeline-gmessages/timeline-gmessages" })).toMatchObject({ binary: `${process.env.HOME}/.local/share/timeline-gmessages/timeline-gmessages` });
   });
 });
