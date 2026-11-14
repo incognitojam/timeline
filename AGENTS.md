@@ -8,14 +8,14 @@ Timeline is a personal data aggregator that indexes exports from various service
 
 ## Vendored Repositories
 
-This project vendors external repositories under `repos/`
+This project vendors external repositories under `repos/`.
 
   - Use vendored repositories as read-only reference material when working with related libraries
   - Prefer examples and patterns from the vendored source code over generated guesses or web search results
   - Do not edit files under `repos/` unless explicitly asked
   - Do not import from `repos/` - application code should continue importing from normal package dependencies
 
-When writing Effect code, inspect `repos/effect/` for examples of idiomatic usage, tests, module structure, and API design. Treat it as the source of truth for Effect patterns.
+When writing Effect code, inspect `repos/effect/` (pinned to the installed Effect release; provenance and refresh instructions in [repos/README.md](repos/README.md)). Start with `LLMS.md` and `ai-docs/src/` for examples, and `packages/effect/src/` and `packages/effect/test/` for implementation and tests. Check import paths and APIs against `node_modules/effect/package.json`, `node_modules/effect/src/`, and the shipped `node_modules/effect/ai-docs/` before using examples from another branch or version. In particular, effect-smol's main-branch examples use `effect/unstable/*` paths and older CLI constructors; the installed package uses `effect/cli` with constructors such as `Flag.String` and `Argument.String`.
 
 When reasoning about SolidJS reactivity (signals, resources, Suspense/transitions) or Solid Query behavior, read the actual implementation rather than guessing: `repos/solid/` (pinned to the installed solid-js version; the reactive core, including createResource and SuspenseContext, is `packages/solid/src/reactive/signal.ts`) and `repos/query/` (pinned to the installed @tanstack/solid-query version; the Solid adapter is `packages/solid-query/`, cache/observer logic in `packages/query-core/`).
 
