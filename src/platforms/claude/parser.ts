@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { parserCliArgs } from "../../ingest/cli";
 import { getDb, initDb } from "../../db/schema";
 import {
   onImportComplete,
@@ -300,32 +301,21 @@ export async function importClaudeExport(
 
 // CLI
 if (import.meta.main) {
-  const args = process.argv.slice(2);
+  const args = parserCliArgs({
+    usage: "bun run src/platforms/claude/parser.ts <export.zip> [account-name]",
+    flags: ["--refresh-raw-data"],
+    minArgs: 1,
+    details: `Imports Claude.ai conversation export into timeline.
+Export from: claude.ai → Settings → Account → Export Data
+
+  --refresh-raw-data  Rewrite content + raw_data for existing rows
+
+Examples:
+  bun run src/platforms/claude/parser.ts ~/Downloads/data-export.zip my-account
+  bun run src/platforms/claude/parser.ts ~/Downloads/data-export.zip my-account --refresh-raw-data`,
+  });
   const refreshRawData = args.includes("--refresh-raw-data");
   const positional = args.filter((a) => !a.startsWith("--"));
-
-  if (positional.length < 1) {
-    console.log(
-      "Usage: bun run src/platforms/claude/parser.ts <export.zip> [account-name] [--refresh-raw-data]"
-    );
-    console.log("");
-    console.log("Imports Claude.ai conversation export into timeline.");
-    console.log("Export from: claude.ai → Settings → Account → Export Data");
-    console.log("");
-    console.log("Flags:");
-    console.log(
-      "  --refresh-raw-data  Rewrite content + raw_data for existing rows"
-    );
-    console.log("");
-    console.log("Examples:");
-    console.log(
-      "  bun run src/platforms/claude/parser.ts ~/Downloads/data-export.zip my-account"
-    );
-    console.log(
-      "  bun run src/platforms/claude/parser.ts ~/Downloads/data-export.zip my-account --refresh-raw-data"
-    );
-    process.exit(1);
-  }
 
   const zipPath = positional[0].startsWith("~")
     ? positional[0].replace("~", process.env.HOME || "")

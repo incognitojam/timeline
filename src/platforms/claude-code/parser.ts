@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { parserCliArgs } from "../../ingest/cli";
 import { conversationSourceAccountKey, getDb, initDb } from "../../db/schema";
 import {
   onImportComplete,
@@ -693,7 +694,10 @@ export async function importClaudeCode(
 
 // CLI
 if (import.meta.main) {
-  const args = process.argv.slice(2);
+  const args = parserCliArgs({
+    usage: "bun run src/platforms/claude-code/parser.ts [projects-dir] [account-name]",
+    flags: ["--refresh-raw-data"],
+  });
   const refreshRawData = args.includes("--refresh-raw-data");
   const positional = args.filter((a) => !a.startsWith("--"));
 

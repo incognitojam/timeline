@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { parserCliArgs } from "../../ingest/cli";
 import { getDb, initDb } from "../../db/schema";
 import {
   upsertIdentities,
@@ -614,7 +615,10 @@ async function auth(): Promise<void> {
 
 // CLI
 if (import.meta.main) {
-  const args = process.argv.slice(2);
+  const args = parserCliArgs({
+    usage: "bun run src/platforms/monzo/parser.ts [auth|status|reset]",
+    flags: ["--headless"],
+  });
   const headless = args.includes("--headless");
   const command = args.find((a) => !a.startsWith("--"));
 

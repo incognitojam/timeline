@@ -9,6 +9,36 @@ import { Database } from "bun:sqlite";
 import { getDb, initDb } from "../db/schema";
 
 /**
+ * Validate options before a CLI opens input files, databases, or media.
+ * Keep positional arguments and defaults with the caller.
+ */
+export function parserCliArgs(
+  options: {
+    usage: string;
+    flags?: readonly string[];
+    minArgs?: number;
+    details?: string;
+  },
+  args = process.argv.slice(2),
+): string[] {
+  const { usage, flags = [], minArgs = 0, details } = options;
+  for (const arg of args) {
+    if (arg.startsWith("-") && arg !== "--help" && arg !== "-h" && !flags.includes(arg)) {
+      console.error(`Unknown option: ${arg}. Use --help for usage.`);
+      process.exit(1);
+    }
+  }
+  const help = args.includes("--help") || args.includes("-h");
+  if (help || args.filter((arg) => !flags.includes(arg)).length < minArgs) {
+    console.log(`Usage: ${usage}${flags.map((flag) => ` [${flag}]`).join("")}`);
+    console.log("\n  --help, -h  Show usage without importing");
+    if (details) console.log(`\n${details}`);
+    process.exit(help ? 0 : 1);
+  }
+  return args;
+}
+
+/**
  * Standard parser function signature.
  * Takes a database, import path, and account name.
  */
@@ -62,18 +92,11 @@ export function runParser(fn: ParserFn, options: ParserCliOptions): void {
     minArgs = 1,
   } = options;
 
-  const args = process.argv.slice(2);
-
-  if (args.length < minArgs) {
-    console.log(`Usage: bun run src/${name}.ts ${usage}`);
-    if (examples.length > 0) {
-      console.log("\nExamples:");
-      for (const ex of examples) {
-        console.log(`  ${ex}`);
-      }
-    }
-    process.exit(1);
-  }
+  const args = parserCliArgs({
+    usage: `bun run src/${name}.ts ${usage}`,
+    minArgs,
+    details: examples.length ? `Examples:\n${examples.map((ex) => `  ${ex}`).join("\n")}` : undefined,
+  });
 
   const importPath = args[0];
   const accountName = args[1] || defaultAccount;

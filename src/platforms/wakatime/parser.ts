@@ -14,6 +14,7 @@
  */
 
 import { Database } from "bun:sqlite";
+import { parserCliArgs } from "../../ingest/cli";
 import { getDb, initDb } from "../../db/schema";
 import {
   aggregateIntoSessions,
@@ -214,22 +215,20 @@ async function importWakaTime(
 }
 
 // CLI
-const args = process.argv.slice(2);
-if (args.length < 1) {
-  console.log("Usage: bun run src/platforms/wakatime/parser.ts <export-file> [account-name] [--include-heartbeats]");
-  console.log("");
-  console.log("Options:");
-  console.log("  --include-heartbeats  Also import individual heartbeats (can add many events)");
-  console.log("");
-  console.log("Examples:");
-  console.log("  bun run src/platforms/wakatime/parser.ts ./imports/wakatime-export.json");
-  console.log("  bun run src/platforms/wakatime/parser.ts ./imports/wakatime-export.json my-account --include-heartbeats");
-  process.exit(1);
-}
+const args = parserCliArgs({
+  usage: "bun run src/platforms/wakatime/parser.ts <export-file> [account-name]",
+  flags: ["--include-heartbeats"],
+  minArgs: 1,
+  details: `  --include-heartbeats  Also import individual heartbeats (can add many events)
 
-const exportPath = args[0];
+Examples:
+  bun run src/platforms/wakatime/parser.ts ./imports/wakatime-export.json
+  bun run src/platforms/wakatime/parser.ts ./imports/wakatime-export.json my-account --include-heartbeats`,
+});
+const positional = args.filter((arg) => !arg.startsWith("--"));
+const exportPath = positional[0];
 const includeHeartbeats = args.includes("--include-heartbeats");
-const accountName = args.find((a) => a !== exportPath && !a.startsWith("--")) || "default";
+const accountName = positional[1] || "default";
 
 const db = getDb();
 initDb(db);
