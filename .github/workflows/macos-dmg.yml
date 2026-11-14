@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag (vX.Y.Z)
+        description: Existing draft release tag (vX.Y.Z)
         required: true
         type: string
       commit:
@@ -56,7 +56,13 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
           git merge-base --is-ancestor HEAD origin/main
           test "$RELEASE_TAG" = "v$(bun run scripts/print-product-version.ts)"
-          gh release view "$RELEASE_TAG" --json tagName --jq .tagName
+          releases="$(gh api "repos/$GH_REPO/releases" --paginate --slurp)"
+          jq -e --arg tag "$RELEASE_TAG" '[.[][] | select(.tag_name == $tag)] | length == 1' <<< "$releases"
+          is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)"
+          if [ "$is_draft" != true ]; then
+            echo "Release $RELEASE_TAG is already published; refusing to replace its assets." >&2
+            exit 1
+          fi
       - run: bun install --frozen-lockfile
       - run: bun install --frozen-lockfile
         working-directory: web
@@ -84,7 +90,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ inputs.tag }}
         run: ./generate-appcast.sh
-      - name: Attach DMG to release
+      - name: Attach assets to draft release
         env:
           RELEASE_TAG: ${{ inputs.tag }}
           EXPECTED_COMMIT: ${{ inputs.commit }}
@@ -92,10 +98,41 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           test "$(gh api "repos/$GH_REPO/commits/refs%2Ftags%2F$RELEASE_TAG" --jq .sha)" = "$EXPECTED_COMMIT"
+          releases="$(gh api "repos/$GH_REPO/releases" --paginate --slurp)"
+          jq -e --arg tag "$RELEASE_TAG" '[.[][] | select(.tag_name == $tag)] | length == 1' <<< "$releases"
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
           if [ -f dist/macos/appcast.xml ]; then
             test "$(gh repo view "$GH_REPO" --json visibility --jq .visibility)" = PUBLIC
+          else
+            has_appcast="$(gh release view "$RELEASE_TAG" --json assets --jq 'any(.assets[]; .name == "appcast.xml")')"
+            if [ "$has_appcast" != false ]; then
+              echo "Draft already has an appcast; restore update-feed configuration before retrying." >&2
+              exit 1
+            fi
           fi
-          gh release upload "$RELEASE_TAG" dist/macos/*.dmg dist/macos/*.sha256
+          # Rebuild the whole draft asset set on retries so signatures and checksums match the DMG.
+          gh release upload "$RELEASE_TAG" dist/macos/*.dmg dist/macos/*.sha256 --clobber
           if [ -f dist/macos/appcast.xml ]; then
-            gh release upload "$RELEASE_TAG" dist/macos/appcast.xml
+            gh release upload "$RELEASE_TAG" dist/macos/appcast.xml --clobber
+          fi
+      - name: Publish the completed release
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          releases="$(gh api "repos/$GH_REPO/releases" --paginate --slurp)"
+          jq -e --arg tag "$RELEASE_TAG" '[.[][] | select(.tag_name == $tag)] | length == 1' <<< "$releases"
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
+          else
+            # An older draft can finish after a newer stable release has shipped.
+            latest="$(bun -e '
+              const releases = (await Bun.stdin.json()).flat();
+              const version = process.argv[1].replace(/^v/, "");
+              const stable = releases.filter(r => !r.draft && !r.prerelease);
+              const newer = stable.some(r => Bun.semver.order(r.tag_name.replace(/^v/, ""), version) > 0);
+              console.log(!newer);
+            ' "$RELEASE_TAG" <<< "$releases")"
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest="$latest"
           fi
