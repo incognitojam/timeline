@@ -127,7 +127,13 @@ Holds the session open, logging incoming message events and a heartbeat every
 
 The sync source runs `dump` with `-media` pointing at a per-run staging
 directory in the state dir and moves each file into Timeline's media storage
-as it imports the message.
+as it imports the message. It also passes `-existing-media` with a per-run JSON
+manifest of full-size stored copies, keyed by message ID then media ID. Each
+candidate has an absolute `path`, byte `size`, and `sha256`. The sidecar checks
+that file's size and hash before emitting `status: "cached"` without a staging
+path; missing or corrupt copies are downloaded again. Thumbnail copies do not
+qualify, so a later run can still fetch the full attachment. Rebuild the sidecar
+alongside the sync source when upgrading to this contract.
 
 Google keeps a smaller copy of every attachment beside the full-size one, under
 its own media ID and decryption key. Some messages arrive with only the
