@@ -128,8 +128,10 @@ The README screenshots in `docs/screenshots/` show demo data for a fictional per
 ## Relocatable service artifact
 
 Build the service, scheduler/database workers, web frontend, pinned Bun
-runtime, native runtime dependencies, and version metadata into an artifact
-that runs without the source checkout:
+runtime, Google Messages sidecar, native runtime dependencies, and version metadata into an artifact
+that runs without the source checkout. The build and artifact smoke test require
+the pinned Go compiler: run `mise install go`, then activate mise or prefix
+the commands below with `mise exec --`:
 
 ```bash
 bun run build:service

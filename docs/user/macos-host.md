@@ -10,6 +10,7 @@ supervised by the OS so it starts at login and restarts on crash.
 - The repository's pinned Bun on your `PATH` to build the app; see
   [Toolchain](../operations/development.md#toolchain). The installed service
   carries its own copy of that runtime.
+- The pinned Go compiler (`mise install go`) to build the bundled Google Messages sidecar. Build with `mise exec -- tools/timeline-app/build.sh` from the repository root if mise is not activated. Go is not needed to run an installed app.
 - A checkout to build from. It does not need to remain after installation.
 
 ## Install
@@ -225,6 +226,8 @@ bun install --frozen-lockfile
 (cd web && bun install --frozen-lockfile)
 (cd tools/timeline-app && ./build.sh --install)
 ```
+
+Google Messages updates with the app. Its pairing state stays in `~/.local/share/timeline-gmessages`; an old standalone executable there is left untouched. With no binary override, sync automatically uses the bundled copy. If **Sidecar binary** has an explicit old path, choose **Use default** and save in the sync dashboard. No re-pair is needed; see [Google Messages setup](source-setup.md#google-messages-setup).
 
 The product version comes from the root `package.json` and is advanced through
 the release process documented in [releases.md](../operations/releases.md). Local builds use

@@ -399,19 +399,19 @@ Live SMS, MMS and RCS text sync from the Google Messages app on your phone, usin
 
 **Requirements**: the phone must be online (everything is proxied through it), and Google-account cookies are needed to pair — QR pairing no longer exists.
 
-1. Build and install the sidecar:
+1. Install or update Timeline.app. It includes the matching sidecar; no Go installation or separate binary copy is needed for app users. For development or Linux, follow the [standalone build instructions](../../tools/timeline-gmessages/README.md#build).
+2. Create `~/.local/share/timeline-gmessages`, save `cookies.txt` there using the [cookie extraction instructions](../../tools/timeline-gmessages/README.md#1-extract-account-cookies), then pair from that state directory:
    ```bash
-   cd tools/timeline-gmessages && go build -o timeline-gmessages .
-   mkdir -p ~/.local/share/timeline-gmessages && cp timeline-gmessages ~/.local/share/timeline-gmessages/
+   mkdir -p ~/.local/share/timeline-gmessages
+   cd ~/.local/share/timeline-gmessages
+   ~/Applications/Timeline.app/Contents/Resources/timeline-service/bin/timeline-gmessages pair
    ```
-2. Pair from the state directory, following [tools/timeline-gmessages/README.md](../../tools/timeline-gmessages/README.md) for cookie extraction:
-   ```bash
-   cd ~/.local/share/timeline-gmessages && ./timeline-gmessages pair
-   ```
-   This writes `session.json`; the sync source only needs that file, not the cookies.
-3. In the sync dashboard, enable **google-messages** and set **Account label** (stored as `source_account`, e.g. your name). The binary and state-directory paths default to `~/.local/share/timeline-gmessages`.
+   Use `/Applications/Timeline.app/...` instead if you installed there. This writes `session.json`; the sync source only needs that file, not the cookies.
+3. In the sync dashboard, enable **google-messages** and set **Account label** (stored as `source_account`, e.g. a phone nickname). Leave **Sidecar binary** on **Use default** to track app updates. The state directory remains `~/.local/share/timeline-gmessages`.
 
-Your own messages carry your phone number as their identity (`phone:+44…`, one per SIM), so link those identities to your contact like any other. The first run backfills everything the phone still holds (typically 30–40 minutes for several thousand messages); each conversation's cursor is saved as soon as it completes, so an interrupted run resumes where it stopped, and later runs only page conversations with new activity, listing every conversation once a day and only the most recently active ones otherwise. A conversation that fails to page (network drop) is reported and retried next run without losing the others' progress. If the session is revoked, the run fails with a re-pair instruction — delete `session.json` and pair again. The sidecar is installed separately from Timeline, so rebuild and copy it again (step 1) when `tools/timeline-gmessages` changes.
+The packaged default is the sidecar beside the app's Bun runtime, resolved relative to the running bundle. Outside the app (`bun run dev`, `sync:once`, Linux), the explicit default remains `~/.local/share/timeline-gmessages/timeline-gmessages`; there is no fallback from a missing bundled binary. A configured binary override always wins, including an override pointing at the old default. Select **Use default** and save to remove that override. Defaults are not persisted as overrides, so existing installations with no override switch automatically. Updating the app leaves the old standalone executable and all pairing state untouched; the old executable is simply unused when the bundled default is selected.
+
+Your own messages carry your phone number as their identity (`phone:+44…`, one per SIM), so link those identities to your contact like any other. The first run backfills everything the phone still holds (typically 30–40 minutes for several thousand messages); each conversation's cursor is saved as soon as it completes, so an interrupted run resumes where it stopped, and later runs only page conversations with new activity, listing every conversation once a day and only the most recently active ones otherwise. A conversation that fails to page (network drop) is reported and retried next run without losing the others' progress. If the session is revoked, the run fails with a re-pair instruction — delete `session.json` and pair again. App updates replace the sidecar together with the service; standalone installations must rebuild it when upgrading the source.
 
 Attachments arrive with the messages that carry them, so a source that was synced before media import existed holds text only for that period. To backfill, clear the source's cursors and let the next run re-page every conversation (messages already indexed are skipped; their attachments are stored):
 ```bash

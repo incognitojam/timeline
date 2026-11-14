@@ -42,6 +42,21 @@ done
 
 test -x "$RESOURCES/timeline-service/bin/timeline-service"
 test -x "$RESOURCES/timeline-service/bin/bun"
+SIDECAR="$RESOURCES/timeline-service/bin/timeline-gmessages"
+sidecar_absolute="$(cd "$(dirname "$SIDECAR")" && pwd)/timeline-gmessages"
+test -x "$SIDECAR"
+codesign --verify --strict "$SIDECAR"
+codesign -d --verbose=4 "$SIDECAR" > "$TMP/sidecar-codesign" 2>&1
+grep -q 'flags=.*runtime' "$TMP/sidecar-codesign"
+test -f "$RESOURCES/timeline-service/Resources/licenses/timeline-gmessages/LICENSE"
+test -f "$RESOURCES/timeline-service/Resources/licenses/timeline-gmessages/NOTICE.txt"
+tar -tzf "$RESOURCES/timeline-service/Resources/licenses/timeline-gmessages/source.tar.gz" > "$TMP/sidecar-source-files"
+grep -q 'timeline-gmessages/vendor/modules.txt' "$TMP/sidecar-source-files"
+# Help does not read cookies/session.json or connect to the phone.
+(cd "$TMP" && "$sidecar_absolute" --help) 2> "$TMP/sidecar-help"
+grep -q -- '-existing-media' "$TMP/sidecar-help"
+"$RESOURCES/timeline-service/bin/bun" --no-env-file "$ROOT/tools/timeline-app/check-sidecar.ts" "$RESOURCES/timeline-service"
+
 test -r "$RESOURCES/timeline-service/bin/timeline-environment"
 grep -q 'NODE_ENV:=production' "$RESOURCES/timeline-service/bin/timeline-environment"
 grep -q '/opt/homebrew/bin:/usr/local/bin' "$RESOURCES/timeline-service/bin/timeline-environment"

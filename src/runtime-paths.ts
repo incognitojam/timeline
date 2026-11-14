@@ -95,3 +95,16 @@ export function getPackagedVersionPath(): string | null {
   if (!resourceRoot) return null;
   return requirePackagedPath(join(resourceRoot, "version.json"), "version metadata");
 }
+
+export const GOOGLE_MESSAGES_STATE_DIR = "~/.local/share/timeline-gmessages";
+
+export function getGoogleMessagesBinaryPath(): string {
+  const resourceRoot = getPackagedResourceRoot();
+  if (resourceRoot) {
+    return requirePackagedPath(
+      join(dirname(resourceRoot), "bin", "timeline-gmessages"),
+      "Google Messages sidecar",
+    );
+  }
+  return `${GOOGLE_MESSAGES_STATE_DIR}/timeline-gmessages`;
+}

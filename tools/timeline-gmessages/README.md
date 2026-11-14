@@ -15,19 +15,26 @@ the rest of this file covers building, pairing, and the CLI.
 
 ## Build
 
+Timeline.app builds, signs and ships this sidecar alongside its Bun runtime. App users do not need Go or a separate installation. Pair with the bundled executable as described in [Google Messages setup](../../docs/user/source-setup.md#google-messages-setup).
+
+For standalone development or Linux, build from the same revision as the service:
+
 ```bash
+mise install go
 cd tools/timeline-gmessages
-go build -o timeline-gmessages .
+mise exec -- go build -mod=readonly -trimpath -o timeline-gmessages .
+mkdir -p ~/.local/share/timeline-gmessages
+cp timeline-gmessages ~/.local/share/timeline-gmessages/
+cd ~/.local/share/timeline-gmessages
 ```
 
-Requires Go (module tracks `go.mau.fi/mautrix-gmessages`). This directory is a
-standalone Go module and is intentionally excluded from the Bun/TS project.
+The standalone default is `~/.local/share/timeline-gmessages/timeline-gmessages`. Rebuild and copy it when upgrading the service. An explicit **Sidecar binary** setting overrides both packaged and standalone defaults. The state directory is independent of the executable location.
 
-`go.mod` pins an untagged upstream commit: conversation-list paging needs
-`ListConversations` to accept the full request (with its `Cursor`), which
-landed in
-[mautrix/gmessages@10110fdf51](https://github.com/mautrix/gmessages/commit/10110fdf51)
-after `v0.2608.0`. Move to the next tagged release once one includes it.
+`mise.toml` pins the build compiler; `go.mod` declares the module's minimum Go version and pins libgm and other dependencies, verified by `go.sum`. App builds require the pinned compiler, disable automatic toolchain downloads and CGO, and target the same native architecture as the app. This directory is a standalone Go module, separate from Bun/TypeScript.
+
+## License and corresponding source
+
+This sidecar is distributed under [GNU AGPL v3 or later](LICENSE). The separate Timeline app and service remain MIT licensed. App bundles include `Resources/timeline-service/Resources/licenses/timeline-gmessages/` with the license, a notice linking to this directory at the release tag (or commit for development builds), and `source.tar.gz`. That archive contains the actual build inputs, vendored dependency sources and their license notices, and `BUILDING.txt` for offline dependency builds with the documented Go compiler. The archive does not contain sessions, cookies or message data.
 
 ## 1. Extract account cookies
 
@@ -36,7 +43,7 @@ you), sign in at
 <https://accounts.google.com/AccountChooser?continue=https://messages.google.com/web/config>.
 Once the page has loaded, open DevTools → Network, reload, right-click the
 top `config` request → **Copy as cURL**, and paste the whole thing into
-`cookies.txt` in this directory. The tool extracts the Cookie header itself.
+`cookies.txt` in the state directory (`~/.local/share/timeline-gmessages` by default). The tool extracts the Cookie header itself.
 
 It also accepts a raw `Cookie:` header line, a bare `SID=...; HSID=...`
 string, or a JSON object of cookie name→value. Required cookies: `SID`,
@@ -53,8 +60,11 @@ the Copy-as-cURL route captures all of them in one go.
 ## 2. Pair
 
 ```bash
-./timeline-gmessages pair
+cd ~/.local/share/timeline-gmessages
+~/Applications/Timeline.app/Contents/Resources/timeline-service/bin/timeline-gmessages pair
 ```
+
+Adjust to `/Applications` if installed there. For standalone installations, use `./timeline-gmessages pair`. The remaining CLI examples assume a standalone binary in the state directory; app users should substitute the bundled executable's absolute path.
 
 It prints an emoji; confirm the matching one on your phone
 (Messages → Settings → Device pairing). On success it writes `session.json`.
@@ -132,8 +142,8 @@ manifest of full-size stored copies, keyed by message ID then media ID. Each
 candidate has an absolute `path`, byte `size`, and `sha256`. The sidecar checks
 that file's size and hash before emitting `status: "cached"` without a staging
 path; missing or corrupt copies are downloaded again. Thumbnail copies do not
-qualify, so a later run can still fetch the full attachment. Rebuild the sidecar
-alongside the sync source when upgrading to this contract.
+qualify, so a later run can still fetch the full attachment. App updates keep this contract matched; standalone users must rebuild the sidecar
+alongside the sync source.
 
 Google keeps a smaller copy of every attachment beside the full-size one, under
 its own media ID and decryption key. Some messages arrive with only the
