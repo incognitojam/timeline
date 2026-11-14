@@ -40,6 +40,7 @@
  */
 
 import { Database } from "bun:sqlite";
+import { parserCliArgs } from "../../ingest/cli";
 import { existsSync } from "fs";
 import { readdir } from "fs/promises";
 import { basename, join } from "path";
@@ -1021,7 +1022,10 @@ export async function importCodex(
 
 // CLI
 if (import.meta.main) {
-  const args = process.argv.slice(2);
+  const args = parserCliArgs({
+    usage: "bun run src/platforms/codex/parser.ts [sessions-dir] [account-name]",
+    flags: ["--dry-run", "--refresh-raw-data"],
+  });
   const dryRun = args.includes("--dry-run");
   const refreshRawData = args.includes("--refresh-raw-data");
   const positional = args.filter((a) => !a.startsWith("--"));

@@ -25,6 +25,7 @@
  */
 
 import { Database } from "bun:sqlite";
+import { parserCliArgs } from "../../ingest/cli";
 import { existsSync } from "fs";
 import { readFile } from "fs/promises";
 import { dirname, extname, join } from "path";
@@ -912,17 +913,17 @@ function printSummary(
 
 // CLI
 if (import.meta.main) {
-  const args = process.argv.slice(2);
+  const args = parserCliArgs({
+    usage: "bun run src/platforms/t3code/parser.ts <account> [db-path]",
+    flags: ["--dry-run", "--refresh-raw-data"],
+    minArgs: 1,
+  });
 
   const dryRun = args.includes("--dry-run");
   const refreshRawData = args.includes("--refresh-raw-data");
   const positionalArgs = args.filter((a) => !a.startsWith("--"));
 
   const accountName = positionalArgs[0];
-  if (!accountName) {
-    console.error("Usage: bun run src/platforms/t3code/parser.ts <account> [db-path] [--dry-run] [--refresh-raw-data]");
-    process.exit(1);
-  }
   const t3DbPath = positionalArgs[1]
     ? positionalArgs[1].startsWith("~")
       ? positionalArgs[1].replace("~", process.env.HOME || "")

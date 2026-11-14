@@ -14,6 +14,7 @@
  */
 
 import { Database } from "bun:sqlite";
+import { parserCliArgs } from "../../ingest/cli";
 import { existsSync } from "fs";
 import { getDb, initDb } from "../../db/schema";
 import { onImportComplete } from "../../db/queries";
@@ -372,7 +373,10 @@ export async function importConductor(
 
 // CLI
 if (import.meta.main) {
-  const args = process.argv.slice(2);
+  const args = parserCliArgs({
+    usage: "bun run src/platforms/conductor/parser.ts [db-path]",
+    flags: ["--dry-run", "--refresh-raw-data"],
+  });
 
   // Parse flags
   const dryRun = args.includes("--dry-run");

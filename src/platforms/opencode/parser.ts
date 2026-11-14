@@ -31,6 +31,7 @@
  */
 
 import { Database } from "bun:sqlite";
+import { parserCliArgs } from "../../ingest/cli";
 import { existsSync, statSync } from "fs";
 import { readdir } from "fs/promises";
 import { basename, join } from "path";
@@ -1130,7 +1131,10 @@ export async function importOpenCode(
 // ============ CLI ============
 
 if (import.meta.main) {
-  const args = process.argv.slice(2);
+  const args = parserCliArgs({
+    usage: "bun run src/platforms/opencode/parser.ts [storage-path] [account-name]",
+    flags: ["--dry-run", "--refresh-raw-data"],
+  });
 
   const dryRun = args.includes("--dry-run");
   const refreshRawData = args.includes("--refresh-raw-data");
