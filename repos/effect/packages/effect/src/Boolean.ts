@@ -1,45 +1,92 @@
 /**
- * This module provides utility functions and type class instances for working with the `boolean` type in TypeScript.
- * It includes functions for basic boolean operations, as well as type class instances for
- * `Equivalence` and `Order`.
+ * Works with TypeScript `boolean` values.
  *
+ * This module exposes the native `Boolean` constructor together with helpers
+ * for checking values, choosing between lazy branches, combining booleans with
+ * logical operations, checking collections with `every` or `some`, ordering
+ * booleans, and reducing boolean values.
+ *
+ * @stability stable
  * @since 2.0.0
  */
-import * as equivalence from "./Equivalence.js"
-import type { LazyArg } from "./Function.js"
-import { dual } from "./Function.js"
-import * as order from "./Order.js"
-import * as predicate from "./Predicate.js"
+import * as Equ from "./Equivalence.ts"
+import type { LazyArg } from "./Function.ts"
+import { dual } from "./Function.ts"
+import * as order from "./Order.ts"
+import * as predicate from "./Predicate.ts"
+import * as Reducer from "./Reducer.ts"
 
 /**
- * Tests if a value is a `boolean`.
+ * Exposes the global boolean constructor for JavaScript truthiness
+ * coercion.
  *
- * @example
- * ```ts
- * import * as assert from "node:assert"
- * import { isBoolean } from "effect/Boolean"
+ * **When to use**
  *
- * assert.deepStrictEqual(isBoolean(true), true)
- * assert.deepStrictEqual(isBoolean("true"), false)
+ * Use to access native JavaScript truthiness coercion from the Effect module
+ * namespace.
+ *
+ * **Gotchas**
+ *
+ * This follows native truthiness rules. For example, non-empty strings such as
+ * `"false"` coerce to `true`.
+ *
+ * **Example** (Coercing values to booleans)
+ *
+ * ```ts import.meta.vitest
+ * import { Boolean } from "effect"
+ *
+ * Boolean.Boolean(1) // => true
+ * Boolean.Boolean("false") // => true
+ * Boolean.Boolean(0) // => false
  * ```
  *
+ * @stability stable
+ * @category constructors
+ * @since 4.0.0
+ */
+export const Boolean = globalThis.Boolean
+
+/**
+ * Checks whether a value is a `boolean`.
+ *
+ * **When to use**
+ *
+ * Use to validate unknown input and narrow it to `boolean`.
+ *
+ * **Example** (Checking for booleans)
+ *
+ * ```ts import.meta.vitest
+ * import { Boolean } from "effect"
+ *
+ * Boolean.isBoolean(true) // => true
+ * Boolean.isBoolean("true") // => false
+ * ```
+ *
+ * @stability stable
  * @category guards
  * @since 2.0.0
  */
 export const isBoolean: (input: unknown) => input is boolean = predicate.isBoolean
 
 /**
- * This function returns the result of either of the given functions depending on the value of the boolean parameter.
- * It is useful when you have to run one of two functions depending on the boolean value.
+ * Chooses between two lazy branches based on a boolean value.
  *
- * @example
- * ```ts
- * import * as assert from "node:assert"
+ * **When to use**
+ *
+ * Use to choose between two lazy branches based on a boolean value.
+ *
+ * **Example** (Pattern matching on booleans)
+ *
+ * ```ts import.meta.vitest
  * import { Boolean } from "effect"
  *
- * assert.deepStrictEqual(Boolean.match(true, { onFalse: () => "It's false!", onTrue: () => "It's true!" }), "It's true!")
+ * Boolean.match(true, {
+ *   onFalse: () => "It's false!",
+ *   onTrue: () => "It's true!"
+ * }) // => "It's true!"
  * ```
  *
+ * @stability stable
  * @category pattern matching
  * @since 2.0.0
  */
@@ -58,48 +105,98 @@ export const match: {
 }): A | B => value ? options.onTrue() : options.onFalse())
 
 /**
+ * Provides an `Order` instance for `boolean` that allows comparing and sorting boolean values.
+ * In this ordering, `false` is considered less than `true`.
+ *
+ * **When to use**
+ *
+ * Use when you need to sort or compare boolean values through APIs that accept
+ * an ordering instance where `false` comes before `true`.
+ *
+ * **Example** (Comparing booleans)
+ *
+ * ```ts import.meta.vitest
+ * import { Boolean } from "effect"
+ *
+ * Boolean.Order(false, true) // => -1
+ * Boolean.Order(true, false) // => 1
+ * Boolean.Order(true, true) // => 0
+ * ```
+ *
+ * @stability stable
  * @category instances
  * @since 2.0.0
  */
-export const Equivalence: equivalence.Equivalence<boolean> = equivalence.boolean
+export const Order: order.Order<boolean> = order.Boolean
 
 /**
+ * Equivalence instance for booleans using strict equality (`===`).
+ *
+ * **When to use**
+ *
+ * Use when checking boolean equality through APIs that accept an equivalence
+ * relation.
+ *
+ * **Example** (Comparing booleans for equivalence)
+ *
+ * ```ts import.meta.vitest
+ * import { Boolean } from "effect"
+ *
+ * Boolean.Equivalence(true, true) // => true
+ * Boolean.Equivalence(true, false) // => false
+ * ```
+ *
+ * @stability stable
  * @category instances
  * @since 2.0.0
  */
-export const Order: order.Order<boolean> = order.boolean
+export const Equivalence: Equ.Equivalence<boolean> = Equ.Boolean
 
 /**
  * Negates the given boolean: `!self`
  *
- * @example
- * ```ts
- * import * as assert from "node:assert"
- * import { not } from "effect/Boolean"
+ * **When to use**
  *
- * assert.deepStrictEqual(not(true), false)
- * assert.deepStrictEqual(not(false), true)
+ * Use to invert a boolean value.
+ *
+ * **Example** (Negating booleans)
+ *
+ * ```ts import.meta.vitest
+ * import { Boolean } from "effect"
+ *
+ * Boolean.not(true) // => false
+ * Boolean.not(false) // => true
  * ```
  *
+ * @stability stable
  * @category combinators
  * @since 2.0.0
  */
 export const not = (self: boolean): boolean => !self
 
 /**
- * Combines two boolean using AND: `self && that`.
+ * Combines two booleans using logical AND: `self && that`.
  *
- * @example
- * ```ts
- * import * as assert from "node:assert"
- * import { and } from "effect/Boolean"
+ * **When to use**
  *
- * assert.deepStrictEqual(and(true, true), true)
- * assert.deepStrictEqual(and(true, false), false)
- * assert.deepStrictEqual(and(false, true), false)
- * assert.deepStrictEqual(and(false, false), false)
+ * Use to require both boolean operands to be `true`.
+ *
+ * **Details**
+ *
+ * Supports both data-first and data-last forms.
+ *
+ * **Example** (Combining booleans with AND)
+ *
+ * ```ts import.meta.vitest
+ * import { Boolean } from "effect"
+ *
+ * Boolean.and(true, true) // => true
+ * Boolean.and(true, false) // => false
+ * Boolean.and(false, true) // => false
+ * Boolean.and(false, false) // => false
  * ```
  *
+ * @stability stable
  * @category combinators
  * @since 2.0.0
  */
@@ -109,19 +206,24 @@ export const and: {
 } = dual(2, (self: boolean, that: boolean): boolean => self && that)
 
 /**
- * Combines two boolean using NAND: `!(self && that)`.
+ * Combines two booleans using NAND: `!(self && that)`.
  *
- * @example
- * ```ts
- * import * as assert from "node:assert"
- * import { nand } from "effect/Boolean"
+ * **When to use**
  *
- * assert.deepStrictEqual(nand(true, true), false)
- * assert.deepStrictEqual(nand(true, false), true)
- * assert.deepStrictEqual(nand(false, true), true)
- * assert.deepStrictEqual(nand(false, false), true)
+ * Use to negate a logical AND result.
+ *
+ * **Example** (Combining booleans with NAND)
+ *
+ * ```ts import.meta.vitest
+ * import { Boolean } from "effect"
+ *
+ * Boolean.nand(true, true) // => false
+ * Boolean.nand(true, false) // => true
+ * Boolean.nand(false, true) // => true
+ * Boolean.nand(false, false) // => true
  * ```
  *
+ * @stability stable
  * @category combinators
  * @since 2.0.0
  */
@@ -131,19 +233,24 @@ export const nand: {
 } = dual(2, (self: boolean, that: boolean): boolean => !(self && that))
 
 /**
- * Combines two boolean using OR: `self || that`.
+ * Combines two booleans using OR: `self || that`.
  *
- * @example
- * ```ts
- * import * as assert from "node:assert"
- * import { or } from "effect/Boolean"
+ * **When to use**
  *
- * assert.deepStrictEqual(or(true, true), true)
- * assert.deepStrictEqual(or(true, false), true)
- * assert.deepStrictEqual(or(false, true), true)
- * assert.deepStrictEqual(or(false, false), false)
+ * Use to accept when either boolean operand is `true`.
+ *
+ * **Example** (Combining booleans with OR)
+ *
+ * ```ts import.meta.vitest
+ * import { Boolean } from "effect"
+ *
+ * Boolean.or(true, true) // => true
+ * Boolean.or(true, false) // => true
+ * Boolean.or(false, true) // => true
+ * Boolean.or(false, false) // => false
  * ```
  *
+ * @stability stable
  * @category combinators
  * @since 2.0.0
  */
@@ -155,17 +262,22 @@ export const or: {
 /**
  * Combines two booleans using NOR: `!(self || that)`.
  *
- * @example
- * ```ts
- * import * as assert from "node:assert"
- * import { nor } from "effect/Boolean"
+ * **When to use**
  *
- * assert.deepStrictEqual(nor(true, true), false)
- * assert.deepStrictEqual(nor(true, false), false)
- * assert.deepStrictEqual(nor(false, true), false)
- * assert.deepStrictEqual(nor(false, false), true)
+ * Use to accept only when both boolean operands are `false`.
+ *
+ * **Example** (Combining booleans with NOR)
+ *
+ * ```ts import.meta.vitest
+ * import { Boolean } from "effect"
+ *
+ * Boolean.nor(true, true) // => false
+ * Boolean.nor(true, false) // => false
+ * Boolean.nor(false, true) // => false
+ * Boolean.nor(false, false) // => true
  * ```
  *
+ * @stability stable
  * @category combinators
  * @since 2.0.0
  */
@@ -177,17 +289,22 @@ export const nor: {
 /**
  * Combines two booleans using XOR: `(!self && that) || (self && !that)`.
  *
- * @example
- * ```ts
- * import * as assert from "node:assert"
- * import { xor } from "effect/Boolean"
+ * **When to use**
  *
- * assert.deepStrictEqual(xor(true, true), false)
- * assert.deepStrictEqual(xor(true, false), true)
- * assert.deepStrictEqual(xor(false, true), true)
- * assert.deepStrictEqual(xor(false, false), false)
+ * Use to accept when exactly one boolean operand is `true`.
+ *
+ * **Example** (Combining booleans with XOR)
+ *
+ * ```ts import.meta.vitest
+ * import { Boolean } from "effect"
+ *
+ * Boolean.xor(true, true) // => false
+ * Boolean.xor(true, false) // => true
+ * Boolean.xor(false, true) // => true
+ * Boolean.xor(false, false) // => false
  * ```
  *
+ * @stability stable
  * @category combinators
  * @since 2.0.0
  */
@@ -199,17 +316,22 @@ export const xor: {
 /**
  * Combines two booleans using EQV (aka XNOR): `!xor(self, that)`.
  *
- * @example
- * ```ts
- * import * as assert from "node:assert"
- * import { eqv } from "effect/Boolean"
+ * **When to use**
  *
- * assert.deepStrictEqual(eqv(true, true), true)
- * assert.deepStrictEqual(eqv(true, false), false)
- * assert.deepStrictEqual(eqv(false, true), false)
- * assert.deepStrictEqual(eqv(false, false), true)
+ * Use to accept when both boolean operands have the same truth value.
+ *
+ * **Example** (Checking boolean equivalence)
+ *
+ * ```ts import.meta.vitest
+ * import { Boolean } from "effect"
+ *
+ * Boolean.eqv(true, true) // => true
+ * Boolean.eqv(true, false) // => false
+ * Boolean.eqv(false, true) // => false
+ * Boolean.eqv(false, false) // => true
  * ```
  *
+ * @stability stable
  * @category combinators
  * @since 2.0.0
  */
@@ -221,17 +343,22 @@ export const eqv: {
 /**
  * Combines two booleans using an implication: `(!self || that)`.
  *
- * @example
- * ```ts
- * import * as assert from "node:assert"
- * import { implies } from "effect/Boolean"
+ * **When to use**
  *
- * assert.deepStrictEqual(implies(true, true), true)
- * assert.deepStrictEqual(implies(true, false), false)
- * assert.deepStrictEqual(implies(false, true), true)
- * assert.deepStrictEqual(implies(false, false), true)
+ * Use to model logical implication between a condition and a consequence.
+ *
+ * **Example** (Checking boolean implication)
+ *
+ * ```ts import.meta.vitest
+ * import { Boolean } from "effect"
+ *
+ * Boolean.implies(true, true) // => true
+ * Boolean.implies(true, false) // => false
+ * Boolean.implies(false, true) // => true
+ * Boolean.implies(false, false) // => true
  * ```
  *
+ * @stability stable
  * @category combinators
  * @since 2.0.0
  */
@@ -241,17 +368,26 @@ export const implies: {
 } = dual(2, (self, that) => self ? that : true)
 
 /**
- * This utility function is used to check if all the elements in a collection of boolean values are `true`.
+ * Checks whether every boolean in a collection is `true`.
  *
- * @example
- * ```ts
- * import * as assert from "node:assert"
- * import { every } from "effect/Boolean"
+ * **When to use**
  *
- * assert.deepStrictEqual(every([true, true, true]), true)
- * assert.deepStrictEqual(every([true, false, true]), false)
+ * Use to check that every boolean in an iterable is `true`.
+ *
+ * **Example** (Checking every boolean)
+ *
+ * ```ts import.meta.vitest
+ * import { Boolean } from "effect"
+ *
+ * Boolean.every([true, true, true]) // => true
+ * Boolean.every([true, false, true]) // => false
  * ```
  *
+ * @see {@link some} for checking whether at least one value is `true`
+ * @see {@link ReducerAnd} for reducing booleans with AND through a `Reducer`
+ *
+ * @stability stable
+ * @category predicates
  * @since 2.0.0
  */
 export const every = (collection: Iterable<boolean>): boolean => {
@@ -264,17 +400,26 @@ export const every = (collection: Iterable<boolean>): boolean => {
 }
 
 /**
- * This utility function is used to check if at least one of the elements in a collection of boolean values is `true`.
+ * Checks whether at least one boolean in a collection is `true`.
  *
- * @example
- * ```ts
- * import * as assert from "node:assert"
- * import { some } from "effect/Boolean"
+ * **When to use**
  *
- * assert.deepStrictEqual(some([true, false, true]), true)
- * assert.deepStrictEqual(some([false, false, false]), false)
+ * Use to check that at least one boolean in an iterable is `true`.
+ *
+ * **Example** (Checking some booleans)
+ *
+ * ```ts import.meta.vitest
+ * import { Boolean } from "effect"
+ *
+ * Boolean.some([true, false, true]) // => true
+ * Boolean.some([false, false, false]) // => false
  * ```
  *
+ * @see {@link every} for checking whether all values are `true`
+ * @see {@link ReducerOr} for reducing booleans with OR through a `Reducer`
+ *
+ * @stability stable
+ * @category predicates
  * @since 2.0.0
  */
 export const some = (collection: Iterable<boolean>): boolean => {
@@ -285,3 +430,50 @@ export const some = (collection: Iterable<boolean>): boolean => {
   }
   return false
 }
+
+/**
+ * Reducer for combining `boolean`s using AND.
+ *
+ * **When to use**
+ *
+ * Use to require every accumulated boolean to be `true` through APIs that
+ * consume a `Reducer`.
+ *
+ * **Details**
+ *
+ * The `initialValue` is `true`, so `combineAll([])` returns `true`.
+ *
+ * **Gotchas**
+ *
+ * `combineAll` uses the default left-to-right `Reducer.make` fold and does not
+ * short-circuit on `false`.
+ *
+ * @see {@link ReducerOr} for reducing with OR semantics
+ * @see {@link every} for checking an iterable directly
+ *
+ * @stability stable
+ * @category math
+ * @since 4.0.0
+ */
+export const ReducerAnd: Reducer.Reducer<boolean> = Reducer.make((a, b) => a && b, true)
+
+/**
+ * Reducer for combining `boolean`s using OR.
+ *
+ * **When to use**
+ *
+ * Use to reduce boolean values where the result should be `true` if any
+ * combined value is `true`.
+ *
+ * **Details**
+ *
+ * The `initialValue` is `false`.
+ *
+ * @see {@link ReducerAnd} for reducing with AND semantics
+ * @see {@link some} for checking an iterable directly
+ *
+ * @stability stable
+ * @category math
+ * @since 4.0.0
+ */
+export const ReducerOr: Reducer.Reducer<boolean> = Reducer.make((a, b) => a || b, false)

@@ -1,0 +1,12 @@
+{
+  "repos/effect/packages/effect/src/Config.ts": "40389ba385489b21030fe3973d0521ec3ce64fed89e8d4a6c216e50252ed2fa0",
+  "repos/effect/packages/effect/test/fixtures/zip/7zip.zip": "58dc7557029a384539b8ba1fe8d051a7b081c1c53c3479d9b8f0ce0ce24fe297",
+  "repos/effect/packages/effect/test/fixtures/zip/infozip.zip": "ebc8d7cdbca1a7f1b146a284073d8f5a98d67fbd6dcf97090e559177c55e91b9",
+  "repos/effect/packages/effect/test/fixtures/zip/infozip-stream.zip": "d2ca06ae0cf1e961bb417d38b453261741c4f6c2f54143e0e0881aedb43737b8",
+  "repos/effect/packages/effect/test/fixtures/zip/python-zip64.zip": "89bc7b133dc259a38aa71845c18f530956bb4f8712843c0fd68d86bdbe874c6f",
+  "repos/effect/packages/platform/deno/test/fixtures/tls/ca.pem": "e9b4907cc9bcee6f55959de895e6fafb300102d3e00b7cfffc39b63af1264944",
+  "repos/effect/packages/platform/deno/test/fixtures/tls/cert.pem": "f69659d5b3d912099611792243423c7329bebeb01397dc73074241f1a557f55b",
+  "repos/effect/packages/platform/deno/test/fixtures/tls/key.pem": "880d31f610c41a17f3bb02f9264bca3e7ebeecba382b1a5fc64647628200176b",
+  "repos/effect/packages/platform/node/test/fixtures/tls/cert.pem": "057d6a6bd2407a47d267700d778100732a97133e5dee35d273de106843fe08ce",
+  "repos/effect/packages/platform/node/test/fixtures/tls/key.pem": "b84ef2faff8038e83ddf74627fec11b29020d514a9e7fb68b75466f401145b59"
+}
