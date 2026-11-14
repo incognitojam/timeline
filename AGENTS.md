@@ -8,16 +8,16 @@ Timeline is a personal data aggregator that indexes exports from various service
 
 ## Vendored Repositories
 
-This project vendors external repositories under @repos/
+This project vendors external repositories under `repos/`
 
   - Use vendored repositories as read-only reference material when working with related libraries
   - Prefer examples and patterns from the vendored source code over generated guesses or web search results
-  - Do not edit files under @repos/ unless explicitly asked
-  - Do not import from @repos/ - application code should continue importing from normal package dependencies
+  - Do not edit files under `repos/` unless explicitly asked
+  - Do not import from `repos/` - application code should continue importing from normal package dependencies
 
-When writing Effect code, inspect @repos/effect/ for examples of idiomatic usage, tests, module structure, and API design. Treat it as the source of truth for Effect patterns.
+When writing Effect code, inspect `repos/effect/` for examples of idiomatic usage, tests, module structure, and API design. Treat it as the source of truth for Effect patterns.
 
-When reasoning about SolidJS reactivity (signals, resources, Suspense/transitions) or Solid Query behavior, read the actual implementation rather than guessing: @repos/solid/ (pinned to the installed solid-js version; the reactive core, including createResource and SuspenseContext, is `packages/solid/src/reactive/signal.ts`) and @repos/query/ (pinned to the installed @tanstack/solid-query version; the Solid adapter is `packages/solid-query/`, cache/observer logic in `packages/query-core/`).
+When reasoning about SolidJS reactivity (signals, resources, Suspense/transitions) or Solid Query behavior, read the actual implementation rather than guessing: `repos/solid/` (pinned to the installed solid-js version; the reactive core, including createResource and SuspenseContext, is `packages/solid/src/reactive/signal.ts`) and `repos/query/` (pinned to the installed @tanstack/solid-query version; the Solid adapter is `packages/solid-query/`, cache/observer logic in `packages/query-core/`).
 
 ## Service Deployment
 
