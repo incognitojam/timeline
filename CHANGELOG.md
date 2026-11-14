@@ -1,5 +1,14 @@
 # Timeline
 
+## 0.17.4
+
+### Patch Changes
+
+- e7342ad: Make agent-log, Claude export, WakaTime export, Monzo, and shared import CLIs show help without opening storage and reject unknown flags instead of importing. Existing import paths, account defaults, and supported flags are unchanged.
+- 578e150: Avoid downloading Google Messages attachments again when a verified full-size copy is already stored. Missing or corrupt files are fetched and repaired, and thumbnails remain eligible for full-size upgrades.
+  
+  When upgrading, rebuild and reinstall `timeline-gmessages` from `tools/timeline-gmessages` alongside Timeline. Older sidecar binaries do not support the new sync protocol.
+
 ## 0.17.3
 
 ### Patch Changes
