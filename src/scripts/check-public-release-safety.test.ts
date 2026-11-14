@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import publicReleaseFixtures from "./public-release-fixtures.json";
 import {
+  checkPublicTree,
   checkPublicTreePath,
   checkStagedPublicTree,
   scanPublicTreeText,
@@ -66,6 +68,47 @@ describe("public release safety check", () => {
     expect(checkPublicTreePath("exports/messages.jsonl")[0]?.rule).toBe("unsafe-tracked-artifact");
     expect(checkPublicTreePath("config/.env.example")).toEqual([]);
     expect(checkPublicTreePath("src/db/schema.ts")).toEqual([]);
+  });
+
+  test("permits the exact public upstream fixtures", () => {
+    expect(checkPublicTree(Object.keys(publicReleaseFixtures))).toEqual([]);
+  });
+
+  test("checks staged fixture contents before accepting an upstream exception", () => {
+    const repo = mkdtempSync(join(tmpdir(), "timeline-public-fixture-"));
+    const fixture = "repos/effect/packages/platform/node/test/fixtures/tls/key.pem";
+    const original = readFileSync(fixture);
+    try {
+      const git = (...args: string[]) => {
+        const result = Bun.spawnSync(["git", ...args], { cwd: repo, stderr: "pipe" });
+        if (result.exitCode !== 0) throw new Error(new TextDecoder().decode(result.stderr));
+      };
+      git("init", "--quiet");
+      const path = join(repo, fixture);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, original);
+      git("add", fixture);
+      expect(checkStagedPublicTree(repo)).toEqual([]);
+
+      writeFileSync(path, ["BEGIN ", "PRIVATE KEY\nsynthetic fixture"].join(""));
+      git("add", fixture);
+      writeFileSync(path, original);
+      expect(checkStagedPublicTree(repo).map(finding => finding.rule)).toEqual([
+        "unsafe-tracked-artifact",
+        "private-key",
+      ]);
+
+      git("reset", "--quiet");
+      const otherPath = join(repo, "other.pem");
+      writeFileSync(otherPath, original);
+      git("add", "other.pem");
+      expect(checkStagedPublicTree(repo).map(finding => finding.rule)).toEqual([
+        "unsafe-tracked-artifact",
+        "private-key",
+      ]);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 
   test("scans staged content instead of an unstaged working copy", () => {

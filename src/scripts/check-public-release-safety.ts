@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readlinkSync } from "node:fs";
+import publicReleaseFixtures from "./public-release-fixtures.json";
 
 export interface PublicTreeFinding {
   path: string;
@@ -12,6 +14,12 @@ interface ContentRule {
 }
 
 const textDecoder = new TextDecoder();
+const publicFixtures: Readonly<Record<string, string>> = publicReleaseFixtures;
+
+function isPublicFixture(path: string, bytes: Uint8Array): boolean {
+  const expected = publicFixtures[path];
+  return expected !== undefined && createHash("sha256").update(bytes).digest("hex") === expected;
+}
 
 const pattern = (...parts: string[]): RegExp => new RegExp(parts.join(""), "gim");
 const caseSensitivePattern = (...parts: string[]): RegExp => new RegExp(parts.join(""), "gm");
@@ -261,8 +269,9 @@ function readTrackedFile(path: string): Uint8Array | null {
 export function checkPublicTree(paths: string[]): PublicTreeFinding[] {
   const findings: PublicTreeFinding[] = [];
   for (const path of paths) {
-    findings.push(...checkPublicTreePath(path));
     const bytes = readTrackedFile(path);
+    if (bytes && isPublicFixture(path, bytes)) continue;
+    findings.push(...checkPublicTreePath(path));
     if (!bytes || bytes.includes(0)) continue;
     findings.push(...scanPublicTreeText(path, textDecoder.decode(bytes)));
   }
@@ -273,9 +282,10 @@ function checkStagedPublicTreeEntries(entries: IndexEntry[], cwd: string): Publi
   const findings: PublicTreeFinding[] = [];
   const blobs = stagedBlobs(entries, cwd);
   for (const entry of entries) {
-    findings.push(...checkPublicTreePath(entry.path));
     const bytes = blobs.get(entry.objectId);
     if (!bytes) throw new Error(`Missing staged blob ${entry.objectId} for ${entry.path}`);
+    if (isPublicFixture(entry.path, bytes)) continue;
+    findings.push(...checkPublicTreePath(entry.path));
     if (bytes.includes(0)) continue;
     findings.push(...scanPublicTreeText(entry.path, textDecoder.decode(bytes)));
   }
