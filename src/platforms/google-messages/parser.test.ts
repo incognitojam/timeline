@@ -102,6 +102,7 @@ describe("google-messages parser", () => {
       unknownDirection: 0,
       systemSkipped: 0,
       attachmentsStored: 0,
+      attachmentsCached: 0,
       attachmentsThumbnails: 0,
       attachmentsFailed: 0,
       attachmentsUnavailable: 0,
@@ -309,6 +310,13 @@ describe("google-messages parser", () => {
       if (!row) throw new Error(`no event ${sourceId}`);
       return JSON.parse(row.raw_data) as { media: Array<Record<string, unknown>> };
     };
+
+    it("rejects cached media on a new message without inserting it", async () => {
+      const mms = message({ id: "300", media: [{ media_id: "photo", status: "cached" }] });
+      await expect(importWithMedia(jsonl(conversation(), mms))).rejects.toThrow("claims cached media but has not been imported");
+      expect(db.query("SELECT id FROM events WHERE source = 'google-messages' AND source_id = '300'").get()).toBeNull();
+      expect(attachments()).toEqual([]);
+    });
 
     it("moves downloaded parts into media storage and records the ones the phone withheld", async () => {
       writeFileSync(join(staging, "abc_1-photo.png"), PNG_1X1);

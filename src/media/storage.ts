@@ -5,7 +5,7 @@
  * Files are stored in by-hash/ directory and hardlinked to source-specific paths.
  */
 
-import { existsSync } from "fs";
+import { createReadStream, existsSync } from "fs";
 import { mkdir, link, stat, unlink } from "fs/promises";
 import { join, dirname, extname, resolve, sep } from "path";
 import { createHash } from "crypto";
@@ -137,12 +137,15 @@ export class LocalMediaStore implements MediaStore {
 
     let deduplicated = false;
 
-    // Check if hash file exists
-    try {
-      await stat(hashAbsPath);
-      deduplicated = true;
-    } catch {
-      // File doesn't exist, write it
+    // Re-downloads must repair corrupt blobs too: source paths are hardlinks,
+    // so a damaged source file can also damage its by-hash copy.
+    const blob = Bun.file(hashAbsPath);
+    if (await blob.exists() && blob.size === fileSize) {
+      const storedHash = createHash("sha256");
+      for await (const chunk of createReadStream(hashAbsPath)) storedHash.update(chunk);
+      deduplicated = storedHash.digest("hex") === hash;
+    }
+    if (!deduplicated) {
       await mkdir(dirname(hashAbsPath), { recursive: true });
       await Bun.write(hashAbsPath, content);
     }

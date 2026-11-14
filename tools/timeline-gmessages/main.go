@@ -174,6 +174,7 @@ func runDump(log zerolog.Logger, args []string) error {
 	fs := flag.NewFlagSet("dump", flag.ContinueOnError)
 	maxMessages := fs.Int("max-messages", 0, "stop paging each conversation after ~N messages (0 = all)")
 	mediaDir := fs.String("media", "", "download media into this directory (default: skip)")
+	existingMediaPath := fs.String("existing-media", "", "JSON file of stored full-size media candidates by message ID and media ID")
 	folderArg := fs.String("folder", "all", "inbox|archive|spam|all")
 	sinceMs := fs.Int64("since", 0, "only emit messages at/after this Unix-ms timestamp; skip conversations idle before it (0 = everything)")
 	cursorsPath := fs.String("cursors", "", "JSON object of conversation id -> Unix-ms cursor, overriding -since per conversation (\"-\" = stdin)")
@@ -182,6 +183,10 @@ func runDump(log zerolog.Logger, args []string) error {
 		return err
 	}
 
+	knownMedia, err := readExistingMedia(*existingMediaPath)
+	if err != nil {
+		return err
+	}
 	folders, err := parseFolders(*folderArg)
 	if err != nil {
 		return err
@@ -244,7 +249,7 @@ func runDump(log zerolog.Logger, args []string) error {
 
 			_ = enc.Encode(conversationRecord(conv, folder))
 
-			n, err := dumpMessages(ctx, log, cli, enc, convID, *maxMessages, since, *mediaDir)
+			n, err := dumpMessages(ctx, log, cli, enc, convID, *maxMessages, since, *mediaDir, knownMedia)
 			totalMsgs += n
 			if err != nil {
 				// The consumer must not advance this conversation's cursor:
@@ -369,7 +374,7 @@ func withRetries[T any](log zerolog.Logger, operation string, request func() (T,
 // dumpMessages pages one conversation from newest to oldest following the
 // response cursor, emitting one JSONL record per message at/after sinceMs
 // (0 = no bound). It returns the number of messages emitted.
-func dumpMessages(ctx context.Context, log zerolog.Logger, cli *libgm.Client, enc *json.Encoder, convID string, maxMessages int, sinceMs int64, mediaDir string) (int, error) {
+func dumpMessages(ctx context.Context, log zerolog.Logger, cli *libgm.Client, enc *json.Encoder, convID string, maxMessages int, sinceMs int64, mediaDir string, knownMedia existingMedia) (int, error) {
 	const pageSize = 100
 	var cursor *gmproto.Cursor
 	var count int
@@ -392,7 +397,7 @@ func dumpMessages(ctx context.Context, log zerolog.Logger, cli *libgm.Client, en
 			}
 			rec := messageRecord(msg)
 			if mediaDir != "" {
-				rec.Media = downloadMedia(log, cli, mediaDir, msg)
+				rec.Media = downloadMedia(log, cli.DownloadMedia, mediaDir, msg, knownMedia)
 			}
 			_ = enc.Encode(rec)
 			count++
@@ -413,7 +418,7 @@ func dumpMessages(ctx context.Context, log zerolog.Logger, cli *libgm.Client, en
 // under its own media ID and key; when the phone unlocks only that one, it is
 // downloaded instead so the part is not lost entirely. The record's status says
 // which copy landed on disk.
-func downloadMedia(log zerolog.Logger, cli *libgm.Client, mediaDir string, msg *gmproto.Message) []mediaRecord {
+func downloadMedia(log zerolog.Logger, download func(string, []byte) (io.ReadCloser, error), mediaDir string, msg *gmproto.Message, knownMedia existingMedia) []mediaRecord {
 	var out []mediaRecord
 	for _, part := range msg.GetMessageInfo() {
 		mc, ok := part.GetData().(*gmproto.MessageInfo_MediaContent)
@@ -430,6 +435,12 @@ func downloadMedia(log zerolog.Logger, cli *libgm.Client, mediaDir string, msg *
 			Width:    media.GetDimensions().GetWidth(),
 			Height:   media.GetDimensions().GetHeight(),
 		}
+		if size, ok := knownMedia.verified(msg.GetMessageID(), media.GetMediaID()); ok {
+			rec.Status = "cached"
+			rec.Size = size
+			out = append(out, rec)
+			continue
+		}
 		id, key := media.GetMediaID(), media.GetDecryptionKey()
 		status := "stored"
 		if id == "" || len(key) == 0 {
@@ -442,7 +453,7 @@ func downloadMedia(log zerolog.Logger, cli *libgm.Client, mediaDir string, msg *
 			continue
 		}
 		path := filepath.Join(mediaDir, mediaFileName(id, media.GetMediaName()))
-		size, err := downloadMediaFile(cli, id, key, path)
+		size, err := downloadMediaFile(download, id, key, path)
 		if err != nil {
 			log.Warn().Err(err).Str("media_id", id).Str("copy", status).Str("path", path).Msg("Media download failed")
 			rec.Status = "failed"
@@ -468,8 +479,8 @@ func mediaFileName(mediaID, mediaName string) string {
 
 // downloadMediaFile streams one decrypted attachment to path and returns the
 // number of bytes written.
-func downloadMediaFile(cli *libgm.Client, mediaID string, key []byte, path string) (int64, error) {
-	body, err := cli.DownloadMedia(mediaID, key)
+func downloadMediaFile(download func(string, []byte) (io.ReadCloser, error), mediaID string, key []byte, path string) (int64, error) {
+	body, err := download(mediaID, key)
 	if err != nil {
 		return 0, err
 	}
@@ -676,7 +687,7 @@ type mediaRecord struct {
 	// Dimensions of the full-size image as the phone declared them, whichever copy was downloaded.
 	Width  int64  `json:"width,omitempty"`
 	Height int64  `json:"height,omitempty"`
-	Status string `json:"status,omitempty"` // stored | thumbnail | failed | unavailable
+	Status string `json:"status,omitempty"` // stored | thumbnail | cached | failed | unavailable
 	Path   string `json:"path,omitempty"`
 }
 

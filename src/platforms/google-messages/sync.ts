@@ -9,7 +9,7 @@
  * stopped instead of starting over. See docs/user/source-setup.md.
  */
 import { spawn } from "node:child_process";
-import { accessSync, constants, existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { expandPath } from "../../config";
@@ -17,6 +17,7 @@ import { getAppStateDb, getSyncState, setSyncState } from "../../db/app-state";
 import { getDb, initDb } from "../../db/schema";
 import type { SyncOptions, SyncResult, SyncSource } from "../../sync/types";
 import { EVENT_SOURCE, importGoogleMessages, type ImportStats } from "./parser";
+import { existingMediaManifest } from "./existing-media";
 import { backgroundCommand } from "../../lib/background-priority";
 
 export const DEFAULT_STATE_DIR = "~/.local/share/timeline-gmessages";
@@ -122,7 +123,7 @@ async function runSidecar<T>(
   consume: (lines: AsyncIterable<string>) => Promise<T>,
 ): Promise<SidecarRun<T>> {
   const listUntilArgs = listUntil === undefined ? [] : ["-list-until", String(listUntil)];
-  const [command, ...args] = backgroundCommand([config.binary, "dump", "-folder", "all", "-cursors", "-", "-media", mediaDir, ...listUntilArgs]);
+  const [command, ...args] = backgroundCommand([config.binary, "dump", "-folder", "all", "-cursors", "-", "-media", mediaDir, "-existing-media", join(mediaDir, "existing-media.json"), ...listUntilArgs]);
   const proc = spawn(command, args, {
     cwd: config.stateDir,
     stdio: ["pipe", "pipe", "pipe"],
@@ -237,6 +238,7 @@ export const googleMessagesSyncSource: SyncSource = {
     let mediaDir: string | undefined;
     try {
       mediaDir = createMediaStaging(resolved.stateDir);
+      writeFileSync(join(mediaDir, "existing-media.json"), JSON.stringify(await existingMediaManifest(db, resolved.account)), { mode: 0o600 });
       const run = await runSidecar<ImportStats>(resolved, cursors, listUntil, mediaDir, options.signal, (lines) =>
         importGoogleMessages(db, lines, {
           sourceAccount: resolved.account,

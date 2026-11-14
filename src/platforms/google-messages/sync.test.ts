@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { getDb, initDb } from "../../db/schema";
 import { runSourceOnce } from "../../sync/once";
+import { existingMediaManifest, mediaCopyUri } from "./existing-media";
 import { EVENT_SOURCE } from "./parser";
 import { deleteSyncState, getAppStateDb, getSyncState, setSyncState } from "../../db/app-state";
 import { FULL_LISTING_INTERVAL_MS, googleMessagesSyncSource, MEDIA_STAGING_PREFIX, REACTION_REFRESH_MS, SYNC_OVERLAP_MS, type GoogleMessagesSyncState } from "./sync";
@@ -39,7 +40,7 @@ const MMS_WITH_PHOTO = {
   ...MESSAGE("101", "1"),
   message_type: "mms",
   text: "",
-  media: [{ media_id: "m1", name: "photo.jpg", mime_type: "image/jpeg", width: 4, height: 3, status: "stored", path: "__MEDIA__/m1-photo.jpg" }],
+  media: [{ media_id: "m1", name: "photo.jpg", mime_type: "image/jpeg", width: 4, height: 3, size: 10, status: "stored", path: "__MEDIA__/m1-photo.jpg" }],
 };
 
 /** Conversation 1 completes; conversation 2 is either completed, failed, or followed by a broken line. */
@@ -78,7 +79,7 @@ describe("google-messages sync source", () => {
         `echo "$@" >> "${argsLog}"`,
         `cat > "${stdinLog}"`,
         'if [ "$GMESSAGES_FAKE_FAIL" = "1" ]; then echo "boom" >&2; exit 3; fi',
-        'MEDIA=""; while [ $# -gt 0 ]; do if [ "$1" = "-media" ]; then MEDIA="$2"; fi; shift; done',
+        `MEDIA=""; while [ $# -gt 0 ]; do if [ "$1" = "-media" ]; then MEDIA="$2"; fi; if [ "$1" = "-existing-media" ]; then cp "$2" "${dir}/manifest.json"; fi; shift; done`,
         'printf "jpeg bytes" > "$MEDIA/m1-photo.jpg"',
         `sed "s#__MEDIA__#$MEDIA#g" "${join(dir, "fixture.jsonl")}"`,
         'if [ "$GMESSAGES_FAKE_LINGER" = "1" ]; then trap \'kill $!; exit 143\' TERM; sleep 20 & wait $!; fi',
@@ -109,6 +110,52 @@ describe("google-messages sync source", () => {
   const state = () => getSyncState<GoogleMessagesSyncState>(getAppStateDb(), EVENT_SOURCE);
   const sentCursors = () => JSON.parse(readFileSync(stdinLog, "utf8")) as Record<string, number>;
 
+  it("passes stored full copies for only this account, including successful retries", async () => {
+    expect((await googleMessagesSyncSource.sync(options())).success).toBe(true);
+    const db = getDb();
+    const first = await existingMediaManifest(db, "Owner");
+    expect(first["101"].m1).toMatchObject({ size: 10, path: join(dir, "media-root/google-messages/+447700900001/m1-photo.jpg") });
+    expect(await existingMediaManifest(db, "Other")).toEqual({});
+    // Old rows remain usable without the new copy marker.
+    db.run("UPDATE attachments SET original_uri = NULL WHERE source = ?", [EVENT_SOURCE]);
+    expect(await existingMediaManifest(db, "Owner")).toEqual(first);
+    // A legacy full copy might have been overwritten with a smaller thumbnail.
+    db.run("UPDATE attachments SET file_size = 5 WHERE source = ?", [EVENT_SOURCE]);
+    expect(await existingMediaManifest(db, "Owner")).toEqual({});
+    db.run("UPDATE attachments SET file_size = 10 WHERE source = ?", [EVENT_SOURCE]);
+    // A legacy thumbnail must still be upgraded; a later successful download
+    // gets its copy identity from the attachment, not immutable raw_data.
+    db.run("UPDATE events SET raw_data = json_set(raw_data, '$.media[0].status', 'thumbnail') WHERE source = ? AND source_id = '101'", [EVENT_SOURCE]);
+    expect(await existingMediaManifest(db, "Owner")).toEqual({});
+    db.close();
+    expect((await googleMessagesSyncSource.sync(options())).success).toBe(true);
+    const reopened = getDb();
+    expect(await existingMediaManifest(reopened, "Owner")).toEqual(first);
+    // A thumbnail written by the new importer must not inherit a legacy
+    // full-size status from raw_data.
+    reopened.run("UPDATE attachments SET original_uri = ? WHERE source = ?", [mediaCopyUri("m1", "thumbnail"), EVENT_SOURCE]);
+    expect(await existingMediaManifest(reopened, "Owner")).toEqual({});
+    reopened.run("UPDATE attachments SET original_uri = ? WHERE source = ?", [mediaCopyUri("m1", "stored"), EVENT_SOURCE]);
+    reopened.close();
+    // Simulate the Go sidecar's verified cache hit. It emits no staging path.
+    writeFileSync(join(dir, "fixture.jsonl"), [CONVERSATION("1"), { ...MMS_WITH_PHOTO, media: [{ media_id: "m1", status: "cached" }] }].map((record) => JSON.stringify(record)).join("\n"));
+    const cached = await googleMessagesSyncSource.sync(options());
+    expect(cached).toMatchObject({ success: true, eventsAdded: 0, metadata: { attachmentsCached: 1, attachmentsStored: 0, attachmentsFailed: 0 } });
+    expect(JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8"))).toEqual(first);
+    expect(readFileSync(first["101"].m1.path, "utf8")).toBe("jpeg bytes");
+  });
+
+  it("repairs a corrupt stored attachment after the sidecar fetches it again", async () => {
+    await googleMessagesSyncSource.sync(options());
+    const path = join(dir, "media-root/google-messages/+447700900001/m1-photo.jpg");
+    writeFileSync(path, "bad! bytes");
+    expect((await googleMessagesSyncSource.sync(options())).success).toBe(true);
+    expect(readFileSync(path, "utf8")).toBe("jpeg bytes");
+    rmSync(path);
+    expect((await googleMessagesSyncSource.sync(options())).success).toBe(true);
+    expect(readFileSync(path, "utf8")).toBe("jpeg bytes");
+  });
+
   it("refuses to sync without an account, binary, or pairing", async () => {
     expect(await googleMessagesSyncSource.canSync({})).toMatch(/account/);
     expect(await googleMessagesSyncSource.canSync({ account: "Owner", binary: join(dir, "missing"), state_dir: dir })).toMatch(/not found/);
@@ -124,7 +171,7 @@ describe("google-messages sync source", () => {
     expect(first.result).toMatchObject({ success: true, eventsAdded: 3, metadata: { conversationsDone: 2, resumedConversations: 0, attachmentsStored: 1 } });
     expect(first.events.inserted.byType).toEqual({ "mms:received": 1, "sms:received": 2 });
     const args = readFileSync(argsLog, "utf8").trim();
-    expect(args).toMatch(new RegExp(`^dump -folder all -cursors - -media ${dir}/${MEDIA_STAGING_PREFIX}\\S+$`));
+    expect(args).toMatch(new RegExp(`^dump -folder all -cursors - -media ${dir}/${MEDIA_STAGING_PREFIX}\\S+ -existing-media \\S+$`));
     expect(sentCursors()).toEqual({});
     // The staging directory lives only for the run.
     expect(readdirSync(dir).filter((entry) => entry.startsWith(MEDIA_STAGING_PREFIX))).toEqual([]);

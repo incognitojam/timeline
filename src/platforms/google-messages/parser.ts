@@ -18,6 +18,7 @@ import { formatIdentifier, upsertIdentities, type UpsertIdentityOptions } from "
 import { onImportComplete } from "../../db/import-hooks";
 import { isPhoneNumberLike, normalizePhoneNumber, PHONE_IDENTITY_PLATFORM as IDENTITY_PLATFORM } from "../../lib/phone";
 import { type AttachmentInput, markAttachmentFailed, markAttachmentUnrecoverable, storeAndInsertAttachment } from "../../media/attachments";
+import { mediaCopyUri } from "./existing-media";
 import { imageDimensions } from "../../media/dimensions";
 
 export const EVENT_SOURCE = "google-messages";
@@ -54,9 +55,10 @@ export interface GmMedia {
   /**
    * `stored` = the full-size file was decrypted to `path`; `thumbnail` = only
    * Google's smaller copy could be unlocked and that is what `path` holds;
+   * `cached` = verified full-size copy already in Timeline storage (no path);
    * `unavailable` = neither copy had a decryption key; `failed` = download error.
    */
-  status?: "stored" | "thumbnail" | "failed" | "unavailable";
+  status?: "stored" | "thumbnail" | "failed" | "unavailable" | "cached";
   /** Where the sidecar wrote the file; relative paths resolve against ImportOptions.mediaDir. */
   path?: string;
 }
@@ -132,6 +134,7 @@ export interface ImportStats {
   systemSkipped: number;
   /** Attachments copied into media storage at full size. */
   attachmentsStored: number;
+  attachmentsCached: number;
   /** Attachments stored as Google's smaller copy, the full-size one being locked. */
   attachmentsThumbnails: number;
   /** Attachments the sidecar could not download; recorded as failed. */
@@ -361,6 +364,11 @@ async function handleMessage(ctx: ImportContext, record: GmMessage): Promise<voi
       ? [ownerIdentifier, ...others.map((p) => participantIdentifier(p, p.participant_id))]
       : [participantIdentifier(sender, record.sender_participant_id ?? "unknown"), ownerIdentifier];
 
+  if (record.media?.some((media) => media.status === "cached") &&
+      !ctx.findEvent.get(EVENT_SOURCE, record.id, ctx.options.sourceAccount)) {
+    throw new Error(`Message ${record.id} claims cached media but has not been imported`);
+  }
+
   const inserted = ctx.insert.get(
     EVENT_SOURCE,
     record.id,
@@ -469,6 +477,10 @@ async function dimensionsOf(media: GmMedia, content: Buffer): Promise<{ width: n
 async function storeMedia(ctx: ImportContext, eventId: number, message: GmMessage, conversationId: string): Promise<void> {
   const parts = message.media ?? [];
   for (const [index, media] of parts.entries()) {
+    if (media.status === "cached") {
+      ctx.stats.attachmentsCached++;
+      continue;
+    }
     const partId = partIdFor(media, index);
     const filename = mediaFilename(media, partId);
     const attachment: AttachmentInput = {
@@ -500,7 +512,7 @@ async function storeMedia(ctx: ImportContext, eventId: number, message: GmMessag
     const dims = await dimensionsOf(media, content);
     await storeAndInsertAttachment(
       ctx.db,
-      { ...attachment, ...dims },
+      { ...attachment, ...dims, originalUri: mediaCopyUri(partId, media.status === "thumbnail" ? "thumbnail" : "stored") },
       content,
       join(conversationId, `${flattenPartId(partId)}-${filename}`),
     );
@@ -553,6 +565,7 @@ export async function importGoogleMessages(
       unknownDirection: 0,
       systemSkipped: 0,
       attachmentsStored: 0,
+      attachmentsCached: 0,
       attachmentsThumbnails: 0,
       attachmentsFailed: 0,
       attachmentsUnavailable: 0,

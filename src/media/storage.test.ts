@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, statSync, readFileSync } from "fs";
+import { mkdtempSync, rmSync, existsSync, statSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { createHash } from "crypto";
@@ -130,6 +130,22 @@ describe("storeFile content-addressed storage", () => {
     const pathB = join(mediaRoot, second.storagePath);
     // Both source paths share the inode with the by-hash file.
     expect(statSync(pathA).ino).toBe(statSync(pathB).ino);
+  });
+
+  test("repairs corrupt hash blobs and every source hardlink on a repeated store", async () => {
+    const content = Buffer.from("shared payload");
+    const options = { source: "google-messages", relativePath: "conversation/image.jpg", content };
+    const first = await storeFile(options);
+    const second = await storeFile({ ...options, relativePath: "other/image.jpg" });
+    const firstPath = join(mediaRoot, first.storagePath);
+    const secondPath = join(mediaRoot, second.storagePath);
+    const hashPath = join(mediaRoot, "by-hash", first.hash.slice(0, 2), `${first.hash}.jpg`);
+    for (const corrupt of [Buffer.from("short"), Buffer.alloc(content.length, 0)]) {
+      writeFileSync(firstPath, corrupt);
+      const repaired = await storeFile(options);
+      expect(repaired.deduplicated).toBe(false);
+      for (const path of [firstPath, secondPath, hashPath]) expect(readFileSync(path)).toEqual(content);
+    }
   });
 
   test("reads a stored local file through the media store", async () => {
