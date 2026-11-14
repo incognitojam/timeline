@@ -8,7 +8,7 @@ idiomatic_version_file_enable_tools = ["bun"]
 
 [tools]
 # Exact compiler for the shipped Google Messages sidecar.
-go = "1.26.5"
+go = "1.27.4"
 "aqua:rhysd/actionlint" = "1.7.12"
 ripgrep = "15.2.0"
 shellcheck = "0.11.0"
