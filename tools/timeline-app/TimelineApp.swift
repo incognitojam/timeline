@@ -81,7 +81,7 @@ struct TimelineApp: App {
 
             Divider()
 
-            Button(updates.automaticUpdatesEnabled ? "Check for Updates…" : "View Downloads on GitHub…") {
+            Button("Check for Updates…") {
                 updates.checkForUpdates()
             }
             .disabled(!updates.canCheck)

@@ -216,7 +216,7 @@ through SMAppService, and manual bootstrap fails with EIO.
 
 ## Updating
 
-In update-enabled builds, **Install Update and Relaunch…** resumes a staged update. Any normal quit while an update is staged first holds and stops the service. Quitting from the menu while the ready-to-install window is open, or after choosing **Install on Quit** when offered, leaves the service stopped until Timeline is opened again; opening the app recovers its update hold. A manual maintenance hold refuses the update and stays in place.
+Every installed build checks for updates automatically and offers **Check for Updates…** in the menu. Installation asks for confirmation unless you opt into automatic downloads. **Install Update and Relaunch…** resumes a staged update. Any normal quit while an update is staged first holds and stops the service. Quitting from the menu while the ready-to-install window is open, or after choosing **Install on Quit** when offered, leaves the service stopped until Timeline is opened again; opening the app recovers its update hold. A manual maintenance hold refuses the update and stays in place.
 
 Updates replace `Timeline.app`; the running service never pulls or builds a git
 checkout. For signed downloads, follow [macOS distribution](../operations/macos-distribution.md).
@@ -235,7 +235,7 @@ The product version comes from the root `package.json` and is advanced through
 the release process documented in [releases.md](../operations/releases.md). Local app and
 service builds use the same build-number script as packaging CI; use a full-history
 checkout and see [build numbering](../operations/releases.md) for the override.
-Once Sparkle updates are enabled, a branch ahead of `main` can out-number the next
+A branch ahead of `main` can out-number the next
 release, delaying update offers until a release has a higher build number.
 Development rebuilds remain distinguishable by the source commit shown in the web
 app's **Settings → Version & build**.
@@ -244,6 +244,8 @@ The installer creates the maintenance hold, stops the service before replacing
 the bundle, retains `~/Applications/Timeline.app.previous`, clears the hold,
 and launches the new app. The web app's **Settings** page reports the running
 release, build, and source commit without contacting a git remote.
+
+Sparkle replaces the whole app while preserving configuration, databases, media, and capture preferences. If automatic downloads are opted in, Timeline installs and relaunches as soon as the update is ready. If relaunch fails, the service remains held until Timeline is opened again. Sparkle does not retain `Timeline.app.previous` and does not offer downgrades: rollback requires manually installing an older DMG under the maintenance-hold procedure, then reopening Timeline to recover its update hold. Moving from a self-signed source build to Developer ID may require approving Screen Recording and Login Items again.
 
 ## Troubleshooting
 

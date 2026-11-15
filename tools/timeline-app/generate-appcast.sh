@@ -4,14 +4,6 @@ cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"
 APP="${TIMELINE_UPDATE_APP_BUNDLE:-$PWD/Timeline.app}"
 PLIST="$APP/Contents/Info.plist"
-if ! /usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$PLIST" >/dev/null 2>&1; then
-  if [ -n "${SPARKLE_ED_PRIVATE_KEY:-}" ]; then
-    echo 'Update signing is configured but native updates are disabled in the app.' >&2
-    exit 1
-  fi
-  echo 'Manual distribution: no native update feed generated.'
-  exit 0
-fi
 : "${SPARKLE_ED_PRIVATE_KEY:?Set the Sparkle update signing secret}"
 : "${GH_REPO:?Set the GitHub release repository}"
 : "${RELEASE_TAG:?Set the release tag}"
