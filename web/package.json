@@ -35,7 +35,7 @@
   },
   "devDependencies": {
     "@iconify-json/material-symbols": "^1.2.98",
-    "@iconify-json/simple-icons": "^1.2.94",
+    "@iconify-json/simple-icons": "^1.2.102",
     "@material/material-color-utilities": "^0.4.0",
     "@playwright/test": "^1.62.1",
     "@solidjs/testing-library": "^0.8.10",

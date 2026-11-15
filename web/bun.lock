@@ -28,7 +28,7 @@
       },
       "devDependencies": {
         "@iconify-json/material-symbols": "^1.2.98",
-        "@iconify-json/simple-icons": "^1.2.94",
+        "@iconify-json/simple-icons": "^1.2.102",
         "@material/material-color-utilities": "^0.4.0",
         "@playwright/test": "^1.62.1",
         "@solidjs/testing-library": "^0.8.10",
@@ -158,7 +158,7 @@
 
     "@iconify-json/material-symbols": ["@iconify-json/material-symbols@1.2.100", "", { "dependencies": { "@iconify/types": "*" } }, "sha512-lo3JulvaCnCCYVZHfld4kQ2YNkN55xCtLGplVgETx0n6nRR8IknMphknSqIpFhT/4J3upZJmLBTQT6cyQn8ThQ=="],
 
-    "@iconify-json/simple-icons": ["@iconify-json/simple-icons@1.2.94", "", { "dependencies": { "@iconify/types": "*" } }, "sha512-l8UWzVxKaqZd9ABsE/M/9p6NyGkQnmCnOoZyhQmjlXCtY5PuL2rcWxOFk2l9pk7ux3ERMPkTLE4jl6kQpTkwxA=="],
+    "@iconify-json/simple-icons": ["@iconify-json/simple-icons@1.2.102", "", { "dependencies": { "@iconify/types": "*" } }, "sha512-IwbAj1ZI6LBy+qU7sVYxB1wgbSSIDKjY9I0BnnpjfIdlqfXoYnBb80UvYA0WkodUFWfQyL4AjaKMg48fqX8sIw=="],
 
     "@iconify/types": ["@iconify/types@2.0.0", "", {}, "sha512-+wluvCrRhXrhyOmRDJ3q8mux9JkKy5SJ/v8ol2tu4FVjyYvtEzkc/3pK15ET6RKg4b4w4BmTk1+gsCUhf21Ykg=="],
 
