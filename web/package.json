@@ -34,7 +34,7 @@
     "unified": "^11.0.5"
   },
   "devDependencies": {
-    "@iconify-json/material-symbols": "^1.2.88",
+    "@iconify-json/material-symbols": "^1.2.98",
     "@iconify-json/simple-icons": "^1.2.94",
     "@material/material-color-utilities": "^0.4.0",
     "@playwright/test": "^1.62.1",
