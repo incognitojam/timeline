@@ -18,11 +18,6 @@ if (plistVersion !== PRODUCT_VERSION) {
     `Product version mismatch: package.json is ${PRODUCT_VERSION}, Timeline Info.plist is ${plistVersion}. Run bun run version:sync.`,
   );
 }
-const plistBuild = /<key>CFBundleVersion<\/key>\s*<string>([^<]+)<\/string>/.exec(infoPlist)?.[1];
-if (!plistBuild || !/^\d+$/.test(plistBuild)) {
-  throw new Error("Timeline Info.plist must have a numeric CFBundleVersion");
-}
-
 const webPackage = JSON.parse(readFileSync(join(repoRoot, "web", "package.json"), "utf8")) as {
   private?: unknown;
   version?: unknown;

@@ -18,7 +18,9 @@ If the publish run fails before the tag is pushed, rerun the Release run for the
 
 The root `package.json` is the source of truth for the product version. `tools/timeline-app/Info.plist` is a checked mirror maintained by `bun run version:sync`; `bun run version:check` rejects drift. The web package is private and has no independent version.
 
-`CFBundleVersion` is a separate numeric build identifier. Local builds use the committed value from `Info.plist`. Packaging CI derives `TIMELINE_BUILD_NUMBER` from the tagged commit’s reachable commit count with `scripts/print-build-number.sh`, so retries use the same number and subsequent releases on `main` advance it.
+`CFBundleVersion` is a separate numeric build identifier, added to the built app rather than committed in `Info.plist`. Local app and service builds default to `scripts/print-build-number.sh`, the same script packaging CI uses for `TIMELINE_BUILD_NUMBER`. The override remains available. Retries at the same commit use the same number and subsequent releases on `main` advance it. Use a full-history checkout so the reachable commit count is accurate.
+
+Once Sparkle updates are enabled, a source build is offered releases with a higher build number. A branch ahead of `main` can out-number the next release, delaying update offers until a release surpasses that branch build.
 
 After Changesets publishes a release, the macOS DMG workflow builds the tagged source on an Apple Silicon runner, signs and notarizes it, then attaches the DMG and checksum. See [macOS distribution](macos-distribution.md) for the required signing secrets and failure recovery. The source release can exist while packaging is still running or has failed.
 

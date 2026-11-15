@@ -74,16 +74,16 @@ function git(...args: string[]): string {
 }
 
 function appBuildNumber(): string {
-  const infoPlist = join(repoRoot, "tools", "timeline-app", "Info.plist");
-  const result = Bun.spawnSync(["/usr/libexec/PlistBuddy", "-c", "Print :CFBundleVersion", infoPlist], {
+  const result = Bun.spawnSync([join(repoRoot, "scripts", "print-build-number.sh")], {
+    cwd: repoRoot,
     stdout: "pipe",
     stderr: "pipe",
   });
   if (result.exitCode !== 0) {
-    throw new Error(`could not read CFBundleVersion from Timeline Info.plist: ${result.stderr.toString().trim()}`);
+    throw new Error(`could not determine Timeline build number: ${result.stderr.toString().trim()}`);
   }
   const value = result.stdout.toString().trim();
-  if (!value) throw new Error("Timeline Info.plist has an empty CFBundleVersion");
+  if (!value) throw new Error("build-number script returned no value");
   return value;
 }
 

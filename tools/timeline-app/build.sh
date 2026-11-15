@@ -47,13 +47,13 @@ ditto "$SPARKLE_ROOT/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framew
 cp "$SPARKLE_ROOT/LICENSE" "$APP/Contents/Resources/Sparkle-LICENSE"
 cp Info.plist "$APP/Contents/Info.plist"
 PRODUCT_VERSION="$(bun run "$REPO_ROOT/scripts/print-product-version.ts")"
-BUNDLE_BUILD="${TIMELINE_BUILD_NUMBER:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' Info.plist)}"
+BUNDLE_BUILD="${TIMELINE_BUILD_NUMBER:-$("$REPO_ROOT/scripts/print-build-number.sh")}"
 if [[ ! "$BUNDLE_BUILD" =~ ^[0-9]+$ ]]; then
   echo "Error: Timeline build number must contain only digits: $BUNDLE_BUILD" >&2
   exit 1
 fi
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $PRODUCT_VERSION" "$APP/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUNDLE_BUILD" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $BUNDLE_BUILD" "$APP/Contents/Info.plist"
 bun run update-config.ts "$APP/Contents/Info.plist"
 cp ../../deploy/macos/run-tailscale.sh "$APP/Contents/Resources/run-tailscale.sh"
 chmod 755 "$APP/Contents/Resources/run-tailscale.sh"

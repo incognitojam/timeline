@@ -10,7 +10,7 @@ output="$work/updates"
 mkdir -p "$output"
 ditto "${1:-Timeline.app}" "$app"
 cp Info.plist "$app/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c 'Set :CFBundleVersion 999999' "$app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Add :CFBundleVersion string 999999' "$app/Contents/Info.plist"
 
 # Fresh synthetic keys exercise the real signing tools without the login keychain.
 bun -e '

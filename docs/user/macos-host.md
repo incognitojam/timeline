@@ -230,10 +230,13 @@ bun install --frozen-lockfile
 Google Messages updates with the app. Its pairing state stays in `~/.local/share/timeline-gmessages`; an old standalone executable there is left untouched. With no binary override, sync automatically uses the bundled copy. If **Sidecar binary** has an explicit old path, choose **Use default** and save in the sync dashboard. No re-pair is needed; see [Google Messages setup](source-setup.md#google-messages-setup).
 
 The product version comes from the root `package.json` and is advanced through
-the release process documented in [releases.md](../operations/releases.md). Local builds use
-`CFBundleVersion` from `tools/timeline-app/Info.plist`; packaging CI can set the
-monotonic numeric `TIMELINE_BUILD_NUMBER` override. Development rebuilds remain
-distinguishable by the source commit shown in the web app's **Settings → Version & build**.
+the release process documented in [releases.md](../operations/releases.md). Local app and
+service builds use the same build-number script as packaging CI; use a full-history
+checkout and see [build numbering](../operations/releases.md) for the override.
+Once Sparkle updates are enabled, a branch ahead of `main` can out-number the next
+release, delaying update offers until a release has a higher build number.
+Development rebuilds remain distinguishable by the source commit shown in the web
+app's **Settings → Version & build**.
 
 The installer creates the maintenance hold, stops the service before replacing
 the bundle, retains `~/Applications/Timeline.app.previous`, clears the hold,
