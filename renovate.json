@@ -8,5 +8,17 @@
   "ignorePaths": [
     "**/node_modules/**",
     "repos/**"
+  ],
+  "packageRules": [
+    {
+      "description": "Icon sets publish data-only releases every few days; collect them into one monthly PR",
+      "matchPackageNames": [
+        "@iconify-json/**"
+      ],
+      "groupName": "Iconify icon sets",
+      "schedule": [
+        "* 0-3 1 * *"
+      ]
+    }
   ]
 }
