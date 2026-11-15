@@ -110,7 +110,7 @@ jobs:
           # The action ignores a failed tag push and then creates the release at the head of main.
           create-github-releases: false
           push-git-tags: false
-      - name: Tag the tested commit and publish the GitHub release
+      - name: Tag the tested commit and draft the GitHub release
         if: steps.publish.outputs.published == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -122,7 +122,7 @@ jobs:
           grep -q . "$notes"
           prerelease=()
           if [[ "$TAG" == *-* ]]; then prerelease=(--prerelease); fi
-          gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$notes" "${prerelease[@]}"
+          gh release create "$TAG" --draft --verify-tag --title "$TAG" --notes-file "$notes" "${prerelease[@]}"
 
   macos-dmg:
     needs: release
