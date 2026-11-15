@@ -1,5 +1,12 @@
 # Timeline
 
+## 0.17.5
+
+### Patch Changes
+
+- a559da5: Ship the matching Google Messages sidecar with Timeline.app, so app updates no longer require a separate sidecar installation. Existing pairing state and explicit binary overrides are preserved.
+- 8af9918: Number source-built macOS apps like releases so they are only offered updates with a higher build number.
+
 ## 0.17.4
 
 ### Patch Changes
