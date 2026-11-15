@@ -85,6 +85,10 @@ struct TimelineApp: App {
                 updates.checkForUpdates()
             }
             .disabled(!updates.canCheck)
+            if updates.updateStaged {
+                Button("Install Update and Relaunch…") { updates.checkForUpdates() }
+                    .disabled(!updates.canInstallStagedUpdate)
+            }
             if let issue = updates.issue { Text(issue) }
 
             Button("Quit Timeline") { NSApplication.shared.terminate(nil) }

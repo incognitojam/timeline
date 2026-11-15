@@ -18,6 +18,9 @@ trap cleanup EXIT
 swiftc LaunchAgentIdentity.swift LaunchAgentIdentityTests.swift -o "$TMP/launch-agent-identity-tests"
 "$TMP/launch-agent-identity-tests"
 
+swiftc UpdateInstallation.swift UpdateInstallationTests.swift -o "$TMP/update-installation-tests"
+"$TMP/update-installation-tests"
+
 swiftc LaunchAgentConfig.swift UpdateMaintenance.swift UpdateMaintenanceTests.swift -o "$TMP/update-maintenance-tests"
 "$TMP/update-maintenance-tests" "$TMP"
 test -f "$APP/Contents/Frameworks/Sparkle.framework/Sparkle"
