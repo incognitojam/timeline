@@ -30,6 +30,7 @@ import {
   INVALID_CONTACT_FILTER_MESSAGE,
   parseContactFilterId,
   parseQuery,
+  prefixSearchSuggestion,
   removeFilter,
 } from "../lib/query-parser";
 import { normalizeRouteParam } from "../lib/route-params";
@@ -413,6 +414,19 @@ export default function SearchView() {
     setDebouncedQuery(query());
   };
 
+  // A word typed partway ("mee") matches nothing on its own, so offer it as a
+  // prefix search instead.
+  const prefixSuggestion = createMemo(() =>
+    mode() === "keyword" ? prefixSearchSuggestion(debouncedQuery()) : null,
+  );
+
+  const searchFor = (q: string) => {
+    clearTimeout(debounceTimer);
+    setQuery(q);
+    setDebouncedQuery(q);
+    inputRef?.focus();
+  };
+
   const handlePersonClick = async (identifier: string, source: string, e: MouseEvent) => {
     e.stopPropagation();
     await navigateToIdentity(navigate, identifier, source);
@@ -630,7 +644,13 @@ export default function SearchView() {
                 </p>
               }
             >
-              <p class="text-xs text-muted-foreground">
+              <div class="space-y-1 text-xs text-muted-foreground">
+              <p>
+                Words also match other endings: <code class="bg-secondary px-1 rounded">run</code> finds
+                running. <code class="bg-secondary px-1 rounded">poi*</code> matches words starting with
+                poi, <code class="bg-secondary px-1 rounded">"exact words"</code> match as written.
+              </p>
+              <p>
                 Filters: <code class="bg-secondary px-1 rounded">source:</code>{" "}
                 <code class="bg-secondary px-1 rounded">type:</code>{" "}
                 <code class="bg-secondary px-1 rounded">date:</code>{" "}
@@ -640,6 +660,7 @@ export default function SearchView() {
                 <code class="bg-secondary px-1 rounded">contact:</code>{" "}
                 <code class="bg-secondary px-1 rounded">chat:</code>
               </p>
+              </div>
             </Show>
             <label class="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
               <input
@@ -805,7 +826,24 @@ export default function SearchView() {
             <Show
               when={mode() === "semantic" && debouncedQuery().trim().length === 0}
               fallback={
-                <div class={`text-center py-8 text-muted-foreground ${staleContentClass(searchResultsAreStale())}`} aria-busy={searchResultsAreStale()}>No events found</div>
+                <div class={`text-center py-8 text-muted-foreground ${staleContentClass(searchResultsAreStale())}`} aria-busy={searchResultsAreStale()}>
+                  <p>No events found</p>
+                  <Show when={prefixSuggestion()}>
+                    {(suggestion) => (
+                      <p class="mt-2 text-sm">
+                        Try{" "}
+                        <button
+                          type="button"
+                          class="rounded bg-secondary px-1 font-mono text-foreground hover:bg-accent"
+                          onClick={() => searchFor(suggestion().query)}
+                        >
+                          {suggestion().word}*
+                        </button>{" "}
+                        to match words starting with "{suggestion().word}"
+                      </p>
+                    )}
+                  </Show>
+                </div>
               }
             >
               <div class="text-center py-8 text-muted-foreground">

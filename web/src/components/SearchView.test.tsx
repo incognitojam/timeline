@@ -151,6 +151,25 @@ describe("SearchView", () => {
     }
   });
 
+  it("offers a prefix search when a partly typed word finds nothing", async () => {
+    searchParams.q = "mee";
+    const queryClient = createTestClient();
+    queryClient.setQueryData(
+      queryKeys.searchEvents(parseQuery("mee"), false),
+      { pages: [{ events: [], count: 0, nextCursor: null }], pageParams: [undefined] },
+    );
+
+    const { findByRole, getByRole } = render(() => (
+      <QueryClientProvider client={queryClient}>
+        <SearchView />
+      </QueryClientProvider>
+    ));
+
+    fireEvent.click(await findByRole("button", { name: "mee*" }));
+
+    expect(getByRole("combobox", { name: "Search timeline" })).toHaveValue("mee*");
+  });
+
   it("keeps the search form visible while route-owned data is pending", () => {
     const queryClient = createTestClient();
     const { getByPlaceholderText, getByText, queryByText } = render(() => (
