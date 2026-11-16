@@ -646,9 +646,10 @@ export default function SearchView() {
             >
               <div class="space-y-1 text-xs text-muted-foreground">
               <p>
-                Words also match other endings: <code class="bg-secondary px-1 rounded">run</code> finds
-                running. <code class="bg-secondary px-1 rounded">poi*</code> matches words starting with
-                poi, <code class="bg-secondary px-1 rounded">"exact words"</code> match as written.
+                <code class="bg-secondary px-1 rounded">run</code> also finds running,{" "}
+                <code class="bg-secondary px-1 rounded">poi*</code> words starting with poi,{" "}
+                <code class="bg-secondary px-1 rounded">"exact words"</code> as written,{" "}
+                <code class="bg-secondary px-1 rounded">-word</code> leaves it out
               </p>
               <p>
                 Filters: <code class="bg-secondary px-1 rounded">source:</code>{" "}

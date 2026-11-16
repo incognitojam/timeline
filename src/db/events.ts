@@ -155,47 +155,72 @@ function ftsPhrase(tokens: string[]): string {
 }
 
 /**
- * Text search terms, split by the index that answers them. Plain words match
- * stemmed (`run` finds "running"); `word*` matches words starting with it;
- * `"quoted words"` match as written, with any punctuation in them checked
- * literally because FTS ignores it.
+ * Terms a search must match, split by the index that answers them. Plain
+ * words match stemmed (`run` finds "running"); `word*` matches words starting
+ * with it; `"quoted words"` match as written, with any punctuation in them
+ * checked literally because FTS ignores it.
  */
-interface TextSearchTerms {
+interface TextMatch {
   stemmed: string[];
   exact: string[];
   literals: string[];
 }
 
-function parseTextSearch(query: string): TextSearchTerms {
-  const terms: TextSearchTerms = { stemmed: [], exact: [], literals: [] };
+/** Terms every result matches, and one TextMatch per `-word` none may match. */
+interface TextSearch {
+  include: TextMatch;
+  exclude: TextMatch[];
+}
+
+function emptyTextMatch(): TextMatch {
+  return { stemmed: [], exact: [], literals: [] };
+}
+
+function isEmptyTextMatch(match: TextMatch): boolean {
+  return match.stemmed.length === 0 && match.exact.length === 0 && match.literals.length === 0;
+}
+
+function addQuotedTerms(match: TextMatch, quoted: string): void {
+  const tokens = ftsTokens(quoted);
+  if (tokens.length > 0) match.exact.push(ftsPhrase(tokens));
+  const phrase = quoted.trim();
+  if (phrase && /[^\p{L}\p{N}\s]/u.test(phrase)) match.literals.push(phrase);
+}
+
+function addWordTerms(match: TextMatch, chunk: string): void {
+  const tokens = ftsTokens(chunk);
+  const last = tokens.pop();
+  if (last === undefined) return;
+  for (const token of tokens) match.stemmed.push(ftsPhrase([token]));
+  if (chunk.endsWith("*")) {
+    match.exact.push(`${ftsPhrase([last])}*`);
+  } else {
+    match.stemmed.push(ftsPhrase([last]));
+  }
+}
+
+function parseTextSearch(query: string): TextSearch {
+  const search: TextSearch = { include: emptyTextMatch(), exclude: [] };
   const trimmed = query.trim();
   // A whole query in single quotes is an exact phrase, like double quotes.
   const normalized = trimmed.length >= 2 && trimmed.startsWith("'") && trimmed.endsWith("'")
     ? `"${trimmed.slice(1, -1)}"`
     : trimmed;
 
-  // A quote left open while typing runs to the end of the query.
-  for (const match of normalized.matchAll(/"([^"]*)"?|[^\s"]+/g)) {
-    const quoted = match[1];
-    if (quoted !== undefined) {
-      const tokens = ftsTokens(quoted);
-      if (tokens.length > 0) terms.exact.push(ftsPhrase(tokens));
-      const phrase = quoted.trim();
-      if (phrase && /[^\p{L}\p{N}\s]/u.test(phrase)) terms.literals.push(phrase);
-      continue;
-    }
-
-    const tokens = ftsTokens(match[0]);
-    const last = tokens.pop();
-    if (last === undefined) continue;
-    for (const token of tokens) terms.stemmed.push(ftsPhrase([token]));
-    if (match[0].endsWith("*")) {
-      terms.exact.push(`${ftsPhrase([last])}*`);
+  // A quote left open while typing runs to the end of the query. A leading
+  // "-" excludes the word or quote; one inside a word ("board-games") doesn't.
+  for (const match of normalized.matchAll(/(-?)"([^"]*)"?|[^\s"]+/g)) {
+    const quoted = match[2];
+    const excluded = quoted === undefined ? match[0].startsWith("-") : match[1] === "-";
+    const target = excluded ? emptyTextMatch() : search.include;
+    if (quoted === undefined) {
+      addWordTerms(target, match[0]);
     } else {
-      terms.stemmed.push(ftsPhrase([last]));
+      addQuotedTerms(target, quoted);
     }
+    if (excluded && !isEmptyTextMatch(target)) search.exclude.push(target);
   }
-  return terms;
+  return search;
 }
 
 function escapeLikePattern(value: string): string {
@@ -226,27 +251,42 @@ function addExactLikeSearch(
   );
 }
 
+function addTextMatch(
+  conditions: string[],
+  params: (string | number)[],
+  match: TextMatch,
+  tableAlias: string,
+): void {
+  if (match.stemmed.length > 0) {
+    conditions.push(`${tableAlias}.id IN (SELECT rowid FROM events_fts_stemmed WHERE events_fts_stemmed MATCH ?)`);
+    params.push(match.stemmed.join(" "));
+  }
+  if (match.exact.length > 0) {
+    conditions.push(`${tableAlias}.id IN (SELECT rowid FROM events_fts WHERE events_fts MATCH ?)`);
+    params.push(match.exact.join(" "));
+  }
+  for (const literal of match.literals) {
+    addExactLikeSearch(conditions, params, literal, tableAlias);
+  }
+}
+
 export function addTextSearch(
   conditions: string[],
   params: (string | number)[],
   query: string,
   tableAlias = "e",
 ): void {
-  const terms = parseTextSearch(query);
+  const search = parseTextSearch(query);
+  addTextMatch(conditions, params, search.include, tableAlias);
 
-  if (terms.stemmed.length > 0) {
-    conditions.push(`${tableAlias}.id IN (SELECT rowid FROM events_fts_stemmed WHERE events_fts_stemmed MATCH ?)`);
-    params.push(terms.stemmed.join(" "));
-  }
-  if (terms.exact.length > 0) {
-    conditions.push(`${tableAlias}.id IN (SELECT rowid FROM events_fts WHERE events_fts MATCH ?)`);
-    params.push(terms.exact.join(" "));
-  }
-  for (const literal of terms.literals) {
-    addExactLikeSearch(conditions, params, literal, tableAlias);
+  for (const excluded of search.exclude) {
+    const excludedConditions: string[] = [];
+    addTextMatch(excludedConditions, params, excluded, tableAlias);
+    // LIKE on NULL title and content is NULL, which NOT would leave NULL.
+    conditions.push(`NOT COALESCE((${excludedConditions.join(" AND ")}), 0)`);
   }
 
-  if (terms.stemmed.length === 0 && terms.exact.length === 0 && terms.literals.length === 0) {
+  if (isEmptyTextMatch(search.include) && search.exclude.length === 0) {
     // Symbols FTS can't index, such as "+", fall back to a literal match.
     const literal = query.replace(/"/g, "").trim();
     if (literal.length > 0) {
