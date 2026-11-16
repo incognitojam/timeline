@@ -1,5 +1,5 @@
 import { defineConfig } from "@playwright/test";
-import { parsePort, t3WorkspacePort } from "../scripts/ports";
+import { parsePort, workspacePort } from "../scripts/ports";
 
 const ignoreSnapshots = process.env.PLAYWRIGHT_IGNORE_SNAPSHOTS === "1";
 
@@ -18,7 +18,7 @@ function resolvePort(): number {
     return parsePort(explicitPort, "PLAYWRIGHT_PORT");
   }
 
-  return t3WorkspacePort("playwright") ?? 4173;
+  return workspacePort("playwright") ?? 4173;
 }
 
 const port = resolvePort();

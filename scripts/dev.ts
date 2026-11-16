@@ -15,7 +15,7 @@ import {
   readState,
   writeState,
 } from "./dev-state";
-import { parsePort, t3WorkspacePort } from "./ports";
+import { parsePort, workspacePort } from "./ports";
 import { waitForServer } from "./readiness";
 
 type DevOptions = {
@@ -135,8 +135,9 @@ function printHelp() {
 
 Starts the API and Vite web app together.
 
-In T3 Code, the web server uses T3CODE_WORKSPACE_PORT and the API uses the next
-port. Otherwise, ports are OS-assigned unless pinned via flag or env var.
+In styal or T3 Code, the web server uses STYAL_WORKSPACE_PORT (or
+T3CODE_WORKSPACE_PORT) and the API uses the next port. Otherwise, ports are
+OS-assigned unless pinned via flag or env var.
 Port ${DEFAULT_SERVER_PORT} (the installed service) is never used.
 
 Options:
@@ -242,9 +243,9 @@ const background = launchLog !== undefined;
 
 const apiPort = externalApiTarget
   ? undefined
-  : await pickPort(options.apiPort ?? explicitApiPortFromEnv() ?? t3WorkspacePort("api"));
+  : await pickPort(options.apiPort ?? explicitApiPortFromEnv() ?? workspacePort("api"));
 const webPort = await pickPort(
-  options.webPort ?? explicitWebPortFromEnv() ?? t3WorkspacePort("web"),
+  options.webPort ?? explicitWebPortFromEnv() ?? workspacePort("web"),
   new Set(apiPort === undefined ? [] : [apiPort]),
 );
 

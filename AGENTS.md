@@ -126,7 +126,7 @@ bun install
 # Parsers: bun run src/platforms/<platform>/parser.ts [args...]
 # Args vary by parser; check the CLI block near bottom of each file. Setup: docs/user/source-setup.md
 
-# Run the web app (uses T3 workspace ports when available, otherwise free ports)
+# Run the web app (uses the harness's workspace ports when available, otherwise free ports)
 bun run dev
 bun run dev -- --background   # detached; returns once the web app answers
 bun run dev:status            # ports/URLs of this worktree's dev server

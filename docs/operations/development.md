@@ -54,11 +54,9 @@ identified by PID and start time, so do not use `pkill -f`, which can match the
 calling shell. It also cleans up children left behind if the dev process itself
 was killed.
 
-Ports come from `T3CODE_WORKSPACE_PORT` (web) and the next port (API) in T3
-Code, otherwise from the OS, unless pinned with `--web-port`/`--api-port`. Dev
-never uses port 3001, which belongs to the installed service; read the ports
-from `dev:status` rather than guessing. Vite started on its own has no API to
-proxy to, so start the app through `bun run dev`.
+`bun run dev -- --help` explains how ports are chosen; read them from
+`dev:status` rather than guessing. Vite started on its own has no API to proxy
+to, so start the app through `bun run dev`.
 
 ## Running one sync source
 
