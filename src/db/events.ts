@@ -142,24 +142,60 @@ export function createCursor(
   return `${cursor.timestamp}_${cursor.id}`;
 }
 
-function isQuotedExactQuery(query: string): boolean {
-  const trimmed = query.trim();
-  if (trimmed.length < 2) return false;
-  return (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  );
+// Split as the unicode61 tokenizer does, so each token is one indexed word:
+// events_fts_stemmed has no positions to match a multi-word phrase.
+const FTS_TOKEN = /[\p{L}\p{N}]+/gu;
+
+function ftsTokens(text: string): string[] {
+  return text.match(FTS_TOKEN) ?? [];
 }
 
-function stripExactQueryQuotes(query: string): string {
-  const trimmed = query.trim();
-  return isQuotedExactQuery(trimmed) ? trimmed.slice(1, -1) : trimmed;
+function ftsPhrase(tokens: string[]): string {
+  return `"${tokens.join(" ").replace(/"/g, '""')}"`;
 }
 
-function buildFtsPrefixQuery(query: string): string | null {
-  const tokens = query.match(/[\p{L}\p{N}_]+/gu) ?? [];
-  if (tokens.length === 0) return null;
-  return tokens.map((token) => `"${token.replace(/"/g, '""')}"*`).join(" ");
+/**
+ * Text search terms, split by the index that answers them. Plain words match
+ * stemmed (`run` finds "running"); `word*` matches words starting with it;
+ * `"quoted words"` match as written, with any punctuation in them checked
+ * literally because FTS ignores it.
+ */
+interface TextSearchTerms {
+  stemmed: string[];
+  exact: string[];
+  literals: string[];
+}
+
+function parseTextSearch(query: string): TextSearchTerms {
+  const terms: TextSearchTerms = { stemmed: [], exact: [], literals: [] };
+  const trimmed = query.trim();
+  // A whole query in single quotes is an exact phrase, like double quotes.
+  const normalized = trimmed.length >= 2 && trimmed.startsWith("'") && trimmed.endsWith("'")
+    ? `"${trimmed.slice(1, -1)}"`
+    : trimmed;
+
+  // A quote left open while typing runs to the end of the query.
+  for (const match of normalized.matchAll(/"([^"]*)"?|[^\s"]+/g)) {
+    const quoted = match[1];
+    if (quoted !== undefined) {
+      const tokens = ftsTokens(quoted);
+      if (tokens.length > 0) terms.exact.push(ftsPhrase(tokens));
+      const phrase = quoted.trim();
+      if (phrase && /[^\p{L}\p{N}\s]/u.test(phrase)) terms.literals.push(phrase);
+      continue;
+    }
+
+    const tokens = ftsTokens(match[0]);
+    const last = tokens.pop();
+    if (last === undefined) continue;
+    for (const token of tokens) terms.stemmed.push(ftsPhrase([token]));
+    if (match[0].endsWith("*")) {
+      terms.exact.push(`${ftsPhrase([last])}*`);
+    } else {
+      terms.stemmed.push(ftsPhrase([last]));
+    }
+  }
+  return terms;
 }
 
 function escapeLikePattern(value: string): string {
@@ -196,20 +232,28 @@ export function addTextSearch(
   query: string,
   tableAlias = "e",
 ): void {
-  const exactQuery = isQuotedExactQuery(query);
-  const cleanQuery = stripExactQueryQuotes(query);
-  const ftsQuery = buildFtsPrefixQuery(cleanQuery);
+  const terms = parseTextSearch(query);
 
-  if (ftsQuery) {
+  if (terms.stemmed.length > 0) {
+    conditions.push(`${tableAlias}.id IN (SELECT rowid FROM events_fts_stemmed WHERE events_fts_stemmed MATCH ?)`);
+    params.push(terms.stemmed.join(" "));
+  }
+  if (terms.exact.length > 0) {
     conditions.push(`${tableAlias}.id IN (SELECT rowid FROM events_fts WHERE events_fts MATCH ?)`);
-    params.push(ftsQuery);
-    if (exactQuery) {
-      addExactLikeSearch(conditions, params, cleanQuery, tableAlias);
+    params.push(terms.exact.join(" "));
+  }
+  for (const literal of terms.literals) {
+    addExactLikeSearch(conditions, params, literal, tableAlias);
+  }
+
+  if (terms.stemmed.length === 0 && terms.exact.length === 0 && terms.literals.length === 0) {
+    // Symbols FTS can't index, such as "+", fall back to a literal match.
+    const literal = query.replace(/"/g, "").trim();
+    if (literal.length > 0) {
+      addExactLikeSearch(conditions, params, literal, tableAlias);
+    } else {
+      conditions.push("0 = 1");
     }
-  } else if (cleanQuery.length > 0) {
-    addExactLikeSearch(conditions, params, cleanQuery, tableAlias);
-  } else {
-    conditions.push("0 = 1");
   }
 }
 

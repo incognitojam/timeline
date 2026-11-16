@@ -186,6 +186,19 @@ export function parseQuery(query: string): ParsedQuery {
   return result;
 }
 
+/**
+ * For a query ending in a plain word, the same query searching for words that
+ * start with it (`mee` → `mee*`), to offer when the whole word matched nothing.
+ */
+export function prefixSearchSuggestion(query: string): { word: string; query: string } | null {
+  const trimmed = query.trimEnd();
+  const insideQuote = (trimmed.match(/"/g)?.length ?? 0) % 2 === 1;
+  if (insideQuote) return null;
+  const match = trimmed.match(/(?:^|\s)([\p{L}\p{N}_]{2,})$/u);
+  if (!match) return null;
+  return { word: match[1], query: `${trimmed}*` };
+}
+
 /** Find the filter fragment that autocomplete should replace. */
 function getActiveAutocompleteToken(
   beforeCursor: string,

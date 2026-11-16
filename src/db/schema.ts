@@ -137,6 +137,43 @@ function ensureIndex(db: Database, name: string, createSql: string): void {
   }
 }
 
+/**
+ * Create the stemmed full-text index, filling it from events when it is new.
+ * Building it reads every event's text, so on a large database the first
+ * startup after it was added takes a few minutes.
+ */
+function ensureStemmedFts(db: Database): void {
+  const exists = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='events_fts_stemmed'")
+    .get();
+  if (exists) return;
+
+  const hasEvents = db.prepare("SELECT 1 FROM events LIMIT 1").get() !== null;
+  if (hasEvents) console.log("Building stemmed full-text index...");
+  const startedAt = performance.now();
+  db.transaction(() => {
+    db.exec(`
+      CREATE VIRTUAL TABLE events_fts_stemmed USING fts5(
+        title,
+        content,
+        location_name,
+        content=events,
+        content_rowid=id,
+        tokenize='porter unicode61',
+        detail=none
+      )
+    `);
+    db.exec(`INSERT INTO events_fts_stemmed(events_fts_stemmed) VALUES('rebuild')`);
+  })();
+  if (hasEvents) console.log(`Stemmed full-text index built (${((performance.now() - startedAt) / 1000).toFixed(1)}s)`);
+}
+
+/** Rebuild both full-text indexes from events, after bulk writes with the FTS triggers dropped. */
+export function rebuildFullTextIndexes(db: Database): void {
+  db.exec(`INSERT INTO events_fts(events_fts) VALUES('rebuild')`);
+  db.exec(`INSERT INTO events_fts_stemmed(events_fts_stemmed) VALUES('rebuild')`);
+}
+
 export function initDb(db: Database) {
   // Callers that opened their own connection (tests, scripts) get the same
   // connection setup as getDb() gives.
@@ -344,7 +381,10 @@ function createSchema(db: Database) {
   ensureConversationSummariesBackfilled(db);
   ensureCodingAgentConversations(db);
 
-  // FTS5 for full-text search
+  // FTS5 for full-text search. events_fts indexes words as written (exact
+  // phrases and prefix queries); events_fts_stemmed reduces English words to
+  // their stems so plain search terms match other word endings. It answers
+  // single words only, so it stores no positions (detail=none).
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
       title,
@@ -354,6 +394,7 @@ function createSchema(db: Database) {
       content_rowid=id
     )
   `);
+  ensureStemmedFts(db);
 
   // FTS triggers - only recreate if missing or different from expected
   ensureTrigger(
@@ -361,6 +402,8 @@ function createSchema(db: Database) {
     "events_ai",
     `CREATE TRIGGER events_ai AFTER INSERT ON events BEGIN
       INSERT INTO events_fts(rowid, title, content, location_name)
+      VALUES (NEW.id, NEW.title, NEW.content, NEW.location_name);
+      INSERT INTO events_fts_stemmed(rowid, title, content, location_name)
       VALUES (NEW.id, NEW.title, NEW.content, NEW.location_name);
     END`
   );
@@ -370,6 +413,8 @@ function createSchema(db: Database) {
     "events_ad",
     `CREATE TRIGGER events_ad AFTER DELETE ON events BEGIN
       INSERT INTO events_fts(events_fts, rowid, title, content, location_name)
+      VALUES ('delete', OLD.id, OLD.title, OLD.content, OLD.location_name);
+      INSERT INTO events_fts_stemmed(events_fts_stemmed, rowid, title, content, location_name)
       VALUES ('delete', OLD.id, OLD.title, OLD.content, OLD.location_name);
     END`
   );
@@ -381,6 +426,10 @@ function createSchema(db: Database) {
       INSERT INTO events_fts(events_fts, rowid, title, content, location_name)
       VALUES ('delete', OLD.id, OLD.title, OLD.content, OLD.location_name);
       INSERT INTO events_fts(rowid, title, content, location_name)
+      VALUES (NEW.id, NEW.title, NEW.content, NEW.location_name);
+      INSERT INTO events_fts_stemmed(events_fts_stemmed, rowid, title, content, location_name)
+      VALUES ('delete', OLD.id, OLD.title, OLD.content, OLD.location_name);
+      INSERT INTO events_fts_stemmed(rowid, title, content, location_name)
       VALUES (NEW.id, NEW.title, NEW.content, NEW.location_name);
     END`
   );

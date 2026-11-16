@@ -99,6 +99,52 @@ describe("searchTimeline", () => {
   beforeEach(setup);
   afterEach(teardown);
 
+  async function searchIds(query: string): Promise<number[]> {
+    const events = await searchTimeline(wrapDatabase(db), { query, limit: 10 });
+    return events.map((event) => event.id).sort((a, b) => a - b);
+  }
+
+  test("matches whole words, not longer words that start with them", async () => {
+    const poi = insertEvent({ content: "Saved the POI for later" });
+    insertEvent({ content: "That is a good point" });
+
+    expect(await searchIds("POI")).toEqual([poi]);
+  });
+
+  test("matches other endings of plain words", async () => {
+    const running = insertEvent({ content: "We were running late" });
+    const runs = insertEvent({ title: "Morning runs" });
+    const isolation = insertEvent({ content: "Isolation ward" });
+
+    expect(await searchIds("run")).toEqual([running, runs]);
+    expect(await searchIds("isolate")).toEqual([isolation]);
+  });
+
+  test("matches words joined by underscores", async () => {
+    const snake = insertEvent({ content: "Rename it to snake_case_name" });
+
+    expect(await searchIds("snake_case")).toEqual([snake]);
+  });
+
+  test("matches words starting with a term ending in *", async () => {
+    const point = insertEvent({ content: "That is a good point" });
+    const meeting = insertEvent({ content: "The meeting moved" });
+
+    expect(await searchIds("poi*")).toEqual([point]);
+    expect(await searchIds("meeti*")).toEqual([meeting]);
+  });
+
+  test("matches quoted words as written", async () => {
+    const running = insertEvent({ content: "We were running late" });
+    insertEvent({ content: "Went for a run" });
+    const london = insertEvent({ content: "Running club in London" });
+
+    expect(await searchIds('"running"')).toEqual([running, london]);
+    expect(await searchIds('"running" london')).toEqual([london]);
+    // A quote left open while typing still counts as exact.
+    expect(await searchIds('"running')).toEqual([running, london]);
+  });
+
   test("uses FTS tokens for punctuation in path-like queries", async () => {
     const match = insertEvent({ content: "Run bun src/embeddings/cli.ts index" });
     insertEvent({ content: "Embeddings command reference" });

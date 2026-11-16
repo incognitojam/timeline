@@ -140,7 +140,7 @@ async function main() {
   // Create output DB with schema
   // Dynamic import avoids schema.ts module-level side effects (TIMELINE_DB_PATH check)
   process.env.TIMELINE_DB_PATH = sourcePath;
-  const { initDb } = await import("../db/schema");
+  const { initDb, rebuildFullTextIndexes } = await import("../db/schema");
   const outputDb = new Database(outputPath);
   outputDb.exec("PRAGMA journal_mode = WAL");
   initDb(outputDb);
@@ -205,9 +205,7 @@ async function main() {
 
   time("Restore triggers and date summaries", () => initDb(outputDb));
 
-  time("Rebuild FTS index", () => {
-    outputDb.exec(`INSERT INTO events_fts(events_fts) VALUES('rebuild')`);
-  });
+  time("Rebuild FTS indexes", () => rebuildFullTextIndexes(outputDb));
 
   time("Rebuild event_people index", () => {
     outputDb.exec(`DELETE FROM event_people`);

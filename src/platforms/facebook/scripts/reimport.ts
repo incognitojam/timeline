@@ -15,10 +15,11 @@
  * - event_people + identity event counts (cost scales with the people array,
  *   and large group threads rewrite many rows per message) rebuilt by
  *   populateEventPeople's atomic swap;
- * - the events_au FTS sync trigger, rebuilt with FTS5's 'rebuild' command
- *   (events_fts is content=events). If a run is interrupted the triggers
- *   come back via initDb() but FTS keeps pre-run text for already-updated
- *   rows — rerun this script to completion to fix that.
+ * - the events_au FTS sync trigger, with both full-text indexes rebuilt by
+ *   FTS5's 'rebuild' command (they are content=events). If a run is
+ *   interrupted the triggers come back via initDb() but FTS keeps pre-run
+ *   text for already-updated rows — rerun this script to completion to fix
+ *   that.
  *
  * Usage:
  *   bun run src/platforms/facebook/scripts/reimport.ts --account <name> <oldest-export-root> [<newer-export-root> ...]
@@ -27,7 +28,7 @@
  * `your_facebook_activity/messages/`.
  */
 
-import { dropEventPeopleTriggers, getDb, initDb } from "../../../db/schema";
+import { dropEventPeopleTriggers, getDb, initDb, rebuildFullTextIndexes } from "../../../db/schema";
 import { withBulkSummaryRebuild } from "../../../db/bulk-summary-rebuild";
 import { populateEventPeople } from "../../../db/event-people";
 import { importFacebookData } from "../parser";
@@ -73,8 +74,8 @@ await withBulkSummaryRebuild(db, async () => {
   const peopleRows = populateEventPeople(db);
   console.log(`  ${peopleRows.toLocaleString()} event_people rows`);
 
-  console.log("Rebuilding events_fts...");
-  db.exec(`INSERT INTO events_fts(events_fts) VALUES('rebuild')`);
+  console.log("Rebuilding full-text indexes...");
+  rebuildFullTextIndexes(db);
 
   console.log("Restoring triggers and rebuilding conversation summaries...");
 });

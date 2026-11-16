@@ -5,6 +5,7 @@ import {
   getFilterChips,
   parseContactFilterId,
   parseQuery,
+  prefixSearchSuggestion,
   removeFilter,
 } from "./query-parser";
 
@@ -307,5 +308,22 @@ describe("removeFilter", () => {
       "message"
     );
     expect(result).toBe("source:discord from:alice");
+  });
+});
+
+describe("prefixSearchSuggestion", () => {
+  it("turns a trailing plain word into a prefix term", () => {
+    expect(prefixSearchSuggestion("source:discord mee ")).toEqual({
+      word: "mee",
+      query: "source:discord mee*",
+    });
+  });
+
+  it("offers nothing for filters, prefix terms, quotes or single letters", () => {
+    expect(prefixSearchSuggestion("chat:bob")).toBeNull();
+    expect(prefixSearchSuggestion("mee*")).toBeNull();
+    expect(prefixSearchSuggestion('"exact mee"')).toBeNull();
+    expect(prefixSearchSuggestion('"exact mee')).toBeNull();
+    expect(prefixSearchSuggestion("m")).toBeNull();
   });
 });
