@@ -1859,6 +1859,49 @@ describe("API Smoke Tests", () => {
         db.close();
       }
     });
+
+    test("GET /api/call-recordings/:id/audio serves the stored recording's audio with ranges", async () => {
+      const { getDb, initDb } = await import("../db/schema");
+      const { importCallRecordings, parseListing } = await import("../platforms/call-recordings/parser");
+      const dir = mkdtempSync(join(tmpdir(), "api-call-audio-"));
+      const db = getDb();
+      try {
+        initDb(db);
+        const audio = join(dir, "Call_api.wav");
+        writeFileSync(audio, "RIFF-audio");
+        const recording = {
+          id: "Call_api", sha1: "e".repeat(40), source: "phone",
+          start: "2099-02-01T10:00:00+00:00", end: "2099-02-01T10:01:00+00:00", start_precision_s: 1, duration_s: 60,
+          direction: "incoming", number: "+447700900123", contact: null, caller_unknown: false, recorded_sides: "both_expected",
+          audio: { original: audio, flac: null, levelled: null }, transcripts: [], best_transcript: null,
+          updated_at: "2099-02-01T10:01:00+00:00", fingerprint: "f1",
+        };
+        importCallRecordings(db, parseListing(JSON.stringify({ schema_version: 1, count: 1, recordings: [recording] })), {
+          sourceAccount: "api-test",
+          importBatch: "api-test",
+        });
+        const { id } = db.prepare("SELECT id FROM events WHERE source = 'call-recordings' AND source_id = 'Call_api'").get() as { id: number };
+        const other = db.prepare("SELECT id FROM events WHERE source != 'call-recordings' LIMIT 1").get() as { id: number } | null;
+
+        const whole = await app.request(`/api/call-recordings/${id}/audio`);
+        expect(whole.status).toBe(200);
+        expect(whole.headers.get("Content-Type")).toBe("audio/wav");
+        expect(await whole.text()).toBe("RIFF-audio");
+
+        const part = await app.request(`/api/call-recordings/${id}/audio`, { headers: { Range: "bytes=5-" } });
+        expect(part.status).toBe(206);
+        expect(part.headers.get("Content-Range")).toBe("bytes 5-9/10");
+        expect(await part.text()).toBe("audio");
+
+        expect((await app.request("/api/call-recordings/999999999/audio")).status).toBe(404);
+        expect((await app.request("/api/call-recordings/not-a-number/audio")).status).toBe(404);
+        if (other) expect((await app.request(`/api/call-recordings/${other.id}/audio`)).status).toBe(404);
+      } finally {
+        db.prepare("DELETE FROM events WHERE source = 'call-recordings' AND source_id = 'Call_api'").run();
+        db.close();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("Discord Emoji", () => {

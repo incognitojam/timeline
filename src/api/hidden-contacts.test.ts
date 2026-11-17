@@ -27,6 +27,7 @@ const GUILD_ID = "999977772097";
 const exempt = {
   "/api/attachments": "Attachment inventory is audited separately from event visibility.",
   "/api/attachments/:id": "Direct attachment lookup is an explicit resource access path.",
+  "/api/call-recordings/:id/audio": "Direct recording audio lookup is an explicit resource access path.",
   "/api/attachments/description-history": "Returns aggregate attachment-description history only.",
   "/api/attachments/stats": "Returns attachment aggregates only.",
   "/api/auth/status": "Returns authentication state only.",
