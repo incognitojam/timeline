@@ -11,7 +11,14 @@ import { getAppStateDb } from "../db/app-state";
 import { openReadonlyTimelineDb } from "../db/readonly";
 import { listJobs } from "../jobs/store";
 import { getRecentSyncLogs } from "../sync/log";
+import {
+  describeQuiet,
+  QUIET_RULE_SUMMARY,
+  type SourceFreshness,
+  UNCHECKED_REASON_LABEL,
+} from "../shared/source-freshness";
 import { runningVersionInfo } from "../version";
+import { getSourceFreshness } from "./source-freshness";
 import {
   formatInterval,
   getLastSyncForSource,
@@ -149,6 +156,26 @@ function remotePullSummary(metadata: string | null): string | null {
     return `from ${meta.host}: ${targets.join(", ")}`;
   } catch {
     return null;
+  }
+}
+
+/** Status cell for a source; a quiet synced source also says how its last sync went. */
+function freshnessStatus(entry: SourceFreshness): string {
+  switch (entry.status) {
+    case "undated":
+      return "No dated events";
+    case "unchecked":
+      return `Not checked: ${UNCHECKED_REASON_LABEL[entry.reason]}`;
+    case "new":
+      return `New: ${entry.activeDays} days with events so far`;
+    case "ok":
+      return `OK, usually at most ${entry.usualGapDays}d without new events`;
+    case "quiet": {
+      const lastRun = entry.feed === "sync" ? getLastSyncForSource(entry.source) : null;
+      const outcome = lastRun?.skipped ? "was deferred" : lastRun?.success ? "succeeded" : "failed";
+      const sync = lastRun && !lastRun.isRunning ? `; last sync ${outcome} ${formatRelative(lastRun.time)}` : "";
+      return `**Quiet**: ${describeQuiet(entry)}${sync}`;
+    }
   }
 }
 
@@ -430,6 +457,8 @@ async function gatherStatusData() {
   // Get storage status
   const storage = await getStorageStatus();
 
+  const freshness = getSourceFreshness();
+
   return {
     serviceState,
     version: runningVersionInfo,
@@ -442,6 +471,7 @@ async function gatherStatusData() {
     syncHistory,
     queue,
     storage,
+    freshness,
     generatedAt: new Date().toISOString(),
   };
 }
@@ -485,6 +515,8 @@ export async function generateStatusMarkdown(options: StatusMarkdownOptions = {}
     lines.push("| Version | Unavailable |");
   }
   lines.push(`| Database | ${data.eventCount.toLocaleString()} events |`);
+  const quiet = data.freshness.filter((entry) => entry.status === "quiet");
+  lines.push(`| Quiet sources | ${quiet.length > 0 ? quiet.map((entry) => entry.source).join(", ") : "None"} |`);
   lines.push("");
 
   // Queue section
@@ -547,6 +579,25 @@ export async function generateStatusMarkdown(options: StatusMarkdownOptions = {}
     }
     lines.push("");
   }
+
+  // Sources section: newest event per source and whether it has gone quiet
+  lines.push("## Sources");
+  lines.push("");
+  lines.push(`*${QUIET_RULE_SUMMARY}*`);
+  lines.push("");
+  if (data.freshness.length > 0) {
+    lines.push("| Source | Newest event | Status |");
+    lines.push("|--------|--------------|--------|");
+    const order: Record<SourceFreshness["status"], number> = { quiet: 0, ok: 1, new: 2, unchecked: 3, undated: 4 };
+    const sorted = [...data.freshness].sort((a, b) => order[a.status] - order[b.status]);
+    for (const entry of sorted) {
+      const newest = entry.status === "undated" ? "-" : `${entry.newestAt.slice(0, 10)} (${formatRelative(entry.newestAt)})`;
+      lines.push(`| ${entry.source} | ${newest} | ${freshnessStatus(entry)} |`);
+    }
+  } else {
+    lines.push("*No events yet*");
+  }
+  lines.push("");
 
   // Sync Activity (24h ASCII chart)
   lines.push("## Sync Activity");

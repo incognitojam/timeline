@@ -587,6 +587,7 @@ const apiResponses: Record<string, unknown> = {
         builtAt: "2025-01-15T07:30:00.000Z",
       },
     },
+    freshness: [],
     database: {
       status: "ok",
       eventCount: 24,

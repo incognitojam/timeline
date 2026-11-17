@@ -1,6 +1,7 @@
 import { fireEvent, render, waitFor } from "@solidjs/testing-library";
 import type { ParentProps } from "solid-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { SourceFreshness } from "@shared/source-freshness";
 import type { InboxSourceInfo, Job, SchedulerSourceStatus, ServiceStatus, SyncHistoryEntry, SyncSourceInfo } from "../lib/api";
 import SyncView from "./SyncView";
 
@@ -132,7 +133,11 @@ function historyEntry(sourceName: string, id: number): SyncHistoryEntry {
   };
 }
 
-function status(sourceStatuses: SchedulerSourceStatus[], queue: Job[] = []): ServiceStatus {
+function status(
+  sourceStatuses: SchedulerSourceStatus[],
+  queue: Job[] = [],
+  freshness: SourceFreshness[] = [],
+): ServiceStatus {
   return {
     service: {
       uptime: 60,
@@ -142,6 +147,7 @@ function status(sourceStatuses: SchedulerSourceStatus[], queue: Job[] = []): Ser
     scheduler: { enabled: true, sources: sourceStatuses },
     inbox: { enabled: true, watchedDirs: [], sources: [] },
     queue,
+    freshness,
   };
 }
 
@@ -300,5 +306,48 @@ describe("SyncView source actions", () => {
     const option = getByRole("option", { name: "Google Takeout" });
 
     expect(option).toHaveValue("google-takeout");
+  });
+});
+
+describe("SyncView quiet sources", () => {
+  beforeEach(() => {
+    testState.historyEntries = [];
+    testState.inboxSources = [];
+    testState.syncSources = [syncSource({ name: "spotify" })];
+  });
+
+  const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
+
+  it("flags a quiet sync source on its card and a quiet import in the banner", () => {
+    testState.statusQuery = loadedQuery(
+      status([source({ source: "spotify", description: "Spotify listening history" })], [], [
+        { source: "spotify", status: "quiet", newestAt: daysAgo(9), feed: "sync", quietDays: 9, usualGapDays: 1 },
+        { source: "phone", status: "quiet", newestAt: daysAgo(82), feed: "imports", quietDays: 82, usualGapDays: 29 },
+        { source: "facebook", status: "unchecked", newestAt: daysAgo(400), reason: "one-off" },
+      ]),
+    );
+    const { getByText, queryByText } = render(() => <SyncView />);
+
+    expect(getByText("Quiet: newest event")).toBeInTheDocument();
+    expect(getByText("9d ago")).toBeInTheDocument();
+    expect(getByText("1d").parentElement).toHaveTextContent("Usually at most 1d without new events");
+    // Spotify's warning stays on its card; only the source without one is listed above.
+    expect(getByText("Quiet sources")).toBeInTheDocument();
+    expect(getByText("quiet 82d, usually at most 29d without new events")).toBeInTheDocument();
+    expect(queryByText("Facebook")).not.toBeInTheDocument();
+  });
+
+  it("shows a healthy source's newest event without a warning", () => {
+    testState.statusQuery = loadedQuery(
+      status([source({ source: "spotify", description: "Spotify listening history" })], [], [
+        { source: "spotify", status: "ok", newestAt: daysAgo(0.1), feed: "sync", quietDays: 0, usualGapDays: 1 },
+      ]),
+    );
+    const { getByText, queryByText } = render(() => <SyncView />);
+
+    expect(getByText("Newest event")).toBeInTheDocument();
+    expect(getByText("2h ago")).toBeInTheDocument();
+    expect(queryByText("Quiet sources")).not.toBeInTheDocument();
+    expect(queryByText(/Quiet:/)).not.toBeInTheDocument();
   });
 });

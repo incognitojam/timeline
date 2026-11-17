@@ -20,6 +20,7 @@ import { loadSyncSourcesConfig } from "../sync/config";
 import { getRecentSyncLogs } from "../sync/log";
 import type { SyncLogEntry } from "../sync/types";
 import { runningVersionInfo } from "../version";
+import { getSourceFreshness } from "./source-freshness";
 import { getStorageStatus } from "./storage-status";
 
 const registeredSyncSources = new Set(SYNC_SOURCES.map((source) => source.name));
@@ -270,6 +271,8 @@ export const statusRoutes = new Hono()
         sources: inboxStats,
       },
       queue,
+      // Newest event per source and whether it has gone quiet; a few dozen index seeks per source.
+      freshness: getSourceFreshness(),
     });
   })
 

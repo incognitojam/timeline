@@ -2063,6 +2063,7 @@ describe("API Smoke Tests", () => {
       expect(json.service).not.toHaveProperty("update");
       expect(json).not.toHaveProperty("database");
       expect(Array.isArray(json.queue)).toBe(true);
+      expect(Array.isArray(json.freshness)).toBe(true);
     });
 
     test("GET /api/status/sync-history returns entries", async () => {
