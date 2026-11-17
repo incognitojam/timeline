@@ -9,6 +9,7 @@ import {
 import { createTokenManager, type OAuthTokens } from "../../lib/oauth-tokens";
 import {
   createOAuth2Client,
+  OAuth2HttpError,
   type OAuth2Client,
   type OAuth2ProviderConfig,
 } from "../../lib/oauth2-client";
@@ -17,6 +18,9 @@ import { getMonzoAuthCommand } from "../../runtime-paths";
 import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+
+import { httpRetry } from "../../lib/http-retry";
+import { reportMonzoFailure } from "./subprocess";
 
 // Types
 interface MonzoAccount {
@@ -162,6 +166,16 @@ function createMonzoOAuthClient(config: MonzoConfig): OAuth2Client<MonzoTokens> 
   });
 }
 
+class MonzoHttpError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+  }
+}
+
+function isAuthError(error: unknown): boolean {
+  return error instanceof MonzoHttpError && (error.status === 401 || error.status === 403);
+}
+
 // API helpers
 async function monzoGet<T>(token: string, endpoint: string): Promise<T> {
   const response = await fetch(`${MONZO_API_URL}${endpoint}`, {
@@ -170,7 +184,9 @@ async function monzoGet<T>(token: string, endpoint: string): Promise<T> {
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`API error ${response.status}: ${error}`);
+    const retryAfter = response.headers.get("Retry-After");
+    const retryHint = response.status === 429 && retryAfter ? ` (Retry-After: ${retryAfter})` : "";
+    throw new MonzoHttpError(response.status, `API error ${response.status}: ${error}${retryHint}`);
   }
 
   return response.json();
@@ -182,15 +198,17 @@ interface MonzoPot {
   deleted: boolean;
 }
 
-async function waitForSCA(token: string): Promise<MonzoAccount[]> {
+async function waitForSCA(token: string, headless = false): Promise<MonzoAccount[]> {
   console.log("Fetching accounts (approve in Monzo app if prompted)...");
 
   for (let i = 0; i < 60; i++) {
     try {
-      const response = await monzoGet<{ accounts: MonzoAccount[] }>(token, "/accounts");
+      const response = await httpRetry(
+        () => monzoGet<{ accounts: MonzoAccount[] }>(token, "/accounts"),
+      );
       return response.accounts.filter((a) => !a.closed);
-    } catch (e: any) {
-      if (e.message?.includes("403")) {
+    } catch (e) {
+      if (e instanceof MonzoHttpError && e.status === 403 && !headless) {
         if (i === 0) console.log("⏳ Waiting for approval in Monzo app...");
         await new Promise((r) => setTimeout(r, 1000));
       } else {
@@ -198,7 +216,8 @@ async function waitForSCA(token: string): Promise<MonzoAccount[]> {
       }
     }
   }
-  throw new Error("Timed out waiting for Monzo app approval");
+  // Preserve the interactive timeout → refresh → authorization flow.
+  throw new MonzoHttpError(403, "Timed out waiting for Monzo app approval");
 }
 
 async function fetchPots(token: string, accountId: string): Promise<Map<string, string>> {
@@ -355,7 +374,7 @@ function getTransactionType(tx: MonzoTransaction): string {
 }
 
 // Main sync function
-async function sync(opts: { headless?: boolean } = {}): Promise<void> {
+export async function sync(opts: { headless?: boolean } = {}): Promise<void> {
   const headless = opts.headless ?? false;
   let config = loadConfig();
 
@@ -392,6 +411,19 @@ async function sync(opts: { headless?: boolean } = {}): Promise<void> {
   let tokens = oauth.getTokens();
   let accounts: MonzoAccount[] | null = null;
   let needsFullRefresh = false;
+  let authFailure: string | undefined;
+
+  async function refreshToken(currentTokens: MonzoTokens): Promise<MonzoTokens | null> {
+    if (!currentTokens.refresh_token) return null;
+    try {
+      return await httpRetry(() => oauth.refresh(currentTokens));
+    } catch (error) {
+      if (!(error instanceof OAuth2HttpError) || ![400, 401, 403].includes(error.status)) throw error;
+      authFailure = error.message;
+      return null;
+    }
+  }
+
 
   // Check if token is expired or about to expire (5 min buffer)
   const bufferMs = 5 * 60 * 1000;
@@ -399,43 +431,34 @@ async function sync(opts: { headless?: boolean } = {}): Promise<void> {
 
   if (tokens && !tokenExpired) {
     try {
-      accounts = await waitForSCA(tokens.access_token);
-      needsFullRefresh = checkNeedsFullRefresh(accounts);
-    } catch (e) {
-      // Token invalid, try to refresh
+      accounts = await waitForSCA(tokens.access_token, headless);
+    } catch (error) {
+      if (!isAuthError(error)) throw error;
+      authFailure = error instanceof Error ? error.message : String(error);
       console.log("Token invalid, attempting refresh...");
-      tokens = await oauth.refresh(tokens, { silent: true });
-      if (tokens) {
-        try {
-          accounts = await waitForSCA(tokens.access_token);
-          needsFullRefresh = checkNeedsFullRefresh(accounts);
-        } catch {
-          tokens = null;
-        }
-      }
+      tokens = await refreshToken(tokens);
     }
-  } else if (tokens && tokenExpired) {
-    // Token expired, try to refresh first
+  } else if (tokens) {
     console.log("Token expired, attempting refresh...");
-    const refreshed = await oauth.refresh(tokens, { silent: true });
-    if (refreshed) {
-      tokens = refreshed;
-      try {
-        accounts = await waitForSCA(tokens.access_token);
-        needsFullRefresh = checkNeedsFullRefresh(accounts);
-      } catch {
-        tokens = null;
-      }
-    } else {
+    tokens = await refreshToken(tokens);
+  }
+
+  if (tokens && !accounts) {
+    try {
+      accounts = await waitForSCA(tokens.access_token, headless);
+    } catch (error) {
+      if (!isAuthError(error)) throw error;
+      authFailure = error instanceof Error ? error.message : String(error);
       tokens = null;
     }
   }
+  if (accounts) needsFullRefresh = checkNeedsFullRefresh(accounts);
 
   // If no valid token or needs full refresh, do OAuth
   if (!tokens || needsFullRefresh) {
     if (headless) {
       const reason = !tokens
-        ? "no valid token"
+        ? `no valid token${authFailure ? `: ${authFailure}` : ""}`
         : "full refresh required (most recent transaction is >89 days old)";
       throw new Error(
         `Monzo requires interactive OAuth (${reason}). Run \`${getMonzoAuthCommand()}\` to re-authenticate.`
@@ -651,6 +674,12 @@ if (import.meta.main) {
       }
     }
   } else {
-    await sync({ headless });
+    try {
+      await sync({ headless });
+    } catch (error) {
+      if (!headless) throw error;
+      reportMonzoFailure(error);
+      process.exitCode = 1;
+    }
   }
 }
