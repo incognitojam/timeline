@@ -24,7 +24,7 @@
     "@tanstack/solid-query": "^5.101.4",
     "date-fns": "^4.4.0",
     "echarts": "^6.1.0",
-    "maplibre-gl": "^6.1.0",
+    "maplibre-gl": "^6.18.0",
     "property-information": "^7.0.0",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
