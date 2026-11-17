@@ -139,6 +139,8 @@ export interface DayContextData {
   centerTimestamp: string;
   events: TimelineEvent[];
   attachments?: Record<number, Attachment[]>;
+  /** Call events each call recording recorded, keyed by recording event id. */
+  callLinks?: Record<number, TimelineEvent[]>;
   summary: {
     totalEvents: number;
     bySource: { source: string; count: number }[];

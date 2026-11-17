@@ -1,5 +1,5 @@
 import { fireEvent, render } from "@solidjs/testing-library";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TimelineEvent } from "../../lib/types";
 import { clearCache, populateCache } from "../../lib/identities";
 import CallRecordingCard from "./CallRecordingCard";
@@ -83,6 +83,18 @@ describe("CallRecordingCard", () => {
     expect(getByText("Alice", { selector: "p" })).toBeTruthy();
     expect(queryByText("Owner")).toBeNull();
     expect(queryByText("Ally")).toBeNull();
+  });
+
+  it("shows the call it recorded and opens that call's conversation", () => {
+    const call = recordingEvent({ id: 2, source: "phone", type: "call:outgoing", duration_ms: 150_000, content: "2m 30s", raw_data: "{}" });
+    const onOpenConversation = vi.fn();
+    const { getByTitle } = render(() => (
+      <CallRecordingCard event={recordingEvent()} linkedCalls={[call]} onOpenConversation={onOpenConversation} />
+    ));
+    const row = getByTitle("Open the conversation this call belongs to");
+    expect(row.textContent).toContain("Outgoing call");
+    fireEvent.click(row);
+    expect(onOpenConversation).toHaveBeenCalledWith(call);
   });
 });
 

@@ -1,4 +1,5 @@
 import { type EventGroupData, groupEvents } from "@shared/grouping";
+import { callRecordingsMeta } from "@platforms/call-recordings/meta";
 import { useNavigate } from "@solidjs/router";
 import { createEffect, createResource, createSignal, For, on, onCleanup, Show, Suspense } from "solid-js";
 import { fetchTrackImages } from "../../lib/api";
@@ -212,12 +213,27 @@ export default function DayTimeline(props: Props) {
     // google-health is the canonical health source; on days it provides sleep,
     // suppress the duplicate fitbit sleep so the same night isn't shown twice.
     const ghSleep = dayHasGoogleHealthSleep(d.events);
+    // A call event a shown recording recorded is shown inside that recording's card.
+    const recordedCalls = new Set(
+      hidden.has(callRecordingsMeta.id) ? [] : Object.values(d.callLinks ?? {}).flat().map((call) => call.id),
+    );
     return d.events.filter(e => {
+      if (recordedCalls.has(e.id)) return false;
       if (isDailyHealthMetric(e)) return false;
       if (ghSleep && isFitbitSleep(e)) return false;
       if (hidden.has(e.source)) return false;
       return true;
     });
+  };
+
+  // Linked calls from a hidden source stay hidden inside their recording's card too.
+  const visibleCallLinks = () => {
+    const links = data()?.callLinks;
+    if (!links) return undefined;
+    const hidden = hiddenSources();
+    return Object.fromEntries(
+      Object.entries(links).map(([recordingId, calls]) => [recordingId, calls.filter((call) => !hidden.has(call.source))]),
+    );
   };
 
   const periods = () => {
@@ -441,6 +457,7 @@ export default function DayTimeline(props: Props) {
                         defaultExpanded={expandedGroups().has(group.id)}
                         trackImageMap={trackImageMap()}
                         attachmentsByEvent={data()?.attachments}
+                        callLinksByEvent={visibleCallLinks()}
                         onOpenConversation={props.onOpenConversation}
                         onOpenInWorkspace={props.onOpenInWorkspace}
                         onPersonClick={handlePersonClick}
@@ -466,6 +483,7 @@ export default function DayTimeline(props: Props) {
                         defaultExpanded={expandedGroups().has(group.id)}
                         trackImageMap={trackImageMap()}
                         attachmentsByEvent={data()?.attachments}
+                        callLinksByEvent={visibleCallLinks()}
                         onOpenConversation={props.onOpenConversation}
                         onOpenInWorkspace={props.onOpenInWorkspace}
                         onPersonClick={handlePersonClick}
@@ -491,6 +509,7 @@ export default function DayTimeline(props: Props) {
                         defaultExpanded={expandedGroups().has(group.id)}
                         trackImageMap={trackImageMap()}
                         attachmentsByEvent={data()?.attachments}
+                        callLinksByEvent={visibleCallLinks()}
                         onOpenConversation={props.onOpenConversation}
                         onOpenInWorkspace={props.onOpenInWorkspace}
                         onPersonClick={handlePersonClick}
@@ -516,6 +535,7 @@ export default function DayTimeline(props: Props) {
                         defaultExpanded={expandedGroups().has(group.id)}
                         trackImageMap={trackImageMap()}
                         attachmentsByEvent={data()?.attachments}
+                        callLinksByEvent={visibleCallLinks()}
                         onOpenConversation={props.onOpenConversation}
                         onOpenInWorkspace={props.onOpenInWorkspace}
                         onPersonClick={handlePersonClick}
