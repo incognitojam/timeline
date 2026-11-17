@@ -22,9 +22,7 @@ bun -e '
   await Bun.write(process.argv[2], pub.toString("base64"));
 ' "$work/private-key" "$work/public-key"
 chmod 600 "$work/private-key"
-TIMELINE_UPDATE_FEED_URL=https://example.com/appcast.xml \
-  TIMELINE_UPDATE_PUBLIC_KEY="$(cat "$work/public-key")" \
-  bun run update-config.ts "$app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :SUPublicEDKey $(cat "$work/public-key")" "$app/Contents/Info.plist"
 codesign --force --sign - "$app"
 codesign --verify --deep --strict "$app"
 ditto -c -k --keepParent "$app" "$output/Timeline-test.zip"

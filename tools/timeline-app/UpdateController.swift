@@ -4,7 +4,7 @@ import Sparkle
 
 @MainActor
 final class UpdateController: NSObject, ObservableObject, NSApplicationDelegate, SPUUpdaterDelegate {
-    @Published private(set) var canCheck = true
+    @Published private(set) var canCheck = false
     @Published private(set) var issue: String?
     private var serviceAgent: ServiceAgentController?
     private var controller: SPUStandardUpdaterController?
@@ -17,8 +17,6 @@ final class UpdateController: NSObject, ObservableObject, NSApplicationDelegate,
         !installation.preparing && (canCheck || immediateInstall != nil)
     }
 
-    var automaticUpdatesEnabled: Bool { controller != nil }
-
     override init() {
         var recoveryError: Error?
         let maintenance = UpdateMaintenance(directory: timelineDataDirectory())
@@ -30,23 +28,20 @@ final class UpdateController: NSObject, ObservableObject, NSApplicationDelegate,
     func configure(serviceAgent: ServiceAgentController) {
         guard self.serviceAgent == nil else { return }
         self.serviceAgent = serviceAgent
-        if Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil {
-            controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: self, userDriverDelegate: nil)
+        let installed = ServiceAgentController.isRunningFromInstalledLocation()
+        controller = SPUStandardUpdaterController(startingUpdater: installed, updaterDelegate: self, userDriverDelegate: nil)
+        if installed {
             controller?.updater.publisher(for: \.canCheckForUpdates).assign(to: &$canCheck)
+        } else {
+            issue = "Install Timeline in Applications to enable updates."
         }
     }
 
     func checkForUpdates() {
         if let immediateInstall {
             immediateInstall()
-        } else if let controller {
-            controller.checkForUpdates(nil)
         } else {
-            guard let value = Bundle.main.object(forInfoDictionaryKey: "TimelineReleaseURL") as? String,
-                  let url = URL(string: value) else {
-                fatalError("The Timeline bundle has no release download URL")
-            }
-            NSWorkspace.shared.open(url)
+            controller?.checkForUpdates(nil)
         }
     }
 

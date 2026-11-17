@@ -54,7 +54,6 @@ if [[ ! "$BUNDLE_BUILD" =~ ^[0-9]+$ ]]; then
 fi
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $PRODUCT_VERSION" "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $BUNDLE_BUILD" "$APP/Contents/Info.plist"
-bun run update-config.ts "$APP/Contents/Info.plist"
 cp ../../deploy/macos/run-tailscale.sh "$APP/Contents/Resources/run-tailscale.sh"
 chmod 755 "$APP/Contents/Resources/run-tailscale.sh"
 mv Timeline "$APP/Contents/MacOS/Timeline"

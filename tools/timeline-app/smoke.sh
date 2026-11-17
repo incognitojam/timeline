@@ -101,6 +101,11 @@ artifact_version="$($RESOURCES/timeline-service/bin/bun --no-env-file -e \
 test "$artifact_version" = "$app_version
 $app_build"
 
+# The packaged updater must carry the reviewed feed/key and prompt-first settings.
+for key in SUFeedURL SUPublicEDKey SUEnableAutomaticChecks SUAutomaticallyUpdate; do
+  test "$(/usr/libexec/PlistBuddy -c "Print :$key" "$INFO_PLIST")" = "$(/usr/libexec/PlistBuddy -c "Print :$key" Info.plist)"
+done
+
 codesign --verify --deep --strict "$APP"
 "$ROOT/tools/timeline-app/smoke-updater.sh" "$APP"
 

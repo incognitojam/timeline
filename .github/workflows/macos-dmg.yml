@@ -71,8 +71,6 @@ jobs:
         env:
           TIMELINE_CODESIGN_IDENTITY: '-'
           VITE_MAPTILER_API_KEY: ${{ secrets.VITE_MAPTILER_API_KEY }}
-          TIMELINE_UPDATE_FEED_URL: ${{ vars.TIMELINE_UPDATE_FEED_URL }}
-          TIMELINE_UPDATE_PUBLIC_KEY: ${{ vars.TIMELINE_UPDATE_PUBLIC_KEY }}
         run: TIMELINE_BUILD_NUMBER="$(../../scripts/print-build-number.sh)" ./build.sh
       - name: Sign, notarize, and package DMG
         working-directory: tools/timeline-app
@@ -101,20 +99,9 @@ jobs:
           releases="$(gh api "repos/$GH_REPO/releases" --paginate --slurp)"
           jq -e --arg tag "$RELEASE_TAG" '[.[][] | select(.tag_name == $tag)] | length == 1' <<< "$releases"
           test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
-          if [ -f dist/macos/appcast.xml ]; then
-            test "$(gh repo view "$GH_REPO" --json visibility --jq .visibility)" = PUBLIC
-          else
-            has_appcast="$(gh release view "$RELEASE_TAG" --json assets --jq 'any(.assets[]; .name == "appcast.xml")')"
-            if [ "$has_appcast" != false ]; then
-              echo "Draft already has an appcast; restore update-feed configuration before retrying." >&2
-              exit 1
-            fi
-          fi
           # Rebuild the whole draft asset set on retries so signatures and checksums match the DMG.
           gh release upload "$RELEASE_TAG" dist/macos/*.dmg dist/macos/*.sha256 --clobber
-          if [ -f dist/macos/appcast.xml ]; then
-            gh release upload "$RELEASE_TAG" dist/macos/appcast.xml --clobber
-          fi
+          gh release upload "$RELEASE_TAG" dist/macos/appcast.xml --clobber
       - name: Publish the completed release
         env:
           RELEASE_TAG: ${{ inputs.tag }}

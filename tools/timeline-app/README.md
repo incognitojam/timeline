@@ -45,6 +45,7 @@ The app owns and surfaces the Timeline service and recall capture jobs:
   the maintenance hold is active, then re-checks health every few seconds until
   it comes back or the restart window expires. If kickstart fails, the app
   requests the same guarded service-agent reconcile used by the background poll.
+- **Check for Updates…** checks the release feed in every installed build; automatic checks are enabled and installation asks first. **Install Update and Relaunch…** resumes a staged update. Any normal quit while one is staged, including from the ready-to-install window, holds and stops the service until Timeline is reopened. Opting into automatic downloads installs and relaunches when ready.
 - Updates are app replacements rather than mutations of a live checkout. Update a development installation by
   pulling/building in any checkout and running `./build.sh --install` again.
   The web Settings page reports the running release/build/commit but does not offer
@@ -81,7 +82,8 @@ macOS requires approval, the menu shows an item that opens System Settings →
 General → Login Items.
 
 For a build-only local bundle, run `./build.sh` without `--install`; it still
-writes `Timeline.app` in this directory.
+writes `Timeline.app` in this directory. Updates stay disabled when this copy is
+opened from the build directory; install it in an Applications folder first.
 Set `TIMELINE_CODESIGN_IDENTITY=-` to force ad-hoc signing for build-only CI.
 The product version comes from the repository root `package.json`. Build numbering for local
 builds and CI follows [the release process](../../docs/operations/releases.md). Local builds sign the app and its agent launcher. Distribution packaging also
