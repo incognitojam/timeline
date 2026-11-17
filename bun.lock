@@ -16,7 +16,7 @@
         "hono": "^4.13.18",
         "jose": "^6.2.17",
         "js-tiktoken": "^1.0.21",
-        "marked": "^18.0.9",
+        "marked": "^18.2.0",
         "sharp": "^0.35.3",
         "sqlite-vec": "^0.1.9",
         "thumbhash": "^0.1.1",
@@ -413,7 +413,7 @@
 
     "launch-editor": ["launch-editor@2.14.1", "", { "dependencies": { "picocolors": "^1.1.1", "shell-quote": "^1.8.4" } }, "sha512-QWBrQsMpH7gPr965dsKD/3cKWiNoTjpATQf++Xq63N6sKRGMwlVXz41O1IZTMfZQgBctD/K5Zt06+/I6pP6+HA=="],
 
-    "marked": ["marked@18.0.9", "", { "bin": { "marked": "bin/marked.js" } }, "sha512-/Sa4qiiHZxf0/FQdBBowr9q4r10krCwMvpK48FUBdXdUXScDxiQGR9zCPrFgRVR5LU3iySOiIjy09ZQvADir1w=="],
+    "marked": ["marked@18.2.1", "", { "bin": { "marked": "bin/marked.js" } }, "sha512-ii4bxCTCqqwpT86XZWgJNs+ZnAIZksmLGYMViWA7PDIXYIeNo1x6cDdX3JOip9NM/cI6p8z57FxliACboTruMA=="],
 
     "math-intrinsics": ["math-intrinsics@1.1.0", "", {}, "sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g=="],
 
