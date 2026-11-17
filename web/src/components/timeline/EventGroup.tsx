@@ -8,6 +8,8 @@ import TransportCard from "./TransportCard";
 import JournalCard from "./JournalCard";
 import RecallCard from "../../platforms/recall/RecallCard";
 import RecallSessionCard from "../../platforms/recall/RecallSessionCard";
+import CallRecordingCard from "../../platforms/call-recordings/CallRecordingCard";
+import { callRecordingsMeta } from "@platforms/call-recordings/meta";
 import SleepCard from "../../platforms/google/health/SleepCard";
 import CheckinCard from "../../platforms/swarm/CheckinCard";
 import { isSleepEvent } from "../../platforms/google/health/sleep";
@@ -113,6 +115,9 @@ function SingleEventCard(props: Props & { event: TimelineEvent }) {
             onEditEvent={props.onEditEvent}
             onDeleteEvent={props.onDeleteEvent}
           />
+        </Match>
+        <Match when={props.event.source === callRecordingsMeta.id}>
+          <CallRecordingCard event={props.event} isHighlighted={isHighlighted()} onPersonClick={props.onPersonClick} />
         </Match>
         <Match when={props.event.source === "recall"}>
           <RecallCard

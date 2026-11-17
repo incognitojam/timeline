@@ -1,5 +1,6 @@
 import { amexMeta } from "./amex/meta";
 import { ampMeta } from "./amp/meta";
+import { callRecordingsMeta } from "./call-recordings/meta";
 import { chatgptMeta } from "./chatgpt/meta";
 import { claudeMeta } from "./claude/meta";
 import { claudeCodeMeta } from "./claude-code/meta";
@@ -61,4 +62,5 @@ export const PLATFORM_METAS = [
   minecraftMeta,
   amexMeta,
   recallMeta,
+  callRecordingsMeta,
 ] as const satisfies readonly PlatformMeta[];

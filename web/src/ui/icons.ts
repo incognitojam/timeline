@@ -82,6 +82,7 @@ export { default as IconCamera } from "~icons/material-symbols/photo-camera-outl
 export { default as IconPictureAsPdf } from "~icons/material-symbols/picture-as-pdf-outline-rounded";
 export { default as IconPlayArrow } from "~icons/material-symbols/play-arrow-rounded";
 export { default as IconProgress } from "~icons/material-symbols/progress-activity";
+export { default as IconRecordVoiceOver } from "~icons/material-symbols/record-voice-over-outline-rounded";
 export { default as IconRefresh } from "~icons/material-symbols/refresh-rounded";
 export { default as IconReply } from "~icons/material-symbols/reply-rounded";
 export { default as IconSchedule } from "~icons/material-symbols/schedule-outline-rounded";

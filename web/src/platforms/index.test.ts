@@ -14,6 +14,7 @@ const EXPECTED_ICONS: Record<string, keyof typeof Icons> = {
   backup: "IconCloudUpload",
   "backup-app-state": "IconCloudUpload",
   "backup-offsite": "IconCloudUpload",
+  "call-recordings": "IconRecordVoiceOver",
   chatgpt: "IconOpenAI",
   chrome: "IconGoogleChrome",
   claude: "IconClaude",

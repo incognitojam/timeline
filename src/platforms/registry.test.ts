@@ -57,6 +57,7 @@ const EXPECTED_SYNC_ORDER = [
   "codex",
   "steam",
   "recall",
+  "call-recordings",
   "remote-agents",
   "inbox-rclone",
   "thumbhash",
@@ -108,6 +109,7 @@ const EXPECTED_SEED_ORDER = [
   "chatgpt",
   "minecraft",
   "amex",
+  "call-recordings",
 ];
 
 const EXPECTED_IDENTITY_PLATFORMS = [
@@ -144,6 +146,7 @@ const EXPECTED_SOURCES = [
   ["backup", "Backup", "#64748b"],
   ["backup-app-state", "App State Backup", "#64748b"],
   ["backup-offsite", "Offsite Backup", "#64748b"],
+  ["call-recordings", "Call recordings", "#f43f5e"],
   ["chatgpt", "ChatGPT", "#10A37F"],
   ["chrome", "Chrome", "#D99200"],
   ["claude", "Claude", "#D97757"],
@@ -238,7 +241,7 @@ describe("source groups derived from traits", () => {
     expect(sorted(AI_SOURCES)).toEqual(AI);
     expect(sorted(SOCIAL_SOURCES)).toEqual(SOCIAL);
     expect(sorted(MESSAGE_SOURCES)).toEqual([...AI, ...SOCIAL].sort());
-    expect(sorted(PERSONAL_SOURCES)).toEqual([...SOCIAL, "google-calendar"].sort());
+    expect(sorted(PERSONAL_SOURCES)).toEqual([...SOCIAL, "google-calendar", "call-recordings"].sort());
   });
 
   test("keep session sources and their gaps", () => {
@@ -273,7 +276,7 @@ describe("source groups derived from traits", () => {
       sorted([
         "facebook", "discord", "skype", "reddit", "phone", "google-messages", "claude", "chatgpt", "claude-code",
         "conductor", "codex", "amp", "t3code", "opencode", "google-keep", "google-calendar", "google-chat",
-        "instagram", "linkedin", "github", "journal", "manual",
+        "instagram", "linkedin", "github", "journal", "manual", "call-recordings",
       ]),
     );
     expect(EVENT_CORPUS_POLICY.excluded).toEqual([
