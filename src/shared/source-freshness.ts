@@ -29,7 +29,7 @@ export const QUIET_RULE_SUMMARY =
 export type SourceFeed = "sync" | "imports";
 
 /** Why a source with dated events is not checked. */
-export type UncheckedReason = "sync-off" | "one-off" | "finished";
+export type UncheckedReason = "sync-off" | "one-off" | "finished" | "retired";
 
 /** A checked source with enough history to judge. */
 interface JudgedFreshness {
@@ -54,6 +54,7 @@ export type SourceFreshness =
 export type QuietSourceFreshness = Extract<SourceFreshness, { status: "quiet" }>;
 
 export const UNCHECKED_REASON_LABEL: Record<UncheckedReason, string> = {
+  retired: "source retired",
   "sync-off": "sync turned off",
   "one-off": "imported once",
   finished: `import-only, quiet over ${QUIET_RULE.importRetireDays} days`,

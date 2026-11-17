@@ -100,3 +100,46 @@ describe("/status.md sources", () => {
     expect(text).toMatch(/\| swarm \| [\d-]+ \(1d ago\) \| OK, usually at most 3d without new events \|/);
   });
 });
+
+describe("retired source freshness", () => {
+  const sources = ["steam-friends", "fitbit", "monzo", "trakt"];
+  afterEach(() => {
+    for (const source of sources) {
+      getDb().prepare("DELETE FROM events WHERE source = ?").run(source);
+      getAppStateDb().prepare("DELETE FROM sync_sources WHERE source = ?").run(source);
+    }
+  });
+
+  it("distinguishes retired, import-only, disabled and quiet enabled sources without deleting settings", async () => {
+    const db = getDb();
+    const insert = db.prepare(
+      "INSERT INTO events (source, source_id, type, timestamp, raw_data, imported_at) VALUES (?, ?, 'test', ?, '{}', ?)",
+    );
+    seed(db, () => {
+      for (const source of sources) {
+        for (let day = 10; day < 200; day++) {
+          const date = new Date(Date.now() - day * 86_400_000).toISOString();
+          insert.run(source, `retirement-${day}`, date, date);
+        }
+      }
+    });
+    for (const source of sources) upsertSyncSourcePatch(source, { enabled: source !== "trakt" }, getAppStateDb());
+
+    const response = await app.request("/api/status");
+    expect(response.status).toBe(200);
+    const status = await response.json();
+    const bySource = new Map(status.freshness.map((entry: { source: string }) => [entry.source, entry]));
+    expect(bySource.get("steam-friends")).toMatchObject({ status: "unchecked", reason: "retired" });
+    expect(bySource.get("fitbit")).toMatchObject({ status: "quiet", feed: "imports" });
+    expect(bySource.get("monzo")).toMatchObject({ status: "quiet", feed: "sync" });
+    expect(bySource.get("trakt")).toMatchObject({ status: "unchecked", reason: "sync-off" });
+
+    const markdown = await (await app.request("/status.md")).text();
+    expect(markdown).toMatch(/\| steam-friends \| .* \| Not checked: source retired \|/);
+    expect(markdown).toMatch(/\| trakt \| .* \| Not checked: sync turned off \|/);
+    for (const source of ["fitbit", "monzo"]) {
+      expect(markdown).toMatch(new RegExp(`\\| ${source} \\| .* \\| \\*\\*Quiet\\*\\*:`));
+    }
+    expect(getAppStateDb().query("SELECT enabled FROM sync_sources WHERE source = 'steam-friends'").get()).toEqual({ enabled: 1 });
+  });
+});
