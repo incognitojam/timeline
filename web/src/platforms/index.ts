@@ -1,5 +1,6 @@
 import { amexDisplay } from "./amex";
 import { ampDisplay } from "./amp";
+import { callRecordingsDisplay } from "./call-recordings";
 import { chatgptDisplay } from "./chatgpt";
 import { claudeDisplay } from "./claude";
 import { claudeCodeDisplay } from "./claude-code";
@@ -58,4 +59,5 @@ export const PLATFORM_DISPLAYS: readonly PlatformDisplay[] = [
   minecraftDisplay,
   amexDisplay,
   recallDisplay,
+  callRecordingsDisplay,
 ];

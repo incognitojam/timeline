@@ -1,5 +1,6 @@
 import { amexPlatform } from "./amex";
 import { ampPlatform } from "./amp";
+import { callRecordingsPlatform } from "./call-recordings";
 import { chatgptPlatform } from "./chatgpt";
 import { claudePlatform } from "./claude";
 import { claudeCodePlatform } from "./claude-code";
@@ -58,4 +59,5 @@ export const PLATFORMS: readonly PlatformModule[] = [
   minecraftPlatform,
   amexPlatform,
   recallPlatform,
+  callRecordingsPlatform,
 ];

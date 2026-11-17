@@ -1,0 +1,123 @@
+import { Show, createMemo, createSignal } from "solid-js";
+import { sourceLabel } from "@shared/sources";
+import { readRecording, recordedSidesLabel, recordingAppLabel } from "@platforms/call-recordings/shared/recording";
+import { parseTranscript } from "@platforms/call-recordings/shared/transcript";
+import type { TimelineEvent } from "../../lib/types";
+import { getSourceColorStyle } from "../../lib/source-styles";
+import { extractIdentifiers, getResolvedNameOr } from "../../lib/identities";
+import { formatDuration, formatTime } from "../../lib/format";
+import SourceIcon from "../../components/SourceIcon";
+import CallTranscript from "./CallTranscript";
+
+/** Turns shown before the transcript is expanded. */
+const PREVIEW_TURNS = 3;
+
+interface Props {
+  event: TimelineEvent;
+  isHighlighted?: boolean;
+  onPersonClick?: (identifier: string, source: string, e: MouseEvent) => void;
+}
+
+const DIRECTIONS: Readonly<Record<string, string>> = {
+  "recording:incoming": "Incoming",
+  "recording:outgoing": "Outgoing",
+};
+
+/** A recorded call: who, when, how long, what was captured, and its transcript as a conversation. */
+export default function CallRecordingCard(props: Props) {
+  const [expanded, setExpanded] = createSignal(false);
+  const colorStyle = () => getSourceColorStyle(props.event.source);
+  const recording = createMemo(() => readRecording(props.event.raw_data));
+  /**
+   * A recording with a number holds just that caller. One placed by its call
+   * holds that call's people, the owner included, so its title names it instead.
+   */
+  const counterparty = () => {
+    const people = extractIdentifiers([props.event]);
+    return people.length === 1 ? (people[0] ?? null) : null;
+  };
+  const name = () => getResolvedNameOr(counterparty(), props.event.title ?? "Unknown caller");
+  const turns = createMemo(() => (props.event.content ? parseTranscript(props.event.content) : []));
+  const shownTurns = () => (expanded() ? turns() : turns().slice(0, PREVIEW_TURNS));
+  const callLabel = () => {
+    const app = recording()?.source;
+    const direction = DIRECTIONS[props.event.type];
+    const kind = app ? `${recordingAppLabel(app)} call` : "Call";
+    return direction ? `${direction} ${kind.charAt(0).toLowerCase()}${kind.slice(1)}` : kind;
+  };
+
+  return (
+    <div class={`relative pl-8 pb-4 ${props.isHighlighted ? "ring-2 ring-ring rounded-lg" : ""}`}>
+      <div class="absolute left-3 top-0 bottom-0 w-px bg-border timeline-spine" />
+      <div
+        class="absolute left-1 top-1 w-5 h-5 rounded-full flex items-center justify-center source-icon"
+        style={colorStyle()}
+      >
+        <SourceIcon source={props.event.source} class="w-3 h-3" />
+      </div>
+
+      <div class={`rounded-lg bg-card p-3 ${props.isHighlighted ? "bg-accent" : ""}`}>
+        <div class="flex items-start gap-2">
+          <span class="text-xs text-muted-foreground shrink-0 font-mono pt-0.5">
+            {formatTime(props.event.timestamp)}
+            <Show when={props.event.end_timestamp}>
+              {(end) => <>{" – "}{formatTime(end())}</>}
+            </Show>
+          </span>
+
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1 flex-wrap">
+              <span class="text-xs font-medium source-label" style={colorStyle()}>
+                {sourceLabel(props.event.source)}
+              </span>
+              <span class="text-xs text-muted-foreground">
+                {callLabel()}
+                <Show when={props.event.duration_ms}>
+                  {(ms) => <>{" "}&bull; {formatDuration(ms())}</>}
+                </Show>
+                <Show when={recording()}>
+                  {(rec) => <>{" "}&bull; {recordedSidesLabel(rec().recorded_sides)}</>}
+                </Show>
+              </span>
+            </div>
+
+            <Show
+              when={counterparty()}
+              fallback={<p class="text-sm font-medium truncate">{name()}</p>}
+            >
+              {(identifier) => (
+                <button
+                  type="button"
+                  class="text-sm font-medium truncate hover:text-primary hover:underline text-left block"
+                  onClick={(e) => props.onPersonClick?.(identifier(), props.event.source, e)}
+                >
+                  {name()}
+                </button>
+              )}
+            </Show>
+
+            <Show
+              when={turns().length > 0}
+              fallback={
+                <p class="text-xs text-muted-foreground mt-1">
+                  {recording()?.recorded_sides === "silent" ? "No transcript: the recording is silent" : "No transcript yet"}
+                </p>
+              }
+            >
+              <CallTranscript turns={shownTurns()} start={recording()?.start ?? null} />
+              <Show when={turns().length > PREVIEW_TURNS}>
+                <button
+                  type="button"
+                  class="text-xs text-primary hover:underline mt-1"
+                  onClick={() => setExpanded(!expanded())}
+                >
+                  {expanded() ? "Show less" : `Show full transcript (${turns().length} turns)`}
+                </button>
+              </Show>
+            </Show>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
