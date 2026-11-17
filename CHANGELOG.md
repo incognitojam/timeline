@@ -1,5 +1,19 @@
 # Timeline
 
+## 0.18.0
+
+### Minor Changes
+
+- bd2a3e8: Play a call recording's audio from its card on the timeline, read on demand from call-transcribe's folder. Recordings with only an AMR original say that no playable copy exists yet.
+- 8917ee5: Keyword search leaves out events containing a word written with a leading `-`, such as `running -club`, or a quoted phrase such as `-"running late"`. A search made only of excluded words lists every other event that matches the filters.
+- 2760ad1: Link each call recording to the call it recorded, from the phone call log or any other source with calls, so the day view shows the call and its recording as one card. Links appear as soon as either side is imported.
+- 5abc64b: Import call recordings and their transcripts from call-transcribe's `calls` command. Each recording appears on the timeline as a call with its transcript, which is searchable and included in day summaries.
+- 1cecafa: Keyword search matches whole words and their other endings, so `POI` no longer finds "point" while `run` still finds "runs" and "running". End a word with `*` to match words starting with it, or quote words to match them exactly as written. The search page explains this syntax and offers a `*` search when a partly typed word finds nothing. The first service start after updating builds a new search index, which takes about a minute on a large timeline.
+
+### Patch Changes
+
+- b7fc35f: Publish releases only after the signed macOS DMG, checksum, and configured update feed are attached, keeping the previous stable release available while packaging runs or is retried.
+
 ## 0.17.5
 
 ### Patch Changes
