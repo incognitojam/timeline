@@ -1,6 +1,6 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
 import { sourceLabel } from "@shared/sources";
-import { readRecording, recordedSidesLabel, recordingAppLabel } from "@platforms/call-recordings/shared/recording";
+import { playableAudio, readRecording, recordedSidesLabel, recordingAppLabel } from "@platforms/call-recordings/shared/recording";
 import { parseTranscript } from "@platforms/call-recordings/shared/transcript";
 import type { TimelineEvent } from "../../lib/types";
 import { getSourceColorStyle } from "../../lib/source-styles";
@@ -38,6 +38,10 @@ export default function CallRecordingCard(props: Props) {
   const [expanded, setExpanded] = createSignal(false);
   const colorStyle = () => getSourceColorStyle(props.event.source);
   const recording = createMemo(() => readRecording(props.event.raw_data));
+  const audio = () => {
+    const rec = recording();
+    return rec ? playableAudio(rec) : null;
+  };
   /**
    * A recording with a number holds just that caller. One placed by its call
    * holds that call's people, the owner included, so its title names it instead.
@@ -122,6 +126,22 @@ export default function CallRecordingCard(props: Props) {
                 </button>
               )}
             </For>
+
+            <Show
+              when={audio()}
+              fallback={
+                <Show when={recording()}>
+                  <p class="text-xs text-muted-foreground mt-1">No copy of the audio plays in a browser yet</p>
+                </Show>
+              }
+            >
+              <audio
+                class="mt-2 w-full max-w-md h-8"
+                controls
+                preload="none"
+                src={`/api/call-recordings/${props.event.id}/audio`}
+              />
+            </Show>
 
             <Show
               when={turns().length > 0}

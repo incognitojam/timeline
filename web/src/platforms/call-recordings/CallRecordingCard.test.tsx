@@ -96,5 +96,18 @@ describe("CallRecordingCard", () => {
     fireEvent.click(row);
     expect(onOpenConversation).toHaveBeenCalledWith(call);
   });
+
+  it("plays audio a browser can play, and says when there is none", () => {
+    const playable = render(() => (
+      <CallRecordingCard event={recordingEvent({}, { audio: { original: "/calls/Call_1.amr", flac: "/calls/Call_1.flac", levelled: null } })} />
+    ));
+    expect(playable.container.querySelector("audio")?.getAttribute("src")).toBe("/api/call-recordings/1/audio");
+    playable.unmount();
+    const amrOnly = render(() => (
+      <CallRecordingCard event={recordingEvent({}, { audio: { original: "/calls/Call_1.amr", flac: null, levelled: null } })} />
+    ));
+    expect(amrOnly.container.querySelector("audio")).toBeNull();
+    expect(amrOnly.getByText("No copy of the audio plays in a browser yet")).toBeTruthy();
+  });
 });
 

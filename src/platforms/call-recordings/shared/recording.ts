@@ -91,3 +91,30 @@ export function readRecording(rawData: unknown): CallsRecording | null {
   }
   return record as CallsRecording;
 }
+
+/** Audio formats browsers play, by extension. Cube's AMR originals are not among them. */
+const PLAYABLE_AUDIO_TYPES: Readonly<Record<string, string>> = {
+  ".flac": "audio/flac",
+  ".m4a": "audio/mp4",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".ogg": "audio/ogg",
+  ".opus": "audio/ogg",
+  ".aac": "audio/aac",
+  ".webm": "audio/webm",
+};
+
+export interface PlayableAudio {
+  path: string;
+  mimeType: string;
+}
+
+/** The first copy of a recording's audio a browser can play: the original, else its FLAC or levelled copy. */
+export function playableAudio(recording: CallsRecording): PlayableAudio | null {
+  for (const path of [recording.audio?.original, recording.audio?.flac, recording.audio?.levelled]) {
+    if (typeof path !== "string") continue;
+    const mimeType = PLAYABLE_AUDIO_TYPES[path.slice(path.lastIndexOf(".")).toLowerCase()];
+    if (mimeType) return { path, mimeType };
+  }
+  return null;
+}

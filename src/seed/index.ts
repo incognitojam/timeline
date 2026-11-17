@@ -142,7 +142,7 @@ try {
     appStateDb.exec("PRAGMA synchronous = OFF");
     initAppStateDb(appStateDb);
 
-    const ctx = new SeedContext(db, buildDbPath, buildMediaRoot, stagingRoot, anchorDate, YEARS);
+    const ctx = new SeedContext(db, buildDbPath, buildMediaRoot, join(outDir, "media"), stagingRoot, anchorDate, YEARS);
     console.log(`Seeding ${ctx.startDate} → ${anchorDate} for ${selected.length} generators`);
     const imports = await runGenerators(ctx, db);
     const undeclared = undeclaredEventPairs(db);

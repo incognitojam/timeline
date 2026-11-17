@@ -7,8 +7,11 @@ import { EVENT_SOURCE, importCallRecordings, parseListing, SCHEMA_VERSION } from
 import type { CallsRecording, CallsTranscript } from "./shared/recording";
 
 const NAME = "call-recordings";
-/** Where Alex's call-transcribe folder would be; the seed never reads audio. */
+/** Where Alex's call-transcribe folder would be, for audio the seed doesn't write. */
 const CALLS_DIR = `${HOME_DIR}/call-transcribe/backlog`;
+/** Seeded audio is a short synthetic murmur, not the call's full length. */
+const AUDIO_SECONDS = 12;
+const SAMPLE_RATE = 8000;
 /** Alex's recorder captured only their own side before this many days ago. */
 const BOTH_SIDES_DAYS = 45;
 /** Seeded phone calls from this far back may have a recording. */
@@ -163,6 +166,61 @@ function transcribe(ctx: SeedContext, rng: Rng, dir: string, id: string, draft: 
   };
 }
 
+/**
+ * A mono 16-bit WAV of two "voices" (hummed tones) taking turns, or silence:
+ * enough for the player to have something to play without any real speech.
+ */
+function murmur(rng: Rng, silent: boolean): Uint8Array {
+  const samples = AUDIO_SECONDS * SAMPLE_RATE;
+  const data = new Int16Array(samples);
+  if (!silent) {
+    let at = 0;
+    let voice = 0;
+    while (at < samples) {
+      const length = Math.min(samples - at, Math.round(rng.float(0.8, 2.6) * SAMPLE_RATE));
+      const pitch = voice === 0 ? rng.float(150, 190) : rng.float(220, 270);
+      for (let i = 0; i < length; i++) {
+        const t = i / SAMPLE_RATE;
+        const envelope = Math.sin((Math.PI * i) / length) * (0.6 + 0.4 * Math.sin(2 * Math.PI * 4 * t));
+        const tone = Math.sin(2 * Math.PI * pitch * t) + 0.4 * Math.sin(4 * Math.PI * pitch * t);
+        data[at + i] = Math.round(envelope * tone * 6000);
+      }
+      at += length + Math.round(rng.float(0.1, 0.5) * SAMPLE_RATE);
+      voice = 1 - voice;
+    }
+  }
+  const header = new DataView(new ArrayBuffer(44));
+  const ascii = (offset: number, text: string) => [...text].forEach((char, i) => header.setUint8(offset + i, char.charCodeAt(0)));
+  ascii(0, "RIFF");
+  header.setUint32(4, 36 + data.byteLength, true);
+  ascii(8, "WAVEfmt ");
+  header.setUint32(16, 16, true);
+  header.setUint16(20, 1, true);
+  header.setUint16(22, 1, true);
+  header.setUint32(24, SAMPLE_RATE, true);
+  header.setUint32(28, SAMPLE_RATE * 2, true);
+  header.setUint16(32, 2, true);
+  header.setUint16(34, 16, true);
+  ascii(36, "data");
+  header.setUint32(40, data.byteLength, true);
+  const wav = new Uint8Array(44 + data.byteLength);
+  wav.set(new Uint8Array(header.buffer), 0);
+  wav.set(new Uint8Array(data.buffer), 44);
+  return wav;
+}
+
+/**
+ * Recordings from the near-side-only era keep an AMR original that browsers
+ * can't play (and the seed doesn't write); later ones get playable audio.
+ */
+function audioFor(ctx: SeedContext, rng: Rng, id: string, draft: Draft): CallsRecording["audio"] {
+  if (draft.sides === "near_side_only") {
+    return { original: `${CALLS_DIR}/CubeCallRecorder/All/${id}.amr`, flac: null, levelled: null };
+  }
+  const folder = draft.app === "pixel" ? "pixel" : "CubeCallRecorder/All";
+  return { original: ctx.writeMedia(`call-transcribe/${folder}/${id}.wav`, murmur(rng, draft.sides === "silent")), flac: null, levelled: null };
+}
+
 function build(ctx: SeedContext, rng: Rng, dir: string, draft: Draft): CallsRecording {
   const end = new Date(draft.start.getTime() + draft.durationS * 1000);
   const number = draft.withNumber && draft.person ? draft.person.phone : null;
@@ -183,7 +241,7 @@ function build(ctx: SeedContext, rng: Rng, dir: string, draft: Draft): CallsReco
     contact: number ? null : draft.contact,
     caller_unknown: !number && !draft.contact,
     recorded_sides: draft.sides,
-    audio: { original: `${CALLS_DIR}/${pixel ? "pixel" : "CubeCallRecorder/All"}/${id}.${pixel ? "m4a" : "amr"}`, flac: null, levelled: null },
+    audio: audioFor(ctx, rng, id, draft),
     transcripts,
     best_transcript: transcripts[0]?.txt ?? null,
     updated_at: localIso(ctx, end),

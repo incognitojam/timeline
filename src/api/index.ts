@@ -83,6 +83,7 @@ import { getMediaStore, readOrRestore } from "../media/storage";
 import { streamDaySummary, SUMMARY_EXCLUDED_SOURCES } from "../summary/day-summary";
 import { waitForModels, initProviders, getDefaultModel, getVisionAvailability, resolveLanguageModel } from "../llm";
 import { PERSONAL_SOURCES } from "../shared/grouping";
+import { recordingAudioResponse } from "../platforms/call-recordings/audio";
 import { findCallLinks } from "../platforms/call-recordings/links";
 import { EVENT_SOURCE as CALL_RECORDINGS_SOURCE } from "../platforms/call-recordings/parser";
 import type { EventParticipant } from "../shared/types";
@@ -795,6 +796,19 @@ app.get("/api/media/*", async (c) => {
     console.error("Error serving media file:", error);
     return c.json({ error: "Failed to serve file" }, 500);
   }
+});
+
+// A call recording's audio, read on demand from where call-transcribe keeps it.
+app.get("/api/call-recordings/:id/audio", async (c) => {
+  const id = parseIntStrict(c.req.param("id"));
+  if (!Number.isSafeInteger(id)) return c.json({ error: "Recording not found" }, 404);
+  const row = await readDb.get<{ raw_data: string }>(
+    "SELECT raw_data FROM events WHERE id = ? AND source = ?",
+    id,
+    CALL_RECORDINGS_SOURCE,
+  );
+  if (!row) return c.json({ error: "Recording not found" }, 404);
+  return recordingAudioResponse(row.raw_data, c.req.header("range"));
 });
 
 // Discord custom emoji image serving. The :id may include an extension

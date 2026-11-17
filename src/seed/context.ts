@@ -55,6 +55,8 @@ export class SeedContext {
     readonly db: Database,
     readonly dbPath: string,
     readonly mediaRoot: string,
+    /** Where mediaRoot ends up once the build is installed. */
+    readonly installedMediaRoot: string,
     readonly stagingRoot: string,
     /** Last local date of the generated range (normally today). */
     readonly anchorDate: string,
@@ -100,6 +102,17 @@ export class SeedContext {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, content);
     return path;
+  }
+
+  /**
+   * Write a file into the seed's media directory and return the absolute path
+   * it has once installed, for sources whose records name files by path.
+   */
+  writeMedia(relativePath: string, content: string | Uint8Array): string {
+    const path = join(this.mediaRoot, relativePath);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, content);
+    return join(this.installedMediaRoot, relativePath);
   }
 
   /** The most recent `count` days (all days when count exceeds the range). */
