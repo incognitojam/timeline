@@ -145,6 +145,36 @@ describe("searchTimeline", () => {
     expect(await searchIds('"running')).toEqual([running, london]);
   });
 
+  test("excludes events matching a word prefixed with -", async () => {
+    const late = insertEvent({ content: "Running late again" });
+    insertEvent({ content: "Running club tonight" });
+    insertEvent({ content: "Joined the running clubs" });
+
+    expect(await searchIds("running -club")).toEqual([late]);
+    expect(await searchIds("running -clu*")).toEqual([late]);
+  });
+
+  test("excludes quoted phrases prefixed with -", async () => {
+    insertEvent({ content: "Running late again" });
+    const lateNight = insertEvent({ content: "Running, then late dinner" });
+
+    expect(await searchIds('running -"running late"')).toEqual([lateNight]);
+  });
+
+  test("lists everything else when every word is excluded", async () => {
+    const note = insertEvent({ title: "Untitled note" });
+    insertEvent({ content: "Running club tonight" });
+
+    expect(await searchIds("-club")).toEqual([note]);
+  });
+
+  test("keeps hyphens inside words as part of the search", async () => {
+    const games = insertEvent({ content: "Bought two board-games" });
+    insertEvent({ content: "Bought a board" });
+
+    expect(await searchIds("board-games")).toEqual([games]);
+  });
+
   test("uses FTS tokens for punctuation in path-like queries", async () => {
     const match = insertEvent({ content: "Run bun src/embeddings/cli.ts index" });
     insertEvent({ content: "Embeddings command reference" });

@@ -609,7 +609,7 @@ Examples:
 - Coordinates: query_events(latitude: 51.5, longitude: -0.12)
 - Combined: query_events(query: "project", contact: "Bob", start_date: "2025-01-01")`,
     {
-      query: z.string().optional().describe('Text search across titles, content, and location names. Words are ANDed with punctuation ignored (e.g. "board-games" also matches text mentioning board and games separately) and match other English endings of the same word (run matches runs and running); end a word with * to match words starting with it (poi* matches point); wrap words in double quotes to match them exactly as written'),
+      query: z.string().optional().describe('Text search across titles, content, and location names. Words are ANDed with punctuation ignored (e.g. "board-games" also matches text mentioning board and games separately) and match other English endings of the same word (run matches runs and running); end a word with * to match words starting with it (poi* matches point); wrap words in double quotes to match them exactly as written; prefix a word or quote with - to exclude events containing it (-club, -"running late")'),
       source: z.string().optional().describe("Filter by source (spotify, discord, reddit, facebook, etc.)"),
       type: z.string().optional().describe("Filter by event type (listen:track, message:dm, post, etc.)"),
       contact: z.string().optional().describe("Contact ID, display name, or platform identifier (e.g. discord:123…, phone:+44…, or a bare Discord snowflake) — returns events involving this person across all platforms"),
