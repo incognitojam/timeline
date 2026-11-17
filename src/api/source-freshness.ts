@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { getAppStateDb } from "../db/app-state";
 import { openReadonlyTimelineDb } from "../db/readonly";
 import { QUIET_RULE, type SourceFeed, type SourceFreshness } from "../shared/source-freshness";
+import { DECLARED_SOURCES } from "../shared/sources";
 import { SYSTEM_SOURCES } from "../shared/system-sources";
 import { loadSyncSourcesConfig } from "../sync/config";
 import { SYNC_SOURCES } from "../sync/sources";
@@ -16,9 +17,15 @@ const NEWEST_PAGE = 50;
 /** Journal entries and manual notes are written when the owner chooses to. */
 const APP_WRITTEN_SOURCES = new Set(SYSTEM_SOURCES.map((source) => source.id));
 
+// Legacy event types describe stored history, not events a current importer can write.
+const activeWriters = new Set([
+  ...DECLARED_SOURCES.filter((source) => source.eventTypes?.length).map((source) => source.id),
+  ...SYNC_SOURCES.map((source) => source.name),
+]);
+
 export interface FreshnessOptions {
   now: number;
-  /** Configured sync sources: whether each is enabled. Others are import-only. */
+  /** Registered, configured sync sources: whether each is enabled. Others are import-only. */
   syncEnabled: ReadonlyMap<string, boolean>;
 }
 
@@ -154,6 +161,11 @@ export function computeSourceFreshness(db: Database, options: FreshnessOptions):
     const newest = found.row;
     const newestAt = new Date(found.ms).toISOString();
     const quietMs = options.now - found.ms;
+
+    if (!activeWriters.has(source)) {
+      results.push({ source, status: "unchecked", newestAt, reason: "retired" });
+      continue;
+    }
 
     const syncEnabled = options.syncEnabled.get(source);
     if (syncEnabled === false) {

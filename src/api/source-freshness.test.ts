@@ -42,6 +42,18 @@ function freshness(syncEnabled: Record<string, boolean> = {}): Map<string, Sourc
 }
 
 describe("computeSourceFreshness", () => {
+  it("marks legacy-only and undeclared sources retired, even without leftover settings", () => {
+    seed(db, () => {
+      for (let day = 10; day < 200; day++) {
+        event("steam-friends", day);
+        event("retired-test-source", day);
+      }
+    });
+    for (const source of ["steam-friends", "retired-test-source"]) {
+      expect(freshness().get(source)).toMatchObject({ status: "unchecked", reason: "retired" });
+    }
+  });
+
   it("flags a synced source that stopped, with its quiet and normal gap", () => {
     seed(db, () => {
       for (let day = 10; day < 200; day++) event("spotify", day + 0.3);
