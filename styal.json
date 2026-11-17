@@ -1,6 +1,6 @@
 {
   "$schema": "https://styal.build/schema/styal.json",
-  "worktreeCleanup": ["node_modules/", "web/node_modules/", "web/dist/"],
+  "worktreeCleanup": ["**/node_modules", "web/dist", ".seed-build-*"],
   "actions": [
     {
       "id": "setup",
