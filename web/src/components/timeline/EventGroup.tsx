@@ -31,6 +31,8 @@ interface Props {
   defaultExpanded?: boolean;
   trackImageMap?: Map<string, string>;
   attachmentsByEvent?: Record<number, Attachment[]>;
+  /** Call events each recording recorded, keyed by recording event id. */
+  callLinksByEvent?: Record<number, TimelineEvent[]>;
   onOpenConversation?: (event: TimelineEvent) => void;
   onOpenInWorkspace?: (event: TimelineEvent) => void;
   onPersonClick?: (name: string, source: string, e: MouseEvent) => void;
@@ -88,10 +90,17 @@ function AlbumArtGrid(props: { urls: string[] }) {
 
 /** Picks the card a lone event renders as; most sources use the generic one. */
 function SingleEventCard(props: Props & { event: TimelineEvent }) {
-  const isHighlighted = () => props.event.id === props.highlightEventId;
+  // A recording stands in for the call events it recorded, which the day view hides.
+  const linkedCalls = () => props.callLinksByEvent?.[props.event.id] ?? [];
+  const isHighlighted = () =>
+    props.event.id === props.highlightEventId || linkedCalls().some((call) => call.id === props.highlightEventId);
+  const setRefs = (el: HTMLDivElement) => {
+    props.setEventRef?.(props.event.id, el);
+    for (const call of linkedCalls()) props.setEventRef?.(call.id, el);
+  };
 
   return (
-    <div id={`event-${props.event.id}`} ref={(el) => props.setEventRef?.(props.event.id, el)}>
+    <div id={`event-${props.event.id}`} ref={setRefs}>
       <Switch
         fallback={
           <TimelineEventCard
@@ -117,7 +126,13 @@ function SingleEventCard(props: Props & { event: TimelineEvent }) {
           />
         </Match>
         <Match when={props.event.source === callRecordingsMeta.id}>
-          <CallRecordingCard event={props.event} isHighlighted={isHighlighted()} onPersonClick={props.onPersonClick} />
+          <CallRecordingCard
+            event={props.event}
+            linkedCalls={linkedCalls()}
+            isHighlighted={isHighlighted()}
+            onPersonClick={props.onPersonClick}
+            onOpenConversation={props.onOpenConversation}
+          />
         </Match>
         <Match when={props.event.source === "recall"}>
           <RecallCard

@@ -1,4 +1,4 @@
-import { Show, createMemo, createSignal } from "solid-js";
+import { For, Show, createMemo, createSignal } from "solid-js";
 import { sourceLabel } from "@shared/sources";
 import { readRecording, recordedSidesLabel, recordingAppLabel } from "@platforms/call-recordings/shared/recording";
 import { parseTranscript } from "@platforms/call-recordings/shared/transcript";
@@ -14,8 +14,18 @@ const PREVIEW_TURNS = 3;
 
 interface Props {
   event: TimelineEvent;
+  /** Call events this recording recorded, shown here instead of on their own. */
+  linkedCalls?: readonly TimelineEvent[];
   isHighlighted?: boolean;
   onPersonClick?: (identifier: string, source: string, e: MouseEvent) => void;
+  onOpenConversation?: (event: TimelineEvent) => void;
+}
+
+/** "Outgoing call" for `call:outgoing`; "Call" for a message-style call such as `message:dm:call`. */
+function callTypeLabel(type: string): string {
+  if (!type.startsWith("call:")) return "Call";
+  const kind = type.slice("call:".length);
+  return `${kind.charAt(0).toUpperCase()}${kind.slice(1)} call`;
 }
 
 const DIRECTIONS: Readonly<Record<string, string>> = {
@@ -95,6 +105,23 @@ export default function CallRecordingCard(props: Props) {
                 </button>
               )}
             </Show>
+
+            <For each={props.linkedCalls ?? []}>
+              {(call) => (
+                <button
+                  type="button"
+                  class="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary"
+                  title="Open the conversation this call belongs to"
+                  onClick={() => props.onOpenConversation?.(call)}
+                >
+                  <SourceIcon source={call.source} class="w-3 h-3" />
+                  <span>
+                    {sourceLabel(call.source)} &bull; {callTypeLabel(call.type)}
+                    <Show when={call.duration_ms}>{(ms) => <> &bull; {formatDuration(ms())}</>}</Show>
+                  </span>
+                </button>
+              )}
+            </For>
 
             <Show
               when={turns().length > 0}

@@ -83,6 +83,8 @@ import { getMediaStore, readOrRestore } from "../media/storage";
 import { streamDaySummary, SUMMARY_EXCLUDED_SOURCES } from "../summary/day-summary";
 import { waitForModels, initProviders, getDefaultModel, getVisionAvailability, resolveLanguageModel } from "../llm";
 import { PERSONAL_SOURCES } from "../shared/grouping";
+import { findCallLinks } from "../platforms/call-recordings/links";
+import { EVENT_SOURCE as CALL_RECORDINGS_SOURCE } from "../platforms/call-recordings/parser";
 import type { EventParticipant } from "../shared/types";
 import { type ConversationRangeExportFormat, parseConversationRangeExportFormat } from "../shared/conversation-export";
 import {
@@ -1069,7 +1071,16 @@ app.get("/api/day", async (c) => {
     timingEnd(c, "db-att");
   }
 
-  return c.json({ ...result, attachments });
+  // Recordings carry the call events they recorded; the web shows each pair as one card.
+  const recordings = result.events.filter((e) => e.source === CALL_RECORDINGS_SOURCE);
+  const callLinks: Record<number, TimelineEvent[]> = {};
+  if (recordings.length > 0) {
+    timingStart(c, "db-calls", "Call Links");
+    for (const [recordingId, calls] of await findCallLinks(readDb, recordings)) callLinks[recordingId] = calls;
+    timingEnd(c, "db-calls");
+  }
+
+  return c.json({ ...result, attachments, callLinks });
 });
 
 app.get("/api/summary/models", async (c) => {

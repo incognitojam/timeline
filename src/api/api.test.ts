@@ -1825,6 +1825,42 @@ describe("API Smoke Tests", () => {
     });
   });
 
+  describe("Call recordings", () => {
+    test("GET /api/day returns the call each recording recorded", async () => {
+      const { getDb, initDb } = await import("../db/schema");
+      const { importCallRecordings, parseListing } = await import("../platforms/call-recordings/parser");
+      const db = getDb();
+      try {
+        initDb(db);
+        const recording = {
+          id: "Call_day", sha1: "d".repeat(40), source: "phone",
+          start: "2099-03-01T10:00:20+00:00", end: "2099-03-01T10:05:00+00:00", start_precision_s: 1, duration_s: 280,
+          direction: "outgoing", number: "+447700900123", contact: null, caller_unknown: false, recorded_sides: "both_expected",
+          audio: { original: "/recordings/Call_day.amr", flac: null, levelled: null }, transcripts: [], best_transcript: null,
+          updated_at: "2099-03-01T10:05:00+00:00", fingerprint: "f1",
+        };
+        importCallRecordings(db, parseListing(JSON.stringify({ schema_version: 1, count: 1, recordings: [recording] })), {
+          sourceAccount: "api-test",
+          importBatch: "api-test",
+        });
+        const call = db.prepare(`
+          INSERT INTO events (source, source_id, source_account, type, timestamp, duration_ms, title, people, raw_data, conversation_id)
+          VALUES ('phone', 'api-day-call', 'api-test', 'call:outgoing', '2099-03-01T10:00:00.000Z', 300000, 'Alice',
+                  '["phone:api-test","phone:+447700900123"]', '{"number":"+447700900123"}', '+447700900123')
+          RETURNING id`).get() as { id: number };
+        const { id } = db.prepare("SELECT id FROM events WHERE source = 'call-recordings' AND source_id = 'Call_day'").get() as { id: number };
+
+        const res = await app.request("/api/day?date=2099-03-01");
+        expect(res.status).toBe(200);
+        const body = await res.json() as { callLinks: Record<string, Array<{ id: number }>> };
+        expect(body.callLinks[String(id)]?.map((linked) => linked.id)).toEqual([call.id]);
+      } finally {
+        db.prepare("DELETE FROM events WHERE source_id IN ('Call_day', 'api-day-call')").run();
+        db.close();
+      }
+    });
+  });
+
   describe("Discord Emoji", () => {
     test("GET /api/discord/emoji/:id returns 400 for non-numeric id", async () => {
       const res = await app.request("/api/discord/emoji/not-a-snowflake");
