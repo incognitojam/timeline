@@ -103,6 +103,7 @@ export { default as IconTrain } from "~icons/material-symbols/train-outline-roun
 export { default as IconTram } from "~icons/material-symbols/tram-outline-rounded";
 export { default as IconTravelExplore } from "~icons/material-symbols/travel-explore-rounded";
 export { default as IconTimeline } from "~icons/material-symbols/view-timeline-outline-rounded";
+export { default as IconWarning } from "~icons/material-symbols/warning-outline-rounded";
 
 // Source brand marks. They remain monochrome so source colour continues to
 // come from the shared --source-color styling rather than the SVG asset.

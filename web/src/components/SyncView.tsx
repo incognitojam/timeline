@@ -1,4 +1,10 @@
 import { A } from "@solidjs/router";
+import {
+  describeQuiet,
+  QUIET_RULE_SUMMARY,
+  type QuietSourceFreshness as QuietSource,
+  type SourceFreshness,
+} from "@shared/source-freshness";
 import { sourceLabel } from "@shared/sources";
 import { createSignal, For, onCleanup, Show } from "solid-js";
 import {
@@ -13,6 +19,7 @@ import { getSourceColorStyle } from "../lib/source-styles";
 import { syncAuthStatusBadge, syncStatusBadgeClass } from "../lib/sync-auth-status";
 import { historyStatusLabel } from "../lib/sync-history";
 import { summarizeSyncJob } from "../lib/sync-jobs";
+import { IconWarning } from "../ui/icons";
 import SourceIcon from "./SourceIcon";
 
 type ActivityEntry =
@@ -100,6 +107,45 @@ function SyncStatePip(props: { state: SyncActionState }) {
               : "border border-yellow-400/70"
         }`}
       />
+    </Show>
+  );
+}
+
+/** Quiet-source warning text; light yellow is unreadable on the light theme's pale panels. */
+const QUIET_TONE = "text-yellow-800 dark:text-yellow-400";
+
+/** A sync card's newest event, flagged when the source has gone quiet. */
+function NewestEventLine(props: { entry: SourceFreshness | undefined }) {
+  const newestAt = () => {
+    const entry = props.entry;
+    return entry && "newestAt" in entry ? entry.newestAt : null;
+  };
+  const quiet = (): QuietSource | null => {
+    const entry = props.entry;
+    return entry?.status === "quiet" ? entry : null;
+  };
+  return (
+    <Show when={newestAt()}>
+      {(newest) => (
+        <div class={`text-xs mb-2 ${quiet() ? QUIET_TONE : "text-muted-foreground"}`} title={QUIET_RULE_SUMMARY}>
+          <div class="flex items-center gap-1">
+            <Show when={quiet()}>
+              <IconWarning class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            </Show>
+            <span>
+              {quiet() ? "Quiet: newest event " : "Newest event "}
+              <span class="font-mono">{formatRelativeTime(newest())}</span>
+            </span>
+          </div>
+          <Show when={quiet()}>
+            {(entry) => (
+              <div>
+                Usually at most <span class="font-mono">{entry().usualGapDays}d</span> without new events
+              </div>
+            )}
+          </Show>
+        </div>
+      )}
     </Show>
   );
 }
@@ -326,6 +372,17 @@ export default function SyncView() {
     return history().filter((e) => e.source === filter);
   };
 
+  const freshnessFor = (source: string) => status()?.freshness.find((entry) => entry.source === source);
+  // Quiet sources that have no sync card to carry the warning, such as hand imports.
+  const quietWithoutCard = (): QuietSource[] => {
+    const s = status();
+    if (!s) return [];
+    return s.freshness.filter(
+      (entry): entry is QuietSource =>
+        entry.status === "quiet" && !s.scheduler.sources.some((source) => source.source === entry.source),
+    );
+  };
+
   const queuedJobs = () => status()?.queue.filter((job) => job.status === "queued") ?? [];
   const isSyncSource = (source: string) => syncSourcesQuery.data?.sources.some((entry) => entry.name === source) ?? false;
 
@@ -377,6 +434,29 @@ export default function SyncView() {
             }}
           </Show>
         </div>
+
+        <Show when={quietWithoutCard().length > 0}>
+          <div
+            class="mb-6 rounded-lg border border-yellow-400/30 bg-yellow-400/10 p-3 text-sm"
+            title={QUIET_RULE_SUMMARY}
+          >
+            <div class={`flex items-center gap-1.5 font-medium ${QUIET_TONE}`}>
+              <IconWarning class="h-4 w-4 shrink-0" aria-hidden="true" />
+              Quiet sources
+            </div>
+            <ul class="mt-1.5 space-y-1">
+              <For each={quietWithoutCard()}>
+                {(entry) => (
+                  <li class="flex items-center gap-1.5">
+                    <SourceIcon source={entry.source} />
+                    <span>{sourceLabel(entry.source)}</span>
+                    <span class="text-muted-foreground">{describeQuiet(entry)}</span>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </div>
+        </Show>
 
         {/* Sync Sources */}
         <div class="mb-8">
@@ -512,6 +592,8 @@ export default function SyncView() {
                             </div>
                           )}
                         </Show>
+
+                        <NewestEventLine entry={freshnessFor(source.source)} />
 
                         {/* Next run */}
                         <Show when={source.nextRunAt}>

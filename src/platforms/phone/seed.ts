@@ -7,6 +7,12 @@ import { type ChatLine, chatSession, chatStart, GOOGLE_MESSAGES_DAYS, type Topic
 
 const NAME = "sms-backup-restore";
 
+/**
+ * Backups reached the inbox weekly until the backup app stopped uploading this
+ * many days before the anchor, so the status page shows a source gone quiet.
+ */
+const BACKUPS_STOPPED_DAYS = 42;
+
 const TOPICS: Partial<Record<PersonKey, readonly Topic[]>> = {
   rowan: ["hike", "friend"],
   sam: ["friend", "gaming"],
@@ -258,10 +264,14 @@ export const smsBackupRestoreSeed: SeedSource = {
     }
 
     const callTags: string[] = [];
-    for (const day of ctx.days) {
+    const backedUpDays = ctx.days.filter((day) => day.daysAgo >= BACKUPS_STOPPED_DAYS);
+    for (const day of backedUpDays) {
       for (let n = rng.poisson(day.isWeekend ? 0.38 : 0.24); n > 0; n--) callTags.push(callTag(ctx, rng, day));
     }
 
+    const lastBackedUpDay = backedUpDays.at(-1);
+    if (!lastBackedUpDay) throw new Error("sms-backup-restore needs a day before its backups stopped");
+    const lastBackupDate = ctx.localDate(lastBackedUpDay.date, 23, 0).getTime();
     const lastDay = textDays.at(-1) ?? ctx.days[0];
     if (!lastDay) throw new Error("sms-backup-restore needs at least one day");
     const backupDate = ctx.localDate(lastDay.date, 23, 0).getTime();
@@ -276,7 +286,7 @@ export const smsBackupRestoreSeed: SeedSource = {
     ].join("\n");
     const callsXml = [
       header,
-      `<calls count="${callTags.length}" backup_set="${rng.uuid()}" backup_date="${ctx.localDate(ctx.anchorDate, 3, 0).getTime()}" type="full">`,
+      `<calls count="${callTags.length}" backup_set="${rng.uuid()}" backup_date="${lastBackupDate}" type="full">`,
       ...callTags,
       "</calls>",
       "",
@@ -288,6 +298,10 @@ export const smsBackupRestoreSeed: SeedSource = {
     await importSms(ctx.db, smsPath, SELF.phone, options);
     await importMms(ctx.db, smsPath, SELF.phone, options);
     await importCalls(ctx.db, callsPath, SELF.phone, options);
+    // Each event arrived with the weekly backup on the Sunday after it.
+    ctx.db
+      .prepare("UPDATE events SET imported_at = date(timestamp, 'weekday 0') || ' 03:00:00' WHERE source = 'phone'")
+      .run();
 
     // The owner's number is never upserted by this importer (only counterparties).
     const counterparties = new Set<PersonKey>([...contacts.map((p) => p.key), ...CALL_WEIGHTS.map(([key]) => key)]);

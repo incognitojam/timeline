@@ -2,6 +2,7 @@ import type { ConversationRangeExportFormat } from "@shared/conversation-export"
 import type { MusicPeriod, MusicRankingsOverview, MusicRecentResponse } from "@platforms/spotify/shared/music";
 import type { NetworkSettings } from "@shared/network-settings";
 import type { ReleaseStatus } from "@shared/releases";
+import type { SourceFreshness } from "@shared/source-freshness";
 import type { TimelineServiceStatus, VersionInfo } from "@shared/version";
 import type { EventParticipant } from "@shared/types";
 import type {
@@ -1804,6 +1805,7 @@ export interface ServiceStatus {
     sources: InboxSourceStatus[];
   };
   queue: Job[];
+  freshness: SourceFreshness[];
 }
 
 export interface SyncHistoryEntry {
