@@ -7,6 +7,12 @@ import { createHash, randomBytes } from "node:crypto";
 import { waitForOAuthCallback, OAUTH_REDIRECT_URI } from "./oauth-callback";
 import { createTokenManager, type OAuthTokens } from "./oauth-tokens";
 
+export class OAuth2HttpError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+  }
+}
+
 export interface OAuth2ProviderConfig {
   name: string;
   authUrl: string;
@@ -216,7 +222,9 @@ export function createOAuth2Client<T extends OAuthTokens = OAuthTokens>(
       });
 
       if (!response.ok) {
-        throw new Error(`Token refresh failed: ${await response.text()}`);
+        const retryAfter = response.headers.get("Retry-After");
+        const retryHint = response.status === 429 && retryAfter ? ` (Retry-After: ${retryAfter})` : "";
+        throw new OAuth2HttpError(response.status, `Token refresh failed (HTTP ${response.status}): ${await response.text()}${retryHint}`);
       }
 
       const tokenResponse: OAuth2TokenResponse = await response.json();

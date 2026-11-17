@@ -7,6 +7,8 @@ import { getMonzoAuthCommand, getMonzoParserPath } from "../../runtime-paths";
 import type { SyncSource, SyncOptions, SyncResult } from "../../sync/types";
 import { backgroundCommand } from "../../lib/background-priority";
 
+import { readMonzoFailure } from "./subprocess";
+
 const CONFIG_PATH = join(homedir(), ".config", "timeline", "monzo.json");
 
 interface MonzoConfig {
@@ -86,21 +88,23 @@ export const monzoSyncSource: SyncSource = {
             // Pass through TIMELINE_DB_PATH if set
             TIMELINE_DB_PATH: process.env.TIMELINE_DB_PATH || "",
           },
-          stdout: options.verbose ? "inherit" : "pipe",
-          stderr: options.verbose ? "inherit" : "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
         }
       );
 
       // Read stdout/stderr concurrently with the exit wait so the subprocess
       // can't deadlock filling its pipe buffer.
-      const stdoutPromise: Promise<string> =
-        !options.verbose && proc.stdout
-          ? new Response(proc.stdout).text()
-          : Promise.resolve("");
-      const stderrPromise: Promise<string> =
-        !options.verbose && proc.stderr
-          ? new Response(proc.stderr).text()
-          : Promise.resolve("");
+      async function capture(stream: ReadableStream<Uint8Array>, output: NodeJS.WriteStream): Promise<string> {
+        const chunks: Uint8Array[] = [];
+        for await (const chunk of stream) {
+          chunks.push(chunk);
+          if (options.verbose) output.write(chunk);
+        }
+        return Buffer.concat(chunks).toString("utf8");
+      }
+      const stdoutPromise = capture(proc.stdout, process.stdout);
+      const stderrPromise = capture(proc.stderr, process.stderr);
 
       let timedOut = false;
       let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
@@ -128,13 +132,10 @@ export const monzoSyncSource: SyncSource = {
 
       const exitCode = exitResult as number;
 
+      const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
+
       if (exitCode !== 0) {
-        const stderr = await stderrPromise;
-        const stdout = await stdoutPromise;
-        const errOutput = stderr.trim() || stdout.trim();
-        const errorMsg = errOutput
-          ? errOutput.split("\n").pop() || `Process exited with code ${exitCode}`
-          : `Process exited with code ${exitCode}`;
+        const errorMsg = readMonzoFailure(stderr, stdout, exitCode);
         return {
           source: "monzo",
           success: false,
@@ -145,9 +146,8 @@ export const monzoSyncSource: SyncSource = {
         };
       }
 
-      // Parse stdout for stats if not verbose (verbose inherits output)
+      // Parse stdout for stats in both quiet and verbose mode.
       let eventsAdded = 0;
-      const stdout = await stdoutPromise;
       const match = stdout.match(/Imported:\s*(\d+)/);
       if (match) {
         eventsAdded = parseInt(match[1], 10);
