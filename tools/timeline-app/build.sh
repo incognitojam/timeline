@@ -36,7 +36,7 @@ swiftc -target "$(uname -m)-apple-macos14.0" -O -parse-as-library \
   ServiceController.swift RecallNotifier.swift RemoteAccess.swift \
   RecallLog.swift RecallAgeMenu.swift RecallCapture.swift RecallPipeline.swift RecallMigration.swift \
   TimelineServiceConfig.swift LaunchAgentIdentity.swift Subprocess.swift \
-  UpdateController.swift UpdateMaintenance.swift -o Timeline
+  UpdateController.swift UpdateMaintenance.swift UpdateInstallation.swift -o Timeline
 
 # Assemble a minimal .app bundle.
 rm -rf "$APP"

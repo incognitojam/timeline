@@ -9,9 +9,13 @@ final class UpdateController: NSObject, ObservableObject, NSApplicationDelegate,
     private var serviceAgent: ServiceAgentController?
     private var controller: SPUStandardUpdaterController?
     private let maintenance = UpdateMaintenance(directory: timelineDataDirectory())
-    private var installingUpdate = false
-    private var preparing = false
-    private var prepared = false
+    @Published private var installation = UpdateInstallation()
+    private var immediateInstall: (() -> Void)?
+
+    var updateStaged: Bool { installation.staged }
+    var canInstallStagedUpdate: Bool {
+        !installation.preparing && (canCheck || immediateInstall != nil)
+    }
 
     var automaticUpdatesEnabled: Bool { controller != nil }
 
@@ -33,7 +37,9 @@ final class UpdateController: NSObject, ObservableObject, NSApplicationDelegate,
     }
 
     func checkForUpdates() {
-        if let controller {
+        if let immediateInstall {
+            immediateInstall()
+        } else if let controller {
             controller.checkForUpdates(nil)
         } else {
             guard let value = Bundle.main.object(forInfoDictionaryKey: "TimelineReleaseURL") as? String,
@@ -45,19 +51,41 @@ final class UpdateController: NSObject, ObservableObject, NSApplicationDelegate,
     }
 
     func updater(_ updater: SPUUpdater, willInstallUpdate item: SUAppcastItem) {
-        installingUpdate = true
+        installation.stage()
+    }
+
+    func updater(_ updater: SPUUpdater, didExtractUpdate item: SUAppcastItem) {
+        installation.stage()
+    }
+
+    func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem,
+                 immediateInstallationBlock immediateInstallHandler: @escaping () -> Void) -> Bool {
+        installation.stage()
+        // Retain the handler so the menu can retry after refused termination.
+        immediateInstall = immediateInstallHandler
+        immediateInstallHandler()
+        return true
+    }
+
+    func updater(_ updater: SPUUpdater, userDidMake choice: SPUUserUpdateChoice,
+                 forUpdate item: SUAppcastItem, state: SPUUserUpdateState) {
+        installation.recordChoice(skipped: choice == .skip, installerRunning: state.stage == .installing)
     }
 
     // Sparkle waits for this app to terminate before replacing its bundle.
     // Refusing termination prevents replacement if preparation fails.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard installingUpdate, !prepared else { return .terminateNow }
+        switch installation.terminationDecision {
+        case .allow: return .terminateNow
+        case .wait: return .terminateLater
+        case .prepare: break
+        }
         guard let serviceAgent else {
             issue = "Update paused: the service agent is not ready."
             return .terminateCancel
         }
-        guard !preparing else { return .terminateLater }
-        preparing = true
+        installation.beginPreparation()
+        issue = nil
         let maintenance = self.maintenance
         Task {
             do {
@@ -76,17 +104,16 @@ final class UpdateController: NSObject, ObservableObject, NSApplicationDelegate,
                         }
                     }
                 }.value
-                guard installingUpdate else {
+                guard installation.completePreparation() else {
                     try maintenance.recover()
-                    preparing = false
+                    installation.resetPreparation()
                     serviceAgent.resumeAfterUpdate()
                     sender.reply(toApplicationShouldTerminate: false)
                     return
                 }
-                prepared = true
                 sender.reply(toApplicationShouldTerminate: true)
             } catch {
-                preparing = false
+                installation.resetPreparation()
                 serviceAgent.resumeAfterUpdate()
                 issue = "Update paused: \(error.localizedDescription)"
                 sender.reply(toApplicationShouldTerminate: false)
@@ -100,12 +127,21 @@ final class UpdateController: NSObject, ObservableObject, NSApplicationDelegate,
     }
 
     func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
-        installingUpdate = false
-        guard prepared else { return }
+        installation.discard()
+        recoverAfterCycle()
+    }
+
+    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
+        installation.finishCycle(failed: error != nil)
+        recoverAfterCycle()
+    }
+
+    private func recoverAfterCycle() {
+        immediateInstall = nil
+        guard !installation.staged, installation.prepared else { return }
         do {
             try maintenance.recover()
-            prepared = false
-            preparing = false
+            installation.resetPreparation()
             serviceAgent?.resumeAfterUpdate()
         } catch {
             issue = "Update recovery: \(error.localizedDescription)"
