@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { initDb } from "../db/schema";
 import type { SourceFreshness } from "../shared/source-freshness";
 import { seed } from "../testing/seed";
@@ -15,6 +15,16 @@ beforeEach(() => {
   db = new Database(":memory:");
   initDb(db);
 });
+
+afterEach(() => db.close());
+
+/** An event stored with its timestamp text exactly as given. */
+function rawEvent(source: string, timestamp: string, importedAt = "2026-11-17 00:00:00") {
+  db.prepare(
+    `INSERT INTO events (source, source_id, type, timestamp, raw_data, imported_at)
+     VALUES (?, ?, 'test', ?, '{}', ?)`,
+  ).run(source, `e${nextId++}`, timestamp, importedAt);
+}
 
 /** An event `daysAgo` before NOW, imported `importedDaysAgo` before NOW (default: as it happened). */
 function event(source: string, daysAgo: number | null, importedDaysAgo = daysAgo ?? 0) {
@@ -114,4 +124,72 @@ describe("computeSourceFreshness", () => {
     });
     expect(freshness({ "google-calendar": true }).get("google-calendar")).toMatchObject({ status: "ok", quietDays: 1 });
   });
+
+  describe("timestamp text that sorts away from its instant", () => {
+    function stoppedTenDaysAgo() {
+      for (let day = 10; day < 60; day++) event("discord", day);
+    }
+
+    it("counts an offset event that already happened though its text sorts after now", () => {
+      seed(db, () => {
+        stoppedTenDaysAgo();
+        rawEvent("discord", "2026-11-17T12:30:00+01:00"); // 11:30Z, half an hour ago
+      });
+      expect(freshness({ discord: true }).get("discord")).toMatchObject({
+        status: "ok",
+        newestAt: "2026-11-17T11:30:00.000Z",
+      });
+    });
+
+    it("ignores an offset event still in the future though its text sorts before now", () => {
+      seed(db, () => {
+        stoppedTenDaysAgo();
+        rawEvent("discord", "2026-11-17T11:30:00-05:00"); // 16:30Z
+      });
+      expect(freshness({ discord: true }).get("discord")).toMatchObject({ status: "quiet", quietDays: 10 });
+    });
+
+    it("pages past more future events than one read holds", () => {
+      seed(db, () => {
+        for (let day = 0; day < 30; day++) event("google-calendar", day + 0.5);
+        // Sorted after every past event and before the 14h bound, all in the future by instant.
+        for (let minute = 0; minute < 120; minute++) {
+          rawEvent("google-calendar", `2026-11-17T08:${String(minute % 60).padStart(2, "0")}:${String(Math.floor(minute / 60)).padStart(2, "0")}-08:00`);
+        }
+      });
+      expect(freshness({ "google-calendar": true }).get("google-calendar")).toMatchObject({
+        status: "ok",
+        newestAt: new Date(NOW - 0.5 * DAY).toISOString(),
+      });
+    });
+  });
+
+  it("reports an unreadable newest timestamp for that source alone", () => {
+    seed(db, () => {
+      for (let day = 1; day < 60; day++) event("google-calendar", day);
+      rawEvent("google-calendar", "2026-11-16T25:00:00.000Z");
+      for (let day = 1; day < 60; day++) event("spotify", day);
+    });
+    const result = freshness({ "google-calendar": true, spotify: true });
+    expect(result.get("google-calendar")).toEqual({
+      source: "google-calendar",
+      status: "unreadable",
+      timestamp: "2026-11-16T25:00:00.000Z",
+    });
+    expect(result.get("spotify")).toMatchObject({ status: "ok" });
+  });
+
+  it("reports an unreadable timestamp met while measuring the usual gap", () => {
+    seed(db, () => {
+      for (let day = 1; day < 5; day++) event("spotify", day);
+      rawEvent("spotify", "2026-11-02T99:00:00Z");
+      for (let day = 20; day < 60; day++) event("spotify", day);
+    });
+    expect(freshness({ spotify: true }).get("spotify")).toEqual({
+      source: "spotify",
+      status: "unreadable",
+      timestamp: "2026-11-02T99:00:00Z",
+    });
+  });
 });
+

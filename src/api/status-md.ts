@@ -163,7 +163,9 @@ function remotePullSummary(metadata: string | null): string | null {
 function freshnessStatus(entry: SourceFreshness): string {
   switch (entry.status) {
     case "undated":
-      return "No dated events";
+      return "No past dated events";
+    case "unreadable":
+      return `**Unreadable timestamp**: ${sanitizeForTable(entry.timestamp)}`;
     case "unchecked":
       return `Not checked: ${UNCHECKED_REASON_LABEL[entry.reason]}`;
     case "new":
@@ -588,10 +590,10 @@ export async function generateStatusMarkdown(options: StatusMarkdownOptions = {}
   if (data.freshness.length > 0) {
     lines.push("| Source | Newest event | Status |");
     lines.push("|--------|--------------|--------|");
-    const order: Record<SourceFreshness["status"], number> = { quiet: 0, ok: 1, new: 2, unchecked: 3, undated: 4 };
+    const order: Record<SourceFreshness["status"], number> = { quiet: 0, unreadable: 1, ok: 2, new: 3, unchecked: 4, undated: 5 };
     const sorted = [...data.freshness].sort((a, b) => order[a.status] - order[b.status]);
     for (const entry of sorted) {
-      const newest = entry.status === "undated" ? "-" : `${entry.newestAt.slice(0, 10)} (${formatRelative(entry.newestAt)})`;
+      const newest = "newestAt" in entry ? `${entry.newestAt.slice(0, 10)} (${formatRelative(entry.newestAt)})` : "-";
       lines.push(`| ${entry.source} | ${newest} | ${freshnessStatus(entry)} |`);
     }
   } else {

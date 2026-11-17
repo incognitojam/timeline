@@ -115,7 +115,7 @@ function SyncStatePip(props: { state: SyncActionState }) {
 function NewestEventLine(props: { entry: SourceFreshness | undefined }) {
   const newestAt = () => {
     const entry = props.entry;
-    return entry && entry.status !== "undated" ? entry.newestAt : null;
+    return entry && "newestAt" in entry ? entry.newestAt : null;
   };
   const quiet = (): QuietSource | null => {
     const entry = props.entry;

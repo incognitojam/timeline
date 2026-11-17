@@ -8,6 +8,10 @@ import { SYNC_SOURCES } from "../sync/sources";
 
 const DAY_MS = 86_400_000;
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}/;
+/** UTC offsets reach ±14h, so a timestamp's text can sort up to 14h away from its instant. */
+const MAX_OFFSET_MS = 14 * 3_600_000;
+/** Rows read per page when picking the newest past event by instant rather than by text. */
+const NEWEST_PAGE = 50;
 
 /** Journal entries and manual notes are written when the owner chooses to. */
 const APP_WRITTEN_SOURCES = new Set(SYSTEM_SOURCES.map((source) => source.id));
@@ -18,17 +22,25 @@ export interface FreshnessOptions {
   syncEnabled: ReadonlyMap<string, boolean>;
 }
 
-/** Stored timestamps are ISO 8601 with or without a zone, or SQLite's `YYYY-MM-DD HH:MM:SS` (UTC). */
-function timestampMs(timestamp: string): number {
+/**
+ * Stored timestamps are ISO 8601 with or without a zone, or SQLite's
+ * `YYYY-MM-DD HH:MM:SS` (UTC). Null when the text isn't a valid time.
+ */
+function timestampMs(timestamp: string): number | null {
+  if (!DAY_PATTERN.test(timestamp) || Number.isNaN(dayNumber(timestamp.slice(0, 10)))) return null;
   const iso = timestamp.includes("T") ? timestamp : timestamp.replace(" ", "T");
   const zoned = /[zZ]|[+-]\d\d:?\d\d$/.test(iso) || iso.length === 10 ? iso : `${iso}Z`;
   const ms = Date.parse(zoned);
-  if (Number.isNaN(ms)) throw new Error(`Unparseable event timestamp: ${timestamp}`);
-  return ms;
+  return Number.isNaN(ms) ? null : ms;
 }
 
 function dayNumber(day: string): number {
   return Date.parse(`${day}T00:00:00Z`) / DAY_MS;
+}
+
+interface EventRow {
+  timestamp: string;
+  imported_at: string;
 }
 
 interface ActiveDay {
@@ -57,7 +69,7 @@ function longestWait(days: readonly ActiveDay[], feed: SourceFeed): number {
 
 /**
  * Newest event and usual gap for every source in the events table. Each source
- * costs a few dozen seeks on `idx_events_source_timestamp`, independent of how
+ * costs a page of rows and a few dozen seeks on `idx_events_source_timestamp`, independent of how
  * many events it has.
  */
 export function computeSourceFreshness(db: Database, options: FreshnessOptions): SourceFreshness[] {
@@ -73,7 +85,19 @@ export function computeSourceFreshness(db: Database, options: FreshnessOptions):
     )
     .all() as { source: string }[];
 
-  const newestQuery = db.query(
+  // Timestamps only, so a page is read from the index without touching the rows.
+  const firstPageQuery = db.query(
+    `SELECT timestamp FROM events
+     WHERE source = ? AND timestamp IS NOT NULL AND timestamp <= ?
+     ORDER BY timestamp DESC LIMIT ${NEWEST_PAGE}`,
+  );
+  const nextPageQuery = db.query(
+    `SELECT timestamp FROM events
+     WHERE source = ? AND timestamp IS NOT NULL AND timestamp < ?
+     ORDER BY timestamp DESC LIMIT ${NEWEST_PAGE}`,
+  );
+  const importedAtQuery = db.query("SELECT imported_at FROM events WHERE source = ? AND timestamp = ? LIMIT 1");
+  const atOrBeforeQuery = db.query(
     `SELECT timestamp, imported_at FROM events
      WHERE source = ? AND timestamp IS NOT NULL AND timestamp <= ?
      ORDER BY timestamp DESC LIMIT 1`,
@@ -89,19 +113,47 @@ export function computeSourceFreshness(db: Database, options: FreshnessOptions):
      ORDER BY timestamp DESC LIMIT 1`,
   );
 
-  const nowIso = new Date(options.now).toISOString();
+  /**
+   * The source's newest event at or before now, by instant. Text order can put
+   * an event with a UTC offset out of place, so this
+   * reads a page of rows from 14h past now and picks the latest past instant,
+   * paging on only while every row read is still in the future.
+   */
+  function newestPast(source: string): { row: EventRow; ms: number } | { unreadable: string } | null {
+    let page = firstPageQuery.all(source, new Date(options.now + MAX_OFFSET_MS).toISOString()) as { timestamp: string }[];
+    while (page.length > 0) {
+      let best: { timestamp: string; ms: number } | null = null;
+      for (const { timestamp } of page) {
+        const ms = timestampMs(timestamp);
+        if (ms === null) return { unreadable: timestamp };
+        if (ms <= options.now && (!best || ms > best.ms)) best = { timestamp, ms };
+      }
+      if (best) {
+        const { imported_at } = importedAtQuery.get(source, best.timestamp) as { imported_at: string };
+        return { row: { timestamp: best.timestamp, imported_at }, ms: best.ms };
+      }
+      page = nextPageQuery.all(source, page[page.length - 1].timestamp) as { timestamp: string }[];
+    }
+    return null;
+  }
+
   const results: SourceFreshness[] = [];
 
   for (const { source } of sources) {
     if (APP_WRITTEN_SOURCES.has(source)) continue;
 
-    const newest = newestQuery.get(source, nowIso) as { timestamp: string; imported_at: string } | null;
-    if (!newest || !DAY_PATTERN.test(newest.timestamp)) {
+    const found = newestPast(source);
+    if (!found) {
       results.push({ source, status: "undated" });
       continue;
     }
-    const newestAt = new Date(timestampMs(newest.timestamp)).toISOString();
-    const quietMs = Math.max(0, options.now - timestampMs(newest.timestamp));
+    if ("unreadable" in found) {
+      results.push({ source, status: "unreadable", timestamp: found.unreadable });
+      continue;
+    }
+    const newest = found.row;
+    const newestAt = new Date(found.ms).toISOString();
+    const quietMs = options.now - found.ms;
 
     const syncEnabled = options.syncEnabled.get(source);
     if (syncEnabled === false) {
@@ -116,8 +168,8 @@ export function computeSourceFreshness(db: Database, options: FreshnessOptions):
       }
       // A one-off export lands in a single import; a fed source's newest event
       // arrives in a later import than its older ones.
-      const probeBefore = new Date(timestampMs(newest.timestamp) - QUIET_RULE.importProbeDays * DAY_MS).toISOString();
-      const probe = (newestQuery.get(source, probeBefore) ?? oldestQuery.get(source)) as { imported_at: string };
+      const probeBefore = new Date(found.ms - QUIET_RULE.importProbeDays * DAY_MS).toISOString();
+      const probe = (atOrBeforeQuery.get(source, probeBefore) ?? oldestQuery.get(source)) as EventRow;
       if (probe.imported_at.slice(0, 10) === newest.imported_at.slice(0, 10)) {
         results.push({ source, status: "unchecked", newestAt, reason: "one-off" });
         continue;
@@ -127,13 +179,19 @@ export function computeSourceFreshness(db: Database, options: FreshnessOptions):
 
     // Most recent days with events, newest first, each with the day its latest event was imported.
     const days: ActiveDay[] = [{ day: newest.timestamp.slice(0, 10), importedDay: newest.imported_at.slice(0, 10) }];
+    let unreadable: string | null = null;
     while (days.length < QUIET_RULE.historyDays) {
-      const previous = previousQuery.get(source, days[days.length - 1].day) as {
-        timestamp: string;
-        imported_at: string;
-      } | null;
-      if (!previous || !DAY_PATTERN.test(previous.timestamp)) break;
+      const previous = previousQuery.get(source, days[days.length - 1].day) as EventRow | null;
+      if (!previous) break;
+      if (timestampMs(previous.timestamp) === null) {
+        unreadable = previous.timestamp;
+        break;
+      }
       days.push({ day: previous.timestamp.slice(0, 10), importedDay: previous.imported_at.slice(0, 10) });
+    }
+    if (unreadable !== null) {
+      results.push({ source, status: "unreadable", timestamp: unreadable });
+      continue;
     }
     if (days.length < QUIET_RULE.minActiveDays) {
       results.push({ source, status: "new", newestAt, feed, activeDays: days.length });

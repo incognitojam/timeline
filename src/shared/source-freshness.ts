@@ -44,6 +44,8 @@ interface JudgedFreshness {
 
 export type SourceFreshness =
   | { source: string; status: "undated" }
+  /** A sampled timestamp isn't a valid time, so the source can't be judged. */
+  | { source: string; status: "unreadable"; timestamp: string }
   | { source: string; status: "unchecked"; newestAt: string; reason: UncheckedReason }
   | { source: string; status: "new"; newestAt: string; feed: SourceFeed; activeDays: number }
   | (JudgedFreshness & { status: "ok" })
