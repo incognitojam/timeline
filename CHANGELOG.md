@@ -1,5 +1,11 @@
 # Timeline
 
+## 0.19.0
+
+### Minor Changes
+
+- b72902c: Enable native macOS updates in every build, with automatic checks and a prompt before installation.
+
 ## 0.18.0
 
 ### Minor Changes
