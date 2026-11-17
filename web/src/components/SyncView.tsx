@@ -111,6 +111,9 @@ function SyncStatePip(props: { state: SyncActionState }) {
   );
 }
 
+/** Quiet-source warning text; light yellow is unreadable on the light theme's pale panels. */
+const QUIET_TONE = "text-yellow-800 dark:text-yellow-400";
+
 /** A sync card's newest event, flagged when the source has gone quiet. */
 function NewestEventLine(props: { entry: SourceFreshness | undefined }) {
   const newestAt = () => {
@@ -124,7 +127,7 @@ function NewestEventLine(props: { entry: SourceFreshness | undefined }) {
   return (
     <Show when={newestAt()}>
       {(newest) => (
-        <div class={`text-xs mb-2 ${quiet() ? "text-yellow-400" : "text-muted-foreground"}`} title={QUIET_RULE_SUMMARY}>
+        <div class={`text-xs mb-2 ${quiet() ? QUIET_TONE : "text-muted-foreground"}`} title={QUIET_RULE_SUMMARY}>
           <div class="flex items-center gap-1">
             <Show when={quiet()}>
               <IconWarning class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
@@ -437,7 +440,7 @@ export default function SyncView() {
             class="mb-6 rounded-lg border border-yellow-400/30 bg-yellow-400/10 p-3 text-sm"
             title={QUIET_RULE_SUMMARY}
           >
-            <div class="flex items-center gap-1.5 font-medium text-yellow-400">
+            <div class={`flex items-center gap-1.5 font-medium ${QUIET_TONE}`}>
               <IconWarning class="h-4 w-4 shrink-0" aria-hidden="true" />
               Quiet sources
             </div>
