@@ -34,7 +34,8 @@
     "changeset": "changeset",
     "release:version": "changeset version && bun run version:sync",
     "version:sync": "bun run scripts/sync-product-version.ts",
-    "version:check": "bun run scripts/check-product-version.ts"
+    "version:check": "bun run scripts/check-product-version.ts",
+    "sqlite:pin": "bun run scripts/sqlite/pin.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.7",
