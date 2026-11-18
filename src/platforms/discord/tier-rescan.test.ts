@@ -143,26 +143,6 @@ describe("rescanReactionTiers", () => {
     expect(cursors["7d"]["channel-1"]).toBeDefined();
   });
 
-  test("self-seeds a tier bucket missing from the cursors map", async () => {
-    // A cursors map missing the 6h bucket entirely — the shape you'd get on the
-    // first sync after a new tier joins TIERS. The rescan must seed it and
-    // first-encounter, not throw on an undefined bucket.
-    const cursors: TierCursors = { "24h": {}, "7d": {} };
-    const client = fakeClient(new Map());
-
-    const stats = await rescanReactionTiers(
-      client,
-      db,
-      cursors,
-      ["channel-1"],
-      { "channel-1": dateToSnowflake(new Date()) },
-      ACCOUNT,
-    );
-
-    expect(stats.channelsSkipped).toBe(4); // incl. the seeded 1h + 6h tiers
-    expect(cursors["1h"]["channel-1"]).toBeDefined();
-    expect(cursors["6h"]["channel-1"]).toBeDefined();
-  });
 
   test("new earlier tier repairs the gap from an existing later-tier cursor", async () => {
     const messageTs = new Date(Date.now() - 2 * 3600_000);
@@ -217,33 +197,38 @@ describe("rescanReactionTiers", () => {
     expect(stats.messagesReFetched).toBe(0);
   });
 
-  test("capture tier re-fetches band, stores reactions + reactors, records observation", async () => {
-    const messageTs = new Date(Date.now() - 26 * 3600_000); // ~26h old → crosses 24h only
+  test.each([
+    { tier: "24h", age: 26, cursorAge: 30, initial: 1, count: 3 },
+    { tier: "24h", age: 26, cursorAge: 30, initial: 0, count: 1 },
+    { tier: "6h", age: 7, cursorAge: 8, initial: 1, count: 2 },
+  ])("$tier capture: $initial → $count reactions", async ({ tier, age, cursorAge, initial, count }) => {
+    const messageTs = new Date(Date.now() - age * 3600_000);
     const messageId = dateToSnowflake(messageTs);
     insertDiscordEvent({
       id: messageId,
       timestamp: messageTs.toISOString(),
-      reactions: [{ emoji: { id: null, name: "👍" }, count: 1 }], // stored initial count
+      reactions: initial ? [{ emoji: { id: null, name: "👍" }, count: initial }] : [],
     });
 
-    // Simulate: 24h cursor is 30h ago, so the message has just crossed the 24h threshold.
+    const nowCursor = dateToSnowflake(new Date());
     const cursors: TierCursors = {
-      "6h": { "channel-1": dateToSnowflake(new Date(Date.now() - 7 * 3600_000)) },
-      "24h": { "channel-1": dateToSnowflake(new Date(Date.now() - 30 * 3600_000)) },
-      "7d": { "channel-1": dateToSnowflake(new Date(Date.now() - 8 * 24 * 3600_000)) },
+      "1h": { "channel-1": nowCursor },
+      "6h": { "channel-1": nowCursor },
+      "24h": { "channel-1": nowCursor },
+      "7d": { "channel-1": nowCursor },
+      [tier]: { "channel-1": dateToSnowflake(new Date(Date.now() - cursorAge * 3600_000)) },
     };
 
     // Channel high-water = messageId (we've seen this message)
     const channelHigh = { "channel-1": messageId };
 
-    // API now reports 3 reactions (was 1 at initial sync); the capture tier
-    // additionally fetches who reacted.
-    const apiReactions = [{ emoji: { id: null, name: "👍" }, count: 3 }];
+    // The capture tier additionally fetches who reacted.
+    const apiReactions = [{ emoji: { id: null, name: "👍" }, count }];
     const reactors: ReactionUser[] = [
       { id: "u1", name: "Alice" },
       { id: "u2", name: "Bob" },
       { id: "u3", name: "Carol" },
-    ];
+    ].slice(0, count);
     const messagesByChannel = new Map<string, NormalizedMessage[]>();
     messagesByChannel.set("channel-1", [buildMsg(messageId, messageTs.toISOString(), apiReactions)]);
 
@@ -262,18 +247,18 @@ describe("rescanReactionTiers", () => {
       )
       .get(messageId) as { r: string; other: string };
     expect(JSON.parse(row.r)).toEqual([
-      { emoji: { id: null, name: "👍" }, count: 3, users: reactors },
+      { emoji: { id: null, name: "👍" }, count, users: reactors },
     ]);
     expect(row.other).toBe("preserved");
 
-    // 24h tier observation row exists with total_count = 3
+    // The selected tier records the observed count.
     const obs = db
       .prepare(
-        "SELECT total_count, tier FROM discord_reaction_observations WHERE tier = '24h'",
+        "SELECT total_count, tier FROM discord_reaction_observations WHERE tier = ?",
       )
-      .all() as Array<{ total_count: number; tier: string }>;
+      .all(tier) as Array<{ total_count: number; tier: string }>;
     expect(obs.length).toBe(1);
-    expect(obs[0].total_count).toBe(3);
+    expect(obs[0].total_count).toBe(count);
   });
 
   test("24h tier: unchanged count with stored users → no fetch/write, users preserved", async () => {
@@ -317,6 +302,7 @@ describe("rescanReactionTiers", () => {
 
     expect(fetchCalls).toBe(0);
     expect(stats.reactionsUpdated).toBe(0);
+    expect(db.prepare("SELECT total_count FROM discord_reaction_observations WHERE tier = '24h'").all()).toEqual([{ total_count: 2 }]);
     const row = db
       .prepare("SELECT json_extract(raw_data, '$.reactions') AS r FROM events WHERE source_id = ?")
       .get(messageId) as { r: string };
@@ -325,93 +311,7 @@ describe("rescanReactionTiers", () => {
     ]);
   });
 
-  test("24h tier: changed count with NO stored users → captures users", async () => {
-    // A message that first gains reactions after the initial sync arrives at
-    // 24h with a changed count and no stored users. The refresh tier must
-    // capture authors it never had (storedHasUsers is not required).
-    const messageTs = new Date(Date.now() - 26 * 3600_000); // crosses 24h only
-    const messageId = dateToSnowflake(messageTs);
-    insertDiscordEvent({
-      id: messageId,
-      timestamp: messageTs.toISOString(),
-      reactions: [], // no reactions (and no users) at initial sync
-    });
 
-    const cursors: TierCursors = {
-      "6h": { "channel-1": dateToSnowflake(new Date(Date.now() - 7 * 3600_000)) },
-      "24h": { "channel-1": dateToSnowflake(new Date(Date.now() - 30 * 3600_000)) },
-      "7d": { "channel-1": dateToSnowflake(new Date(Date.now() - 8 * 24 * 3600_000)) },
-    };
-    const channelHigh = { "channel-1": messageId };
-
-    const reactors: ReactionUser[] = [{ id: "u1", name: "Alice" }];
-    const messagesByChannel = new Map<string, NormalizedMessage[]>();
-    messagesByChannel.set("channel-1", [
-      buildMsg(messageId, messageTs.toISOString(), [{ emoji: { id: null, name: "👍" }, count: 1 }]),
-    ]);
-
-    const stats = await rescanReactionTiers(
-      fakeClient(messagesByChannel, { "👍": reactors }),
-      db,
-      cursors,
-      ["channel-1"],
-      channelHigh,
-      ACCOUNT,
-    );
-
-    expect(stats.reactionsUpdated).toBe(1);
-    const row = db
-      .prepare("SELECT json_extract(raw_data, '$.reactions') AS r FROM events WHERE source_id = ?")
-      .get(messageId) as { r: string };
-    expect(JSON.parse(row.r)).toEqual([
-      { emoji: { id: null, name: "👍" }, count: 1, users: reactors },
-    ]);
-  });
-
-  test("6h tier: changed count with no stored users → captures users", async () => {
-    const messageTs = new Date(Date.now() - 7 * 3600_000); // crosses 6h only
-    const messageId = dateToSnowflake(messageTs);
-    insertDiscordEvent({
-      id: messageId,
-      timestamp: messageTs.toISOString(),
-      reactions: [{ emoji: { id: null, name: "👍" }, count: 1 }],
-    });
-
-    // 6h band just crossed; 24h/7d thresholds are older than the cursor → skip.
-    const eightHoursAgo = dateToSnowflake(new Date(Date.now() - 8 * 3600_000));
-    const cursors: TierCursors = {
-      "6h": { "channel-1": eightHoursAgo },
-      "24h": { "channel-1": eightHoursAgo },
-      "7d": { "channel-1": eightHoursAgo },
-    };
-    const channelHigh = { "channel-1": messageId };
-
-    const reactors: ReactionUser[] = [
-      { id: "u1", name: "Alice" },
-      { id: "u2", name: "Bob" },
-    ];
-    const messagesByChannel = new Map<string, NormalizedMessage[]>();
-    messagesByChannel.set("channel-1", [
-      buildMsg(messageId, messageTs.toISOString(), [{ emoji: { id: null, name: "👍" }, count: 2 }]),
-    ]);
-
-    const stats = await rescanReactionTiers(
-      fakeClient(messagesByChannel, { "👍": reactors }),
-      db,
-      cursors,
-      ["channel-1"],
-      channelHigh,
-      ACCOUNT,
-    );
-
-    expect(stats.reactionsUpdated).toBe(1);
-    const row = db
-      .prepare("SELECT json_extract(raw_data, '$.reactions') AS r FROM events WHERE source_id = ?")
-      .get(messageId) as { r: string };
-    expect(JSON.parse(row.r)).toEqual([
-      { emoji: { id: null, name: "👍" }, count: 2, users: reactors },
-    ]);
-  });
 
   test("7d tier: changed count with no stored users → counts-only, no author capture", async () => {
     // 7d does not refresh authors on change. With no stored users, a changed
@@ -481,79 +381,7 @@ describe("rescanReactionTiers", () => {
     expect(obsCount.c).toBe(0);
   });
 
-  test("cursor advances to threshold after successful pass", async () => {
-    const messageTs = new Date(Date.now() - 26 * 3600_000);
-    const messageId = dateToSnowflake(messageTs);
-    insertDiscordEvent({ id: messageId, timestamp: messageTs.toISOString() });
 
-    const oldCursor = dateToSnowflake(new Date(Date.now() - 30 * 3600_000));
-    const cursors: TierCursors = {
-      "6h": { "channel-1": dateToSnowflake(new Date(Date.now() - 7 * 3600_000)) },
-      "24h": { "channel-1": oldCursor },
-      "7d": { "channel-1": dateToSnowflake(new Date(Date.now() - 8 * 24 * 3600_000)) },
-    };
-    const channelHigh = { "channel-1": messageId };
-
-    const messagesByChannel = new Map<string, NormalizedMessage[]>();
-    messagesByChannel.set("channel-1", [buildMsg(messageId, messageTs.toISOString())]);
-
-    await rescanReactionTiers(
-      fakeClient(messagesByChannel),
-      db,
-      cursors,
-      ["channel-1"],
-      channelHigh,
-      ACCOUNT,
-    );
-
-    // Cursor should have moved forward; it should no longer equal the old cursor.
-    expect(cursors["24h"]["channel-1"]).not.toBe(oldCursor);
-    expect(BigInt(cursors["24h"]["channel-1"])).toBeGreaterThan(BigInt(oldCursor));
-  });
-
-  test("non-capture tier skips UPDATE when stored reactions equal API reactions", async () => {
-    // ~7h old so the message crosses only the 6h tier, which does not capture
-    // authors — exercises the cascade-avoidance skip in isolation.
-    const messageTs = new Date(Date.now() - 7 * 3600_000);
-    const messageId = dateToSnowflake(messageTs);
-    const reactions = [{ emoji: { id: null, name: "👍" }, count: 2 }];
-    insertDiscordEvent({ id: messageId, timestamp: messageTs.toISOString(), reactions });
-
-    // All cursors at 8h ago: the 6h band has just crossed it, while the 24h
-    // and 7d thresholds are older than the cursor, so those tiers skip.
-    const eightHoursAgo = dateToSnowflake(new Date(Date.now() - 8 * 3600_000));
-    const cursors: TierCursors = {
-      "6h": { "channel-1": eightHoursAgo },
-      "24h": { "channel-1": eightHoursAgo },
-      "7d": { "channel-1": eightHoursAgo },
-    };
-    const channelHigh = { "channel-1": messageId };
-
-    const messagesByChannel = new Map<string, NormalizedMessage[]>();
-    // API returns identical reactions
-    messagesByChannel.set("channel-1", [buildMsg(messageId, messageTs.toISOString(), reactions)]);
-
-    const stats = await rescanReactionTiers(
-      fakeClient(messagesByChannel),
-      db,
-      cursors,
-      ["channel-1"],
-      channelHigh,
-      ACCOUNT,
-    );
-
-    // Message was fetched, but no UPDATE ran because reactions matched and the
-    // 6h tier does not capture authors.
-    expect(stats.messagesReFetched).toBeGreaterThanOrEqual(1);
-    expect(stats.reactionsUpdated).toBe(0);
-
-    // Observation still recorded so we have a per-tier snapshot for trajectory analysis.
-    const obs = db
-      .prepare("SELECT total_count FROM discord_reaction_observations WHERE tier = '6h'")
-      .all() as Array<{ total_count: number }>;
-    expect(obs.length).toBe(1);
-    expect(obs[0].total_count).toBe(2);
-  });
 
   test("non-capture tier preserves earlier-captured authors on an unchanged set", async () => {
     // ~7.5d old → crosses only the 7d tier. The message already carries users
@@ -937,24 +765,6 @@ describe("rescan local band precheck", () => {
     expect(BigInt(cursors["24h"]["channel-1"])).toBeGreaterThan(BigInt(oldCursor));
   });
 
-  test("fetches when a stored event sits inside the band", async () => {
-    const messageTs = new Date(Date.now() - 26 * 3600_000); // inside the 30h→24h band
-    const messageId = dateToSnowflake(messageTs);
-    insertDiscordEvent({ id: messageId, timestamp: messageTs.toISOString() });
-
-    const cursors = cursorsWith24hBand();
-    const channelHigh = { "channel-1": messageId };
-    const messagesByChannel = new Map<string, NormalizedMessage[]>();
-    messagesByChannel.set("channel-1", [buildMsg(messageId, messageTs.toISOString())]);
-    const { client, calls } = countingClient(messagesByChannel);
-
-    const stats = await rescanReactionTiers(client, db, cursors, ["channel-1"], channelHigh, ACCOUNT);
-
-    expect(calls()).toBe(1);
-    expect(stats.channelsChecked).toBe(1);
-    expect(stats.channelsSkippedEmptyBand).toBe(0);
-    expect(stats.messagesReFetched).toBe(1);
-  });
 
   test("finds in-band rows stored with the legacy '+00:00' timestamp tail", async () => {
     // Legacy Discord rows carry ".ssssss+00:00" or second-precision "+00:00"

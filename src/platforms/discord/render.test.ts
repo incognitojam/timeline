@@ -25,8 +25,8 @@ const legacyPollResultRawData = {
 };
 
 describe("renderDiscordEvent", () => {
-  test("renders a guild channel with its guild name from sync raw_data", () => {
-    expect(renderDiscordEvent({
+  test.each([
+{ raw: {
       content: "Hello",
       edited_timestamp: null,
       _channel: {
@@ -38,11 +38,8 @@ describe("renderDiscordEvent", () => {
         category: null,
         recipients: [],
       },
-    })).toEqual({ title: "Example Server #general", content: "Hello" });
-  });
-
-  test("renders a guild channel without a guild name from legacy parser raw_data", () => {
-    expect(renderDiscordEvent({
+    }, expected: { title: "Example Server #general", content: "Hello" } },
+{ raw: {
       ...legacyRawData,
       content: "Hello",
       _channel: {
@@ -54,20 +51,19 @@ describe("renderDiscordEvent", () => {
         category: null,
         recipients: [],
       },
-    })).toEqual({ title: "general", content: "Hello" });
-  });
-
-  test("renders DM and group channel titles", () => {
-    expect(renderDiscordEvent({
+    }, expected: { title: "general", content: "Hello" } },
+{ raw: {
       content: "Hi Alice",
       edited_timestamp: null,
       _channel: { id: "dm-1", name: "Alice", type: "DirectMessage" },
-    })).toEqual({ title: "Alice", content: "Hi Alice" });
-    expect(renderDiscordEvent({
+    }, expected: { title: "Alice", content: "Hi Alice" } },
+{ raw: {
       content: "Hi everyone",
       edited_timestamp: null,
       _channel: { id: "group-1", name: "Alice, Bob", type: "GroupDirectMessage" },
-    })).toEqual({ title: "Alice, Bob", content: "Hi everyone" });
+    }, expected: { title: "Alice, Bob", content: "Hi everyone" } }
+  ])("renders channel title $expected.title", ({ raw, expected }) => {
+    expect(renderDiscordEvent(raw)).toEqual(expected);
   });
 
   test("uses a poll question when message content is empty", () => {
