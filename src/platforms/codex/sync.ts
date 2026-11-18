@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { getDb, initDb } from "../../db/schema";
-import { importCodex, DEFAULT_CODEX_SESSIONS_DIR } from "./parser";
+import { getDb } from "../../db/schema";
+import { importCodex, CodexImportError, DEFAULT_CODEX_SESSIONS_DIR } from "./parser";
 import type { SyncSource, SyncOptions, SyncResult } from "../../sync/types";
 
 function expandPath(configPath: string | undefined): string {
@@ -64,24 +64,27 @@ export const codexSyncSource: SyncSource = {
       }
 
       const db = getDb();
-      initDb(db);
-
-      const stats = await importCodex(db, sessionsDir, accountName);
-      db.close();
+      let stats;
+      try {
+        stats = await importCodex(db, sessionsDir, accountName);
+      } finally {
+        db.close();
+      }
 
       return {
         source: "codex",
         success: true,
         eventsAdded: stats.messages + stats.toolCalls + stats.reasoning,
-        eventsUpdated: 0,
+        eventsUpdated: stats.refreshed,
+        metadata: { filesSkipped: stats.filesSkipped, writeTransactions: stats.writeTransactions, longestWriteHoldMs: stats.longestWriteHoldMs },
         durationMs: Date.now() - startTime,
       };
     } catch (error) {
       return {
         source: "codex",
         success: false,
-        eventsAdded: 0,
-        eventsUpdated: 0,
+        eventsAdded: error instanceof CodexImportError ? error.stats.messages + error.stats.toolCalls + error.stats.reasoning : 0,
+        eventsUpdated: error instanceof CodexImportError ? error.stats.refreshed : 0,
         error: error instanceof Error ? error.message : String(error),
         durationMs: Date.now() - startTime,
       };

@@ -1,6 +1,7 @@
 import { Database } from "./sqlite";
 import { ensureDiscordAttachmentRetryIndex } from "../platforms/discord/attachment-retry-index";
 import { PENDING_POLL_VOTERS_INDEX, PENDING_POLL_VOTERS_WHERE, POLL_VOTER_ORDER } from "../platforms/discord/poll-voter-queries";
+import { initFileCheckpoints } from "../ingest/file-checkpoints";
 import { PLATFORM_METAS } from "../platforms/metas";
 import type { PlatformMeta } from "../platforms/types";
 import type { AttachmentStatus } from "../shared/attachments";
@@ -500,6 +501,19 @@ function createSchema(db: Database) {
       SELECT RAISE(ABORT, 'conversation events require a conversation_id — derive it with extractConversationId() from the persisted raw_data (src/db/conversation-id.ts)');
     END`
   );
+
+  initFileCheckpoints(db);
+  ensureTrigger(db, "file_import_checkpoints_deleted_event", `
+    CREATE TRIGGER file_import_checkpoints_deleted_event AFTER DELETE ON events
+    WHEN OLD.source IN ('codex', 'claude-code')
+    BEGIN
+      DELETE FROM file_import_checkpoints WHERE source = OLD.source
+        AND account = COALESCE(OLD.source_account, '');
+      INSERT INTO file_import_epochs (source, account, epoch)
+        VALUES (OLD.source, COALESCE(OLD.source_account, ''), 1)
+        ON CONFLICT (source, account) DO UPDATE SET epoch = epoch + 1;
+    END
+  `);
 
   // Contacts table - for linking people across platforms
   db.exec(`
