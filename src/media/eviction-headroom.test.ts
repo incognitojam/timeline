@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { Database } from "../db/sqlite";
 import { existsSync, mkdtempSync, utimesSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
