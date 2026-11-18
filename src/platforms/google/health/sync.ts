@@ -60,9 +60,10 @@ export const googleHealthSyncSource: SyncSource = {
       return {
         source: "google-health",
         success: true,
-        eventsAdded: stats.imported,
-        eventsUpdated: 0,
+        eventsAdded: stats.added,
+        eventsUpdated: stats.updated,
         durationMs: Date.now() - startTime,
+        metadata: { ...stats },
       };
     } catch (error) {
       return {

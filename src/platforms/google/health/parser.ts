@@ -324,8 +324,14 @@ async function fetchPages<T>(
 
 export interface GoogleHealthSyncStats {
   apiRecords: number;
-  imported: number;
+  /** Events written for the first time. */
+  added: number;
+  /** Stored events whose fetched record differed, rewritten in place. */
+  updated: number;
+  /** Stored events that matched the fetched record and were left alone. */
+  unchanged: number;
   skipped: number;
+  /** Events in the fetched window per kind, whether or not they were written. */
   sleep: number;
   naps: number;
   dailyMetrics: number;
@@ -463,84 +469,69 @@ export function mainSleepIds(points: SleepDataPoint[]): Set<string> {
   return main;
 }
 
-function syncSleep(
-  db: Database,
-  account: string,
-  points: SleepDataPoint[],
-  importBatch: string,
-  stats: GoogleHealthSyncStats,
-): void {
-  const insert = db.prepare(`
-    INSERT OR REPLACE INTO events (
-      source, source_id, source_account, type, timestamp, end_timestamp,
-      duration_ms, title, content, tags, raw_data, import_batch
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
+export function sleepEvent(dp: SleepDataPoint, isMain: boolean): HealthEventRow {
+  const { interval, summary } = dp.sleep;
+  const dur = durationMs(dp);
 
+  const deep = stageMinutes(summary, "DEEP");
+  const light = stageMinutes(summary, "LIGHT");
+  const rem = stageMinutes(summary, "REM");
+  const awake = stageMinutes(summary, "AWAKE");
+
+  const asleep = summary?.minutesAsleep ? Number(summary.minutesAsleep) : undefined;
+  const inBed = summary?.minutesInSleepPeriod ? Number(summary.minutesInSleepPeriod) : undefined;
+  const efficiency =
+    asleep && inBed ? Math.round((asleep / inBed) * 100) : undefined;
+
+  let title = `Sleep: ${formatDuration(dur)}`;
+  if (efficiency !== undefined) title += ` (${efficiency}% efficiency)`;
+
+  const stageParts: string[] = [];
+  if (deep !== undefined) stageParts.push(`Deep: ${deep}m`);
+  if (light !== undefined) stageParts.push(`Light: ${light}m`);
+  if (rem !== undefined) stageParts.push(`REM: ${rem}m`);
+  if (awake !== undefined) stageParts.push(`Awake: ${awake}m`);
+  const contentParts: string[] = [];
+  if (stageParts.length) contentParts.push(stageParts.join(", "));
+  if (inBed !== undefined) contentParts.push(`Time in bed: ${inBed}m`);
+
+  const tags: string[] = [SOURCE, "api"];
+  if (deep !== undefined) tags.push(`deep:${deep}`);
+  if (light !== undefined) tags.push(`light:${light}`);
+  if (rem !== undefined) tags.push(`rem:${rem}`);
+  if (awake !== undefined) tags.push(`wake:${awake}`);
+
+  return {
+    sourceId: `sleep:${dataPointId(dp.name)}`,
+    type: isMain ? "sleep" : "sleep:nap",
+    timestamp: toLocalIso(interval.startTime, interval.startUtcOffset),
+    endTimestamp: toLocalIso(interval.endTime, interval.endUtcOffset),
+    durationMs: dur,
+    title,
+    content: contentParts.join("\n"),
+    tags: JSON.stringify(tags),
+    rawData: JSON.stringify(dp),
+  };
+}
+
+function sleepEvents(points: SleepDataPoint[], stats: GoogleHealthSyncStats): HealthEventRow[] {
   const mainIds = mainSleepIds(points);
   stats.apiRecords += points.length;
-
+  const events: HealthEventRow[] = [];
   for (const dp of points) {
-    const { interval, summary } = dp.sleep;
     const isMain = mainIds.has(dp.name);
-    const type = isMain ? "sleep" : "sleep:nap";
-    const dur = durationMs(dp);
-
-    const deep = stageMinutes(summary, "DEEP");
-    const light = stageMinutes(summary, "LIGHT");
-    const rem = stageMinutes(summary, "REM");
-    const awake = stageMinutes(summary, "AWAKE");
-
-    const asleep = summary?.minutesAsleep ? Number(summary.minutesAsleep) : undefined;
-    const inBed = summary?.minutesInSleepPeriod ? Number(summary.minutesInSleepPeriod) : undefined;
-    const efficiency =
-      asleep && inBed ? Math.round((asleep / inBed) * 100) : undefined;
-
-    let title = `Sleep: ${formatDuration(dur)}`;
-    if (efficiency !== undefined) title += ` (${efficiency}% efficiency)`;
-
-    const stageParts: string[] = [];
-    if (deep !== undefined) stageParts.push(`Deep: ${deep}m`);
-    if (light !== undefined) stageParts.push(`Light: ${light}m`);
-    if (rem !== undefined) stageParts.push(`REM: ${rem}m`);
-    if (awake !== undefined) stageParts.push(`Awake: ${awake}m`);
-    const contentParts: string[] = [];
-    if (stageParts.length) contentParts.push(stageParts.join(", "));
-    if (inBed !== undefined) contentParts.push(`Time in bed: ${inBed}m`);
-    const content = contentParts.join("\n");
-
-    const tags: string[] = [SOURCE, "api"];
-    if (deep !== undefined) tags.push(`deep:${deep}`);
-    if (light !== undefined) tags.push(`light:${light}`);
-    if (rem !== undefined) tags.push(`rem:${rem}`);
-    if (awake !== undefined) tags.push(`wake:${awake}`);
-
+    let event: HealthEventRow;
     try {
-      const result = insert.run(
-        SOURCE,
-        `sleep:${dataPointId(dp.name)}`,
-        account,
-        type,
-        toLocalIso(interval.startTime, interval.startUtcOffset),
-        toLocalIso(interval.endTime, interval.endUtcOffset),
-        dur,
-        title,
-        content,
-        JSON.stringify(tags),
-        JSON.stringify(dp),
-        importBatch,
-      );
-      if (result.changes > 0) {
-        stats.imported++;
-        if (isMain) stats.sleep++;
-        else stats.naps++;
-      } else {
-        stats.skipped++;
-      }
+      event = sleepEvent(dp, isMain);
     } catch {
       stats.skipped++;
+      continue;
     }
+    events.push(event);
+    if (isMain) stats.sleep++;
+    else stats.naps++;
   }
+  return events;
 }
 
 // ============================================================================
@@ -698,42 +689,23 @@ export function dailyMetricEvent(
   };
 }
 
-function syncDailyMetric(
-  db: Database,
-  account: string,
+function dailyMetricEvents(
   metric: DailyMetricImport,
   points: DailySummaryDataPoint[],
-  importBatch: string,
   stats: GoogleHealthSyncStats,
-): void {
-  const insert = db.prepare(`
-    INSERT OR REPLACE INTO events (
-      source, source_id, source_account, type, timestamp,
-      title, content, tags, raw_data, import_batch
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
+): HealthEventRow[] {
   stats.apiRecords += points.length;
+  const events: HealthEventRow[] = [];
   for (const dp of points) {
     const event = dailyMetricEvent(metric, dp);
     if (!event) {
       stats.skipped++;
       continue;
     }
-    insert.run(
-      SOURCE,
-      event.sourceId,
-      account,
-      metric.eventType,
-      event.timestamp,
-      event.title,
-      event.content,
-      JSON.stringify(event.tags),
-      JSON.stringify(dp),
-      importBatch,
-    );
-    stats.imported++;
+    events.push(dailyEventRow(metric.eventType, event, dp));
     stats.dailyMetrics++;
   }
+  return events;
 }
 
 // ============================================================================
@@ -963,17 +935,150 @@ export function weightEvent(point: SamplePoint, heights: HeightSample[]): Mapped
   };
 }
 
-function insertMappedEvents(db: Database, account: string, type: string, events: MappedHealthEvent[], importBatch: string): void {
-  const insert = db.prepare(`
-    INSERT OR REPLACE INTO events (
-      source, source_id, source_account, type, timestamp,
-      title, content, tags, raw_data, import_batch
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  for (const event of events) {
-    insert.run(SOURCE, event.sourceId, account, type, event.timestamp, event.title, event.content,
-      JSON.stringify(event.tags), JSON.stringify(event.rawData), importBatch);
+// ============================================================================
+// Writing events
+// ============================================================================
+
+/** A google-health event as the sync stores it: the columns it writes, as written. */
+export interface HealthEventRow {
+  sourceId: string;
+  type: string;
+  timestamp: string;
+  endTimestamp: string | null;
+  durationMs: number | null;
+  title: string;
+  content: string;
+  /** JSON text. */
+  tags: string;
+  /** JSON text. */
+  rawData: string;
+}
+
+/** A day-level event: no end time or duration. */
+export function dailyEventRow(type: string, event: DailyMetricEvent, rawData: unknown): HealthEventRow {
+  return {
+    sourceId: event.sourceId,
+    type,
+    timestamp: event.timestamp,
+    endTimestamp: null,
+    durationMs: null,
+    title: event.title,
+    content: event.content,
+    tags: JSON.stringify(event.tags),
+    rawData: JSON.stringify(rawData),
+  };
+}
+
+interface StoredHealthEvent {
+  id: number;
+  source_id: string;
+  type: string;
+  timestamp: string | null;
+  end_timestamp: string | null;
+  duration_ms: number | null;
+  title: string | null;
+  content: string | null;
+  tags: string | null;
+  raw_data: string;
+}
+
+/** Equal on every column the sync writes except import_batch, which names the run. */
+function storedMatches(stored: StoredHealthEvent, event: HealthEventRow): boolean {
+  return stored.type === event.type &&
+    stored.timestamp === event.timestamp &&
+    stored.end_timestamp === event.endTimestamp &&
+    stored.duration_ms === event.durationMs &&
+    stored.title === event.title &&
+    stored.content === event.content &&
+    stored.tags === event.tags &&
+    stored.raw_data === event.rawData;
+}
+
+/** Rows per lookup query and per write transaction. */
+const WRITE_BATCH_SIZE = 500;
+
+export interface HealthWriteCounts {
+  added: number;
+  updated: number;
+  unchanged: number;
+}
+
+/**
+ * Insert events not yet stored, update changed ones in place (keeping their
+ * id), and leave identical ones untouched. Comparison happens before any write,
+ * so a sync with nothing new takes no write lock. Writes commit in bounded
+ * transactions. A source id given twice keeps its last event.
+ */
+export function writeHealthEvents(
+  db: Database,
+  account: string,
+  events: HealthEventRow[],
+  importBatch: string,
+): HealthWriteCounts {
+  const latest = new Map<string, HealthEventRow>();
+  for (const event of events) latest.set(event.sourceId, event);
+  const sourceIds = [...latest.keys()];
+
+  const stored = new Map<string, StoredHealthEvent>();
+  for (let i = 0; i < sourceIds.length; i += WRITE_BATCH_SIZE) {
+    const chunk = sourceIds.slice(i, i + WRITE_BATCH_SIZE);
+    const rows = db.prepare(`
+      SELECT id, source_id, type, timestamp, end_timestamp, duration_ms, title, content, tags, raw_data
+      FROM events
+      WHERE source = ? AND source_account = ? AND source_id IN (${chunk.map(() => "?").join(", ")})
+    `).all(SOURCE, account, ...chunk) as StoredHealthEvent[];
+    for (const row of rows) stored.set(row.source_id, row);
   }
+
+  const inserts: HealthEventRow[] = [];
+  const updates: { id: number; event: HealthEventRow }[] = [];
+  let unchanged = 0;
+  for (const event of latest.values()) {
+    const existing = stored.get(event.sourceId);
+    if (!existing) inserts.push(event);
+    else if (storedMatches(existing, event)) unchanged++;
+    else updates.push({ id: existing.id, event });
+  }
+
+  const insert = db.prepare(`
+    INSERT INTO events (
+      source, source_id, source_account, type, timestamp, end_timestamp,
+      duration_ms, title, content, tags, raw_data, import_batch
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const update = db.prepare(`
+    UPDATE events SET
+      type = ?, timestamp = ?, end_timestamp = ?, duration_ms = ?,
+      title = ?, content = ?, tags = ?, raw_data = ?, import_batch = ?
+    WHERE id = ?
+  `);
+  const writeInBatches = <T>(items: T[], write: (item: T) => void) => {
+    for (let i = 0; i < items.length; i += WRITE_BATCH_SIZE) {
+      const batch = items.slice(i, i + WRITE_BATCH_SIZE);
+      db.transaction(() => {
+        for (const item of batch) write(item);
+      }).immediate();
+    }
+  };
+  writeInBatches(inserts, e => insert.run(SOURCE, e.sourceId, account, e.type, e.timestamp,
+    e.endTimestamp, e.durationMs, e.title, e.content, e.tags, e.rawData, importBatch));
+  writeInBatches(updates, ({ id, event: e }) => update.run(e.type, e.timestamp, e.endTimestamp,
+    e.durationMs, e.title, e.content, e.tags, e.rawData, importBatch, id));
+
+  return { added: inserts.length, updated: updates.length, unchanged };
+}
+
+function writeAndCount(
+  db: Database,
+  account: string,
+  events: HealthEventRow[],
+  importBatch: string,
+  stats: GoogleHealthSyncStats,
+): void {
+  const counts = writeHealthEvents(db, account, events, importBatch);
+  stats.added += counts.added;
+  stats.updated += counts.updated;
+  stats.unchanged += counts.unchanged;
 }
 
 // ============================================================================
@@ -1025,7 +1130,9 @@ export async function syncGoogleHealth(
 
   const stats: GoogleHealthSyncStats = {
     apiRecords: 0,
-    imported: 0,
+    added: 0,
+    updated: 0,
+    unchanged: 0,
     skipped: 0,
     sleep: 0,
     naps: 0,
@@ -1043,14 +1150,14 @@ export async function syncGoogleHealth(
     if (options.verbose) {
       console.log(`[google-health] sleep ${since}..${until}: ${points.length} records`);
     }
-    syncSleep(db, account, points, importBatch, stats);
+    writeAndCount(db, account, sleepEvents(points, stats), importBatch, stats);
 
     for (const metric of DAILY_METRIC_IMPORTS) {
       const { dataPoints = [] } = await fetchDailySummary(tokens, metric.dataType, since, until);
       if (options.verbose) {
         console.log(`[google-health] ${metric.dataType} ${since}..${until}: ${dataPoints.length} records`);
       }
-      syncDailyMetric(db, account, metric, dataPoints, importBatch, stats);
+      writeAndCount(db, account, dailyMetricEvents(metric, dataPoints, stats), importBatch, stats);
     }
 
     const activityRollups = {} as Record<ActivityRollup, RollupPoint[]>;
@@ -1063,9 +1170,8 @@ export async function syncGoogleHealth(
     const activity = activityEvents(activityRollups);
     const activityDates = new Set(ACTIVITY_ROLLUPS.flatMap(type => activityRollups[type].map(rollupDate)));
     stats.skipped += activityDates.size - activity.length;
-    insertMappedEvents(db, account, "daily:activity", activity, importBatch);
+    writeAndCount(db, account, activity.map(e => dailyEventRow("daily:activity", e, e.rawData)), importBatch, stats);
     stats.activity += activity.length;
-    stats.imported += activity.length;
 
     const zoneRollups = await fetchDailyRollups(tokens, "active-zone-minutes", since, until);
     stats.apiRecords += zoneRollups.length;
@@ -1077,9 +1183,8 @@ export async function syncGoogleHealth(
       }
       return [event];
     });
-    insertMappedEvents(db, account, "daily:azm", azm, importBatch);
+    writeAndCount(db, account, azm.map(e => dailyEventRow("daily:azm", e, e.rawData)), importBatch, stats);
     stats.azm += azm.length;
-    stats.imported += azm.length;
     if (options.verbose) console.log(`[google-health] active-zone-minutes ${since}..${until}: ${zoneRollups.length} rollups`);
 
     const weightPoints = await fetchSamples(tokens, "weight", since, until);
@@ -1088,9 +1193,8 @@ export async function syncGoogleHealth(
     const heights = parseHeightSamples(heightPoints);
     stats.apiRecords += weightPoints.length;
     const weight = weightPoints.map(point => weightEvent(point, heights));
-    insertMappedEvents(db, account, "daily:weight", weight, importBatch);
+    writeAndCount(db, account, weight.map(e => dailyEventRow("daily:weight", e, e.rawData)), importBatch, stats);
     stats.weight += weight.length;
-    stats.imported += weight.length;
     if (options.verbose) console.log(`[google-health] weight ${since}..${until}: ${weightPoints.length} samples`);
   } finally {
     db.close();
@@ -1098,7 +1202,7 @@ export async function syncGoogleHealth(
 
   if (options.verbose) {
     console.log(
-      `[google-health] imported ${stats.imported} (${stats.sleep} sleep, ${stats.naps} naps, ${stats.dailyMetrics} daily metrics, ${stats.activity} activity, ${stats.azm} AZM, ${stats.weight} weight), skipped ${stats.skipped}`,
+      `[google-health] ${stats.added} added, ${stats.updated} updated, ${stats.unchanged} unchanged (${stats.sleep} sleep, ${stats.naps} naps, ${stats.dailyMetrics} daily metrics, ${stats.activity} activity, ${stats.azm} AZM, ${stats.weight} weight), skipped ${stats.skipped}`,
     );
   }
   return stats;
