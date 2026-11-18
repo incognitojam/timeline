@@ -398,7 +398,12 @@ describe("groupEvents", () => {
       expect(ids.some((id) => id.includes("spotify:bob"))).toBe(true);
     });
 
-    it("handles missing people field gracefully", () => {
+    it.each([
+      ["missing", null],
+      ["JSON string", JSON.stringify("not-an-array")],
+      ["JSON object", JSON.stringify({ user: "alice" })],
+      ["non-string first element", JSON.stringify([123, null, "spotify:alice"])],
+    ])("uses unknown for %s people", (_name, people) => {
       const now = new Date("2024-01-15T12:00:00Z");
       const events: GroupableEvent[] = [
         makeEvent({
@@ -407,72 +412,13 @@ describe("groupEvents", () => {
           type: "listen:track:friend",
           content: "Track by Example Band from Example Album",
           timestamp: now.toISOString(),
-          people: null,
+          people,
         }),
       ];
 
       const groups = groupEvents(events);
 
       expect(groups.length).toBe(1);
-      expect(groups[0].participants).toEqual(["unknown"]);
-    });
-
-    it("handles malformed people field (JSON string instead of array)", () => {
-      const now = new Date("2024-01-15T12:00:00Z");
-      const events: GroupableEvent[] = [
-        makeEvent({
-          id: 1,
-          source: "spotify-friends",
-          type: "listen:track:friend",
-          content: "Track by Example Band from Example Album",
-          timestamp: now.toISOString(),
-          people: JSON.stringify("not-an-array"), // String, not array
-        }),
-      ];
-
-      const groups = groupEvents(events);
-
-      expect(groups.length).toBe(1);
-      // Should fall back to "unknown", not return first character "n"
-      expect(groups[0].participants).toEqual(["unknown"]);
-    });
-
-    it("handles malformed people field (JSON object instead of array)", () => {
-      const now = new Date("2024-01-15T12:00:00Z");
-      const events: GroupableEvent[] = [
-        makeEvent({
-          id: 1,
-          source: "spotify-friends",
-          type: "listen:track:friend",
-          content: "Track by Example Band from Example Album",
-          timestamp: now.toISOString(),
-          people: JSON.stringify({ user: "alice" }), // Object, not array
-        }),
-      ];
-
-      const groups = groupEvents(events);
-
-      expect(groups.length).toBe(1);
-      expect(groups[0].participants).toEqual(["unknown"]);
-    });
-
-    it("handles array with non-string elements", () => {
-      const now = new Date("2024-01-15T12:00:00Z");
-      const events: GroupableEvent[] = [
-        makeEvent({
-          id: 1,
-          source: "spotify-friends",
-          type: "listen:track:friend",
-          content: "Track by Example Band from Example Album",
-          timestamp: now.toISOString(),
-          people: JSON.stringify([123, null, "spotify:alice"]), // Mixed types
-        }),
-      ];
-
-      const groups = groupEvents(events);
-
-      expect(groups.length).toBe(1);
-      // Should skip non-strings and use first valid string
       expect(groups[0].participants).toEqual(["unknown"]);
     });
   });
