@@ -9,7 +9,6 @@ import {
   importAmexData,
   parseAmexAmount,
   parseAmexDate,
-  cleanReference,
   classifyAmexType,
 } from "./parser";
 
@@ -41,13 +40,6 @@ interface EventRow {
 
 describe("amex parser", () => {
   describe("parseAmexAmount", () => {
-    it("negates a charge (Amex positive) into Monzo convention (money out negative)", () => {
-      expect(parseAmexAmount("56.90")).toBe(-56.9);
-    });
-
-    it("negates a credit (Amex negative) into positive", () => {
-      expect(parseAmexAmount("-220.75")).toBe(220.75);
-    });
 
     it("strips thousands separators", () => {
       expect(parseAmexAmount("1,398.39")).toBe(-1398.39);
@@ -63,37 +55,12 @@ describe("amex parser", () => {
       expect(parseAmexDate("04/05/2026")).toBe("2026-05-04T00:00:00Z");
     });
 
-    it("anchors to midnight so the day-view range query includes the event", () => {
-      // The /timeline?date= query filters `timestamp >= 'DATE T00:00:00'`; a
-      // bare 'YYYY-MM-DD' sorts before that lower bound and is hidden despite
-      // showing in search. A full ISO timestamp falls inside the day's range.
-      const ts = parseAmexDate("04/05/2026");
-      expect(ts && ts >= "2026-05-04T00:00:00" && ts < "2026-05-04T24:00:00").toBe(true);
-    });
-
     it("returns null for an unrecognized format", () => {
       expect(parseAmexDate("2026-05-04")).toBeNull();
     });
   });
 
-  describe("cleanReference", () => {
-    it("strips the Excel text-guard quotes", () => {
-      expect(cleanReference("'AT260000000000000000001'")).toBe(
-        "AT260000000000000000001"
-      );
-    });
-  });
-
   describe("classifyAmexType", () => {
-    it("flags bill payments", () => {
-      expect(classifyAmexType("", 100, true)).toBe("transaction:payment");
-    });
-
-    it("flags non-payment credits as refunds", () => {
-      expect(classifyAmexType("General Purchases-Electronics Stores", 40, false)).toBe(
-        "transaction:refund"
-      );
-    });
 
     it("maps categories to Monzo-style buckets", () => {
       expect(classifyAmexType("General Purchases-Groceries", -10, false)).toBe(

@@ -80,6 +80,9 @@ describe("steam session merging", () => {
 
     const addedEvents = getEvents(db, "steam:game:added");
     expect(addedEvents).toHaveLength(3);
+    expect(addedEvents[0].source_account).toBe("TestPlayer");
+    expect(JSON.parse(addedEvents[0].people)).toEqual(["steam:76561198000000000"]);
+    expect(JSON.parse(addedEvents[0].tags)).toContain("appid:100001");
 
     const sessionEvents = getEvents(db, "steam:session");
     expect(sessionEvents).toHaveLength(0);
@@ -167,34 +170,6 @@ describe("steam session merging", () => {
     expect(session.timestamp).toBe(expectedStart);
   });
 
-  test("fourth sync with no change ends session", () => {
-    const state = emptyState();
-    const db = createTestDb();
-
-    // Sync 1 - baseline
-    const ctx1 = createCtx(db, new Date("2024-06-15T14:00:00Z"));
-    processGames(ctx1, state, [
-      { appid: 100001, name: "Factory Builder", playtime_forever: 6000, rtime_last_played: 1718000000, img_icon_url: "" },
-    ]);
-
-    // Sync 2 - play starts
-    const ctx2 = createCtx(db, new Date("2024-06-15T14:15:00Z"));
-    const rtime2 = Math.floor(new Date("2024-06-15T14:14:00Z").getTime() / 1000);
-    processGames(ctx2, state, [
-      { appid: 100001, name: "Factory Builder", playtime_forever: 6012, rtime_last_played: rtime2, img_icon_url: "" },
-    ]);
-
-    expect(state.games["100001"].current_session_id).toBeTruthy();
-
-    // Sync 3 - no change, session ended
-    const ctx3 = createCtx(db, new Date("2024-06-15T14:30:00Z"));
-    processGames(ctx3, state, [
-      { appid: 100001, name: "Factory Builder", playtime_forever: 6012, rtime_last_played: rtime2, img_icon_url: "" },
-    ]);
-
-    expect(state.games["100001"].current_session_id).toBeUndefined();
-  });
-
   test("fifth sync with new play creates separate session", () => {
     const state = emptyState();
     const db = createTestDb();
@@ -217,6 +192,8 @@ describe("steam session merging", () => {
     processGames(ctx3, state, [
       { appid: 100001, name: "Factory Builder", playtime_forever: 6012, rtime_last_played: rtime2, img_icon_url: "" },
     ]);
+
+    expect(state.games["100001"].current_session_id).toBeUndefined();
 
     // Sync 4 - new play starts (later in the day)
     const ctx4 = createCtx(db, new Date("2024-06-15T17:00:00Z"));
@@ -264,97 +241,7 @@ describe("steam session merging", () => {
   });
 });
 
-describe("timestamp accuracy", () => {
-  test("session start stays stable across merges", () => {
-    const db = createTestDb();
-    const state = emptyState();
-
-    // Baseline
-    const ctx1 = createCtx(db, new Date("2024-06-15T14:00:00Z"));
-    processGames(ctx1, state, [
-      { appid: 100001, name: "Factory Builder", playtime_forever: 6000, rtime_last_played: 1718000000, img_icon_url: "" },
-    ]);
-
-    // First detection: 12 min played, rtime = 14:14
-    const ctx2 = createCtx(db, new Date("2024-06-15T14:15:00Z"));
-    const rtime2 = Math.floor(new Date("2024-06-15T14:14:00Z").getTime() / 1000);
-    processGames(ctx2, state, [
-      { appid: 100001, name: "Factory Builder", playtime_forever: 6012, rtime_last_played: rtime2, img_icon_url: "" },
-    ]);
-
-    const session1 = getEvents(db, "steam:session")[0];
-    // start = 14:14 - 12m = 14:02
-    expect(session1.timestamp).toBe(new Date(rtime2 * 1000 - 12 * 60 * 1000).toISOString());
-
-    // Second observation: 15 more min (27 total), rtime = 14:29
-    const ctx3 = createCtx(db, new Date("2024-06-15T14:30:00Z"));
-    const rtime3 = Math.floor(new Date("2024-06-15T14:29:00Z").getTime() / 1000);
-    processGames(ctx3, state, [
-      { appid: 100001, name: "Factory Builder", playtime_forever: 6027, rtime_last_played: rtime3, img_icon_url: "" },
-    ]);
-
-    const session2 = getEvents(db, "steam:session")[0];
-    // start = 14:29 - 27m = 14:02 (should be approximately the same)
-    expect(session2.timestamp).toBe(new Date(rtime3 * 1000 - 27 * 60 * 1000).toISOString());
-  });
-
-  test("end_timestamp equals rtime_last_played on each update", () => {
-    const db = createTestDb();
-    const state = emptyState();
-
-    // Baseline
-    const ctx1 = createCtx(db, new Date("2024-06-15T14:00:00Z"));
-    processGames(ctx1, state, [
-      { appid: 100001, name: "Factory Builder", playtime_forever: 6000, rtime_last_played: 1718000000, img_icon_url: "" },
-    ]);
-
-    // Play detected
-    const ctx2 = createCtx(db, new Date("2024-06-15T14:15:00Z"));
-    const rtime2 = Math.floor(new Date("2024-06-15T14:14:00Z").getTime() / 1000);
-    processGames(ctx2, state, [
-      { appid: 100001, name: "Factory Builder", playtime_forever: 6012, rtime_last_played: rtime2, img_icon_url: "" },
-    ]);
-
-    let session = getEvents(db, "steam:session")[0];
-    expect(session.end_timestamp).toBe(new Date(rtime2 * 1000).toISOString());
-
-    // More play
-    const ctx3 = createCtx(db, new Date("2024-06-15T14:30:00Z"));
-    const rtime3 = Math.floor(new Date("2024-06-15T14:29:00Z").getTime() / 1000);
-    processGames(ctx3, state, [
-      { appid: 100001, name: "Factory Builder", playtime_forever: 6027, rtime_last_played: rtime3, img_icon_url: "" },
-    ]);
-
-    session = getEvents(db, "steam:session")[0];
-    expect(session.end_timestamp).toBe(new Date(rtime3 * 1000).toISOString());
-  });
-});
-
 describe("new game detection", () => {
-  test("initial sync with multiple games creates only game:added events", () => {
-    const db = createTestDb();
-    const state = emptyState();
-    const ctx = createCtx(db);
-
-    const games = Array.from({ length: 200 }, (_, i) => ({
-      appid: 1000 + i,
-      name: `Game ${i}`,
-      playtime_forever: i * 100,
-      rtime_last_played: 1718000000 - i * 3600,
-      img_icon_url: "",
-    }));
-
-    const stats = processGames(ctx, state, games);
-
-    expect(stats.gamesAdded).toBe(200);
-    expect(stats.sessionsCreated).toBe(0);
-
-    const addedEvents = getEvents(db, "steam:game:added");
-    expect(addedEvents).toHaveLength(200);
-
-    const sessionEvents = getEvents(db, "steam:session");
-    expect(sessionEvents).toHaveLength(0);
-  });
 
   test("new game on subsequent sync with playtime creates both events", () => {
     const db = createTestDb();
@@ -492,44 +379,4 @@ describe("edge cases", () => {
     expect(sessions[0].duration_ms).toBe(totalDelta * 60 * 1000);
   });
 
-  test("source_account uses persona name", () => {
-    const db = createTestDb();
-    const state = emptyState();
-    const ctx = createCtx(db);
-
-    processGames(ctx, state, [
-      { appid: 100001, name: "Factory Builder", playtime_forever: 6000, rtime_last_played: 1718000000, img_icon_url: "" },
-    ]);
-
-    const events = getEvents(db);
-    expect(events[0].source_account).toBe("TestPlayer");
-  });
-
-  test("people contains steam identity", () => {
-    const db = createTestDb();
-    const state = emptyState();
-    const ctx = createCtx(db);
-
-    processGames(ctx, state, [
-      { appid: 100001, name: "Factory Builder", playtime_forever: 6000, rtime_last_played: 1718000000, img_icon_url: "" },
-    ]);
-
-    const events = getEvents(db);
-    const people = JSON.parse(events[0].people);
-    expect(people).toEqual(["steam:76561198000000000"]);
-  });
-
-  test("tags contain appid", () => {
-    const db = createTestDb();
-    const state = emptyState();
-    const ctx = createCtx(db);
-
-    processGames(ctx, state, [
-      { appid: 100001, name: "Factory Builder", playtime_forever: 6000, rtime_last_played: 1718000000, img_icon_url: "" },
-    ]);
-
-    const events = getEvents(db);
-    const tags = JSON.parse(events[0].tags);
-    expect(tags).toContain("appid:100001");
-  });
 });

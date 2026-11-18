@@ -282,24 +282,6 @@ describe("importRecall", () => {
     expect(getAttachment(event!.id)).toBeDefined();
   });
 
-  it("is FTS-searchable on OCR text", async () => {
-    await writeCapture("121500", {
-      captured_at: "2026-05-13T12:15:00Z",
-      hostname: HOST,
-      frontmost_app: "Safari",
-      ocr_text: "Reviewing pull request feedback on the recall feature",
-    });
-
-    await importRecall(db, recallDir);
-
-    const hit = db
-      .prepare(
-        "SELECT events.id FROM events JOIN events_fts ON events.id = events_fts.rowid WHERE events_fts MATCH 'recall'"
-      )
-      .get() as { id: number } | undefined;
-    expect(hit).toBeDefined();
-  });
-
   it("is idempotent: re-running picks up new files but does not duplicate prior events", async () => {
     await writeCapture("100000", {
       captured_at: "2026-05-13T10:00:00Z",

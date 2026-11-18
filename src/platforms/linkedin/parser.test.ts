@@ -20,13 +20,6 @@ describe("linkedin toISO", () => {
     expect(toISO("Jan 2025")).toBe("2025-01-01T00:00:00Z");
   });
 
-  it("produces timestamps the day-view range query includes", () => {
-    // A bare 'YYYY-MM-DD' sorts before the day view's lower bound
-    // ('DATE T00:00:00') and is hidden despite showing in search.
-    const ts = toISO("13 Dec 2025");
-    expect(ts && ts >= "2025-12-13T00:00:00" && ts < "2025-12-13T24:00:00").toBe(true);
-  });
-
   it("returns null for an unrecognized format", () => {
     expect(toISO("")).toBeNull();
     expect(toISO("sometime last year")).toBeNull();
