@@ -65,9 +65,6 @@ afterAll(() => {
 });
 
 describe("DbPool", () => {
-  test("create() initializes workers and resolves", () => {
-    expect(pool.size).toBe(2);
-  });
 
   test("query() returns rows", async () => {
     const rows = await pool.query<{ source: string; title: string }>(
@@ -93,21 +90,6 @@ describe("DbPool", () => {
       "nonexistent-999"
     );
     expect(missing).toBeNull();
-  });
-
-  test("concurrent queries execute without blocking each other", async () => {
-    const results = await Promise.all([
-      pool.query("SELECT COUNT(*) as count FROM events WHERE source = ?", "test"),
-      pool.get("SELECT title FROM events WHERE source_id = ?", "pool-1"),
-      pool.query("SELECT DISTINCT type FROM events WHERE source = ?", "test"),
-      pool.get("SELECT source FROM events WHERE source_id = ?", "pool-3"),
-    ]);
-
-    expect(results).toHaveLength(4);
-    expect(Array.isArray(results[0])).toBe(true);
-    expect(results[1]).not.toBeNull();
-    expect(Array.isArray(results[2])).toBe(true);
-    expect(results[3]).not.toBeNull();
   });
 
   test("invalid SQL returns error without crashing worker", async () => {

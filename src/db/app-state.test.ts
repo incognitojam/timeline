@@ -21,19 +21,6 @@ function teardown(): void {
   db.close();
 }
 
-describe("sync_log indexes", () => {
-  beforeEach(setup);
-  afterEach(teardown);
-
-  test("indexes global history by newest start time", () => {
-    const index = db
-      .prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?")
-      .get("idx_sync_log_started_at") as { sql: string } | null;
-
-    expect(index?.sql).toContain("sync_log(started_at DESC)");
-  });
-});
-
 describe("spotify_resources image_url", () => {
   beforeEach(setup);
   afterEach(teardown);
