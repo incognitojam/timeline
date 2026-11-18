@@ -266,14 +266,15 @@ describe("Manual Events API Tests", () => {
       ]);
 
       const db = getDb();
+      const insert = db.prepare(`
+        INSERT INTO events (
+          source, source_id, source_account, type, timestamp,
+          title, content, raw_data
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
       const insertMany = db.transaction(() => {
         for (let i = 0; i < 1001; i++) {
-          db.prepare(`
-            INSERT INTO events (
-              source, source_id, source_account, type, timestamp,
-              title, content, raw_data
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(
+          insert.run(
             "manual",
             `busy-day-${i}`,
             "user",

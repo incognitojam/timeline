@@ -9,11 +9,18 @@
 process.env.NODE_ENV = "test";
 
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { homedir, tmpdir } from "os";
+import { dirname, join } from "path";
 import { MAX_TIMEOUT_DELAY_MS } from "../config/types";
-import { getAppStateDb, setBlockedNetworks, setSpotifyResource } from "../db/app-state";
+import {
+  deleteSyncState,
+  getAppStateDb,
+  getSyncState,
+  setBlockedNetworks,
+  setSpotifyResource,
+  setSyncState,
+} from "../db/app-state";
 import { upsertIdentity } from "../db/identities";
 import {
   recordPlaylistCreatedAt,
@@ -28,7 +35,6 @@ import {
   setMediaStoreOverride,
   WriteThroughMediaStore,
 } from "../media/storage";
-import { enqueueJob } from "../jobs/store";
 import { parseInterval } from "../config";
 import { SYNC_SOURCES } from "../sync/sources";
 import { app, fetchApiRequest } from "./index";
@@ -2322,44 +2328,30 @@ describe("API Smoke Tests", () => {
     });
 
     test("GET /api/sync/sources reports Trakt tokens stored in sync state as connected", async () => {
-      const testHome = mkdtempSync(join(tmpdir(), "api-trakt-auth-test-"));
-      const configDir = join(testHome, ".config", "timeline");
-      mkdirSync(configDir, { recursive: true });
-      writeFileSync(
-        join(configDir, "trakt.json"),
-        JSON.stringify({ client_id: "test-client-id", client_secret: "test-client-secret" })
-      );
-
-      const script = `
-        import { getAppStateDb, setSyncState } from "./src/db/app-state.ts";
-        import { createSyncSourceRoutes } from "./src/api/sync-sources.ts";
-
-        setSyncState(getAppStateDb(), "trakt", {
-          access_token: "access-token",
-          refresh_token: "refresh-token",
-          expires_at: Date.now() + 60_000,
-        });
-        const response = await createSyncSourceRoutes("4h").request("/api/sync/sources");
-        const body = await response.json();
-        const trakt = body.sources.find((source) => source.name === "trakt");
-        console.log("TRAKT_AUTH_STATUS=" + trakt.authStatus);
-      `;
-      const child = Bun.spawn([process.execPath, "--input-type=module", "-e", script], {
-        cwd: process.cwd(),
-        env: {
-          ...process.env,
-          HOME: testHome,
-          TIMELINE_DB_PATH: join(testHome, "timeline.db"),
-        },
-        stdout: "pipe",
-        stderr: "pipe",
+      // The preload points homedir() at this run's HOME, where Trakt reads its client credentials.
+      const configPath = join(homedir(), ".config", "timeline", "trakt.json");
+      const priorConfig = existsSync(configPath) ? readFileSync(configPath, "utf-8") : null;
+      const appDb = getAppStateDb();
+      const priorState = getSyncState(appDb, "trakt");
+      mkdirSync(dirname(configPath), { recursive: true });
+      writeFileSync(configPath, JSON.stringify({ client_id: "test-client-id", client_secret: "test-client-secret" }));
+      setSyncState(appDb, "trakt", {
+        access_token: "access-token",
+        refresh_token: "refresh-token",
+        expires_at: Date.now() + 60_000,
       });
 
       try {
-        expect(await child.exited).toBe(0);
-        expect(await new Response(child.stdout).text()).toContain("TRAKT_AUTH_STATUS=connected");
+        const res = await createSyncSourceRoutes("4h").request("/api/sync/sources");
+        expect(res.status).toBe(200);
+        const json = await res.json();
+        const trakt = json.sources.find((source: { name: string }) => source.name === "trakt");
+        expect(trakt.authStatus).toBe("connected");
       } finally {
-        rmSync(testHome, { recursive: true, force: true });
+        if (priorConfig === null) rmSync(configPath);
+        else writeFileSync(configPath, priorConfig);
+        if (priorState === null) deleteSyncState(appDb, "trakt");
+        else setSyncState(appDb, "trakt", priorState);
       }
     });
 
@@ -3219,13 +3211,11 @@ describe("API Smoke Tests", () => {
       const prefix = `jobs-negative-limit-${crypto.randomUUID()}`;
 
       try {
-        for (let i = 0; i < 55; i++) {
-          enqueueJob({
-            kind: "sync",
-            source: `${prefix}-${i}`,
-            dedupeKey: `${prefix}:${i}`,
-          }, appDb);
-        }
+        // enqueueJob commits each job in its own transaction, so insert the rows directly.
+        seed(appDb, () => {
+          const insert = appDb.prepare("INSERT INTO jobs (kind, source, dedupe_key) VALUES ('sync', ?, ?)");
+          for (let i = 0; i < 55; i++) insert.run(`${prefix}-${i}`, `${prefix}:${i}`);
+        });
 
         const res = await app.request("/api/jobs?limit=-1");
         expect(res.status).toBe(200);
