@@ -58,14 +58,14 @@ path = "~/.local/share/timeline/timeline.db"
 # Path to media storage directory for attachments (photos, videos, etc.)
 path = "~/.local/share/timeline/media"
 # Optional: soft cap on the local media cache. The scheduled media-evict job
-# (below) drops the oldest R2-durable blobs to stay under this; read-through
-# restores them from R2 on demand. Unset = unbounded.
+# (below) triggers only above this limit, then drops the oldest R2-durable blobs
+# down to 90% of it (25 GiB -> 22.5 GiB). Read-through restores them from R2 on
+# demand. Unset = unbounded.
 # cache_limit_gib = 25
 
 # Optional: encrypt new media client-side and upload it to Cloudflare R2 for a
-# durable offsite copy. NOTE: reads are still served from local disk - R2 is
-# upload-only for now (no restore/read-through yet), so this is a backup, not a
-# substitute for keeping local media. Put R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY
+# durable offsite copy. Reads restore evicted local media from R2 on demand.
+# Put R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY
 # and a MEDIA_ENCRYPTION_KEY (`openssl rand -base64 32`) in ~/.config/timeline/env,
 # then flip enabled. Back up MEDIA_ENCRYPTION_KEY to a password manager - losing
 # it makes the offsite copy unrecoverable.

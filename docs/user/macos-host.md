@@ -124,6 +124,14 @@ Sync-source settings are the exception: they live in `app-state.db` (see
 UI reach the scheduler worker over a lightweight `sync-config-changed` nudge with
 no restart or file reload involved.
 
+### Local media cache limit
+
+Set `[media].cache_limit_gib` in `config.toml` and enable the `media-evict` sync source to bound local media storage; eviction requires R2 to be enabled. Leaving the limit unset keeps the cache unbounded.
+
+Eviction starts only when the cache exceeds the limit, then removes the oldest locally cached media confirmed durable in R2 until usage reaches 90% of the limit. For example, a 25 GiB limit targets 22.5 GiB after crossing 25 GiB. Whole blobs are removed, so the cache may finish below that target. If there are not enough durable blobs, eviction keeps the remaining local copies and reports the shortfall.
+
+This leaves headroom for new media instead of evicting a small batch on every sync. Up to another 10% of the configured capacity's oldest media can live only offsite (plus the final whole blob); opening it restores it from R2 on demand. Under-limit scheduled runs use a quick size estimate between full inventories, with full reconciliation on the first run after six hours even if the estimate stays below the limit.
+
 ## Operate
 
 ```bash

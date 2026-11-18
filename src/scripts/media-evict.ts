@@ -2,7 +2,7 @@
  * Local media-cache eviction.
  *
  *   bun run media-evict              # DRY RUN — reports the plan, deletes nothing
- *   bun run media-evict --execute    # evict oldest R2-durable blobs to the bound
+ *   bun run media-evict --execute    # evict oldest R2-durable blobs to the target
  *
  * Drops the oldest (by cache mtime) blobs that are confirmed in R2 to keep local
  * usage under [media].cache_limit_gib. Read-through restores any evicted blob on
@@ -49,6 +49,9 @@ async function main(): Promise<void> {
     return;
   }
   console.log(`  bound:         ${formatBinaryBytes(result.limitBytes)}`);
+  if (result.targetBytes !== null) {
+    console.log(`  target:        ${formatBinaryBytes(result.targetBytes)} (only when over bound)`);
+  }
   if (result.localBytes <= result.limitBytes) {
     console.log("  under bound — nothing to evict");
   } else {
@@ -56,7 +59,7 @@ async function main(): Promise<void> {
       `  ${execute ? "evicting" : "would evict"}: ${result.toEvictBlobs} blobs, ${formatBinaryBytes(result.toEvictBytes)} (oldest first) → resulting ${formatBinaryBytes(result.resultingBytes)}`,
     );
     if (result.shortfallBytes > 0) {
-      console.log(`  WARNING: ${formatBinaryBytes(result.shortfallBytes)} still over the bound after evicting all evictable blobs`);
+      console.log(`  WARNING: ${formatBinaryBytes(result.shortfallBytes)} still over the target after evicting all evictable blobs`);
     }
   }
 

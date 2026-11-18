@@ -22,6 +22,7 @@ import { collectMediaBlobs } from "./inventory";
 import { MEDIA_TABLES, type MediaTable } from "./registry";
 
 const GIB = 1024 ** 3;
+const EVICTION_TARGET_RATIO = 0.9;
 export const DEFAULT_TARGETED_EVICTION_HEAD_CHECK_LIMIT = 128;
 export const MEDIA_EVICTION_RECONCILE_MS = 6 * 60 * 60 * 1000;
 
@@ -72,14 +73,16 @@ export interface EvictionPlan {
   evictableBytes: number;
   /** Configured cache bound in bytes, or null when unset (report-only). */
   limitBytes: number | null;
-  /** Blobs to evict (oldest cache mtime first) to reach the bound, in order. */
+  /** Lower mark to reclaim to once over the limit; null when unbounded. */
+  targetBytes: number | null;
+  /** Blobs to evict (oldest cache mtime first) to reach the target, in order. */
   selected: EvictionTarget[];
   /** = selected.length, summed bytes — derived for convenience. */
   toEvictBlobs: number;
   toEvictBytes: number;
   /** Local cache size after the planned eviction (assumes all hardlinks removed). */
   resultingBytes: number;
-  /** Bytes still over the bound after evicting everything evictable (0 if reachable). */
+  /** Bytes still over the target after planned eviction (0 if not triggered or reachable). */
   shortfallBytes: number;
   /**
    * How remote durability was checked. `targeted-head` confirms enough oldest
@@ -103,6 +106,10 @@ function assertLimitBytes(limitBytes: number | null): void {
   if (limitBytes !== null && (!Number.isFinite(limitBytes) || limitBytes < 0)) {
     throw new Error(`limitBytes must be null or a non-negative finite number, got ${limitBytes}`);
   }
+}
+
+function evictionTargetBytes(limitBytes: number): number {
+  return Math.floor(limitBytes * EVICTION_TARGET_RATIO);
 }
 
 async function collectLocalBlobs(
@@ -146,7 +153,7 @@ function buildEvictionPlan(
   let toEvictBytes = 0;
   let shortfallBytes = 0;
   if (limitBytes !== null && localBytes > limitBytes) {
-    const need = localBytes - limitBytes;
+    const need = localBytes - evictionTargetBytes(limitBytes);
     const oldestFirst = [...evictable].sort((a, b) => a.mtimeMs - b.mtimeMs);
     for (const b of oldestFirst) {
       if (toEvictBytes >= need) break;
@@ -162,6 +169,7 @@ function buildEvictionPlan(
     evictableBlobs: evictable.length,
     evictableBytes,
     limitBytes,
+    targetBytes: limitBytes === null ? null : evictionTargetBytes(limitBytes),
     selected,
     toEvictBlobs: selected.length,
     toEvictBytes,
@@ -276,7 +284,8 @@ async function planExecutableEviction(
     return buildEvictionPlan(localBlobs, [], limitBytes, "targeted-head", 0);
   }
 
-  const need = localBytes - limitBytes;
+  // Confirm enough durable bytes for the same target as the final planner.
+  const need = localBytes - evictionTargetBytes(limitBytes);
   const evictable: LocalBlob[] = [];
   let evictableBytes = 0;
   let checked = 0;

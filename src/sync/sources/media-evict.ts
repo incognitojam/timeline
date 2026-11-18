@@ -93,6 +93,7 @@ export const mediaEvictSyncSource: SyncSource = {
           evictableBlobs: result.evictableBlobs,
           evictableBytes: result.evictableBytes,
           limitBytes: result.limitBytes,
+          targetBytes: result.targetBytes,
           durabilityCheck: result.durabilityCheck,
           durabilityCheckedBlobs: result.durabilityCheckedBlobs,
         },
