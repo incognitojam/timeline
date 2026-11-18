@@ -1,6 +1,6 @@
 import { Database } from "./sqlite";
 import { ensureDiscordAttachmentRetryIndex } from "../platforms/discord/attachment-retry-index";
-import { PENDING_POLL_VOTERS_INDEX, PENDING_POLL_VOTERS_WHERE } from "../platforms/discord/poll-voter-queries";
+import { PENDING_POLL_VOTERS_INDEX, PENDING_POLL_VOTERS_WHERE, POLL_VOTER_ORDER } from "../platforms/discord/poll-voter-queries";
 import { PLATFORM_METAS } from "../platforms/metas";
 import type { PlatformMeta } from "../platforms/types";
 import type { AttachmentStatus } from "../shared/attachments";
@@ -286,7 +286,7 @@ function createSchema(db: Database) {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_events_source_timestamp ON events(source, timestamp)`);
   db.exec(`DROP INDEX IF EXISTS idx_events_source`);
   ensureIndex(db, PENDING_POLL_VOTERS_INDEX, `CREATE INDEX ${PENDING_POLL_VOTERS_INDEX}
-    ON events(source_account, timestamp DESC, source_id)
+    ON events(source_account, ${POLL_VOTER_ORDER})
     WHERE ${PENDING_POLL_VOTERS_WHERE}`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_events_source_id ON events(source, id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_events_location ON events(latitude, longitude) WHERE latitude IS NOT NULL`);

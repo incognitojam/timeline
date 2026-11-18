@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { COUNT_POLL_VOTER_CANDIDATES, FIND_POLL_VOTER_CANDIDATES } from "./poll-voter-queries";
-import type { PollVoter } from "./shared/forward";
+import { DiscordAuthenticationError, PollVotersUnavailableError } from "./client";
+import type { StoredPollVoters, PollVoter } from "./shared/forward";
 
 export const POLL_VOTER_CAPTURE_LIMIT = 25;
 
@@ -78,7 +79,20 @@ export async function captureExpiredPollVoters(
       captured++;
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") throw err;
+      if (err instanceof DiscordAuthenticationError) throw err;
       failed++;
+      if (err instanceof PollVotersUnavailableError) {
+        const voters: StoredPollVoters = {
+          status: "unavailable",
+          reason: `Discord returned HTTP ${err.status}`,
+          http_status: err.status,
+          recorded_at: new Date().toISOString(),
+        };
+        updateVoters.run(JSON.stringify(voters), candidate.source_id, sourceAccount);
+      } else {
+        db.query("UPDATE events SET raw_data = json_set(raw_data, '$.poll.voter_attempted_at', ?) WHERE source = 'discord' AND source_id = ? AND source_account = ?")
+          .run(new Date().toISOString(), candidate.source_id, sourceAccount);
+      }
       console.warn(
         `[discord] poll voter capture failed for ${candidate.source_id}: ${err instanceof Error ? err.message : String(err)}`,
       );

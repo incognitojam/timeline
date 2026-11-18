@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifyDiscordRoute, DiscordClient, setDiscordClientSleepForTests } from "./client";
+import { classifyDiscordRoute, DiscordClient, PollVotersUnavailableError, setDiscordClientSleepForTests } from "./client";
 
 describe("classifyDiscordRoute", () => {
   test("sanitizes channel and message IDs", () => {
@@ -319,3 +319,26 @@ test("terminal rate-limit headers defer the next request instead of delaying fai
     expect(sleeps[0]).toBeLessThanOrEqual(60500);
   } finally {globalThis.fetch=original;setDiscordClientSleepForTests(null);}
 });
+for (const status of [400, 403, 404]) {
+  test(`first-page ${status} reports unavailable rather than empty voters`, async () => {
+    const original = globalThis.fetch;
+    let requests = 0;
+    globalThis.fetch = (async () => { requests++; return new Response(null, {status}); }) as unknown as typeof fetch;
+    try {
+      await expect(new DiscordClient("test-token").fetchPollAnswerVoters("channel", "message", 1)).rejects.toBeInstanceOf(PollVotersUnavailableError);
+      expect(requests).toBe(1);
+    } finally { globalThis.fetch = original; }
+  });
+}
+for (const status of [429, 503]) {
+  test(`${status} is retried and never treated as unavailable`, async () => {
+    const original = globalThis.fetch;
+    let requests = 0;
+    setDiscordClientSleepForTests(async () => {});
+    globalThis.fetch = (async () => { requests++; return requests === 1 ? new Response(null, {status, headers: {"Retry-After": "0.01"}}) : Response.json({users: []}); }) as unknown as typeof fetch;
+    try {
+      expect(await new DiscordClient("test-token").fetchPollAnswerVoters("channel", "message", 1)).toEqual([]);
+      expect(requests).toBe(2);
+    } finally { globalThis.fetch = original; setDiscordClientSleepForTests(null); }
+  });
+}

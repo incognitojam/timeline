@@ -1441,3 +1441,13 @@ describe("renderEvents", () => {
     }
   });
 });
+
+test("exports refused poll voters as unavailable, not zero votes", () => {
+  const text = renderEvent(makeEvent({ source: "discord", type: "message:dm:poll", raw_data: JSON.stringify({ poll: {
+    question: {text: "Which day?"}, answers: [{answer_id: 1, poll_media: {text: "Sunday"}}],
+    expiry: null, allow_multiselect: false, layout_type: 1,
+    voters: {status: "unavailable", reason: "Discord returned HTTP 403", http_status: 403, recorded_at: "2026-01-01T00:00:00.000Z"},
+  } }) }));
+  expect(text).toContain("Voters unavailable: Discord returned HTTP 403");
+  expect(text).not.toContain("0 votes");
+});

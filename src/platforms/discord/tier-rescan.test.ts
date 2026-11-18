@@ -671,7 +671,7 @@ describe("rescanReactionTiers", () => {
       answers: { "1": [{ id: "voter-1", name: "Alice" }] },
     };
     db.prepare(
-      "UPDATE events SET raw_data = json_set(raw_data, '$.poll.voters', json(?)) WHERE source_id = ?",
+      "UPDATE events SET raw_data = json_set(raw_data, '$.poll.voters', json(?), '$.poll.voter_attempted_at', '2026-04-04T00:00:00.000Z') WHERE source_id = ?",
     ).run(JSON.stringify(capturedVoters), messageId);
 
     const cursors: TierCursors = {
@@ -702,7 +702,86 @@ describe("rescanReactionTiers", () => {
         "SELECT json_extract(raw_data, '$.poll') AS p, json_extract(raw_data, '$.other_field') AS other FROM events WHERE source_id = ?",
       )
       .get(messageId) as { p: string; other: string };
-    expect(JSON.parse(row.p)).toEqual({ ...freshPoll, voters: capturedVoters });
+    expect(JSON.parse(row.p)).toEqual({ ...freshPoll, voters: capturedVoters, voter_attempted_at: "2026-04-04T00:00:00.000Z" });
+    expect(row.other).toBe("preserved");
+
+    // Second pass with identical aggregate data: no write.
+    const cursors2: TierCursors = {
+      "6h": { "channel-1": dateToSnowflake(new Date(Date.now() - 7 * 3600_000)) },
+      "24h": { "channel-1": dateToSnowflake(new Date(Date.now() - 30 * 3600_000)) },
+      "7d": { "channel-1": dateToSnowflake(new Date(Date.now() - 8 * 24 * 3600_000)) },
+    };
+    const stats2 = await rescanReactionTiers(
+      fakeClient(messagesByChannel),
+      db,
+      cursors2,
+      ["channel-1"],
+      channelHigh,
+      ACCOUNT,
+    );
+    expect(stats2.pollsUpdated).toBe(0);
+    const preserved = db
+      .prepare("SELECT json_extract(raw_data, '$.poll.voters') AS voters FROM events WHERE source_id = ?")
+      .get(messageId) as { voters: string };
+    expect(JSON.parse(preserved.voters)).toEqual(capturedVoters);
+  });
+  test("unavailable marker: refreshes changed poll counts while preserving voters, skips when identical", async () => {
+    const buildPoll = (count: number, finalized: boolean): DiscordPoll => ({
+      question: { text: "pineapple on pizza" },
+      answers: [{ answer_id: 1, poll_media: { text: "yes" } }],
+      expiry: "2026-04-04T00:00:00.000Z",
+      allow_multiselect: false,
+      layout_type: 1,
+      results: {
+        is_finalized: finalized,
+        answer_counts: count > 0 ? [{ id: 1, count, me_voted: false }] : [],
+      },
+    });
+
+    const messageTs = new Date(Date.now() - 26 * 3600_000); // crosses 24h only
+    const messageId = dateToSnowflake(messageTs);
+    insertDiscordEvent({
+      id: messageId,
+      timestamp: messageTs.toISOString(),
+      poll: buildPoll(0, false), // captured at initial sync, before any votes
+    });
+    const capturedVoters = {
+      status: "unavailable", reason: "Discord returned HTTP 403", http_status: 403,
+      recorded_at: "2026-04-05T00:00:00.000Z",
+    };
+    db.prepare(
+      "UPDATE events SET raw_data = json_set(raw_data, '$.poll.voters', json(?), '$.poll.voter_attempted_at', '2026-04-04T00:00:00.000Z') WHERE source_id = ?",
+    ).run(JSON.stringify(capturedVoters), messageId);
+
+    const cursors: TierCursors = {
+      "6h": { "channel-1": dateToSnowflake(new Date(Date.now() - 7 * 3600_000)) },
+      "24h": { "channel-1": dateToSnowflake(new Date(Date.now() - 30 * 3600_000)) },
+      "7d": { "channel-1": dateToSnowflake(new Date(Date.now() - 8 * 24 * 3600_000)) },
+    };
+    const channelHigh = { "channel-1": messageId };
+
+    const freshPoll = buildPoll(4, true);
+    const msg = buildMsg(messageId, messageTs.toISOString());
+    msg.poll = freshPoll;
+    const messagesByChannel = new Map<string, NormalizedMessage[]>();
+    messagesByChannel.set("channel-1", [msg]);
+
+    const stats = await rescanReactionTiers(
+      fakeClient(messagesByChannel),
+      db,
+      cursors,
+      ["channel-1"],
+      channelHigh,
+      ACCOUNT,
+    );
+
+    expect(stats.pollsUpdated).toBe(1);
+    const row = db
+      .prepare(
+        "SELECT json_extract(raw_data, '$.poll') AS p, json_extract(raw_data, '$.other_field') AS other FROM events WHERE source_id = ?",
+      )
+      .get(messageId) as { p: string; other: string };
+    expect(JSON.parse(row.p)).toEqual({ ...freshPoll, voters: capturedVoters, voter_attempted_at: "2026-04-04T00:00:00.000Z" });
     expect(row.other).toBe("preserved");
 
     // Second pass with identical aggregate data: no write.

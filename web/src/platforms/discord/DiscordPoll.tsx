@@ -232,6 +232,9 @@ export function DiscordPoll(props: { parsedPoll: ParsedDiscordPoll }): JSX.Eleme
         {" · "}
         {closed() ? "Poll closed" : "Poll open"}
       </div>
+      <Show when={props.parsedPoll.votersUnavailableReason}>
+        {(reason) => <div class="text-sm text-muted-foreground">Voters unavailable: {reason()}</div>}
+      </Show>
       <Show when={hasVoters()}>
         <Dialog
           open={votersOpen()}
