@@ -1,3 +1,9 @@
 [test]
 preload = ["./test/setup.ts"]
 root = "src"
+
+[install]
+# Only install releases at least three days old, matching the minimumReleaseAge
+# in our Renovate presets. Renovate updates bun.lock with a plain `bun install`,
+# so without this a range bump can lock a release published minutes earlier.
+minimumReleaseAge = 259200 # seconds
