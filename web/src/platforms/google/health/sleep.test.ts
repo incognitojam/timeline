@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSleepEvent, parseSleepEvent } from "./sleep";
+import { parseSleepEvent } from "./sleep";
 import type { TimelineEvent } from "../../../lib/types";
 
 function makeEvent(raw: unknown, overrides: Partial<TimelineEvent> = {}): TimelineEvent {
@@ -46,19 +46,6 @@ const googleHealthRaw = {
     },
   },
 };
-
-describe("isSleepEvent", () => {
-  it("matches google-health sleep and naps", () => {
-    expect(isSleepEvent({ source: "google-health", type: "sleep" })).toBe(true);
-    expect(isSleepEvent({ source: "google-health", type: "sleep:nap" })).toBe(true);
-  });
-
-  it("ignores fitbit sleep and other google-health metrics", () => {
-    expect(isSleepEvent({ source: "fitbit", type: "sleep" })).toBe(false);
-    expect(isSleepEvent({ source: "fitbit", type: "sleep:nap" })).toBe(false);
-    expect(isSleepEvent({ source: "google-health", type: "daily:hrv" })).toBe(false);
-  });
-});
 
 describe("parseSleepEvent", () => {
   it("reads stage totals in display order", () => {
