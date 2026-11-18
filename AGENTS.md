@@ -345,6 +345,7 @@ The required `macOS app bundle` PR job runs automatically for native app, packag
 - **Seed file-backed databases with `seed()`** (`src/testing/seed.ts`) - row-by-row autocommits each wait for an fsync
 - **Wait on events, not wall-clock deadlines** - await the promise, exit, or state change; the test timeout bounds a hang
 - **Pass `--timeout 30000` to direct `bun test` runs** - `./test.sh` does; Bun (1.3 and 1.4) ignores a bunfig.toml timeout and applies a preload's `setDefaultTimeout` only to the first file, so a bare run uses the 5 s default and fails subprocess-heavy tests on a loaded machine
+- **A timeout under load is not a test failure** - when `./test.sh` times out while other agents are using the machine, rerun the failing file alone; if it passes, say so in your report and let the pull request's CI be the full run. Don't raise a timeout to get past it. When several agents share the machine, run the files you changed and leave the full suite to CI
 - **Leave paths to the preload** - `test/setup.ts` points HOME, TMPDIR, config, databases, media, and inbox at one per-run directory it removes afterwards; restore any override instead of deleting it; runs need no `TMPDIR=` prefix
 
 **Backend tests** use Bun's native test runner (`bun test`). Test files live alongside source in `src/**/*.test.ts`.
