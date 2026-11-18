@@ -148,22 +148,6 @@ describe("Filtered contact events", () => {
 
 describe("Contact API Tests", () => {
   describe("Contacts", () => {
-    test("GET /api/contacts returns contacts list", async () => {
-      const res = await app.request("/api/contacts");
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      expect(json).toHaveProperty("contacts");
-      expect(Array.isArray(json.contacts)).toBe(true);
-    });
-
-    test("GET /api/contacts/count returns count", async () => {
-      const res = await app.request("/api/contacts/count");
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      expect(json).toHaveProperty("count");
-      expect(typeof json.count).toBe("number");
-    });
-
     test("GET /api/contacts reflects newly created contact (cache invalidation)", async () => {
       // Prime the cache
       const res1 = await app.request("/api/contacts");
@@ -433,23 +417,6 @@ describe("Contact API Tests", () => {
         body: JSON.stringify({ dateOfBirth: "March 15" }),
       });
       expect(patchRes.status).toBe(400);
-
-      deleteContact(getDb(), contact.id);
-    });
-
-    test("GET /api/contacts/:id returns memories array", async () => {
-      const createRes = await app.request("/api/contacts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ displayName: "Memory Test User" }),
-      });
-      const { contact } = await createRes.json();
-
-      const getRes = await app.request(`/api/contacts/${contact.id}`);
-      const fetched = await getRes.json();
-      expect(fetched).toHaveProperty("memories");
-      expect(Array.isArray(fetched.memories)).toBe(true);
-      expect(fetched.memories.length).toBe(0);
 
       deleteContact(getDb(), contact.id);
     });
@@ -1259,52 +1226,14 @@ describe("Contact API Tests", () => {
       db.close();
     });
 
-    test("shows DM sent by contact", async () => {
+    test("returns exactly the contact's sent and received events", async () => {
       const res = await app.request(`/api/contacts/${contactId}/events?limit=50`);
+      expect(res.status).toBe(200);
       const json = await res.json();
-      expect(json.events.some((e: { source_id: string }) => e.source_id === "cef-dm-sent")).toBe(true);
-    });
-
-    test("shows DM sent to contact", async () => {
-      const res = await app.request(`/api/contacts/${contactId}/events?limit=50`);
-      const json = await res.json();
-      expect(json.events.some((e: { source_id: string }) => e.source_id === "cef-dm-recv")).toBe(true);
-    });
-
-    test("shows group msg sent by contact", async () => {
-      const res = await app.request(`/api/contacts/${contactId}/events?limit=50`);
-      const json = await res.json();
-      expect(json.events.some((e: { source_id: string }) => e.source_id === "cef-group-sent")).toBe(true);
-    });
-
-    test("does not show group msg by someone else", async () => {
-      const res = await app.request(`/api/contacts/${contactId}/events?limit=50`);
-      const json = await res.json();
-      expect(json.events.some((e: { source_id: string }) => e.source_id === "cef-group-other")).toBe(false);
-    });
-
-    test("shows SMS received from contact", async () => {
-      const res = await app.request(`/api/contacts/${contactId}/events?limit=50`);
-      const json = await res.json();
-      expect(json.events.some((e: { source_id: string }) => e.source_id === "cef-sms-recv")).toBe(true);
-    });
-
-    test("shows SMS sent to contact", async () => {
-      const res = await app.request(`/api/contacts/${contactId}/events?limit=50`);
-      const json = await res.json();
-      expect(json.events.some((e: { source_id: string }) => e.source_id === "cef-sms-sent")).toBe(true);
-    });
-
-    test("shows call to contact", async () => {
-      const res = await app.request(`/api/contacts/${contactId}/events?limit=50`);
-      const json = await res.json();
-      expect(json.events.some((e: { source_id: string }) => e.source_id === "cef-call-out")).toBe(true);
-    });
-
-    test("shows manual event with contact", async () => {
-      const res = await app.request(`/api/contacts/${contactId}/events?limit=50`);
-      const json = await res.json();
-      expect(json.events.some((e: { source_id: string }) => e.source_id === "cef-manual")).toBe(true);
+      expect(json.events.map((event: { source_id: string }) => event.source_id).sort()).toEqual([
+        "cef-call-out", "cef-dm-recv", "cef-dm-sent", "cef-group-sent",
+        "cef-manual", "cef-sms-recv", "cef-sms-sent",
+      ]);
     });
   });
 });

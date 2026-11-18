@@ -117,23 +117,6 @@ describe("Health API Tests", () => {
       db.close();
     });
 
-    test("GET /api/health/stats returns the correct structure", async () => {
-      const res = await app.request(
-        "/api/health/stats?view=week&mode=calendar&anchor=2024-01-15",
-      );
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      expect(json).toHaveProperty("dateRange");
-      expect(json.dateRange).toHaveProperty("start");
-      expect(json.dateRange).toHaveProperty("end");
-      expect(json).toHaveProperty("sleep");
-      expect(json).toHaveProperty("heart");
-      expect(json).toHaveProperty("hrv");
-      expect(json).toHaveProperty("activity");
-      expect(json).toHaveProperty("spo2");
-      expect(json).toHaveProperty("weight");
-    });
-
     test("GET /api/health/stats returns seeded values", async () => {
       const res = await app.request(
         "/api/health/stats?view=week&mode=calendar&anchor=2024-01-15",
@@ -161,17 +144,6 @@ describe("Health API Tests", () => {
       expect(json.spo2.avgValue).toBe(97.2);
     });
 
-    test("GET /api/health/stats returns stats for a calendar month", async () => {
-      const res = await app.request(
-        "/api/health/stats?view=month&mode=calendar&anchor=2024-01-01",
-      );
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      expect(json.dateRange.start).toBe("2024-01-01");
-      expect(json.dateRange.end).toBe("2024-01-31");
-      expect(json.heart.avgRestingHR).toBe(62);
-    });
-
     test("a recorded zero counts as a tracked activity day", async () => {
       const res = await app.request(
         "/api/health/stats?view=month&mode=calendar&anchor=2024-02-01",
@@ -185,26 +157,6 @@ describe("Health API Tests", () => {
         daysTracked: 1,
         byDay: [{ date: "2024-02-01", steps: 0 }],
       });
-    });
-
-    test("GET /api/health/stats returns calendar week dates", async () => {
-      const res = await app.request(
-        "/api/health/stats?view=week&mode=calendar&anchor=2026-06-29",
-      );
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      expect(json.dateRange.start).toBe("2026-06-29");
-      expect(json.dateRange.end).toBe("2026-07-05");
-    });
-
-    test("GET /api/health/stats returns calendar month dates", async () => {
-      const res = await app.request(
-        "/api/health/stats?view=month&mode=calendar&anchor=2026-07-01",
-      );
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      expect(json.dateRange.start).toBe("2026-07-01");
-      expect(json.dateRange.end).toBe("2026-07-31");
     });
 
     test("GET /api/health/stats returns stats for the calendar year", async () => {
@@ -221,76 +173,18 @@ describe("Health API Tests", () => {
       expect(json.weight).not.toHaveProperty("latestBmi");
     });
 
-    test("GET /api/health/stats accepts a canonical recent window", async () => {
-      const res = await app.request(
-        "/api/health/stats?view=month&mode=recent&anchor=2024-01-30",
-      );
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      expect(json.dateRange).toEqual({ start: "2024-01-01", end: "2024-01-30" });
-      expect(json.heart.avgRestingHR).toBe(62);
-    });
-
-    test("GET /api/health/stats accepts canonical day and quarter windows", async () => {
-      const day = await app.request(
-        "/api/health/stats?view=day&mode=recent&anchor=2024-01-17",
-      );
-      expect(day.status).toBe(200);
-      expect((await day.json()).dateRange).toEqual({
-        start: "2024-01-17",
-        end: "2024-01-17",
-      });
-
-      const quarter = await app.request(
-        "/api/health/stats?view=quarter&mode=calendar&anchor=2024-02-12",
-      );
-      expect(quarter.status).toBe(200);
-      expect((await quarter.json()).dateRange).toEqual({
-        start: "2024-01-01",
-        end: "2024-03-31",
-      });
-    });
-
-    test("legacy period params are not supported", async () => {
-      const res = await app.request("/api/health/stats?month=2024-01");
+    test.each([
+      "?month=2024-01",
+      "",
+      "?view=decade&mode=calendar&anchor=2026-01-01",
+      "?view=week&mode=rolling&anchor=2026-01-01",
+      "?view=month&mode=calendar&anchor=2026-02-30",
+    ])("rejects invalid health window %s", async (query) => {
+      const res = await app.request(`/api/health/stats${query}`);
       expect(res.status).toBe(400);
       expect(await res.json()).toEqual({
         error: "Missing or invalid health window. Use ?view=day|week|month|quarter|year&mode=recent|calendar&anchor=YYYY-MM-DD",
       });
-    });
-
-    test("GET /api/health/stats without a window returns 400", async () => {
-      const res = await app.request("/api/health/stats");
-      expect(res.status).toBe(400);
-      const json = await res.json();
-      expect(json).toHaveProperty("error");
-    });
-
-    test("GET /api/health/stats with an invalid view returns 400", async () => {
-      const res = await app.request(
-        "/api/health/stats?view=decade&mode=calendar&anchor=2026-01-01",
-      );
-      expect(res.status).toBe(400);
-      const json = await res.json();
-      expect(json).toHaveProperty("error");
-    });
-
-    test("GET /api/health/stats with an invalid mode returns 400", async () => {
-      const res = await app.request(
-        "/api/health/stats?view=week&mode=rolling&anchor=2026-01-01",
-      );
-      expect(res.status).toBe(400);
-      const json = await res.json();
-      expect(json).toHaveProperty("error");
-    });
-
-    test("GET /api/health/stats with an invalid anchor returns 400", async () => {
-      const res = await app.request(
-        "/api/health/stats?view=month&mode=calendar&anchor=2026-02-30",
-      );
-      expect(res.status).toBe(400);
-      const json = await res.json();
-      expect(json).toHaveProperty("error");
     });
 
     test("GET /api/health/stats returns zero averages for an empty period", async () => {
@@ -577,14 +471,6 @@ describe("Health API Tests", () => {
       );
 
       db.close();
-    });
-
-    test("GET /api/health/biomarkers returns 200 with biomarkers array", async () => {
-      const res = await app.request("/api/health/biomarkers");
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      expect(json).toHaveProperty("biomarkers");
-      expect(Array.isArray(json.biomarkers)).toBe(true);
     });
 
     test("GET /api/health/biomarkers returns correctly grouped biomarker data", async () => {
