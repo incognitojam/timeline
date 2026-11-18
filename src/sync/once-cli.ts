@@ -66,7 +66,7 @@ const PASSTHROUGH_ENV = ["PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ", "NO
 
 export const EXIT_USAGE = 2;
 
-class UsageError extends Error {}
+export class UsageError extends Error {}
 
 function parseEnvAssignment(assignment: string): [string, string] {
   const separator = assignment.indexOf("=");
@@ -184,8 +184,9 @@ function buildChildEnv(sandbox: string, dbPath: string, envFile: string | undefi
   return { sandboxEnv, env };
 }
 
-function parseCliArgs() {
+function parseCliArgs(args: string[]) {
   return parseArgs({
+    args,
     allowPositionals: true,
     options: {
       sandbox: { type: "string" },
@@ -224,12 +225,13 @@ function resolveSandbox(requested: string | undefined, sourceName: string): stri
   return join(resolve(import.meta.dir, "../.."), ".sync-once", `${sourceName}-${stamp}`);
 }
 
-async function main(): Promise<number> {
-  const { values, positionals } = parseCliArgs();
-  if (values.help) {
-    console.log(USAGE);
-    return 0;
-  }
+/**
+ * Checks a request and works out where its run goes, creating nothing; a
+ * request it refuses throws UsageError.
+ */
+export function prepareRun(args: string[]) {
+  const { values, positionals } = parseCliArgs(args);
+  if (values.help) return { help: true as const };
   if (positionals.length !== 1) throw new UsageError(`Expected exactly one source name\n\n${USAGE}`);
   const [sourceName] = positionals;
   if (!/^[a-z0-9][a-z0-9-]*$/.test(sourceName)) throw new UsageError(`Invalid source name "${sourceName}"`);
@@ -250,6 +252,16 @@ async function main(): Promise<number> {
   const dbPath = values["dry-run"] && values.db ? join(sandbox, "dry-run", basename(requestedDb)) : requestedDb;
 
   const { sandboxEnv, env } = buildChildEnv(sandbox, dbPath, envFile, values.env);
+  return { help: false as const, values, sourceName, state, configFile, envFile, homeFiles, sandbox, requestedDb, dbPath, sandboxEnv, env };
+}
+
+async function main(): Promise<number> {
+  const run = prepareRun(process.argv.slice(2));
+  if (run.help) {
+    console.log(USAGE);
+    return 0;
+  }
+  const { values, sourceName, state, configFile, envFile, homeFiles, sandbox, requestedDb, dbPath, sandboxEnv, env } = run;
 
   // The sandbox was checked empty or absent, so everything in it from here is ours.
   const createdRoot = mkdirSync(sandbox, { recursive: true });
