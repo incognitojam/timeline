@@ -2,9 +2,9 @@
 /**
  * Verification and rebuild script for event_people table synchronization
  *
- * The event_people table indexes the entries of events.people JSON arrays that
- * eventPeopleRowFilter selects, maintained by triggers. This script verifies
- * synchronization and can rebuild the table atomically if discrepancies are found.
+ * The event_people table holds the rows eventPeopleRowsSql derives from
+ * events.people, maintained by triggers. This script verifies synchronization
+ * and can rebuild the table atomically if discrepancies are found.
  *
  * Usage:
  *   bun run src/scripts/verify-event-people.ts              # Verify only
@@ -13,13 +13,20 @@
  *   bun run src/scripts/verify-event-people.ts --force-rebuild  # Always rebuild
  *
  * Exit codes:
- *   0 - All checks pass (or rebuild successful)
- *   1 - Discrepancies found (and --rebuild not specified)
+ *   0 - All checks pass (or the rebuild committed and verified clean)
+ *   1 - Discrepancies found and not rebuilt, or stopped before any rebuild (no
+ *       database, no events, SQLite too old, or an error); the table is unchanged
+ *   2 - The rebuild failed and rolled back: the old table is intact
+ *   3 - The rebuild committed, but verifying it found issues or failed
  */
 
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { getTimelineDbPath } from "../db/paths";
 import { Database } from "../db/sqlite";
-import { eventPeopleRowFilter, getDb, initDb } from "../db/schema";
+import { eventIndexesEveryone, eventPeopleRowsSql, getDb, initDb } from "../db/schema";
 import { populateEventPeople } from "../db/queries";
+import { configureBunSqliteForSqliteVec, loadedSqliteLibraryPath } from "../embeddings/sqlite-vec";
 
 interface Check {
   label: string;
@@ -53,14 +60,9 @@ const CHECKS = {
   // A person added to events.people whose row the trigger failed to insert
   missingRows: {
     label: "Missing rows (not indexed)",
-    from: "events e, json_each(e.people) p",
-    where: `e.people IS NOT NULL
-      AND ${eventPeopleRowFilter("e", "p")}
-      AND NOT EXISTS (
-        SELECT 1 FROM event_people ep
-        WHERE ep.event_id = e.id AND ep.person = p.value
-      )`,
-    sample: "e.id AS eventId, p.value AS person, e.source, 'missing (not in event_people)' AS issue",
+    from: `(${eventPeopleRowsSql("events e")}) x`,
+    where: "NOT EXISTS (SELECT 1 FROM event_people ep WHERE ep.event_id = x.event_id AND ep.person = x.person)",
+    sample: "x.event_id AS eventId, x.person, x.source, 'missing (not in event_people)' AS issue",
   },
   // A row whose source or timestamp no longer matches its event
   mismatchedMetadata: {
@@ -74,13 +76,18 @@ const CHECKS = {
   },
 } as const satisfies Record<string, Check>;
 
-// A row for a person the event still lists but the rule no longer indexes: a
-// group member, indexed before only the sender of a group message was. Not
-// drift; a rebuild drops it.
-const BEFORE_SENDER_RULE = `${LISTED} AND NOT EXISTS (
-      SELECT 1 FROM json_each(COALESCE(e.people, '[]')) p
-      WHERE p.value = ep.person AND ${eventPeopleRowFilter("e", "p")}
-    )`;
+// Rows for people a group message still lists after its sender: its members,
+// indexed before only the sender of a group message was. Not drift; a rebuild
+// drops them. Counted per group message, which decides the rule once and finds
+// each listed member by primary key.
+const ROWS_BEFORE_SENDER_RULE = `
+  SELECT COALESCE(SUM((
+    SELECT COUNT(DISTINCT p.value) FROM json_each(e.people) p
+    WHERE p.key > 0 AND p.value IS NOT NULL AND p.value != '' AND p.value IS NOT e.people ->> 0
+      AND EXISTS (SELECT 1 FROM event_people ep WHERE ep.event_id = e.id AND ep.person = p.value)
+  )), 0) AS count
+  FROM events e
+  WHERE e.people IS NOT NULL AND NOT (${eventIndexesEveryone("e")})`;
 
 export type VerificationResult = Record<keyof typeof CHECKS, number> & { rowsBeforeSenderRule: number };
 
@@ -102,7 +109,7 @@ export function verifyEventPeople(db: Database): VerificationResult {
     ...(Object.fromEntries(
       Object.entries(CHECKS).map(([name, check]) => [name, count(check.from, check.where)]),
     ) as Record<keyof typeof CHECKS, number>),
-    rowsBeforeSenderRule: count(EVENT_PEOPLE_WITH_EVENT, BEFORE_SENDER_RULE),
+    rowsBeforeSenderRule: (db.prepare(ROWS_BEFORE_SENDER_RULE).get() as { count: number }).count,
   };
 }
 
@@ -138,6 +145,56 @@ function printSection(title: string): void {
   console.log("=".repeat(70));
 }
 
+/** A clean result: no drift and no rows from before the sender rule. */
+export function isClean(result: VerificationResult): boolean {
+  return issueCount(result) === 0 && result.rowsBeforeSenderRule === 0;
+}
+
+export type RebuildOutcome =
+  /** populateEventPeople threw; its transaction rolled back, so the old table is intact. */
+  | { kind: "rolled-back"; error: unknown }
+  /** The rebuild committed and was verified; `after` may still show issues. */
+  | { kind: "committed"; rows: number; after: VerificationResult }
+  /** The rebuild committed, but verifying it threw. */
+  | { kind: "committed-unverified"; rows: number; error: unknown };
+
+/** Rebuild, then verify the committed result, keeping the two failures apart. */
+export function rebuildAndVerify(db: Database, verify: (db: Database) => VerificationResult = verifyEventPeople): RebuildOutcome {
+  let rows: number;
+  try {
+    rows = populateEventPeople(db);
+  } catch (error) {
+    return { kind: "rolled-back", error };
+  }
+  try {
+    return { kind: "committed", rows, after: verify(db) };
+  } catch (error) {
+    return { kind: "committed-unverified", rows, error };
+  }
+}
+
+/** The oldest SQLite the people index's SQL runs on: it uses the ->> operator. */
+const MINIMUM_SQLITE_VERSION = "3.38.0";
+
+/** Refuse a SQLite older than the minimum, before any of its SQL fails part-way. */
+export function assertSqliteVersion(version: string): void {
+  const parts = (v: string) => v.split(".").map(Number);
+  const [have, need] = [parts(version), parts(MINIMUM_SQLITE_VERSION)];
+  for (let i = 0; i < need.length; i++) {
+    if ((have[i] ?? 0) !== need[i]) {
+      if ((have[i] ?? 0) > need[i]) return;
+      throw new Error(`SQLite ${version} is older than ${MINIMUM_SQLITE_VERSION}, which the people index needs. Set TIMELINE_SQLITE_LIBRARY_PATH to a newer library.`);
+    }
+  }
+}
+
+/** The SQLite this process loaded, to compare with the service's; refuses one too old. */
+export function sqliteDescription(db: Database): string {
+  const { version } = db.prepare("SELECT sqlite_version() AS version").get() as { version: string };
+  assertSqliteVersion(version);
+  return `${version} from ${loadedSqliteLibraryPath() ?? "Bun's default library"}`;
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const verbose = args.includes("--verbose");
@@ -149,7 +206,23 @@ async function main() {
   console.log("================================");
   console.log(`Date: ${new Date().toISOString()}`);
 
+  // Use the SQLite library the service uses, chosen before any database opens.
+  configureBunSqliteForSqliteVec();
+  const path = resolve(getTimelineDbPath());
+  if (!existsSync(path)) {
+    console.error(`No database at ${path}. Set TIMELINE_DB_PATH to the database to check.`);
+    process.exit(1);
+  }
   const db = getDb();
+  const events = (db.prepare("SELECT COUNT(*) AS count FROM events").get() as { count: number }).count;
+  console.log(`Database: ${path}`);
+  console.log(`Events:   ${formatCount(events)}`);
+  console.log(`SQLite:   ${sqliteDescription(db)}`);
+  if (shouldRebuild && events === 0) {
+    console.error(`\nRefusing to rebuild: ${path} has no events. Check TIMELINE_DB_PATH.`);
+    db.close();
+    process.exit(1);
+  }
 
   if (shouldRebuild) {
     db.exec("BEGIN IMMEDIATE");
@@ -180,49 +253,26 @@ async function main() {
   let stats: { eventCount: number; eventPeopleCount: number; eventsWithPeople: number };
   let result: VerificationResult;
   let duration: number;
-  let hasIssues: boolean;
-  let totalIssues: number;
 
   db.exec("BEGIN");
   try {
-    // Get statistics
     stats = getStatistics(db);
     console.log(`\nTable Statistics:`);
     console.log(`  Events total:        ${formatCount(stats.eventCount)}`);
     console.log(`  Events with people:  ${formatCount(stats.eventsWithPeople)}`);
     console.log(`  event_people rows:   ${formatCount(stats.eventPeopleCount)}`);
 
-    // Run verification checks
     printSection("Verification Checks");
-
     console.log("\nRunning checks (this may take a moment for large databases)...\n");
-
     const startTime = Date.now();
-
     result = verifyEventPeople(db);
-
     duration = Date.now() - startTime;
-
-    for (const [name, check] of Object.entries(CHECKS) as Array<[keyof typeof CHECKS, Check]>) {
-      const count = result[name];
-      const status = count === 0 ? "PASS" : "FAIL";
-      console.log(`  ${check.label.padEnd(35)} ${formatCount(count).padStart(12)}  ${status}`);
-    }
-
-    if (result.rowsBeforeSenderRule > 0) {
-      console.log(`  ${"Member rows from before the rule".padEnd(35)} ${formatCount(result.rowsBeforeSenderRule).padStart(12)}  REBUILD NEEDED`);
-    }
-
+    printResult(result);
     console.log(`\n  Verification completed in ${duration}ms`);
 
-    totalIssues = issueCount(result);
-    hasIssues = totalIssues > 0;
-
-    // Show sample mismatches if verbose and issues found
-    if (verbose && hasIssues) {
+    if (verbose && issueCount(result) > 0) {
       printSection("Sample Mismatches");
-      const samples = sampleMismatches(db, 5);
-      for (const sample of samples) {
+      for (const sample of sampleMismatches(db, 5)) {
         console.log(`  Event ${sample.eventId}: ${sample.person} (${sample.source})`);
         console.log(`    Issue: ${sample.issue}`);
       }
@@ -238,78 +288,46 @@ async function main() {
     throw err;
   }
 
-  // Track final issue state (may be updated after rebuild)
-  let finalHasIssues = hasIssues;
-  let finalIssueCount = totalIssues;
-  let rebuildRan = false;
+  const totalIssues = issueCount(result);
 
-  // Handle rebuild
-  if (forceRebuild || (rebuild && hasIssues)) {
-    rebuildRan = true;
+  if (forceRebuild || (rebuild && totalIssues > 0)) {
     printSection("Rebuilding event_people Table");
-
-    console.log("\nPerforming atomic rebuild...");
+    console.log("\nRebuilding in one transaction...");
     const rebuildStart = Date.now();
-
-    try {
-      const newCount = populateEventPeople(db);
-      const rebuildDuration = Date.now() - rebuildStart;
-
-      console.log(`\nRebuild completed in ${rebuildDuration}ms`);
-      console.log(`  New row count: ${formatCount(newCount)}`);
-
-      // Re-verify after rebuild
-      console.log("\nRe-verifying after rebuild...");
-      db.exec("BEGIN");
-      let postResult: VerificationResult;
-      try {
-        postResult = verifyEventPeople(db);
-        db.exec("COMMIT");
-      } catch (err) {
-        try {
-          db.exec("ROLLBACK");
-        } catch {
-          // Ignore rollback errors
-        }
-        throw err;
-      }
-
-      const postTotalIssues = issueCount(postResult);
-      finalHasIssues = postTotalIssues > 0;
-      finalIssueCount = postTotalIssues;
-
-      if (postTotalIssues === 0) {
-        console.log("  All checks now pass.");
-      } else {
-        console.log(`  WARNING: ${postTotalIssues} issues remain after rebuild`);
-      }
-    } catch (err) {
-      console.error("\nRebuild failed:", err);
-      db.close();
-      process.exit(1);
+    const outcome = rebuildAndVerify(db);
+    db.close();
+    printSection("Summary");
+    if (outcome.kind === "rolled-back") {
+      console.error("\nREBUILD FAILED AND ROLLED BACK: the old table is intact.");
+      console.error(outcome.error);
+      process.exit(2);
     }
-  } else if (hasIssues && !rebuild) {
-    printSection("Action Required");
-    console.log(`\nFound ${formatCount(totalIssues)} total discrepancies.`);
-    console.log("Run with --rebuild to fix, or --verbose to see samples.");
+    console.log(`\nRebuild committed in ${Date.now() - rebuildStart}ms`);
+    console.log(`  New row count: ${formatCount(outcome.rows)}`);
+    if (outcome.kind === "committed-unverified") {
+      console.error("\nREBUILD COMMITTED, BUT VERIFYING IT FAILED: the new table is in place and unverified.");
+      console.error(outcome.error);
+      process.exit(3);
+    }
+    printResult(outcome.after);
+    if (!isClean(outcome.after)) {
+      console.error("\nREBUILD COMMITTED, BUT VERIFYING IT FOUND ISSUES: the new table is in place.");
+      process.exit(3);
+    }
+    console.log("\nREBUILD COMMITTED AND VERIFIED: all checks pass.");
+    process.exit(0);
   }
 
   printSection("Summary");
-
-  if (finalHasIssues) {
+  if (totalIssues > 0) {
     console.log("\nVERIFICATION FAILED");
-    if (rebuildRan) {
-      console.log(`${formatCount(finalIssueCount)} discrepancies remain after rebuild.`);
-      console.log("This may indicate a bug in the rebuild logic or corrupted data.");
-    } else {
-      console.log(`${formatCount(finalIssueCount)} discrepancies found between events.people and event_people table.`);
-      console.log("\nTo fix: bun run src/scripts/verify-event-people.ts --rebuild");
-    }
+    console.log(`${formatCount(totalIssues)} discrepancies found between events.people and event_people table.`);
+    console.log("Run with --verbose to see samples; --rebuild rebuilds the whole table.");
   } else {
     console.log("\nVERIFICATION PASSED");
     console.log("event_people table is synchronized with events.people.");
   }
-  if (result.rowsBeforeSenderRule > 0 && !rebuildRan) {
+  if (result.rowsBeforeSenderRule > 0) {
     console.log("\nThe table predates the rule that indexes only the sender of a group message:");
     console.log(`${formatCount(result.rowsBeforeSenderRule)} rows still index group members. They are not drift, but the`);
     console.log("table needs a rebuild to drop them. --rebuild does not rebuild for them; use --force-rebuild.");
@@ -317,7 +335,17 @@ async function main() {
   console.log("=".repeat(70));
 
   db.close();
-  process.exit(finalHasIssues ? 1 : 0);
+  process.exit(totalIssues > 0 ? 1 : 0);
+}
+
+function printResult(result: VerificationResult): void {
+  for (const [name, check] of Object.entries(CHECKS) as Array<[keyof typeof CHECKS, Check]>) {
+    const count = result[name];
+    console.log(`  ${check.label.padEnd(35)} ${formatCount(count).padStart(12)}  ${count === 0 ? "PASS" : "FAIL"}`);
+  }
+  if (result.rowsBeforeSenderRule > 0) {
+    console.log(`  ${"Member rows from before the rule".padEnd(35)} ${formatCount(result.rowsBeforeSenderRule).padStart(12)}  REBUILD NEEDED`);
+  }
 }
 
 if (import.meta.main) {

@@ -1,28 +1,24 @@
 import { Database } from "./sqlite";
-import { createEventPeopleTriggers, dropEventPeopleTriggers, eventPeopleRowFilter } from "./schema";
+import { createEventPeopleTriggers, dropEventPeopleTriggers, eventPeopleRowsSql } from "./schema";
 
 /**
- * Populate the event_people index table from existing events.
- * This denormalizes the JSON people arrays for fast lookups.
+ * Rebuild the event_people index table from events.people, then refresh
+ * identities.event_count from it.
  *
- * Uses atomic table swap pattern:
- * 1. Create new table with data and indexes
- * 2. Drop old table and rename new table
- *
- * This ensures readers see either the old or new data, never an empty table.
- * Writers are blocked during the transaction, but readers continue uninterrupted.
+ * One IMMEDIATE transaction: writers wait until it commits, readers keep seeing
+ * the old table until then, and an error or interruption rolls everything back.
+ * The old table is dropped first so the new rows reuse its freed pages rather
+ * than growing the file; indexes are built after the rows, in one sort each.
  */
 export function populateEventPeople(db: Database): number {
-  // Clean up any leftover temp table from interrupted previous run
-  db.exec("DROP TABLE IF EXISTS event_people_new");
-
+  // With secure_delete on, dropping the old table would write every freed page to the WAL.
+  db.exec("PRAGMA secure_delete = OFF");
   db.exec("BEGIN IMMEDIATE");
   try {
     dropEventPeopleTriggers(db);
-
-    // Create new table with same schema
+    db.exec("DROP TABLE IF EXISTS event_people");
     db.exec(`
-      CREATE TABLE event_people_new (
+      CREATE TABLE event_people (
         event_id INTEGER NOT NULL,
         person TEXT NOT NULL,
         source TEXT NOT NULL,
@@ -31,28 +27,15 @@ export function populateEventPeople(db: Database): number {
         PRIMARY KEY (event_id, person)
       )
     `);
-
-    // Populate from events.people JSON arrays
-    // Use INSERT OR IGNORE to handle duplicate people in the same event's JSON array
-    // is_sender = 1 for people[0] (the sender/originator)
     db.exec(`
-      INSERT OR IGNORE INTO event_people_new (event_id, person, source, timestamp, is_sender)
-      SELECT e.id, p.value, e.source, e.timestamp, CASE WHEN p.key = 0 THEN 1 ELSE 0 END
-      FROM events e, json_each(e.people) p
-      WHERE e.people IS NOT NULL AND ${eventPeopleRowFilter("e", "p")}
+      INSERT OR IGNORE INTO event_people (event_id, person, source, timestamp, is_sender)
+      ${eventPeopleRowsSql("events e")}
     `);
-
-    // Atomic swap: drop old table, build indexes on new table with final names, then rename.
-    // Index names are freed by dropping the old table.
-    // Triggers on events table reference event_people by name - they'll work with renamed table.
-    db.exec("DROP TABLE IF EXISTS event_people");
-    db.exec(`CREATE INDEX idx_event_people_person_ts ON event_people_new(person, source, timestamp DESC)`);
-    db.exec(`CREATE INDEX idx_event_people_person_only_ts ON event_people_new(person, timestamp DESC)`);
-    db.exec(`CREATE INDEX idx_event_people_sender_ts ON event_people_new(person, is_sender, timestamp DESC)`);
-    db.exec("ALTER TABLE event_people_new RENAME TO event_people");
+    db.exec(`CREATE INDEX idx_event_people_person_ts ON event_people(person, source, timestamp DESC)`);
+    db.exec(`CREATE INDEX idx_event_people_person_only_ts ON event_people(person, timestamp DESC)`);
+    db.exec(`CREATE INDEX idx_event_people_sender_ts ON event_people(person, is_sender, timestamp DESC)`);
     createEventPeopleTriggers(db);
 
-    // Refresh identities.event_count from rebuilt event_people
     db.exec(`
       UPDATE identities
       SET event_count = COALESCE(
@@ -61,19 +44,14 @@ export function populateEventPeople(db: Database): number {
       )
     `);
 
-    // Return count of rows while still in the transaction (so failures can rollback)
+    // Counted inside the transaction, so a failure here rolls back too.
     const countRow = db.prepare("SELECT COUNT(*) as count FROM event_people").get() as { count: number };
 
     db.exec("COMMIT");
     return countRow.count;
   } catch (err) {
-    db.exec("ROLLBACK");
-    // Clean up partial temp table if it exists
-    try {
-      db.exec("DROP TABLE IF EXISTS event_people_new");
-    } catch {
-      // Ignore cleanup errors
-    }
+    // SQLite rolls back by itself on some errors (I/O, a full disk); report the error, not the ROLLBACK.
+    if (db.inTransaction) db.exec("ROLLBACK");
     throw err;
   }
 }
