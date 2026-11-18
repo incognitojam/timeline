@@ -1473,7 +1473,7 @@ const EVENT_PEOPLE_TRIGGERS = {
   events_people_au_insert: `CREATE TRIGGER events_people_au_insert AFTER UPDATE ON events
     WHEN NEW.people IS NOT NULL
     BEGIN
-      INSERT INTO event_people (event_id, person, source, timestamp, is_sender)
+      INSERT OR IGNORE INTO event_people (event_id, person, source, timestamp, is_sender)
       SELECT DISTINCT NEW.id, value, NEW.source, NEW.timestamp, CASE WHEN key = 0 THEN 1 ELSE 0 END
       FROM json_each(NEW.people)
       WHERE value IS NOT NULL AND value != '';
