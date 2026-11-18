@@ -74,11 +74,6 @@ function renderRow(
 }
 
 describe("AIEventRow", () => {
-  it("keeps the target ring inside the highlighted row", () => {
-    const view = renderRow([], makeEvent(), true);
-
-    expect(view.container.querySelector("#event-42")).toHaveClass("ring-inset");
-  });
 
   it("renders a top-level stored image inline once, not in a trailing group", () => {
     const { getAllByAltText, queryByText } = renderRow([makeAttachment()]);

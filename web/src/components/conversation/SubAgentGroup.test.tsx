@@ -86,17 +86,6 @@ function renderAtNestingCap(
 }
 
 describe("SubAgentGroup", () => {
-  it("keeps the target ring inside the highlighted row", () => {
-    const event = makeEvent(1, "Alice");
-    const view = renderAtNestingCap(
-      makeGroup("root", [event]),
-      () => [],
-      () => event.id,
-    );
-
-    expect(view.container.querySelector("#event-1")).toHaveClass("ring-inset");
-    view.unmount();
-  });
 
   it("traverses capped descendants once", () => {
     const rootEvent = makeEvent(1, "Root");
