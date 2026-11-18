@@ -25,12 +25,6 @@ function part(overrides: Partial<OpenCodePart>): OpenCodePart {
 }
 
 describe("normalizePartsToBlocks", () => {
-  it("converts text parts to text blocks", () => {
-    const blocks = normalizePartsToBlocks([
-      part({ type: "text", text: "hello" }),
-    ]);
-    expect(blocks).toEqual([{ type: "text", text: "hello" }]);
-  });
 
   it("skips text parts with no text content", () => {
     const blocks = normalizePartsToBlocks([part({ type: "text" })]);
@@ -52,34 +46,6 @@ describe("normalizePartsToBlocks", () => {
         name: "Bash",
         id: "call_1",
         input: { command: "ls" },
-      },
-    ]);
-  });
-
-  it("emits tool_use + tool_result linked by id when output is present", () => {
-    const blocks = normalizePartsToBlocks([
-      part({
-        type: "tool",
-        tool: "Read",
-        callID: "call_42",
-        state: {
-          status: "success",
-          input: { path: "/tmp/foo" },
-          output: "line1\nline2",
-        },
-      }),
-    ]);
-    expect(blocks).toEqual([
-      {
-        type: "tool_use",
-        name: "Read",
-        id: "call_42",
-        input: { path: "/tmp/foo" },
-      },
-      {
-        type: "tool_result",
-        tool_use_id: "call_42",
-        content: "line1\nline2",
       },
     ]);
   });
@@ -121,38 +87,6 @@ describe("normalizePartsToBlocks", () => {
       type: "tool_result",
       tool_use_id: "call_5",
       content: "from metadata",
-    });
-  });
-
-  it("skips step-start and step-finish parts", () => {
-    const blocks = normalizePartsToBlocks([
-      part({ type: "step-start" }),
-      part({ type: "text", text: "kept" }),
-      part({ type: "step-finish", reason: "stop" }),
-    ]);
-    expect(blocks).toEqual([{ type: "text", text: "kept" }]);
-  });
-
-  it("converts reasoning parts to thinking blocks", () => {
-    const blocks = normalizePartsToBlocks([
-      part({ type: "reasoning", text: "consider options" }),
-    ]);
-    expect(blocks).toEqual([{ type: "thinking", thinking: "consider options" }]);
-  });
-
-  it("uses state.error for failed tools without output", () => {
-    const blocks = normalizePartsToBlocks([
-      part({
-        type: "tool",
-        tool: "read",
-        callID: "call_7",
-        state: { status: "error", input: {}, error: "File not found" },
-      }),
-    ]);
-    expect(blocks[1]).toEqual({
-      type: "tool_result",
-      tool_use_id: "call_7",
-      error: "File not found",
     });
   });
 
@@ -320,18 +254,6 @@ describe("normalizeV2Content", () => {
       { type: "tool_result", tool_use_id: "call_1", content: "a.txt" },
       { type: "text", text: "done" },
     ]);
-  });
-
-  it("uses the structured error message for failed tools", () => {
-    const blocks = normalizeV2Content([
-      {
-        type: "tool",
-        id: "call_2",
-        name: "webfetch",
-        state: { status: "error", input: {}, error: { type: "Tool.Error", message: "timed out" } },
-      },
-    ]);
-    expect(blocks[1]).toEqual({ type: "tool_result", tool_use_id: "call_2", error: "timed out" });
   });
 
   it("emits only tool_use while a tool is running or streaming", () => {

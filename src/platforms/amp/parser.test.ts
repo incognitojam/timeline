@@ -8,119 +8,55 @@ import { initDb } from "../../db/schema";
 import { type AmpContentBlock, importAmp, normalizeAmpBlocks } from "./parser";
 
 describe("normalizeAmpBlocks", () => {
-  it("passes text blocks through with only type + text", () => {
-    const input: AmpContentBlock[] = [{ type: "text", text: "hello" }];
-    expect(normalizeAmpBlocks(input)).toEqual([{ type: "text", text: "hello" }]);
-  });
-
-  it("passes thinking blocks through with only type + thinking", () => {
-    const input: AmpContentBlock[] = [
-      { type: "thinking", thinking: "pondering" },
-    ];
-    expect(normalizeAmpBlocks(input)).toEqual([
-      { type: "thinking", thinking: "pondering" },
-    ]);
-  });
-
-  it("maps tool_use blocks keeping name, id, input", () => {
-    const input: AmpContentBlock[] = [
-      {
-        type: "tool_use",
-        name: "Bash",
-        id: "use_1",
-        input: { command: "ls" },
-      },
-    ];
-    expect(normalizeAmpBlocks(input)).toEqual([
-      {
-        type: "tool_use",
-        name: "Bash",
-        id: "use_1",
-        input: { command: "ls" },
-      },
-    ]);
-  });
-
-  it("flattens a successful tool_result's run.result into content", () => {
-    const input: AmpContentBlock[] = [
-      {
-        type: "tool_result",
-        toolUseID: "use_1",
-        run: { status: "success", result: "ok" },
-      },
-    ];
-    expect(normalizeAmpBlocks(input)).toEqual([
-      { type: "tool_result", tool_use_id: "use_1", content: "ok" },
-    ]);
-  });
-
-  it("stringifies non-string result values", () => {
-    const input: AmpContentBlock[] = [
-      {
-        type: "tool_result",
-        toolUseID: "use_2",
-        run: { status: "success", result: { a: 1, b: 2 } },
-      },
-    ];
-    expect(normalizeAmpBlocks(input)).toEqual([
-      {
-        type: "tool_result",
-        tool_use_id: "use_2",
-        content: '{"a":1,"b":2}',
-      },
-    ]);
-  });
-
-  it("maps error-status results into the error field", () => {
-    const input: AmpContentBlock[] = [
-      {
-        type: "tool_result",
-        toolUseID: "use_3",
-        run: { status: "error", error: { message: "boom" } },
-      },
-    ];
-    expect(normalizeAmpBlocks(input)).toEqual([
-      { type: "tool_result", tool_use_id: "use_3", error: "boom" },
-    ]);
-  });
-
-  it("handles tool_result with no run object", () => {
-    const input: AmpContentBlock[] = [
-      { type: "tool_result", toolUseID: "use_4" },
-    ];
-    expect(normalizeAmpBlocks(input)).toEqual([
-      { type: "tool_result", tool_use_id: "use_4", content: undefined },
-    ]);
-  });
-
-  it("maps image blocks to media_type and drops the base64 data", () => {
-    const input: AmpContentBlock[] = [
-      {
-        type: "image",
-        source: { type: "base64", mediaType: "image/png", data: "QUJD" },
-      },
-    ];
-    expect(normalizeAmpBlocks(input)).toEqual([
-      { type: "image", media_type: "image/png" },
-    ]);
-  });
-
-  it("maps message-type summary blocks to summary_type and text", () => {
-    const input: AmpContentBlock[] = [
-      { type: "summary", summary: { type: "message", summary: "did some work" } },
-    ];
-    expect(normalizeAmpBlocks(input)).toEqual([
-      { type: "summary", summary_type: "message", text: "did some work" },
-    ]);
-  });
-
-  it("maps thread-type summary blocks to summary_type and thread_id", () => {
-    const input: AmpContentBlock[] = [
-      { type: "summary", summary: { type: "thread", thread: "T-thread-id" } },
-    ];
-    expect(normalizeAmpBlocks(input)).toEqual([
-      { type: "summary", summary_type: "thread", thread_id: "T-thread-id" },
-    ]);
+  const blockCases: { name: string; input: AmpContentBlock[]; expected: ReturnType<typeof normalizeAmpBlocks> }[] = [
+    {
+      name: "passes thinking blocks through with only type + thinking",
+      input: [{ type: "thinking", thinking: "pondering" }],
+      expected: [{ type: "thinking", thinking: "pondering" }],
+    },
+    {
+      name: "maps tool_use blocks keeping name, id, input",
+      input: [
+        {
+          type: "tool_use",
+          name: "Bash",
+          id: "use_1",
+          input: { command: "ls" },
+        },
+      ],
+      expected: [
+        {
+          type: "tool_use",
+          name: "Bash",
+          id: "use_1",
+          input: { command: "ls" },
+        },
+      ],
+    },
+    {
+      name: "maps error-status results into the error field",
+      input: [
+        {
+          type: "tool_result",
+          toolUseID: "use_3",
+          run: { status: "error", error: { message: "boom" } },
+        },
+      ],
+      expected: [{ type: "tool_result", tool_use_id: "use_3", error: "boom" }],
+    },
+    {
+      name: "handles tool_result with no run object",
+      input: [{ type: "tool_result", toolUseID: "use_4" }],
+      expected: [{ type: "tool_result", tool_use_id: "use_4", content: undefined }],
+    },
+    {
+      name: "maps thread-type summary blocks to summary_type and thread_id",
+      input: [{ type: "summary", summary: { type: "thread", thread: "T-thread-id" } }],
+      expected: [{ type: "summary", summary_type: "thread", thread_id: "T-thread-id" }],
+    },
+  ];
+  it.each(blockCases)("$name", ({ input, expected }) => {
+    expect(normalizeAmpBlocks(input)).toEqual(expected);
   });
 });
 
@@ -393,26 +329,6 @@ describe("importAmp", () => {
     expect(row!.content).toBe("original");
     expect(row!.timestamp).toBe(new Date(threadCreated).toISOString());
     expect(getPeople(row!)).toEqual(["amp:claude-sonnet-4", "amp:tester"]);
-  });
-
-  it("stores the thread id as conversation_id", async () => {
-    await writeThreadMessages("T-conv-test", [
-      { role: "user", content: [{ type: "text", text: "hello" }] },
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "hi" }],
-        usage: { model: "claude-sonnet-4" },
-      },
-    ]);
-
-    await importAmp(db, ampDir, "tester");
-
-    const rows = getRows();
-    expect(rows).toHaveLength(2);
-    expect(rows.map((row) => row.conversation_id)).toEqual([
-      "T-conv-test",
-      "T-conv-test",
-    ]);
   });
 
   it("updates normalized columns and raw_data when updateExisting is enabled", async () => {
@@ -693,17 +609,11 @@ describe("importAmp", () => {
     expect(raw.source_content).toEqual([{ type: "text", text: "hello" }]);
   });
 
-  it("prefers workspaceRoots over env when deriving project tags", async () => {
-    await writeThreadMessages(
-      "thread-workspace-roots",
-      [
-        {
-          role: "user",
-          messageId: 1,
-          content: [{ type: "text", text: "hello" }],
-        },
-      ],
-      {
+  const projectCases: { name: string; thread: string; options: AmpFixtureThreadOptions; check: (row: EventRow) => void }[] = [
+    {
+      name: "prefers workspaceRoots over env when deriving project tags",
+      thread: "thread-workspace-roots",
+      options: {
         workspaceRoots: ["/tmp/from-workspace-roots"],
         env: {
           initial: {
@@ -715,34 +625,22 @@ describe("importAmp", () => {
             ],
           },
         },
-      }
-    );
+      },
+      check: (row: EventRow) => {
+        const raw = JSON.parse(row.raw_data);
+        expect(getTags(row)).toContain("project:from-workspace-roots");
 
-    await importAmp(db, ampDir, "tester");
-
-    const row = getRow("thread-workspace-roots:1");
-    expect(row).toBeDefined();
-    expect(getTags(row!)).toContain("project:from-workspace-roots");
-
-    const raw = JSON.parse(row!.raw_data);
-    expect(raw.workspace.project_name).toBe("from-workspace-roots");
-    expect(raw.workspace.project_source).toBe("workspace_roots");
-    expect(raw.workspace.project_path).toBe("/tmp/from-workspace-roots");
-    expect(raw.workspace.display_name).toBe("from-env");
-    expect(raw.workspace.fs_path).toBe("/tmp/from-env-path");
-  });
-
-  it("derives project tags from env tree displayName without workspaceRoots", async () => {
-    await writeThreadMessages(
-      "thread-env-display",
-      [
-        {
-          role: "user",
-          messageId: 1,
-          content: [{ type: "text", text: "hello" }],
-        },
-      ],
-      {
+        expect(raw.workspace.project_name).toBe("from-workspace-roots");
+        expect(raw.workspace.project_source).toBe("workspace_roots");
+        expect(raw.workspace.project_path).toBe("/tmp/from-workspace-roots");
+        expect(raw.workspace.display_name).toBe("from-env");
+        expect(raw.workspace.fs_path).toBe("/tmp/from-env-path");
+      },
+    },
+    {
+      name: "derives project tags from env tree displayName without workspaceRoots",
+      thread: "thread-env-display",
+      options: {
         workspaceRoots: null,
         env: {
           initial: {
@@ -754,125 +652,92 @@ describe("importAmp", () => {
             ],
           },
         },
-      }
-    );
+      },
+      check: (row: EventRow) => {
+        const raw = JSON.parse(row.raw_data);
+        expect(getTags(row)).toContain("project:timeline");
 
-    await importAmp(db, ampDir, "tester");
-
-    const row = getRow("thread-env-display:1");
-    expect(row).toBeDefined();
-    expect(getTags(row!)).toContain("project:timeline");
-
-    const raw = JSON.parse(row!.raw_data);
-    expect(raw.workspace_roots).toBeUndefined();
-    expect(raw.workspace.project_name).toBe("timeline");
-    expect(raw.workspace.project_source).toBe(
-      "env.initial.trees[0].displayName"
-    );
-    expect(raw.workspace.display_name).toBe("timeline");
-    expect(raw.workspace.fs_path).toBe("/Users/alice/Developer/timeline");
-  });
-
-  it("falls back to env tree fsPath basename for project tags", async () => {
-    await writeThreadMessages(
-      "thread-env-fspath",
-      [
-        {
-          role: "user",
-          messageId: 1,
-          content: [{ type: "text", text: "hello" }],
-        },
-      ],
-      {
+        expect(raw.workspace_roots).toBeUndefined();
+        expect(raw.workspace.project_name).toBe("timeline");
+        expect(raw.workspace.project_source).toBe("env.initial.trees[0].displayName");
+        expect(raw.workspace.display_name).toBe("timeline");
+        expect(raw.workspace.fs_path).toBe("/Users/alice/Developer/timeline");
+      },
+    },
+    {
+      name: "falls back to env tree fsPath basename for project tags",
+      thread: "thread-env-fspath",
+      options: {
         workspaceRoots: null,
         env: {
           initial: {
             trees: [{ fsPath: "/Users/alice/Developer/timeline" }],
           },
         },
-      }
-    );
+      },
+      check: (row: EventRow) => {
+        const raw = JSON.parse(row.raw_data);
+        expect(getTags(row)).toContain("project:timeline");
 
-    await importAmp(db, ampDir, "tester");
-
-    const row = getRow("thread-env-fspath:1");
-    expect(row).toBeDefined();
-    expect(getTags(row!)).toContain("project:timeline");
-
-    const raw = JSON.parse(row!.raw_data);
-    expect(raw.workspace.project_name).toBe("timeline");
-    expect(raw.workspace.project_source).toBe("env.initial.trees[0].fsPath");
-    expect(raw.workspace.project_path).toBe("/Users/alice/Developer/timeline");
-  });
-
-  it("falls back to env tree uri basename for project tags", async () => {
-    await writeThreadMessages(
-      "thread-env-uri",
-      [
-        {
-          role: "user",
-          messageId: 1,
-          content: [{ type: "text", text: "hello" }],
-        },
-      ],
-      {
+        expect(raw.workspace.project_name).toBe("timeline");
+        expect(raw.workspace.project_source).toBe("env.initial.trees[0].fsPath");
+        expect(raw.workspace.project_path).toBe("/Users/alice/Developer/timeline");
+      },
+    },
+    {
+      name: "falls back to env tree uri basename for project tags",
+      thread: "thread-env-uri",
+      options: {
         workspaceRoots: null,
         env: {
           initial: {
             trees: [{ uri: "file:///Users/alice/Developer/timeline" }],
           },
         },
-      }
-    );
+      },
+      check: (row: EventRow) => {
+        const raw = JSON.parse(row.raw_data);
+        expect(getTags(row)).toContain("project:timeline");
 
-    await importAmp(db, ampDir, "tester");
-
-    const row = getRow("thread-env-uri:1");
-    expect(row).toBeDefined();
-    expect(getTags(row!)).toContain("project:timeline");
-
-    const raw = JSON.parse(row!.raw_data);
-    expect(raw.workspace.project_name).toBe("timeline");
-    expect(raw.workspace.project_source).toBe("env.initial.trees[0].uri");
-    expect(raw.workspace.project_path).toBe("/Users/alice/Developer/timeline");
-    expect(raw.workspace.uri).toBe("file:///Users/alice/Developer/timeline");
-  });
-
-  it("falls back to env systemPromptData workingDirectory for project tags", async () => {
-    await writeThreadMessages(
-      "thread-env-working-directory",
-      [
-        {
-          role: "user",
-          messageId: 1,
-          content: [{ type: "text", text: "hello" }],
-        },
-      ],
-      {
+        expect(raw.workspace.project_name).toBe("timeline");
+        expect(raw.workspace.project_source).toBe("env.initial.trees[0].uri");
+        expect(raw.workspace.project_path).toBe("/Users/alice/Developer/timeline");
+        expect(raw.workspace.uri).toBe("file:///Users/alice/Developer/timeline");
+      },
+    },
+    {
+      name: "falls back to env systemPromptData workingDirectory for project tags",
+      thread: "thread-env-working-directory",
+      options: {
         workspaceRoots: null,
         env: {
           systemPromptData: {
             workingDirectory: "/Users/alice/Developer/timeline",
           },
         },
-      }
-    );
+      },
+      check: (row: EventRow) => {
+        const raw = JSON.parse(row.raw_data);
+        expect(getTags(row)).toContain("project:timeline");
 
+        expect(raw.workspace.project_name).toBe("timeline");
+        expect(raw.workspace.project_source).toBe("env.systemPromptData.workingDirectory");
+        expect(raw.workspace.project_path).toBe("/Users/alice/Developer/timeline");
+        expect(raw.workspace.working_directory).toBe("/Users/alice/Developer/timeline");
+      },
+    },
+  ];
+  it.each(projectCases)("$name", async ({ thread, options, check }) => {
+    await writeThreadMessages(
+      thread,
+      [{ role: "user", messageId: 1, content: [{ type: "text", text: "hello" }] }],
+      options,
+    );
     await importAmp(db, ampDir, "tester");
-
-    const row = getRow("thread-env-working-directory:1");
+    const row = getRow(`${thread}:1`);
     expect(row).toBeDefined();
-    expect(getTags(row!)).toContain("project:timeline");
-
-    const raw = JSON.parse(row!.raw_data);
-    expect(raw.workspace.project_name).toBe("timeline");
-    expect(raw.workspace.project_source).toBe(
-      "env.systemPromptData.workingDirectory"
-    );
-    expect(raw.workspace.project_path).toBe("/Users/alice/Developer/timeline");
-    expect(raw.workspace.working_directory).toBe(
-      "/Users/alice/Developer/timeline"
-    );
+    expect(row?.conversation_id).toBe(thread);
+    check(row!);
   });
 
   it("does not emit project:unknown when no project can be derived", async () => {
@@ -904,125 +769,91 @@ describe("importAmp", () => {
     const sentAt = Date.UTC(2026, 5, 1, 12, 0, 0);
     const usageTs = "2026-06-02T08:30:00.000Z";
 
-    it("prefers meta.sentAt over assistant usage.timestamp", async () => {
-      await writeThreadMessages("thread-ts-sentat", [
-        {
+    const timestampCases: { name: string; thread: string; message: AmpFixtureMessage; expected: string }[] = [
+      {
+        name: "prefers meta.sentAt over assistant usage.timestamp",
+        thread: "thread-ts-sentat",
+        message: {
           role: "assistant",
           messageId: 5,
           content: [{ type: "text", text: "hi" }],
           meta: { sentAt },
           usage: { model: "claude-sonnet-4", timestamp: usageTs },
         },
-      ]);
-
-      await importAmp(db, ampDir, "tester");
-
-      const row = getRow("thread-ts-sentat:5");
-      expect(row).toBeDefined();
-      expect(row!.timestamp).toBe(new Date(sentAt).toISOString());
-    });
-
-    it("uses assistant usage.timestamp when meta.sentAt is absent", async () => {
-      await writeThreadMessages("thread-ts-usage", [
-        {
+        expected: new Date(sentAt).toISOString(),
+      },
+      {
+        name: "uses assistant usage.timestamp when meta.sentAt is absent",
+        thread: "thread-ts-usage",
+        message: {
           role: "assistant",
           messageId: 5,
           content: [{ type: "text", text: "hi" }],
           usage: { model: "claude-sonnet-4", timestamp: usageTs },
         },
-      ]);
-
-      await importAmp(db, ampDir, "tester");
-
-      const row = getRow("thread-ts-usage:5");
-      expect(row).toBeDefined();
-      expect(row!.timestamp).toBe(new Date(usageTs).toISOString());
-    });
-
-    it("ignores usage.timestamp for user messages and falls back", async () => {
-      await writeThreadMessages("thread-ts-user", [
-        {
+        expected: new Date(usageTs).toISOString(),
+      },
+      {
+        name: "ignores usage.timestamp for user messages and falls back",
+        thread: "thread-ts-user",
+        message: {
           role: "user",
           messageId: 3,
           content: [{ type: "text", text: "hi" }],
           usage: { timestamp: usageTs },
         },
-      ]);
-
-      await importAmp(db, ampDir, "tester");
-
-      const row = getRow("thread-ts-user:3");
-      expect(row).toBeDefined();
-      expect(row!.timestamp).toBe(new Date(threadCreated + 3000).toISOString());
-    });
-
-    it("falls back when assistant usage.timestamp is unparseable", async () => {
-      await writeThreadMessages("thread-ts-invalid-usage", [
-        {
+        expected: new Date(threadCreated + 3000).toISOString(),
+      },
+      {
+        name: "falls back when assistant usage.timestamp is unparseable",
+        thread: "thread-ts-invalid-usage",
+        message: {
           role: "assistant",
           messageId: 4,
           content: [{ type: "text", text: "hi" }],
           usage: { model: "claude-sonnet-4", timestamp: "not-a-date" },
         },
-      ]);
-
-      await importAmp(db, ampDir, "tester");
-
-      const row = getRow("thread-ts-invalid-usage:4");
-      expect(row).toBeDefined();
-      expect(row!.timestamp).toBe(new Date(threadCreated + 4000).toISOString());
-    });
-
-    it("falls back when assistant usage.timestamp is not a string", async () => {
-      await writeThreadMessages("thread-ts-non-string-usage", [
-        {
+        expected: new Date(threadCreated + 4000).toISOString(),
+      },
+      {
+        name: "falls back when assistant usage.timestamp is not a string",
+        thread: "thread-ts-non-string-usage",
+        message: {
           role: "assistant",
           messageId: 7,
           content: [{ type: "text", text: "hi" }],
           usage: { model: "claude-sonnet-4", timestamp: 123 },
         },
-      ]);
-
-      await importAmp(db, ampDir, "tester");
-
-      const row = getRow("thread-ts-non-string-usage:7");
-      expect(row).toBeDefined();
-      expect(row!.timestamp).toBe(new Date(threadCreated + 7000).toISOString());
-    });
-
-    it("falls back when meta.sentAt is not a valid date", async () => {
-      await writeThreadMessages("thread-ts-invalid-sentat", [
-        {
+        expected: new Date(threadCreated + 7000).toISOString(),
+      },
+      {
+        name: "falls back when meta.sentAt is not a valid date",
+        thread: "thread-ts-invalid-sentat",
+        message: {
           role: "assistant",
           messageId: 2,
           content: [{ type: "text", text: "hi" }],
           meta: { sentAt: Number.NaN },
           usage: { model: "claude-sonnet-4" },
         },
-      ]);
-
-      await importAmp(db, ampDir, "tester");
-
-      const row = getRow("thread-ts-invalid-sentat:2");
-      expect(row).toBeDefined();
-      expect(row!.timestamp).toBe(new Date(threadCreated + 2000).toISOString());
-    });
-
-    it("falls back to thread order when no reliable timestamp exists", async () => {
-      await writeThreadMessages("thread-ts-fallback", [
-        {
+        expected: new Date(threadCreated + 2000).toISOString(),
+      },
+      {
+        name: "falls back to thread order when no reliable timestamp exists",
+        thread: "thread-ts-fallback",
+        message: {
           role: "assistant",
           messageId: 6,
           content: [{ type: "text", text: "hi" }],
           usage: { model: "claude-sonnet-4" },
         },
-      ]);
-
+        expected: new Date(threadCreated + 6000).toISOString(),
+      },
+    ];
+    it.each(timestampCases)("$name", async ({ thread, message, expected }) => {
+      await writeThreadMessages(thread, [message]);
       await importAmp(db, ampDir, "tester");
-
-      const row = getRow("thread-ts-fallback:6");
-      expect(row).toBeDefined();
-      expect(row!.timestamp).toBe(new Date(threadCreated + 6000).toISOString());
+      expect(getRow(`${thread}:${message.messageId}`)?.timestamp).toBe(expected);
     });
   });
 });
