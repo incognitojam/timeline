@@ -55,7 +55,6 @@ describe("buildHealthUrl", () => {
 
 describe("navigation hierarchy", () => {
 
-
   test.each([
     ["/", "Timeline"],
     ["/event/42", "Timeline"],

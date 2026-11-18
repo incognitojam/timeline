@@ -41,8 +41,4 @@ describe("conversation range selection", () => {
 
     expect(Object.fromEntries(positions)).toEqual({ 20: "single" });
   });
-
-
-
-
 });

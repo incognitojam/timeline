@@ -3,15 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { queryClientDefaultOptions } from "./query-client";
 import { queryOptions } from "./queries";
 
-
 describe("conversation query cache", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
-
-
-
-
 
   it("deduplicates range exports and keys them by effective format", async () => {
     const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) => Promise.resolve(Response.json({
@@ -70,8 +65,6 @@ describe("conversation query cache", () => {
     });
     expect(utcOptions.queryKey).not.toEqual(newYorkOptions.queryKey);
   });
-
-
 });
 
 describe("query cancellation", () => {

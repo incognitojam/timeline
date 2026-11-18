@@ -19,7 +19,7 @@ describe("dateActivityQueries", () => {
     vi.unstubAllGlobals();
   });
 
-  it("fetches the complete lightweight index under one cache key", async () => {
+  it("fetches the complete lightweight date index", async () => {
     const queryClient = createQueryClient();
     const fetchMock = vi.fn<typeof fetch>(async () =>
       new Response(
@@ -43,10 +43,7 @@ describe("dateActivityQueries", () => {
       { date: "2016-04-15", eventCount: 3 },
     ]);
 
-
   });
-
-
 
   it("retries a later request after a failed fetch", async () => {
     const queryClient = createQueryClient();

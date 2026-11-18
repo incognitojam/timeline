@@ -78,7 +78,6 @@ describe("formatRelativeDate", () => {
 
 describe("formatDateSeparator", () => {
 
-
   it("returns an empty string without a timestamp", () => {
     expect(formatDateSeparator(null)).toBe("");
   });
