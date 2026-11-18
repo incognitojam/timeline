@@ -4,31 +4,29 @@ import { createEffect, createSignal, For, type JSX, Match, on, onCleanup, Show, 
 import {
   type SyncSourceConfigField,
   SyncSourceConfigurationError,
-  type SyncSourceConfigurationPatch,
   type SyncSourceInfo,
-  type SyncSourceSettingsPatch,
 } from "../lib/api";
+import {
+  buildConfigurationPatch,
+  canRemoveSettingOverride,
+  type ConfigurationDraftValue,
+  type ConfigurationFieldPath,
+  draftFromSource,
+  effectiveDraftValue,
+  formattedSettingDefault,
+  hasDraftValue,
+  hasSettingDefault,
+  isInvalidStoredOverride,
+  numberSettingError,
+  selectSegments,
+  settingDefaultActionLabel,
+  settingsFieldPath,
+  sourceFingerprint,
+  stringDraft,
+} from "../lib/sync-source-draft";
 import { useUpdateSyncSourceConfiguration } from "../lib/queries";
 import { getSourceColorStyle } from "../lib/source-styles";
 import SegmentedControl from "../ui/SegmentedControl";
-
-interface InvalidStoredOverride {
-  readonly kind: "invalid-stored-override";
-}
-
-type ConfigurationDraftValue = string | boolean | InvalidStoredOverride | null;
-
-const INVALID_STORED_OVERRIDE: InvalidStoredOverride = {
-  kind: "invalid-stored-override",
-};
-
-interface ConfigurationDraft {
-  enabled: boolean;
-  interval: string;
-  settings: Record<string, ConfigurationDraftValue>;
-}
-
-type ConfigurationFieldPath = "enabled" | "interval" | `settings.${string}`;
 
 interface SyncSourceConfigurationFormProps {
   source: SyncSourceInfo;
@@ -37,66 +35,6 @@ interface SyncSourceConfigurationFormProps {
 interface ActiveSubmission {
   id: number;
   sourceEpoch: number;
-}
-
-const DECIMAL_PATTERN = /^[+-]?(\d+(\.\d*)?|\.\d+)$/;
-
-function settingsFieldPath(key: string): `settings.${string}` {
-  return `settings.${key}`;
-}
-
-function draftValueFromSettings(
-  field: SyncSourceConfigField,
-  settings: Record<string, unknown>
-): ConfigurationDraftValue {
-  const value = settings[field.key];
-  if (value === undefined || value === null) return null;
-  switch (field.type) {
-    case "boolean":
-      return typeof value === "boolean" ? value : INVALID_STORED_OVERRIDE;
-    case "number":
-      return typeof value === "number" ? String(value) : INVALID_STORED_OVERRIDE;
-    case "string-list":
-      return Array.isArray(value) && value.every((entry) => typeof entry === "string")
-        ? value.join("\n")
-        : INVALID_STORED_OVERRIDE;
-    default:
-      return typeof value === "string" ? value : INVALID_STORED_OVERRIDE;
-  }
-}
-
-function isInvalidStoredOverride(
-  value: ConfigurationDraftValue
-): value is InvalidStoredOverride {
-  return typeof value === "object" && value !== null && value.kind === "invalid-stored-override";
-}
-
-function hasSettingDefault(field: SyncSourceConfigField): boolean {
-  return field.default !== undefined;
-}
-
-function defaultDraftValue(field: SyncSourceConfigField): Exclude<ConfigurationDraftValue, null> {
-  if (field.default === undefined) return field.type === "boolean" ? false : "";
-  if (field.type === "boolean") return field.default;
-  if (field.type === "number") return String(field.default);
-  if (field.type === "string-list") return field.default.join("\n");
-  return field.default;
-}
-
-function effectiveDraftValue(
-  field: SyncSourceConfigField,
-  draft: ConfigurationDraftValue
-): Exclude<ConfigurationDraftValue, null> {
-  return draft === null || isInvalidStoredOverride(draft) ? defaultDraftValue(field) : draft;
-}
-
-function formattedSettingDefault(field: SyncSourceConfigField): string {
-  if (field.default === undefined) return "";
-  if (field.type === "boolean") return field.default ? "On" : "Off";
-  if (field.type === "string-list") {
-    return field.default.length === 0 ? "None" : field.default.join(", ");
-  }
-  return String(field.default);
 }
 
 function settingDescription(
@@ -120,105 +58,8 @@ function settingDescription(
   );
 }
 
-function canRemoveSettingOverride(field: SyncSourceConfigField): boolean {
-  return hasSettingDefault(field) || field.required !== true;
-}
-
-function settingDefaultActionLabel(field: SyncSourceConfigField): string {
-  return hasSettingDefault(field) ? "Use default" : "Remove override";
-}
-
-function draftFromSource(source: SyncSourceInfo): ConfigurationDraft {
-  const settings: Record<string, ConfigurationDraftValue> = {};
-  for (const field of source.settingsSchema) {
-    settings[field.key] = draftValueFromSettings(field, source.settings);
-  }
-  return {
-    enabled: source.enabled,
-    interval: source.interval ?? "",
-    settings,
-  };
-}
-
-function sourceFingerprint(source: SyncSourceInfo): string {
-  return JSON.stringify({
-    name: source.name,
-    enabled: source.enabled,
-    interval: source.interval,
-    settings: source.settings,
-    settingsSchema: source.settingsSchema,
-  });
-}
-
-function settingValueForPatch(
-  field: SyncSourceConfigField,
-  draft: ConfigurationDraftValue
-): string | number | boolean | string[] | null {
-  if (draft === null) return null;
-  if (field.type === "boolean") return draft === true;
-  const raw = typeof draft === "string" ? draft : "";
-  if (field.type === "number") {
-    const trimmed = raw.trim();
-    if (trimmed === "") return null;
-    return DECIMAL_PATTERN.test(trimmed) ? Number(trimmed) : trimmed;
-  }
-  if (field.type === "string-list") {
-    const entries = raw
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
-    return entries.length === 0 ? null : entries;
-  }
-  const trimmed = raw.trim();
-  return trimmed === "" ? null : trimmed;
-}
-
-function numberSettingError(
-  field: SyncSourceConfigField & { type: "number" },
-  draft: ConfigurationDraftValue
-): string | undefined {
-  const value = settingValueForPatch(field, draft);
-  if (typeof value !== "number") return undefined;
-  if (!Number.isFinite(value)) return "Number is too large";
-  if (field.integer && !Number.isSafeInteger(value)) {
-    return "Must be a whole number in the safe integer range";
-  }
-  if (field.min !== undefined && value < field.min) return `Must be at least ${field.min}`;
-  if (field.max !== undefined && value > field.max) return `Must be at most ${field.max}`;
-  return undefined;
-}
-
-function settingValuesEqual(
-  left: SyncSourceSettingsPatch[string],
-  right: unknown
-): boolean {
-  if (left === null) return right === null || right === undefined;
-  if (Array.isArray(left)) {
-    return Array.isArray(right) &&
-      left.length === right.length &&
-      left.every((entry, index) => entry === right[index]);
-  }
-  return left === right;
-}
-
-function selectSegments(options: string[], stored: string): { value: string; label: string }[] {
-  const values = stored !== "" && !options.includes(stored) ? [...options, stored] : options;
-  return values.map((value) => ({ value, label: value }));
-}
-
 function changeError(error: unknown): string | null {
   return typeof error === "string" ? error : null;
-}
-
-function hasDraftValue(field: SyncSourceConfigField, value: ConfigurationDraftValue): boolean {
-  if (field.type === "boolean") return true;
-  if (typeof value !== "string") return false;
-  return value.trim().length > 0;
-}
-
-function stringDraft(field: SyncSourceConfigField, value: ConfigurationDraftValue): string {
-  const effective = effectiveDraftValue(field, value);
-  return typeof effective === "string" ? effective : "";
 }
 
 function ConfigurationRow(props: {
@@ -357,7 +198,7 @@ export default function SyncSourceConfigurationForm(props: SyncSourceConfigurati
       const submittedSource = source();
       const epoch = sourceEpoch();
       setSubmitError(null);
-      const patch = buildPatch(value, submittedSource);
+      const patch = buildConfigurationPatch(submittedSource, value);
       if (Object.keys(patch).length === 0) {
         reseed(submittedSource);
         return;
@@ -407,10 +248,6 @@ export default function SyncSourceConfigurationForm(props: SyncSourceConfigurati
     form.reset(values);
   }
 
-  function fieldChanged(path: ConfigurationFieldPath): boolean {
-    return form.getFieldMeta(path)?.isDefaultValue === false;
-  }
-
   function setFieldError(path: ConfigurationFieldPath, message: string | undefined) {
     setServerFieldErrors((previous) => {
       const next = { ...previous };
@@ -434,34 +271,6 @@ export default function SyncSourceConfigurationForm(props: SyncSourceConfigurati
       form.setFieldValue(path, null);
       clearServerError(path);
     }
-  }
-
-  function buildPatch(values: ConfigurationDraft, source: SyncSourceInfo): SyncSourceConfigurationPatch {
-    const patch: SyncSourceConfigurationPatch = {};
-    if (fieldChanged("enabled") && values.enabled !== source.enabled) {
-      patch.enabled = values.enabled;
-    }
-
-    if (fieldChanged("interval")) {
-      const interval = values.interval.trim() === "" ? null : values.interval.trim();
-      if (interval !== source.interval) patch.interval = interval;
-    }
-
-    const settings: SyncSourceSettingsPatch = {};
-    for (const field of source.settingsSchema) {
-      const path = settingsFieldPath(field.key);
-      if (!fieldChanged(path)) continue;
-      const draft = values.settings[field.key];
-      if (draft === undefined) {
-        throw new Error(`Missing configuration draft for ${path}`);
-      }
-      const value = settingValueForPatch(field, draft);
-      if (!settingValuesEqual(value, source.settings[field.key])) {
-        settings[field.key] = value;
-      }
-    }
-    if (Object.keys(settings).length > 0) patch.settings = settings;
-    return patch;
   }
 
   createEffect(on(
