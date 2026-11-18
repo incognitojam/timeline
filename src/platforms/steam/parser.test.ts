@@ -170,7 +170,6 @@ describe("steam session merging", () => {
     expect(session.timestamp).toBe(expectedStart);
   });
 
-
   test("fifth sync with new play creates separate session", () => {
     const state = emptyState();
     const db = createTestDb();
@@ -241,7 +240,6 @@ describe("steam session merging", () => {
     expect(titles).toEqual(["Factory Builder", "Strategy Arena"]);
   });
 });
-
 
 describe("new game detection", () => {
 
@@ -380,7 +378,5 @@ describe("edge cases", () => {
     expect(sessions).toHaveLength(1);
     expect(sessions[0].duration_ms).toBe(totalDelta * 60 * 1000);
   });
-
-
 
 });

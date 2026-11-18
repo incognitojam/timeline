@@ -41,7 +41,6 @@ interface EventRow {
 describe("amex parser", () => {
   describe("parseAmexAmount", () => {
 
-
     it("strips thousands separators", () => {
       expect(parseAmexAmount("1,398.39")).toBe(-1398.39);
     });
@@ -56,15 +55,12 @@ describe("amex parser", () => {
       expect(parseAmexDate("04/05/2026")).toBe("2026-05-04T00:00:00Z");
     });
 
-
     it("returns null for an unrecognized format", () => {
       expect(parseAmexDate("2026-05-04")).toBeNull();
     });
   });
 
-
   describe("classifyAmexType", () => {
-
 
     it("maps categories to Monzo-style buckets", () => {
       expect(classifyAmexType("General Purchases-Groceries", -10, false)).toBe(

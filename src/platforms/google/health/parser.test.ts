@@ -198,8 +198,6 @@ describe("daily rollup requests", () => {
 
 describe("daily summary request helpers", () => {
 
-
-
   test("builds the daily summary list filter with live API restriction fields", () => {
     expect(
       buildDailySummaryParams("daily-heart-rate-variability", "2026-05-01", "2026-06-01"),

@@ -83,8 +83,6 @@ describe("spotify-api playlist resolution", () => {
     expect(result).not.toContain("spotify:playlist:known");
   });
 
-
-
   test("collectUnknownPlaylistUris skips recently missing playlists", () => {
     const items: SpotifyPlayHistoryItem[] = [
       {

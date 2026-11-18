@@ -282,7 +282,6 @@ describe("importRecall", () => {
     expect(getAttachment(event!.id)).toBeDefined();
   });
 
-
   it("is idempotent: re-running picks up new files but does not duplicate prior events", async () => {
     await writeCapture("100000", {
       captured_at: "2026-05-13T10:00:00Z",
