@@ -10,15 +10,21 @@ jobs:
   artifact:
     name: Linux service artifact
     runs-on: ubuntu-24.04
+    container: swift:6.2.1-noble@sha256:0e4716bd34384d22963a63afbdbc93be3129dfd0753185aa1ded27755abdcae8
     env:
       VITE_MAPTILER_API_KEY: ci-test
     steps:
+      - name: Install artifact smoke tools
+        run: apt-get update && apt-get install -y --no-install-recommends curl python3
+      - run: swiftc --version
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: jdx/mise-action@v5
         with:
           install_args: bun go
+      - name: Trust the checkout for container Git commands
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: bun install --frozen-lockfile
       - run: bun install --frozen-lockfile
         working-directory: web
@@ -26,3 +32,5 @@ jobs:
         run: bun run build:service --output "$RUNNER_TEMP/timeline-service"
       - name: Smoke-test the relocatable service
         run: ./scripts/smoke-service-artifact.sh "$RUNNER_TEMP/timeline-service"
+      - name: Test portable app logic and generated plists
+        run: ./tools/timeline-app/test-portable.sh "$RUNNER_TEMP/timeline-service"

@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 
 struct LaunchCtlLoadedJob: Equatable {
     let plistPath: String?

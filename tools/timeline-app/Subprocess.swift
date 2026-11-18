@@ -4,7 +4,11 @@
 // output and abandons the process) has its own spawn path.
 
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 
 func writeError(_ message: String) {
     FileHandle.standardError.write(Data(message.utf8))
