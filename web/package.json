@@ -42,7 +42,7 @@
     "@tailwindcss/vite": "^4.3.5",
     "@testing-library/jest-dom": "^7.0.1",
     "@types/hast": "^3.0.5",
-    "@types/node": "26.1.0",
+    "@types/node": "26.6.6",
     "jsdom": "^31.0.1",
     "tailwindcss": "^4.3.5",
     "typescript": "^7.0.2",
