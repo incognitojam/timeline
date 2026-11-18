@@ -62,3 +62,6 @@ jobs:
 
   service-artifact:
     uses: ./.github/workflows/service-artifact.yml
+
+  upgrade:
+    uses: ./.github/workflows/upgrade-check.yml
