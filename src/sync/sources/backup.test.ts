@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { mkdirSync, rmSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, rmSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { Database } from "../../db/sqlite";
 import {
@@ -76,9 +76,12 @@ describe("backupDatabase", () => {
     const cleanDir = join(backupDir, "cleanup-test");
     mkdirSync(cleanDir, { recursive: true });
 
-    // Create fake old backups
+    // Create fake old backups, dated by mtime as cleanup orders them
     for (let i = 0; i < 5; i++) {
-      writeFileSync(join(cleanDir, `timeline-2020-01-0${i + 1}T00-00-00.db`), "");
+      const path = join(cleanDir, `timeline-2020-01-0${i + 1}T00-00-00.db`);
+      writeFileSync(path, "");
+      const mtime = new Date(`2020-01-0${i + 1}T00:00:00Z`);
+      utimesSync(path, mtime, mtime);
     }
 
     const result = await backupDatabase({
@@ -89,12 +92,12 @@ describe("backupDatabase", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.deleted).toBeGreaterThan(0);
+    // keepCount=2: 5 old + 1 new = 6, keep the 2 newest → 4 deleted
+    expect(result.deleted).toBe(4);
+    expect(result.backupPath).toBeString();
 
-    const remaining = readdirSync(cleanDir);
-    const timelineBackups = remaining.filter((f) => f.startsWith("timeline-") && f.endsWith(".db"));
-    // keepCount=2: 5 old + 1 new = 6, keep 2 → 4 deleted
-    expect(timelineBackups.length).toBe(2);
+    const remaining = readdirSync(cleanDir).filter((f) => f.startsWith("timeline-") && f.endsWith(".db"));
+    expect(remaining.sort()).toEqual(["timeline-2020-01-05T00-00-00.db", basename(result.backupPath ?? "")].sort());
 
     rmSync(cleanDir, { recursive: true, force: true });
   });

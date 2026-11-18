@@ -205,11 +205,17 @@ describe("planEviction", () => {
   });
 
   test("evictMedia dry run deletes nothing", async () => {
-    const { root, local, db } = await fixture();
-    const result = await evictMedia(db, local, new FakeRemote(), 0, { dryRun: true });
+    const { root, local, db, a, b, c } = await fixture();
+    // Every blob is durable in the remote and the bound is 0, so the plan selects all three.
+    const result = await evictMedia(db, local, new FakeRemote([a.hash, b.hash, c.hash]), 0, { dryRun: true });
     db.close();
+    expect(result.toEvictBlobs).toBe(3);
     expect(result.evicted).toBe(0);
-    expect(existsSync(join(root, "discord/a/A.png"))).toBe(true);
+    expect(result.reclaimedBytes).toBe(0);
+    for (const blob of [a, b, c]) {
+      expect(existsSync(join(root, blob.storagePath))).toBe(true);
+      expect(await local.statByHash(blob.hash, ".png")).not.toBeNull();
+    }
   });
 
   test("evictMedia --execute removes the oldest durable blobs to the bound", async () => {
