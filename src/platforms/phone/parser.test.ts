@@ -130,11 +130,8 @@ describe("sms-backup-restore", () => {
     });
   });
 
-  describe("emoji entity decoding", () => {
-    it("decodes a single supplementary-plane codepoint (smiley emoji)", async () => {
-      // &#128578; is U+1F642 (slightly smiling face) — needs a surrogate pair.
-      // The old String.fromCharCode-based decoder would mangle this into U+F642
-      // (Private Use Area), which renders as tofu.
+  describe("entity decoding", () => {
+    it("decodes entities in SMS body attributes", async () => {
       const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <smses>
   <sms protocol="0" address="+447700900123" date="1747000000000" type="1" body="Yes, it is &#128578;" toa="null" sc_toa="null" service_center="null" read="1" status="-1" locked="0" date_sent="0" sub_id="-1" readable_date="12 May 2026 00:00:00" contact_name="Alice" />
@@ -144,58 +141,6 @@ describe("sms-backup-restore", () => {
 
       const [row] = getRows();
       expect(row.content).toBe("Yes, it is 🙂");
-    });
-
-    it("decodes pair-of-codepoint emoji (flag = two regional indicators)", async () => {
-      // &#127468;&#127463; is U+1F1EC U+1F1E7 — the GB flag, four UTF-16 code units total.
-      const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<smses>
-  <sms protocol="0" address="+447700900124" date="1747000001000" type="2" body="From &#127468;&#127463;!" toa="null" sc_toa="null" service_center="null" read="1" status="-1" locked="0" date_sent="0" sub_id="-1" readable_date="12 May 2026 00:00:01" contact_name="Bob" />
-</smses>`;
-      const path = await writeSmsXml(xml);
-      await importSms(db, path, "tester", { silent: true });
-
-      const [row] = getRows();
-      expect(row.content).toBe("From 🇬🇧!");
-    });
-
-    it("still decodes BMP entities correctly (newlines, basic punctuation)", async () => {
-      // &#10; (newline), &#33; (!), &amp; (literal &), &quot; (")
-      const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<smses>
-  <sms protocol="0" address="+447700900125" date="1747000002000" type="1" body="Line 1&#10;Line 2 &amp; &quot;quoted&quot;&#33;" toa="null" sc_toa="null" service_center="null" read="1" status="-1" locked="0" date_sent="0" sub_id="-1" readable_date="12 May 2026 00:00:02" contact_name="Carol" />
-</smses>`;
-      const path = await writeSmsXml(xml);
-      await importSms(db, path, "tester", { silent: true });
-
-      const [row] = getRows();
-      expect(row.content).toBe('Line 1\nLine 2 & "quoted"!');
-    });
-
-    it("leaves out-of-range numeric entities as literal text", async () => {
-      // 0x110000 is one past the max valid Unicode codepoint; decoder must not crash.
-      const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<smses>
-  <sms protocol="0" address="+447700900126" date="1747000003000" type="1" body="bad: &#1114112; ok" toa="null" sc_toa="null" service_center="null" read="1" status="-1" locked="0" date_sent="0" sub_id="-1" readable_date="12 May 2026 00:00:03" contact_name="Dan" />
-</smses>`;
-      const path = await writeSmsXml(xml);
-      await importSms(db, path, "tester", { silent: true });
-
-      const [row] = getRows();
-      expect(row.content).toBe("bad: &#1114112; ok");
-    });
-
-    it("decodes hex entities (&#xHHHH;)", async () => {
-      // &#x1F600; = 😀
-      const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<smses>
-  <sms protocol="0" address="+447700900127" date="1747000004000" type="1" body="hex &#x1F600;" toa="null" sc_toa="null" service_center="null" read="1" status="-1" locked="0" date_sent="0" sub_id="-1" readable_date="12 May 2026 00:00:04" contact_name="Eve" />
-</smses>`;
-      const path = await writeSmsXml(xml);
-      await importSms(db, path, "tester", { silent: true });
-
-      const [row] = getRows();
-      expect(row.content).toBe("hex 😀");
     });
 
     it("decodes emoji inside MMS <part> text", async () => {

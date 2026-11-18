@@ -1,5 +1,6 @@
 import { Database } from "../../../db/sqlite";
 import { getDb, initDb } from "../../../db/schema";
+import { decodeEntities } from "../../../ingest/entities";
 
 interface SearchActivity {
   query: string;
@@ -19,23 +20,6 @@ function parseTimestamp(dateStr: string): string | null {
   } catch {
     return null;
   }
-}
-
-function decodeHtmlEntities(text: string): string {
-  return text
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&#(\d+);/g, (match, code) => {
-      const num = Number(code);
-      return num >= 0 && num <= 0x10ffff ? String.fromCodePoint(num) : match;
-    })
-    .replace(/&#x([0-9a-fA-F]+);/g, (match, code) => {
-      const num = parseInt(code, 16);
-      return num >= 0 && num <= 0x10ffff ? String.fromCodePoint(num) : match;
-    })
-    .replace(/&amp;/g, "&");
 }
 
 function parseSearchActivityHtml(html: string): SearchActivity[] {
@@ -76,7 +60,7 @@ function parseSearchActivityHtml(html: string): SearchActivity[] {
       );
       if (searchMatch) {
         activities.push({
-          query: decodeHtmlEntities(searchMatch[2]),
+          query: decodeEntities(searchMatch[2]),
           url: searchMatch[1],
           timestamp,
         });
@@ -89,7 +73,7 @@ function parseSearchActivityHtml(html: string): SearchActivity[] {
       );
       if (visitMatch) {
         activities.push({
-          query: decodeHtmlEntities(visitMatch[2]),
+          query: decodeEntities(visitMatch[2]),
           url: visitMatch[1],
           timestamp,
         });
@@ -102,7 +86,7 @@ function parseSearchActivityHtml(html: string): SearchActivity[] {
         const query = plainSearchMatch[1].trim();
         if (query && !query.includes("GMT")) {
           activities.push({
-            query: decodeHtmlEntities(query),
+            query: decodeEntities(query),
             url: `https://www.google.com/search?q=${encodeURIComponent(query)}`,
             timestamp,
           });

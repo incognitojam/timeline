@@ -21,6 +21,7 @@ import {
 } from "../../db/queries";
 import { isPhoneNumberLike, normalizePhoneNumber } from "../../lib/phone";
 import { basename } from "path";
+import { decodeEntities } from "../../ingest/entities";
 
 // Call types from Android
 const CALL_TYPES: Record<number, string> = {
@@ -73,31 +74,13 @@ interface SmsEntry {
   status?: string;
 }
 
-export function decodeXmlText(value: string): string {
-  return value
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&#(\d+);/g, (match, code) => {
-      const num = Number(code);
-      return num >= 0 && num <= 0x10ffff ? String.fromCodePoint(num) : match;
-    })
-    .replace(/&#x([0-9a-fA-F]+);/g, (match, code) => {
-      const num = parseInt(code, 16);
-      return num >= 0 && num <= 0x10ffff ? String.fromCodePoint(num) : match;
-    })
-    // &amp; last so we don't double-decode entities that contained a literal "&amp;"
-    .replace(/&amp;/g, "&");
-}
-
 export function parseXmlAttributes(tag: string): Record<string, string> {
   const attrs: Record<string, string> = {};
   // Match attribute="value" or attribute='value'
   const attrRegex = /(\w+)=["']([^"']*)["']/g;
   let match;
   while ((match = attrRegex.exec(tag)) !== null) {
-    attrs[match[1]] = decodeXmlText(match[2]);
+    attrs[match[1]] = decodeEntities(match[2]);
   }
   return attrs;
 }
@@ -429,7 +412,7 @@ export async function importMms(
         const textParts: string[] = [];
         let partMatch;
         while ((partMatch = partRegex.exec(block)) !== null) {
-          const text = decodeXmlText(partMatch[1]);
+          const text = decodeEntities(partMatch[1]);
           if (text.trim()) {
             textParts.push(text);
           }
