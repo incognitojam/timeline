@@ -26,43 +26,59 @@ const legacyPollResultRawData = {
 
 describe("renderDiscordEvent", () => {
   test.each([
-{ raw: {
-      content: "Hello",
-      edited_timestamp: null,
-      _channel: {
-        id: "channel-1",
-        name: "general",
-        type: "GuildTextChat",
-        guild_id: "guild-1",
-        guild_name: "Example Server",
-        category: null,
-        recipients: [],
+    {
+      name: "renders a guild channel with its guild name from sync raw_data",
+      raw: {
+        content: "Hello",
+        edited_timestamp: null,
+        _channel: {
+          id: "channel-1",
+          name: "general",
+          type: "GuildTextChat",
+          guild_id: "guild-1",
+          guild_name: "Example Server",
+          category: null,
+          recipients: [],
+        },
       },
-    }, expected: { title: "Example Server #general", content: "Hello" } },
-{ raw: {
-      ...legacyRawData,
-      content: "Hello",
-      _channel: {
-        id: "channel-1",
-        name: "general",
-        type: "GuildTextChat",
-        guild_id: "guild-1",
-        guild_name: null,
-        category: null,
-        recipients: [],
+      expected: { title: "Example Server #general", content: "Hello" },
+    },
+    {
+      name: "renders a guild channel without a guild name from legacy parser raw_data",
+      raw: {
+        ...legacyRawData,
+        content: "Hello",
+        _channel: {
+          id: "channel-1",
+          name: "general",
+          type: "GuildTextChat",
+          guild_id: "guild-1",
+          guild_name: null,
+          category: null,
+          recipients: [],
+        },
       },
-    }, expected: { title: "general", content: "Hello" } },
-{ raw: {
-      content: "Hi Alice",
-      edited_timestamp: null,
-      _channel: { id: "dm-1", name: "Alice", type: "DirectMessage" },
-    }, expected: { title: "Alice", content: "Hi Alice" } },
-{ raw: {
-      content: "Hi everyone",
-      edited_timestamp: null,
-      _channel: { id: "group-1", name: "Alice, Bob", type: "GroupDirectMessage" },
-    }, expected: { title: "Alice, Bob", content: "Hi everyone" } }
-  ])("renders channel title $expected.title", ({ raw, expected }) => {
+      expected: { title: "general", content: "Hello" },
+    },
+    {
+      name: "renders a DM channel title",
+      raw: {
+        content: "Hi Alice",
+        edited_timestamp: null,
+        _channel: { id: "dm-1", name: "Alice", type: "DirectMessage" },
+      },
+      expected: { title: "Alice", content: "Hi Alice" },
+    },
+    {
+      name: "renders a group channel title",
+      raw: {
+        content: "Hi everyone",
+        edited_timestamp: null,
+        _channel: { id: "group-1", name: "Alice, Bob", type: "GroupDirectMessage" },
+      },
+      expected: { title: "Alice, Bob", content: "Hi everyone" },
+    },
+  ])("$name", ({ raw, expected }) => {
     expect(renderDiscordEvent(raw)).toEqual(expected);
   });
 

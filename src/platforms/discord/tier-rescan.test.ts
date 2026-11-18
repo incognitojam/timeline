@@ -143,7 +143,6 @@ describe("rescanReactionTiers", () => {
     expect(cursors["7d"]["channel-1"]).toBeDefined();
   });
 
-
   test("new earlier tier repairs the gap from an existing later-tier cursor", async () => {
     const messageTs = new Date(Date.now() - 2 * 3600_000);
     const messageId = dateToSnowflake(messageTs);
@@ -311,8 +310,6 @@ describe("rescanReactionTiers", () => {
     ]);
   });
 
-
-
   test("7d tier: changed count with no stored users → counts-only, no author capture", async () => {
     // 7d does not refresh authors on change. With no stored users, a changed
     // count writes the new counts only — no author fetch.
@@ -380,8 +377,6 @@ describe("rescanReactionTiers", () => {
       .get() as { c: number };
     expect(obsCount.c).toBe(0);
   });
-
-
 
   test("non-capture tier preserves earlier-captured authors on an unchanged set", async () => {
     // ~7.5d old → crosses only the 7d tier. The message already carries users
@@ -764,7 +759,6 @@ describe("rescan local band precheck", () => {
     expect(stats.channelsSkippedEmptyBand).toBe(1);
     expect(BigInt(cursors["24h"]["channel-1"])).toBeGreaterThan(BigInt(oldCursor));
   });
-
 
   test("finds in-band rows stored with the legacy '+00:00' timestamp tail", async () => {
     // Legacy Discord rows carry ".ssssss+00:00" or second-precision "+00:00"
