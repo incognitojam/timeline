@@ -1,5 +1,25 @@
 # Timeline
 
+## 0.21.0
+
+### Minor Changes
+
+- 65e2e4c: Recall no longer stores screenshots or OCR text of fullscreen video. While VLC, Infuse, a browser, or another player shows video fullscreen, the window is still recorded with its app, title, and position, without an image.
+
+### Patch Changes
+
+- e31e1f7: When the local media cache exceeds its limit, evict the oldest R2-backed media down to 90% of that limit to leave room for new media. More old media may remain offsite until opened and restored on demand.
+- 0d97309: Codex sync skips unchanged rollout files while tracking parent rollouts, and commits new events and attachments in short batches. Use the parser’s --full flag to reread all files.
+- 045d51f: Claude Code sync skips unchanged session and subagent logs, leaves unchanged title suppression untouched, and commits new events and attachments in short batches. Use the parser’s --full flag to reread all files.
+- 0db77c9: Stop waiting after the final failed Discord request attempt, and use a maintained attachment-recovery index instead of scanning recent message JSON on every sync.
+- 81dd9b2: Avoid scanning Discord message history on every sync when looking for polls needing voter capture. The first start builds the pending-poll index once.
+- 636d43d: Show refused Discord poll voters as unavailable instead of recording an empty vote list. Stop retrying permanent refusals and rotate transient failures so older polls can still be captured.
+- 107479b: Skype imports now decode numeric character entities, so emoji and other characters written as `&#128578;` appear as the character in message text and names. Events already imported are unchanged.
+- 9731901: Skip the full media eviction inventory when a fresh filesystem size check shows the cache is below its limit, so idle maintenance releases other sync jobs sooner.
+  
+  Scheduled runs record an estimated cache size when skipping inventory; exact cache and evictable totals are recorded only on full runs. They run the full inventory at least on the first scheduled run after six hours to catch filesystem accounting differences.
+- 7ed40aa: Google Health syncs now keep each event's id and leave unchanged events alone, so links to Google Health events stay valid and syncs with nothing new finish quickly. The sync status reports added and updated events separately.
+
 ## 0.20.0
 
 ### Minor Changes
