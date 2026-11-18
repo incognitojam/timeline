@@ -53,10 +53,6 @@ function makeViewport() {
   return el;
 }
 
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function deferred<T>() {
   let resolve: (value: T) => void = () => {};
   const promise = new Promise<T>((res) => {
@@ -325,208 +321,220 @@ describe("createMessageScroller", () => {
     await waitFor(() => expect(result.isAtEnd()).toBe(true));
   });
 
-  it("auto-refetches newer messages from the newest loaded item cursor", async () => {
-    const loadAfter = vi.fn(async (cursor: string): Promise<MessagePageDelta<number>> => {
-      return cursor === "c2"
-        ? { items: [3], hasMore: false, nextCursor: null }
-        : { items: [], hasMore: false, nextCursor: null };
+  describe("auto-refetch clock", () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it("auto-refetches newer messages from the newest loaded item cursor", async () => {
+      const loadAfter = vi.fn(async (cursor: string): Promise<MessagePageDelta<number>> => {
+        return cursor === "c2"
+          ? { items: [3], hasMore: false, nextCursor: null }
+          : { items: [], hasMore: false, nextCursor: null };
+      });
+      const { result, cleanup } = renderHook(() =>
+        createMessageScroller<number>({
+          key: () => "k",
+          loadInitial: async () => page({ items: [1, 2] }),
+          loadBefore: async () => ({ items: [], hasMore: false, nextCursor: null }),
+          loadAfter,
+          autoRefetch: {
+            intervalMs: 5,
+            getCursor: (item) => `c${item}`,
+          },
+        })
+      );
+      result.viewportRef(makeViewport());
+
+      await vi.advanceTimersByTimeAsync(32);
+      expect(result.items()).toEqual([1, 2, 3]);
+
+      expect(loadAfter).toHaveBeenCalledWith("c2");
+      cleanup();
     });
-    const { result, cleanup } = renderHook(() =>
-      createMessageScroller<number>({
-        key: () => "k",
-        loadInitial: async () => page({ items: [1, 2] }),
-        loadBefore: async () => ({ items: [], hasMore: false, nextCursor: null }),
-        loadAfter,
-        autoRefetch: {
-          intervalMs: 5,
-          getCursor: (item) => `c${item}`,
-        },
-      })
-    );
-    result.viewportRef(makeViewport());
 
-    await waitFor(() => expect(result.items()).toEqual([1, 2, 3]));
+    it("keeps the viewport pinned to the end when auto-refetched messages arrive at the live edge", async () => {
+      let scrollHeight = 100;
+      const viewport = makeViewport();
+      Object.defineProperty(viewport, "scrollHeight", { get: () => scrollHeight, configurable: true });
+      Object.defineProperty(viewport, "clientHeight", { value: 100, configurable: true });
+      viewport.scrollTop = 0;
+      const loadAfter = vi.fn(async (cursor: string): Promise<MessagePageDelta<number>> => {
+        if (cursor !== "c2") return { items: [], hasMore: false, nextCursor: null };
+        scrollHeight = 150;
+        return { items: [3], hasMore: false, nextCursor: null };
+      });
+      const { result, cleanup } = renderHook(() =>
+        createMessageScroller<number>({
+          key: () => "k",
+          loadInitial: async () => page({ items: [1, 2] }),
+          loadBefore: async () => ({ items: [], hasMore: false, nextCursor: null }),
+          loadAfter,
+          autoRefetch: {
+            intervalMs: 5,
+            getCursor: (item) => `c${item}`,
+          },
+        })
+      );
+      result.viewportRef(viewport);
 
-    expect(loadAfter).toHaveBeenCalledWith("c2");
-    cleanup();
-  });
-
-  it("keeps the viewport pinned to the end when auto-refetched messages arrive at the live edge", async () => {
-    let scrollHeight = 100;
-    const viewport = makeViewport();
-    Object.defineProperty(viewport, "scrollHeight", { get: () => scrollHeight, configurable: true });
-    Object.defineProperty(viewport, "clientHeight", { value: 100, configurable: true });
-    viewport.scrollTop = 0;
-    const loadAfter = vi.fn(async (cursor: string): Promise<MessagePageDelta<number>> => {
-      if (cursor !== "c2") return { items: [], hasMore: false, nextCursor: null };
-      scrollHeight = 150;
-      return { items: [3], hasMore: false, nextCursor: null };
-    });
-    const { result, cleanup } = renderHook(() =>
-      createMessageScroller<number>({
-        key: () => "k",
-        loadInitial: async () => page({ items: [1, 2] }),
-        loadBefore: async () => ({ items: [], hasMore: false, nextCursor: null }),
-        loadAfter,
-        autoRefetch: {
-          intervalMs: 5,
-          getCursor: (item) => `c${item}`,
-        },
-      })
-    );
-    result.viewportRef(viewport);
-
-    await waitFor(() => expect(result.items()).toEqual([1, 2, 3]));
-    await waitFor(() => {
+      await vi.advanceTimersByTimeAsync(32);
+      expect(result.items()).toEqual([1, 2, 3]);
       expect(viewport.scrollTo).toHaveBeenCalledWith({ top: 150, behavior: "instant" });
+
+      cleanup();
     });
 
-    cleanup();
-  });
+    it("preserves scrollTop when auto-refetched messages arrive while the reader is away from the end", async () => {
+      let scrollHeight = 300;
+      const viewport = makeViewport();
+      Object.defineProperty(viewport, "scrollHeight", { get: () => scrollHeight, configurable: true });
+      Object.defineProperty(viewport, "clientHeight", { value: 100, configurable: true });
+      viewport.scrollTop = 50;
+      const loadAfter = vi.fn(async (cursor: string): Promise<MessagePageDelta<number>> => {
+        if (cursor !== "c2") return { items: [], hasMore: false, nextCursor: null };
+        scrollHeight = 350;
+        viewport.scrollTop = 75; // Simulate layout moving the scroll position during append.
+        return { items: [3], hasMore: false, nextCursor: null };
+      });
+      const { result, cleanup } = renderHook(() =>
+        createMessageScroller<number>({
+          key: () => "k",
+          loadInitial: async () => page({ items: [1, 2] }),
+          loadBefore: async () => ({ items: [], hasMore: false, nextCursor: null }),
+          loadAfter,
+          autoRefetch: {
+            intervalMs: 5,
+            getCursor: (item) => `c${item}`,
+          },
+        })
+      );
+      result.viewportRef(viewport);
 
-  it("preserves scrollTop when auto-refetched messages arrive while the reader is away from the end", async () => {
-    let scrollHeight = 300;
-    const viewport = makeViewport();
-    Object.defineProperty(viewport, "scrollHeight", { get: () => scrollHeight, configurable: true });
-    Object.defineProperty(viewport, "clientHeight", { value: 100, configurable: true });
-    viewport.scrollTop = 50;
-    const loadAfter = vi.fn(async (cursor: string): Promise<MessagePageDelta<number>> => {
-      if (cursor !== "c2") return { items: [], hasMore: false, nextCursor: null };
-      scrollHeight = 350;
-      return { items: [3], hasMore: false, nextCursor: null };
+      await vi.advanceTimersByTimeAsync(32);
+      expect(result.items()).toEqual([1, 2, 3]);
+      await vi.advanceTimersByTimeAsync(32);
+
+      expect(viewport.scrollTop).toBe(50);
+      expect(viewport.scrollTo).not.toHaveBeenCalled();
+      cleanup();
     });
-    const { result, cleanup } = renderHook(() =>
-      createMessageScroller<number>({
-        key: () => "k",
-        loadInitial: async () => page({ items: [1, 2] }),
-        loadBefore: async () => ({ items: [], hasMore: false, nextCursor: null }),
-        loadAfter,
-        autoRefetch: {
-          intervalMs: 5,
-          getCursor: (item) => `c${item}`,
-        },
-      })
-    );
-    result.viewportRef(viewport);
 
-    await waitFor(() => expect(result.items()).toEqual([1, 2, 3]));
-    await wait(20);
+    it("does not auto-refetch while a newer page is already known", async () => {
+      const loadAfter = vi.fn(
+        async (): Promise<MessagePageDelta<number>> => ({ items: [], hasMore: false, nextCursor: null })
+      );
+      const { result, cleanup } = renderHook(() =>
+        createMessageScroller<number>({
+          key: () => "k",
+          loadInitial: async () => page({ items: [1, 2], hasAfter: true, afterCursor: "a1" }),
+          loadBefore: async () => ({ items: [], hasMore: false, nextCursor: null }),
+          loadAfter,
+          autoRefetch: {
+            intervalMs: 5,
+            getCursor: (item) => `c${item}`,
+          },
+        })
+      );
+      result.viewportRef(makeViewport());
 
-    expect(viewport.scrollTop).toBe(50);
-    expect(viewport.scrollTo).not.toHaveBeenCalled();
-    cleanup();
-  });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(result.isLoading()).toBe(false);
+      await vi.advanceTimersByTimeAsync(32);
 
-  it("does not auto-refetch while a newer page is already known", async () => {
-    const loadAfter = vi.fn(
-      async (): Promise<MessagePageDelta<number>> => ({ items: [], hasMore: false, nextCursor: null })
-    );
-    const { result, cleanup } = renderHook(() =>
-      createMessageScroller<number>({
-        key: () => "k",
-        loadInitial: async () => page({ items: [1, 2], hasAfter: true, afterCursor: "a1" }),
-        loadBefore: async () => ({ items: [], hasMore: false, nextCursor: null }),
-        loadAfter,
-        autoRefetch: {
-          intervalMs: 5,
-          getCursor: (item) => `c${item}`,
-        },
-      })
-    );
-    result.viewportRef(makeViewport());
-
-    await waitFor(() => expect(result.isLoading()).toBe(false));
-    await wait(20);
-
-    expect(loadAfter).not.toHaveBeenCalled();
-    cleanup();
-  });
-
-  it("uses the dedicated auto-refetch loader when provided", async () => {
-    const loadAfter = vi.fn(
-      async (): Promise<MessagePageDelta<number>> => ({ items: [], hasMore: false, nextCursor: null })
-    );
-    const loadFreshAfter = vi.fn(
-      async (cursor: string): Promise<MessagePageDelta<number>> => cursor === "c2"
-        ? { items: [3], hasMore: false, nextCursor: null }
-        : { items: [], hasMore: false, nextCursor: null }
-    );
-    const { result, cleanup } = renderHook(() =>
-      createMessageScroller<number>({
-        key: () => "k",
-        loadInitial: async () => page({ items: [1, 2] }),
-        loadBefore: async () => ({ items: [], hasMore: false, nextCursor: null }),
-        loadAfter,
-        autoRefetch: {
-          intervalMs: 5,
-          getCursor: (item) => `c${item}`,
-          loadAfter: loadFreshAfter,
-        },
-      })
-    );
-    result.viewportRef(makeViewport());
-
-    await waitFor(() => expect(result.items()).toEqual([1, 2, 3]));
-
-    expect(loadFreshAfter).toHaveBeenCalledWith("c2");
-    expect(loadAfter).not.toHaveBeenCalled();
-    cleanup();
-  });
-
-  it("does not auto-refetch when the newest item has no cursor", async () => {
-    const loadAfter = vi.fn(
-      async (): Promise<MessagePageDelta<number>> => ({ items: [], hasMore: false, nextCursor: null })
-    );
-    const { result, cleanup } = renderHook(() =>
-      createMessageScroller<number>({
-        key: () => "k",
-        loadInitial: async () => page({ items: [1, 2] }),
-        loadBefore: async () => ({ items: [], hasMore: false, nextCursor: null }),
-        loadAfter,
-        autoRefetch: {
-          intervalMs: 5,
-          getCursor: () => null,
-        },
-      })
-    );
-    result.viewportRef(makeViewport());
-
-    await waitFor(() => expect(result.isLoading()).toBe(false));
-    await wait(20);
-
-    expect(loadAfter).not.toHaveBeenCalled();
-    cleanup();
-  });
-
-  it("ignores stale auto-refetch responses after the key changes", async () => {
-    const [key, setKey] = createSignal("a");
-    const staleAfter = deferred<MessagePageDelta<number>>();
-    const loadAfter = vi.fn(async (cursor: string): Promise<MessagePageDelta<number>> => {
-      if (cursor === "c2") return staleAfter.promise;
-      return { items: [], hasMore: false, nextCursor: null };
+      expect(loadAfter).not.toHaveBeenCalled();
+      cleanup();
     });
-    const { result, cleanup } = renderHook(() =>
-      createMessageScroller<number>({
-        key,
-        loadInitial: async () => key() === "a" ? page({ items: [1, 2] }) : page({ items: [10, 20] }),
-        loadBefore: async () => ({ items: [], hasMore: false, nextCursor: null }),
-        loadAfter,
-        autoRefetch: {
-          intervalMs: 5,
-          getCursor: (item) => `c${item}`,
-        },
-      })
-    );
-    result.viewportRef(makeViewport());
 
-    await waitFor(() => expect(loadAfter).toHaveBeenCalledWith("c2"));
-    setKey("b");
-    await waitFor(() => expect(result.items()).toEqual([10, 20]));
+    it("uses the dedicated auto-refetch loader when provided", async () => {
+      const loadAfter = vi.fn(
+        async (): Promise<MessagePageDelta<number>> => ({ items: [], hasMore: false, nextCursor: null })
+      );
+      const loadFreshAfter = vi.fn(
+        async (cursor: string): Promise<MessagePageDelta<number>> => cursor === "c2"
+          ? { items: [3], hasMore: false, nextCursor: null }
+          : { items: [], hasMore: false, nextCursor: null }
+      );
+      const { result, cleanup } = renderHook(() =>
+        createMessageScroller<number>({
+          key: () => "k",
+          loadInitial: async () => page({ items: [1, 2] }),
+          loadBefore: async () => ({ items: [], hasMore: false, nextCursor: null }),
+          loadAfter,
+          autoRefetch: {
+            intervalMs: 5,
+            getCursor: (item) => `c${item}`,
+            loadAfter: loadFreshAfter,
+          },
+        })
+      );
+      result.viewportRef(makeViewport());
 
-    staleAfter.resolve({ items: [3], hasMore: false, nextCursor: null });
-    await wait(20);
+      await vi.advanceTimersByTimeAsync(32);
+      expect(result.items()).toEqual([1, 2, 3]);
 
-    expect(result.items()).toEqual([10, 20]);
-    cleanup();
+      expect(loadFreshAfter).toHaveBeenCalledWith("c2");
+      expect(loadAfter).not.toHaveBeenCalled();
+      cleanup();
+    });
+
+    it("does not auto-refetch when the newest item has no cursor", async () => {
+      const loadAfter = vi.fn(
+        async (): Promise<MessagePageDelta<number>> => ({ items: [], hasMore: false, nextCursor: null })
+      );
+      const { result, cleanup } = renderHook(() =>
+        createMessageScroller<number>({
+          key: () => "k",
+          loadInitial: async () => page({ items: [1, 2] }),
+          loadBefore: async () => ({ items: [], hasMore: false, nextCursor: null }),
+          loadAfter,
+          autoRefetch: {
+            intervalMs: 5,
+            getCursor: () => null,
+          },
+        })
+      );
+      result.viewportRef(makeViewport());
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(result.isLoading()).toBe(false);
+      await vi.advanceTimersByTimeAsync(32);
+
+      expect(loadAfter).not.toHaveBeenCalled();
+      cleanup();
+    });
+
+    it("ignores stale auto-refetch responses after the key changes", async () => {
+      const [key, setKey] = createSignal("a");
+      const staleAfter = deferred<MessagePageDelta<number>>();
+      const loadAfter = vi.fn(async (cursor: string): Promise<MessagePageDelta<number>> => {
+        if (cursor === "c2") return staleAfter.promise;
+        return { items: [], hasMore: false, nextCursor: null };
+      });
+      const { result, cleanup } = renderHook(() =>
+        createMessageScroller<number>({
+          key,
+          loadInitial: async () => key() === "a" ? page({ items: [1, 2] }) : page({ items: [10, 20] }),
+          loadBefore: async () => ({ items: [], hasMore: false, nextCursor: null }),
+          loadAfter,
+          autoRefetch: {
+            intervalMs: 5,
+            getCursor: (item) => `c${item}`,
+          },
+        })
+      );
+      result.viewportRef(makeViewport());
+
+      await vi.advanceTimersByTimeAsync(5);
+      expect(loadAfter).toHaveBeenCalledWith("c2");
+      setKey("b");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(result.items()).toEqual([10, 20]);
+
+      staleAfter.resolve({ items: [3], hasMore: false, nextCursor: null });
+      await vi.advanceTimersByTimeAsync(32);
+
+      expect(result.items()).toEqual([10, 20]);
+      cleanup();
+    });
   });
 });

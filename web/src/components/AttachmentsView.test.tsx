@@ -229,6 +229,12 @@ describe("AttachmentsView", () => {
     expect(view.queryByText("Eligible described")).not.toBeInTheDocument();
     expect(await view.findByText("80% of eligible files")).toBeInTheDocument();
 
+    const stats = await view.findByText("Unique files");
+    const history = view.getByText("Description backlog");
+    const filters = view.getByRole("radiogroup", { name: "Media type" });
+    expect(stats.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(history.compareDocumentPosition(filters) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
     // The gallery below is unaffected.
     expect(await view.findByText("May 2026")).toBeInTheDocument();
   });
