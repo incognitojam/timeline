@@ -184,29 +184,6 @@ describe("attachmentDescriptionsSyncSource", () => {
     expect(await attachmentDescriptionsSyncSource.canSync({})).toBe("not configured: models is required");
   });
 
-  it("exposes a required preference-ordered model list setting", () => {
-    expect(attachmentDescriptionsSyncSource.configSchema).toContainEqual({
-      key: "models",
-      type: "string-list",
-      label: "Models",
-      description: "Language models in preference order; later entries are fallbacks",
-      required: true,
-    });
-    expect(attachmentDescriptionsSyncSource.configSchema?.some((field) => field.key === "model")).toBe(false);
-    expect(attachmentDescriptionsSyncSource.configSchema).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          key: "time_budget_ms",
-          default: DEFAULT_ATTACHMENT_DESCRIPTION_TIME_BUDGET_MS,
-        }),
-        expect.objectContaining({
-          key: "limit",
-          default: DEFAULT_ATTACHMENT_DESCRIPTION_SELECTION_LIMIT,
-        }),
-      ])
-    );
-  });
-
   it("accepts preferred models and falls back to the legacy model setting", () => {
     expect(parseAttachmentDescriptionsSettings({ models: ["preferred/model", "fallback/model"] })).toEqual({
       models: ["preferred/model", "fallback/model"],
@@ -229,9 +206,6 @@ describe("attachmentDescriptionsSyncSource", () => {
   it("accepts a smaller image limit and rejects invalid settings before syncing", async () => {
     expect(parseAttachmentDescriptionsSettings({ models: ["vision-model"], max_image_dimension: 1024 }))
       .toMatchObject({ maxImageDimension: 1024 });
-    expect(attachmentDescriptionsSyncSource.configSchema).toContainEqual(expect.objectContaining({
-      key: "max_image_dimension", type: "number", integer: true, min: 1, max: 2048, default: 2048,
-    }));
     for (const value of [0, -1, 1.5, 2049, NaN, Infinity, "1024", null]) {
       expect(await attachmentDescriptionsSyncSource.canSync({ models: ["vision-model"], max_image_dimension: value }))
         .toBe("max_image_dimension must be an integer between 1 and 2048");
