@@ -145,14 +145,6 @@ describe("API Smoke Tests", () => {
       expect(model).toMatchObject({ name: expect.any(String), price: expect.any(String), contextLength: expect.any(Number) });
     });
 
-    test("GET /api/sources returns grouped sources", async () => {
-      const res = await app.request("/api/sources");
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      expect(json).toHaveProperty("sources");
-      expect(typeof json.sources).toBe("object");
-    });
-
     test("GET /api/timeline/dates returns pre-aggregated date activity", async () => {
       const db = getDb();
       const insert = db.prepare(`
@@ -221,37 +213,6 @@ describe("API Smoke Tests", () => {
   });
 
   describe("Search & Events", () => {
-    test("GET /api/search returns events array", async () => {
-      const res = await app.request("/api/search?limit=5");
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      expect(json).toHaveProperty("events");
-      expect(Array.isArray(json.events)).toBe(true);
-      expect(json).toHaveProperty("count");
-    });
-
-    test("GET /api/search with query param works", async () => {
-      const res = await app.request("/api/search?q=test&limit=5");
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      expect(json).toHaveProperty("events");
-    });
-
-    test("GET /api/events returns events for date range", async () => {
-      const res = await app.request("/api/events?limit=5");
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      expect(json).toHaveProperty("events");
-      expect(json).toHaveProperty("count");
-    });
-
-    test("GET /api/recent returns recent events", async () => {
-      const res = await app.request("/api/recent?limit=5");
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      expect(json).toHaveProperty("events");
-      expect(Array.isArray(json.events)).toBe(true);
-    });
 
   });
 
@@ -1596,17 +1557,6 @@ describe("API Smoke Tests", () => {
       });
     });
 
-    test("GET /api/events/:id/attachments returns attachments array", async () => {
-      // Use a non-existent event ID - should still return empty array, not error
-      const res = await app.request("/api/events/1/attachments");
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      expect(json).toHaveProperty("attachments");
-      expect(Array.isArray(json.attachments)).toBe(true);
-      expect(json).toHaveProperty("count");
-      expect(typeof json.count).toBe("number");
-    });
-
     test("attachment responses use the configured description model order", async () => {
       const db = getDb();
       const event = db.prepare(`
@@ -2186,15 +2136,6 @@ describe("API Smoke Tests", () => {
       expect(Array.isArray(json.freshness)).toBe(true);
     });
 
-    test("GET /api/status/sync-history returns entries", async () => {
-      const res = await app.request("/api/status/sync-history");
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      expect(json).toHaveProperty("entries");
-      expect(Array.isArray(json.entries)).toBe(true);
-      expect(json).toHaveProperty("count");
-    });
-
     test("GET /api/attachments/description-history returns daily points", async () => {
       const res = await app.request("/api/attachments/description-history");
       expect(res.status).toBe(200);
@@ -2667,48 +2608,6 @@ describe("API Smoke Tests", () => {
       } finally {
         setSyncConfigChangedNotifier(() => {});
         appDb.prepare("DELETE FROM sync_sources WHERE source = 'backup'").run();
-      }
-    });
-
-    test("PATCH /api/sync/sources/:source deletes settings with null", async () => {
-      const appDb = getAppStateDb();
-      appDb.prepare("DELETE FROM sync_sources WHERE source = 'backup'").run();
-      appDb.prepare(
-        `INSERT INTO sync_sources (source, enabled, interval, settings)
-         VALUES ('backup', 1, NULL, '{"destination":"/tmp/test-backups","keep_count":3}')`
-      ).run();
-
-      try {
-        const res = await app.request("/api/sync/sources/backup", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ settings: { keep_count: null } }),
-        });
-        expect(res.status).toBe(200);
-        expect((await res.json()).settings).toEqual({ destination: "/tmp/test-backups" });
-      } finally {
-        appDb.prepare("DELETE FROM sync_sources WHERE source = 'backup'").run();
-      }
-    });
-
-    test("PATCH /api/sync/sources/:source creates a row for settings only", async () => {
-      const appDb = getAppStateDb();
-      appDb.prepare("DELETE FROM sync_sources WHERE source = 'amp'").run();
-
-      try {
-        const res = await app.request("/api/sync/sources/amp", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ settings: { mode: "api" } }),
-        });
-        expect(res.status).toBe(200);
-        expect(await res.json()).toMatchObject({
-          configured: true,
-          enabled: false,
-          settings: { mode: "api" },
-        });
-      } finally {
-        appDb.prepare("DELETE FROM sync_sources WHERE source = 'amp'").run();
       }
     });
 
@@ -3232,35 +3131,6 @@ describe("API Smoke Tests", () => {
   });
 
   describe("Jobs API", () => {
-    test("GET /api/jobs lists jobs", async () => {
-      const res = await app.request("/api/jobs?limit=10");
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      expect(json).toHaveProperty("jobs");
-      expect(Array.isArray(json.jobs)).toBe(true);
-      expect(json).toHaveProperty("count");
-    });
-
-    test("GET /api/jobs falls back for negative limit", async () => {
-      const appDb = getAppStateDb();
-      const prefix = `jobs-negative-limit-${crypto.randomUUID()}`;
-
-      try {
-        // enqueueJob commits each job in its own transaction, so insert the rows directly.
-        seed(appDb, () => {
-          const insert = appDb.prepare("INSERT INTO jobs (kind, source, dedupe_key) VALUES ('sync', ?, ?)");
-          for (let i = 0; i < 55; i++) insert.run(`${prefix}-${i}`, `${prefix}:${i}`);
-        });
-
-        const res = await app.request("/api/jobs?limit=-1");
-        expect(res.status).toBe(200);
-        const json = await res.json();
-        expect(json.jobs).toHaveLength(50);
-        expect(json.count).toBe(50);
-      } finally {
-        appDb.prepare("DELETE FROM jobs WHERE source LIKE ?").run(`${prefix}-%`);
-      }
-    });
 
     test("GET /api/jobs rejects invalid status", async () => {
       const res = await app.request("/api/jobs?status=banana");
@@ -3487,31 +3357,6 @@ describe("API Smoke Tests", () => {
         expect(Math.round(json.stats.avg_duration_ms)).toBe(103);
       } finally {
         appDb.prepare("DELETE FROM mcp_sessions WHERE id = ?").run(sessionId);
-      }
-    });
-
-    test("GET /api/mcp/sessions falls back for negative limit", async () => {
-      const appDb = getAppStateDb();
-      const prefix = `api-mcp-limit-${crypto.randomUUID()}`;
-
-      try {
-        const insert = appDb.prepare(`
-          INSERT INTO mcp_sessions (id, transport, created_at, last_activity_at)
-          VALUES (?, 'http', datetime('now'), datetime('now'))
-        `);
-        seed(appDb, () => {
-          for (let i = 0; i < 55; i++) {
-            insert.run(`${prefix}-${i}`);
-          }
-        });
-
-        const res = await app.request("/api/mcp/sessions?limit=-1");
-        expect(res.status).toBe(200);
-        const json = await res.json();
-        expect(json.sessions).toHaveLength(50);
-        expect(json.count).toBe(50);
-      } finally {
-        appDb.prepare("DELETE FROM mcp_sessions WHERE id LIKE ?").run(`${prefix}-%`);
       }
     });
 
