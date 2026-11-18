@@ -1,7 +1,6 @@
 import {
   canShiftHealthWindowForward,
   formatHealthDateOnly,
-  type HealthDateRange,
   type HealthWindow,
   type HealthWindowView,
   parseHealthDateOnly,
@@ -279,12 +278,6 @@ const validSections = new Set<Section>(["overview", "sleep", "heart", "activity"
 // URL Period Parsing and Building
 // ============================================================================
 
-export type ParsedPeriod = HealthWindow;
-
-export function getPeriodDateRange(period: ParsedPeriod): HealthDateRange {
-  return period.range;
-}
-
 function today(): string {
   return formatHealthDateOnly(new Date());
 }
@@ -294,14 +287,7 @@ function getDefaultUrlPeriod(): DashboardHealthWindow {
   return { ...window, view: "month" };
 }
 
-/**
- * Parse URL search params to determine view and period
- */
-export function parseUrlPeriod(params: Record<string, string | string[] | undefined>): ParsedPeriod {
-  return resolveUrlPeriod(params);
-}
-
-function resolveUrlPeriod(
+export function resolveUrlPeriod(
   params: Record<string, string | string[] | undefined>
 ): DashboardHealthWindow {
   const canonical = parseHealthWindow({

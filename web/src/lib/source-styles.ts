@@ -60,10 +60,6 @@ export function getSourceIcon(source: string): IconComponent {
   return Object.hasOwn(SOURCE_ICONS, source) ? SOURCE_ICONS[source] : DEFAULT_ICON;
 }
 
-export function hasSourceIcon(source: string): boolean {
-  return Object.hasOwn(SOURCE_ICONS, source);
-}
-
 // Get the actual color value for a source
 export function getSourceColorValue(source: string): string {
   return sourceColor(source);

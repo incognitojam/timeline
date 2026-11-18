@@ -3,9 +3,8 @@ import { resolveHealthWindow } from "@shared/health-periods";
 import {
   formatComparison,
   formatSleepDurationComparison,
-  getPeriodDateRange,
   getPeriodTitle,
-  parseUrlPeriod,
+  resolveUrlPeriod,
 } from "./HealthDashboard";
 
 describe("health dashboard period title", () => {
@@ -19,11 +18,11 @@ describe("health dashboard period title", () => {
   });
 
   it("formats the selected ISO week without using fetched stats", () => {
-    const range = getPeriodDateRange(resolveHealthWindow({
+    const range = resolveHealthWindow({
       view: "week",
       mode: "calendar",
       anchor: "2026-07-01",
-    }));
+    }).range;
 
     expect(range).toEqual({ start: "2026-06-29", end: "2026-07-05" });
     expect(getPeriodTitle("week", "calendar", range.start, range.end, "en-GB")).toBe(
@@ -32,18 +31,18 @@ describe("health dashboard period title", () => {
   });
 
   it("formats date-only month ranges as calendar dates", () => {
-    const range = getPeriodDateRange(resolveHealthWindow({
+    const range = resolveHealthWindow({
       view: "month",
       mode: "calendar",
       anchor: "2026-07-01",
-    }));
+    }).range;
 
     expect(range).toEqual({ start: "2026-07-01", end: "2026-07-31" });
     expect(getPeriodTitle("month", "calendar", range.start, range.end, "en-GB")).toBe("July");
   });
 
   it("shows the full range for a recent month", () => {
-    const period = parseUrlPeriod({
+    const period = resolveUrlPeriod({
       view: "month",
       mode: "recent",
       anchor: "2026-07-02",
@@ -55,7 +54,7 @@ describe("health dashboard period title", () => {
   });
 
   it("falls back instead of crashing on an invalid canonical window", () => {
-    expect(parseUrlPeriod({
+    expect(resolveUrlPeriod({
       view: "month",
       mode: "calendar",
       anchor: "2026-02-30",
