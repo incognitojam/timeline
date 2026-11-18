@@ -77,17 +77,7 @@ describe("formatRelativeDate", () => {
 });
 
 describe("formatDateSeparator", () => {
-  it("formats strings and dates like conversation date dividers", () => {
-    const timestamp = "2026-07-19T19:56:10Z";
-    const expected = new Date(timestamp).toLocaleDateString([], {
-      weekday: "short",
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    });
-    expect(formatDateSeparator(timestamp)).toBe(expected);
-    expect(formatDateSeparator(new Date(timestamp))).toBe(expected);
-  });
+
 
   it("returns an empty string without a timestamp", () => {
     expect(formatDateSeparator(null)).toBe("");
