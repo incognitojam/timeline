@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { getAppStateDb, getSyncState } from "../db/app-state";
 import { getDb, initDb } from "../db/schema";
 import { runSourceOnce, SourceRunError } from "./once";
@@ -188,7 +188,7 @@ describe("sync:once CLI", () => {
     return { stdout, stderr, exitCode };
   }
 
-  it("gives the source only sandbox paths and explicit variables", async () => {
+  it("gives the source sandbox paths and resolves settings against the caller", async () => {
     // Bun loads .env from the working directory unless told not to.
     writeFileSync(join(dir, ".env"), "SYNC_ONCE_DOTENV_SECRET=leaked\n");
     const stateDir = join(dir, "state");
@@ -210,7 +210,7 @@ describe("sync:once CLI", () => {
         "--set",
         `binary=${sidecar}`,
         "--set",
-        `state_dir=${stateDir}`,
+        "state_dir=state",
         "--env",
         "EXPLICIT=1",
         "--json",
@@ -218,7 +218,9 @@ describe("sync:once CLI", () => {
       { SYNC_ONCE_PARENT_SECRET: "leaked" },
     );
     expect(exitCode).toBe(0);
-    expect(JSON.parse(stdout)).toMatchObject({ source: "google-messages", result: { success: true } });
+    const report = JSON.parse(stdout);
+    expect(report).toMatchObject({ source: "google-messages", result: { success: true } });
+    expect(report.config.state_dir).toBe(realpathSync(stateDir));
     const childEnv = Object.fromEntries(
       readFileSync(envDump, "utf8")
         .trim()
@@ -233,7 +235,7 @@ describe("sync:once CLI", () => {
     expect(existsSync(join(sandbox, "app-state.db"))).toBe(true);
   });
 
-  it("keeps .env from every Bun process a source starts, and resolves --set against the caller", async () => {
+  it("keeps the caller's .env out of descendant Bun processes", async () => {
     writeFileSync(join(dir, ".env"), "SYNC_ONCE_DOTENV_SECRET=leaked\n");
     const bin = join(dir, "bin");
     mkdirSync(bin);
@@ -256,12 +258,6 @@ describe("sync:once CLI", () => {
     ]);
     expect(exitCode).toBe(0);
     expect(readFileSync(seen, "utf8").trim()).toBe("absent");
-
-    const claude = join(dir, "sessions");
-    mkdirSync(claude);
-    const relative = await cli(["claude-code", "--sandbox", join(dir, "s2"), "--set", "path=sessions", "--set", "account=alice", "--json"]);
-    expect(relative.exitCode).toBe(0);
-    expect(JSON.parse(relative.stdout).config.path).toEndWith(join(basename(dir), "sessions"));
   });
 
   it("refuses config that sends inbox writes outside the sandbox", async () => {
@@ -347,19 +343,17 @@ describe("sync:once CLI", () => {
   });
 
   it("dry-runs against copies, leaving --db untouched, with supplied state and fixture files", async () => {
-    // thumbhash's canSync initialises the database it is given.
+    // The WAL-copy test above exercises a canSync that writes to the copied DB.
+    // This run covers state and credential fixtures with a caller-owned DB path.
     const db = join(dir, "scratch", "timeline.db");
-    const first = await cli(["thumbhash", "--dry-run", "--db", db, "--sandbox", join(dir, "s1"), "--json"]);
-    expect(first.exitCode).toBe(0);
-    expect(existsSync(db)).toBe(false);
-    expect(existsSync(join(dir, "scratch"))).toBe(false);
-
     const stateFile = join(dir, "state.json");
     writeFileSync(stateFile, JSON.stringify({ "example-key": { cursor: 7 } }));
     const fixture = join(dir, "github.json");
     writeFileSync(fixture, JSON.stringify({ token: "synthetic", username: "alice" }));
     const second = await cli([
       "github",
+      "--db",
+      db,
       "--dry-run",
       "--sandbox",
       join(dir, "s2"),
@@ -369,6 +363,9 @@ describe("sync:once CLI", () => {
       `.config/timeline/github.json=${fixture}`,
       "--json",
     ]);
+    expect(second.exitCode).toBe(0);
+    expect(existsSync(db)).toBe(false);
+    expect(existsSync(join(dir, "scratch"))).toBe(false);
     expect(JSON.parse(second.stdout)).toMatchObject({ cannotSync: null, state: { "example-key": { cursor: 7 } } });
 
     const escape = await cli(["github", "--sandbox", join(dir, "s3"), "--home-file", `../outside=${fixture}`]);
@@ -382,9 +379,9 @@ describe("sync:once CLI", () => {
       `[database]\npath = "${join(dir, "elsewhere.db")}"\n[embeddings]\nbase_url = "http://127.0.0.1:9/v1"\nmodel = "fake"\ndimensions = 3\n`,
     );
     const args = ["embeddings", "--dry-run", "--json"];
-    const without = await cli([...args, "--sandbox", join(dir, "s1")]);
-    expect(JSON.parse(without.stdout).cannotSync).toMatch(/not configured/);
+    // The source test covers refusal without config; this case covers CLI copying.
     const withConfig = await cli([...args, "--sandbox", join(dir, "s2"), "--config", config]);
+    expect(withConfig.exitCode).toBe(0);
     expect(JSON.parse(withConfig.stdout).cannotSync).toBeNull();
     expect(existsSync(join(dir, "elsewhere.db"))).toBe(false);
   });

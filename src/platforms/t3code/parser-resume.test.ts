@@ -10,9 +10,9 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { DEFAULT_BOUNDED_WRITER_LIMITS } from "../../db/bounded-writes";
 import { withBulkSummaryRebuild } from "../../db/bulk-summary-rebuild";
-import { wrapDatabase } from "../../db/pool";
+import { getCache, setCache } from "../../db/cache";
 import { initDb } from "../../db/schema";
-import { getStats } from "../../db/stats";
+import { seed } from "../../testing/seed";
 import { createT3CodeV2Fixture, FIXTURE, insertMessage, insertTurnItem } from "./fixtures/statev2-fixture";
 import { importT3Code, T3ImportError } from "./parser";
 
@@ -231,9 +231,13 @@ describe("importT3Code bounded writes", () => {
   });
 
   it("leaves no stale stats behind a run that died after writing events", async () => {
-    await importT3Code(db, t3Path, "alice");
-    const read = wrapDatabase(db);
-    const cached = (await getStats(read, db)).total_events;
+    await importT3Code(db, t3Path, "alice", {
+      writeLimits: { ...DEFAULT_BOUNDED_WRITER_LIMITS, pauseMs: 0 },
+    });
+    const count = () => (db.prepare("SELECT COUNT(*) AS n FROM events").get() as { n: number }).n;
+    const cached = count();
+    // Stats recomputation is covered in db/stats.test.ts. Here the regression is
+    // whether a committed event invalidates the cache even if the import fails.
     const t3 = new Database(t3Path);
     insertMessage(t3, {
       id: "late-message",
@@ -245,13 +249,16 @@ describe("importT3Code bounded writes", () => {
     });
     t3.close();
 
-    db.exec(`CREATE TRIGGER fail_after_events BEFORE INSERT ON identities
-      BEGIN SELECT RAISE(ABORT, 'simulated crash'); END`);
-    db.exec("DELETE FROM identities WHERE platform = 't3code'");
+    seed(db, () => {
+      setCache(db, "stats", { total_events: cached });
+      db.exec(`CREATE TRIGGER fail_after_events BEFORE INSERT ON identities
+        BEGIN SELECT RAISE(ABORT, 'simulated crash'); END`);
+      db.exec("DELETE FROM identities WHERE platform = 't3code'");
+    });
     await expect(importT3Code(db, t3Path, "alice", { writeLimits: ONE_ROW_AT_A_TIME })).rejects.toThrow("simulated crash");
-    db.exec("DROP TRIGGER fail_after_events");
 
-    expect((await getStats(read, db)).total_events).toBe(cached + 1);
+    expect(count()).toBe(cached + 1);
+    expect(getCache(db, "stats")?.value).not.toEqual({ total_events: cached });
   });
 
   it("lets another writer in during a long write", async () => {
