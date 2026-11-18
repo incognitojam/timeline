@@ -1,0 +1,1008 @@
+{
+  "accepted": [
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) AS count FROM sync_once_snapshot . events was WHERE NOT EXISTS ( SELECT 1 FROM main . events now WHERE now . id = was . id )",
+      "reason": "sync:once comparison attaches a per-run snapshot; it is absent from the fresh schema. Keep explicit replay gap until attached-schema replay is supported.",
+      "error": "SQLiteError: no such table: sync_once_snapshot.events"
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT type , COUNT ( * ) AS count FROM events WHERE id NOT IN ( SELECT id FROM sync_once_snapshot . events ) GROUP BY type ORDER BY count DESC , type",
+      "reason": "sync:once comparison attaches a per-run snapshot; it is absent from the fresh schema. Keep explicit replay gap until attached-schema replay is supported.",
+      "error": "SQLiteError: no such table: sync_once_snapshot.events"
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT id , type , timestamp , source_account , title FROM events WHERE id NOT IN ( SELECT id FROM sync_once_snapshot . events ) ORDER BY id LIMIT ?",
+      "reason": "sync:once comparison attaches a per-run snapshot; it is absent from the fresh schema. Keep explicit replay gap until attached-schema replay is supported.",
+      "error": "SQLiteError: no such table: sync_once_snapshot.events"
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT type , COUNT ( * ) AS count FROM events WHERE id IN ( SELECT id FROM sync_once_snapshot . updated ) GROUP BY type ORDER BY count DESC , type",
+      "reason": "sync:once comparison attaches a per-run snapshot; it is absent from the fresh schema. Keep explicit replay gap until attached-schema replay is supported.",
+      "error": "SQLiteError: no such table: sync_once_snapshot.updated"
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT id , type , timestamp , source_account , title FROM events WHERE id IN ( SELECT id FROM sync_once_snapshot . updated ) ORDER BY id LIMIT ?",
+      "reason": "sync:once comparison attaches a per-run snapshot; it is absent from the fresh schema. Keep explicit replay gap until attached-schema replay is supported.",
+      "error": "SQLiteError: no such table: sync_once_snapshot.updated"
+    },
+    {
+      "database": "timeline",
+      "sql": "INSERT OR IGNORE INTO event_people_new ( event_id , person , source , timestamp , is_sender ) SELECT e . id , p . value , e . source , e . timestamp , CASE WHEN p . key = 0 THEN 1 ELSE 0 END FROM events e , json_each ( e . people ) p WHERE e . people IS NOT NULL AND p . value IS NOT NULL AND p . value != ''",
+      "reason": "One-off event_people rebuild writes a temporary replacement table, absent from the steady-state schema.",
+      "error": "SQLiteError: no such table: event_people_new"
+    },
+    {
+      "database": "timeline",
+      "sql": "INSERT INTO conversation_summaries ( source , source_account , source_account_key , conversation_id , title , message_count , first_message , last_message , latest_title_timestamp , latest_title_event_id , updated_at ) WITH grouped AS ( SELECT source , source_account , CASE WHEN source_account IS NULL THEN 'null:' ELSE 'value:' || source_account END AS source_account_key , conversation_id , COUNT ( * ) AS message_count , MIN ( timestamp ) AS first_message , MAX ( timestamp ) AS last_message FROM conversation_summary_eligible GROUP BY source , source_account , source_account_key , conversation_id ) , latest AS ( SELECT id , source , source_account_key , conversation_id , title , timestamp FROM ( SELECT id , source , source_account_key , conversation_id , title , timestamp , row_number ( ) OVER ( PARTITION BY source , source_account_key , conversation_id ORDER BY timestamp DESC , id DESC ) AS rank FROM conversation_summary_eligible ) WHERE rank = 1 ) SELECT g . source , g . source_account , g . source_account_key , g . conversation_id , latest . title , g . message_count , g . first_message , g . last_message , latest . timestamp , latest . id , datetime ( 'now' ) FROM grouped g JOIN latest ON latest . source = g . source AND latest . source_account_key = g . source_account_key AND latest . conversation_id = g . conversation_id",
+      "reason": "Conversation-summary rebuild reads a temporary materialized eligibility table, absent from the steady-state schema.",
+      "error": "SQLiteError: no such table: conversation_summary_eligible"
+    },
+    {
+      "database": "timeline",
+      "sql": "INSERT INTO conversation_summary_titles ( source , source_account_key , conversation_id , title , first_seen , last_seen , message_count ) SELECT source , CASE WHEN source_account IS NULL THEN 'null:' ELSE 'value:' || source_account END AS source_account_key , conversation_id , title , MIN ( timestamp ) , MAX ( timestamp ) , COUNT ( * ) FROM conversation_summary_eligible GROUP BY source , source_account_key , conversation_id , title",
+      "reason": "Conversation-summary rebuild reads a temporary materialized eligibility table, absent from the steady-state schema.",
+      "error": "SQLiteError: no such table: conversation_summary_eligible"
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"sqlite_stat1\"",
+      "reason": "SQLite compatibility diagnostic enumerates ANALYZE-created tables in its test fixture; production does not create planner statistics.",
+      "error": "SQLiteError: no such table: sqlite_stat1"
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT settings FROM sync_sources WHERE source = 'attachment-descriptions'",
+      "reason": "A test adds only sync_sources alongside the timeline schema, rather than a complete app-state database; this partial mixed fixture cannot replay against its classified steady-state schema.",
+      "error": "SQLiteError: no such table: sync_sources"
+    }
+  ],
+  "underReview": [
+    {
+      "database": "timeline",
+      "sql": "SELECT 1 FROM event_day_sources LIMIT 1",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "event_day_sources:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT 1 FROM events WHERE timestamp GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*' AND date ( timestamp ) IS NOT NULL LIMIT 1",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) AS count FROM conversation_summaries",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "conversation_summaries:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) AS count FROM conversation_summary_titles",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "conversation_summary_titles:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT 1 FROM events WHERE ( type LIKE '%message%' OR type LIKE 'sms:%' OR type LIKE 'mms:%' OR type LIKE 'rcs:%' OR type LIKE 'call:%' ) AND title IS NOT NULL AND conversation_id IS NOT NULL LIMIT 1",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT 1 FROM events LIMIT 1",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "UPDATE identities SET normalized_name = TRIM ( LOWER ( REPLACE ( REPLACE ( REPLACE ( CASE WHEN identities . display_name LIKE 'name:%' THEN substr ( identities . display_name , 6 ) WHEN identities . display_name IS NOT NULL AND LENGTH ( TRIM ( identities . display_name ) ) > 0 THEN identities . display_name WHEN identities . username IS NOT NULL AND LENGTH ( TRIM ( identities . username ) ) > 0 THEN identities . username WHEN identities . platform_id LIKE 'name:%' THEN substr ( identities . platform_id , 6 ) ELSE identities . platform_id END , '_' , ' ' ) , '.' , ' ' ) , '-' , ' ' ) ) ) WHERE normalized_name IS NULL",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "identities:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT e . source as source , e . type as type , COUNT ( * ) as count FROM events e WHERE 1 = 1 GROUP BY e . source , e . type ORDER BY e . source , count DESC",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) AS count FROM events WHERE conversation_id = ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT * FROM events WHERE conversation_id = ? AND ( timestamp IS NULL OR timestamp < ? OR ( timestamp = ? AND id < ? ) ) ORDER BY timestamp DESC , id DESC LIMIT ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT * FROM events WHERE conversation_id = ? AND ( timestamp > ? OR ( timestamp = ? AND id > ? ) ) ORDER BY timestamp ASC , id ASC LIMIT ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT * FROM events WHERE conversation_id = ? ORDER BY timestamp DESC LIMIT ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT c . * , ( SELECT COUNT ( * ) FROM identities i WHERE i . contact_id = c . id ) as identityCount , ( SELECT COUNT ( DISTINCT i . platform ) FROM identities i WHERE i . contact_id = c . id ) as platformCount , ( SELECT COUNT ( * ) FROM identities i WHERE i . contact_id = c . id AND i . event_count > 0 ) as activeIdentityCount , 0 as eventCount FROM contacts c WHERE c . display_name LIKE ? ORDER BY c . is_self DESC , c . display_name COLLATE NOCASE",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "contacts:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT c . * , ( SELECT COUNT ( * ) FROM identities i WHERE i . contact_id = c . id ) as identityCount , ( SELECT COUNT ( DISTINCT i . platform ) FROM identities i WHERE i . contact_id = c . id ) as platformCount , ( SELECT COUNT ( * ) FROM identities i WHERE i . contact_id = c . id AND i . event_count > 0 ) as activeIdentityCount , 0 as eventCount FROM contacts c WHERE c . hidden = 0 AND c . display_name LIKE ? ORDER BY c . is_self DESC , c . display_name COLLATE NOCASE",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "contacts:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "WITH hidden_events AS MATERIALIZED ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) , hidden_sources AS MATERIALIZED ( SELECT e . source , e . type , COUNT ( * ) AS count FROM hidden_events hidden CROSS JOIN events e WHERE e . id = hidden . event_id GROUP BY e . source , e . type ) , visible_sources AS MATERIALIZED ( SELECT totals . source , totals . type , COUNT ( * ) - COALESCE ( MAX ( hidden . count ) , 0 ) AS count FROM events totals LEFT JOIN hidden_sources hidden ON hidden . source = totals . source AND hidden . type = totals . type GROUP BY totals . source , totals . type HAVING COUNT ( * ) - COALESCE ( MAX ( hidden . count ) , 0 ) > 0 ) SELECT 0 AS row_kind , NULL AS source , NULL AS type , ( SELECT COALESCE ( SUM ( count ) , 0 ) FROM visible_sources ) AS count , ( SELECT e . timestamp FROM events e WHERE e . timestamp IS NOT NULL AND e . id NOT IN ( SELECT event_id FROM hidden_events ) ORDER BY e . timestamp ASC LIMIT 1 ) AS earliest , ( SELECT e . timestamp FROM events e WHERE e . timestamp IS NOT NULL AND e . id NOT IN ( SELECT event_id FROM hidden_events ) ORDER BY e . timestamp DESC LIMIT 1 ) AS latest UNION ALL SELECT 1 , source , type , count , NULL , NULL FROM visible_sources ORDER BY row_kind , source , count DESC",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events:index-scan",
+        "hidden_events:automatic-index",
+        "hidden_sources:automatic-index",
+        "identities:table-scan"
+      ]
+    },
+    {
+      "database": "app-state",
+      "sql": "SELECT s . id , s . transport , s . client_name , s . client_version , s . token_hash , s . created_at , s . last_activity_at , COUNT ( c . id ) AS call_count , COALESCE ( SUM ( c . is_error ) , 0 ) AS error_count , MAX ( c . created_at ) AS last_call_at FROM mcp_sessions s LEFT JOIN mcp_tool_calls c ON c . session_id = s . id GROUP BY s . id ORDER BY s . last_activity_at DESC LIMIT ? OFFSET ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "mcp_sessions:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) as count FROM events",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events:index-scan"
+      ]
+    },
+    {
+      "database": "app-state",
+      "sql": "SELECT id , session_id , tool_name , args_json , args_chars , result_text , result_chars , is_error , truncated , duration_ms , created_at FROM mcp_tool_calls ORDER BY created_at DESC , id DESC LIMIT ? OFFSET ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "mcp_tool_calls:index-scan"
+      ]
+    },
+    {
+      "database": "app-state",
+      "sql": "SELECT id , session_id , tool_name , args_json , args_chars , result_text , result_chars , is_error , truncated , duration_ms , created_at FROM mcp_tool_calls WHERE tool_name = ? ORDER BY created_at DESC , id DESC LIMIT ? OFFSET ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "mcp_tool_calls:index-scan"
+      ]
+    },
+    {
+      "database": "app-state",
+      "sql": "SELECT id , session_id , tool_name , args_json , args_chars , result_text , result_chars , is_error , truncated , duration_ms , created_at FROM mcp_tool_calls WHERE is_error = 1 ORDER BY created_at DESC , id DESC LIMIT ? OFFSET ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "mcp_tool_calls:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT platform , platform_id as platformId , display_name as displayName , username , event_count as eventCount , avatar_url as avatarUrl , last_seen as skippedAt FROM identities WHERE skipped = 1 ORDER BY last_seen DESC",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "identities:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "UPDATE identities SET event_count = COALESCE ( ( SELECT COUNT ( * ) FROM event_people ep WHERE ep . person = ( identities . platform || ':' || identities . platform_id ) ) , 0 )",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "identities:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) as count FROM event_people",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "event_people:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) as count FROM contacts WHERE hidden = 1",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "contacts:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT * FROM events e WHERE 1 = 1 AND NOT COALESCE ( ( e . id IN ( SELECT rowid FROM events_fts_stemmed WHERE events_fts_stemmed MATCH ? ) ) , 0 ) ORDER BY e . timestamp DESC , e . id DESC LIMIT ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT * FROM events e WHERE 1 = 1 AND ( e . title LIKE ? ESCAPE '\\' OR e . title LIKE ? ESCAPE '\\' OR e . title LIKE ? ESCAPE '\\' OR e . content LIKE ? ESCAPE '\\' OR e . content LIKE ? ESCAPE '\\' OR e . content LIKE ? ESCAPE '\\' ) ORDER BY e . timestamp DESC , e . id DESC LIMIT ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT title FROM events WHERE source_id = ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT c . * , ( SELECT COUNT ( * ) FROM identities i WHERE i . contact_id = c . id ) as identityCount , ( SELECT COUNT ( DISTINCT i . platform ) FROM identities i WHERE i . contact_id = c . id ) as platformCount , ( SELECT COUNT ( * ) FROM identities i WHERE i . contact_id = c . id AND i . event_count > 0 ) as activeIdentityCount , 0 as eventCount FROM contacts c WHERE c . hidden = 0 ORDER BY c . is_self DESC , c . display_name COLLATE NOCASE",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "contacts:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT DISTINCT source FROM conversation_summaries cs WHERE cs . source NOT IN ( 'claude-code' , 'amp' , 'opencode' , 'conductor' , 't3code' , 'codex' , 'claude' , 'chatgpt' ) AND NOT EXISTS ( SELECT 1 FROM superseded_conversations sc WHERE sc . source = cs . source AND sc . source_account = cs . source_account AND sc . conversation_id = cs . conversation_id AND ( sc . reason = 'title_generation' OR EXISTS ( SELECT 1 FROM conversation_summaries canonical WHERE canonical . source = sc . canonical_source AND canonical . source_account_key = 'value:' || sc . canonical_source_account AND canonical . conversation_id = sc . canonical_conversation_id ) ) ) ORDER BY source",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "conversation_summaries:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) as total FROM conversation_summaries cs WHERE cs . source NOT IN ( 'claude-code' , 'amp' , 'opencode' , 'conductor' , 't3code' , 'codex' , 'claude' , 'chatgpt' ) AND NOT EXISTS ( SELECT 1 FROM superseded_conversations sc WHERE sc . source = cs . source AND sc . source_account = cs . source_account AND sc . conversation_id = cs . conversation_id AND ( sc . reason = 'title_generation' OR EXISTS ( SELECT 1 FROM conversation_summaries canonical WHERE canonical . source = sc . canonical_source AND canonical . source_account_key = 'value:' || sc . canonical_source_account AND canonical . conversation_id = sc . canonical_conversation_id ) ) )",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "conversation_summaries:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT cs . source , cs . source_account AS sourceAccount , cs . conversation_id AS conversationId , cs . title , cs . message_count AS messageCount , cs . first_message AS firstMessage , cs . last_message AS lastMessage FROM conversation_summaries cs WHERE cs . source NOT IN ( 'claude-code' , 'amp' , 'opencode' , 'conductor' , 't3code' , 'codex' , 'claude' , 'chatgpt' ) AND NOT EXISTS ( SELECT 1 FROM superseded_conversations sc WHERE sc . source = cs . source AND sc . source_account = cs . source_account AND sc . conversation_id = cs . conversation_id AND ( sc . reason = 'title_generation' OR EXISTS ( SELECT 1 FROM conversation_summaries canonical WHERE canonical . source = sc . canonical_source AND canonical . source_account_key = 'value:' || sc . canonical_source_account AND canonical . conversation_id = sc . canonical_conversation_id ) ) ) ORDER BY cs . last_message DESC LIMIT ? OFFSET ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "conversation_summaries:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) as total FROM conversation_summaries cs WHERE cs . source NOT IN ( 'claude-code' , 'amp' , 'opencode' , 'conductor' , 't3code' , 'codex' , 'claude' , 'chatgpt' ) AND NOT EXISTS ( SELECT 1 FROM superseded_conversations sc WHERE sc . source = cs . source AND sc . source_account = cs . source_account AND sc . conversation_id = cs . conversation_id AND ( sc . reason = 'title_generation' OR EXISTS ( SELECT 1 FROM conversation_summaries canonical WHERE canonical . source = sc . canonical_source AND canonical . source_account_key = 'value:' || sc . canonical_source_account AND canonical . conversation_id = sc . canonical_conversation_id ) ) ) AND EXISTS ( SELECT 1 FROM conversation_summary_titles cst WHERE cst . source = cs . source AND cst . source_account_key = cs . source_account_key AND cst . conversation_id = cs . conversation_id AND cst . title LIKE ? )",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "conversation_summaries:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT cs . source , cs . source_account AS sourceAccount , cs . conversation_id AS conversationId , cs . title , cs . message_count AS messageCount , cs . first_message AS firstMessage , cs . last_message AS lastMessage FROM conversation_summaries cs WHERE cs . source NOT IN ( 'claude-code' , 'amp' , 'opencode' , 'conductor' , 't3code' , 'codex' , 'claude' , 'chatgpt' ) AND NOT EXISTS ( SELECT 1 FROM superseded_conversations sc WHERE sc . source = cs . source AND sc . source_account = cs . source_account AND sc . conversation_id = cs . conversation_id AND ( sc . reason = 'title_generation' OR EXISTS ( SELECT 1 FROM conversation_summaries canonical WHERE canonical . source = sc . canonical_source AND canonical . source_account_key = 'value:' || sc . canonical_source_account AND canonical . conversation_id = sc . canonical_conversation_id ) ) ) AND EXISTS ( SELECT 1 FROM conversation_summary_titles cst WHERE cst . source = cs . source AND cst . source_account_key = cs . source_account_key AND cst . conversation_id = cs . conversation_id AND cst . title LIKE ? ) ORDER BY cs . last_message DESC LIMIT ? OFFSET ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "conversation_summaries:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "INSERT INTO event_day_sources ( range_day , day , source , event_count , location_count ) SELECT substr ( timestamp , 1 , 10 ) , date ( timestamp ) , source , COUNT ( * ) , COUNT ( location_name ) FROM events WHERE timestamp GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*' AND date ( timestamp ) IS NOT NULL GROUP BY substr ( timestamp , 1 , 10 ) , date ( timestamp ) , source",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "WITH sessions AS ( SELECT duration_ms , timestamp , raw_data , CASE WHEN INSTR ( title , ' (' ) > 0 THEN SUBSTR ( title , 1 , INSTR ( title , ' (' ) - 1 ) ELSE title END AS name FROM events WHERE source = 'wakatime' AND type = 'code:session' AND title IS NOT NULL ) , language_weights AS ( SELECT s . name , l . key AS language , SUM ( CAST ( l . value AS REAL ) / ( SELECT SUM ( CAST ( value AS REAL ) ) FROM json_each ( json_extract ( s . raw_data , '$.languages' ) ) ) * COALESCE ( s . duration_ms , 0 ) ) AS weight FROM sessions s , json_each ( json_extract ( s . raw_data , '$.languages' ) ) l GROUP BY s . name , l . key ) , primary_languages AS ( SELECT name , language , MAX ( weight ) FROM language_weights GROUP BY name ) SELECT s . name , p . language AS primaryLanguage , COALESCE ( SUM ( s . duration_ms ) , 0 ) AS totalDuration , COUNT ( * ) AS sessionCount , MIN ( s . timestamp ) AS firstActivity , MAX ( s . timestamp ) AS lastActivity FROM sessions s LEFT JOIN primary_languages p ON p . name = s . name WHERE s . name != '' GROUP BY s . name",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "primary_languages:automatic-index"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT day AS date , SUM ( event_count ) AS eventCount FROM event_day_sources WHERE source <> 'recall' GROUP BY day ORDER BY day DESC",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "event_day_sources:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "UPDATE events SET conversation_id = 'legacy:' || title WHERE conversation_id IS NULL AND ( type LIKE '%message%' OR type LIKE 'sms:%' OR type LIKE 'mms:%' OR type LIKE 'rcs:%' OR type LIKE 'call:%' ) AND title IS NOT NULL",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT source , type , COUNT ( * ) AS count FROM events GROUP BY source , type ORDER BY source , type",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"attachment_descriptions\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "attachment_descriptions:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"attachments\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "attachments:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"cache\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "cache:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"coding_agent_conversations\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "coding_agent_conversations:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"contact_aliases\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "contact_aliases:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"contact_match_suggestions\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "contact_match_suggestions:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"contact_memories\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "contact_memories:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"contacts\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "contacts:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"conversation_summaries\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "conversation_summaries:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"conversation_summary_titles\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "conversation_summary_titles:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"discord_attachment_retry_pending\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "discord_attachment_retry_pending:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"discord_emojis\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "discord_emojis:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"discord_guild_emojis\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "discord_guild_emojis:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"discord_guilds\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "discord_guilds:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"discord_reaction_observations\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "discord_reaction_observations:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"event_day_sources\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "event_day_sources:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"event_people\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "event_people:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"event_versions\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "event_versions:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"events\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"events_fts\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events_fts:virtual-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"events_fts_data\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events_fts_data:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"events_fts_docsize\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events_fts_docsize:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"events_fts_idx\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events_fts_idx:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"events_fts_stemmed\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events_fts_stemmed:virtual-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"events_fts_stemmed_data\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events_fts_stemmed_data:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"events_fts_stemmed_docsize\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events_fts_stemmed_docsize:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"events_fts_stemmed_idx\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events_fts_stemmed_idx:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"file_import_checkpoints\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "file_import_checkpoints:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"identities\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "identities:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"places\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "places:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"skipped_aliases\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "skipped_aliases:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"spotify_playlist_meta\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "spotify_playlist_meta:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"spotify_playlist_observations\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "spotify_playlist_observations:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"superseded_conversations\"",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "superseded_conversations:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT id , json_extract ( raw_data , '$.type' ) value FROM events WHERE json_valid ( raw_data ) ORDER BY id",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT content_hash AS hash , storage_path AS path , file_size AS size FROM discord_emojis WHERE status = 'stored' AND content_hash IS NOT NULL AND storage_path IS NOT NULL",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "discord_emojis:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) AS n FROM discord_emojis WHERE status = 'failed'",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "discord_emojis:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT storage_path AS path FROM discord_emojis WHERE content_hash = ? AND storage_path IS NOT NULL",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "discord_emojis:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT emoji_id , name , animated FROM discord_emojis WHERE status = 'pending' ORDER BY emoji_id",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "discord_emojis:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT guild_id AS guildId , icon FROM discord_guilds WHERE icon IS NOT NULL",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "discord_guilds:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT ep . person AS person , COUNT ( * ) AS count FROM events e JOIN event_people ep ON ep . event_id = e . id AND ep . is_sender = 1 WHERE e . source = 'discord' AND e . conversation_id IS NOT NULL AND ( e . type LIKE '%message%' OR e . type LIKE 'sms:%' OR e . type LIKE 'mms:%' OR e . type LIKE 'rcs:%' OR e . type LIKE 'call:%' ) AND ( ( e . source_account = ? AND e . conversation_id IN ( ? ) ) ) AND ep . person NOT IN ( SELECT i . platform || ':' || i . platform_id FROM identities i JOIN contacts c ON c . id = i . contact_id AND c . hidden = 1 ) GROUP BY ep . person ORDER BY count DESC LIMIT 100",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "identities:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT a . id , a . source_id , a . content_hash , a . storage_path , a . original_uri , a . filename , a . file_size , json_extract ( e . raw_data , '$._channel.id' ) AS channel_id FROM attachments a JOIN events e ON a . event_id = e . id WHERE a . source = 'discord' AND a . original_uri LIKE 'https://cdn.discordapp.com/%' AND a . status != 'unrecoverable' ORDER BY json_extract ( e . raw_data , '$._channel.guild_id' ) , channel_id , a . id",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "attachments:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT DISTINCT e . * FROM event_people ep JOIN events e ON e . id = ep . event_id WHERE ep . person IN ( ? ) AND ep . timestamp >= ? AND ep . timestamp <= ? AND ep . source != ? AND ( e . type LIKE 'call:%' OR e . type LIKE '%:call' ) AND e . id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 )",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "identities:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT e . id FROM events e WHERE e . id = ? AND e . id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 )",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "identities:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT o1 . playlist_id AS playlist_id , o1 . name AS name , o1 . follower_count AS latest_count , o1 . observed_date AS latest_date , ( SELECT MIN ( observed_date ) FROM spotify_playlist_observations o2 WHERE o2 . playlist_id = o1 . playlist_id ) AS first_date , ( SELECT COUNT ( * ) FROM spotify_playlist_observations o3 WHERE o3 . playlist_id = o1 . playlist_id ) AS observations , m . created_at AS created_at FROM spotify_playlist_observations o1 LEFT JOIN spotify_playlist_meta m ON m . playlist_id = o1 . playlist_id WHERE o1 . observed_date = ( SELECT MAX ( observed_date ) FROM spotify_playlist_observations o4 WHERE o4 . playlist_id = o1 . playlist_id ) ORDER BY latest_count DESC",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "spotify_playlist_observations:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT id , content_hash , storage_path , original_uri , file_size FROM attachments WHERE source = 'facebook' AND status != 'unrecoverable' AND original_uri IS NOT NULL ORDER BY id",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "attachments:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "WITH msgs AS ( SELECT id , conversation_id , title , source_account , type , substr ( source_id , 1 , instr ( substr ( source_id , 5 ) , ':' ) + 4 ) AS prefix , json_extract ( raw_data , '$.sender_name' ) AS sender , json_extract ( raw_data , '$.timestamp_ms' ) AS ts_ms , COALESCE ( content , '' ) AS content_key FROM events WHERE source = 'facebook' AND type LIKE 'message%' AND conversation_id IS NOT NULL AND source_id LIKE 'msg:%' ) , conv_sizes AS ( SELECT conversation_id , COUNT ( * ) AS n FROM msgs GROUP BY conversation_id ) , ranked AS ( SELECT m . id , m . title , m . conversation_id , m . prefix , ROW_NUMBER ( ) OVER ( PARTITION BY m . source_account , m . type , m . sender , m . ts_ms , m . content_key ORDER BY cs . n DESC , m . id ASC ) AS rn , FIRST_VALUE ( m . conversation_id ) OVER ( PARTITION BY m . source_account , m . type , m . sender , m . ts_ms , m . content_key ORDER BY cs . n DESC , m . id ASC ) AS keeper_conversation_id , FIRST_VALUE ( m . prefix ) OVER ( PARTITION BY m . source_account , m . type , m . sender , m . ts_ms , m . content_key ORDER BY cs . n DESC , m . id ASC ) AS keeper_prefix FROM msgs m JOIN conv_sizes cs ON cs . conversation_id = m . conversation_id ) SELECT id , title , conversation_id , keeper_conversation_id FROM ranked WHERE rn > 1 AND prefix != keeper_prefix ORDER BY id",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "conv_sizes:automatic-index"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "WITH msgs AS ( SELECT id , conversation_id , title , source_account , type , substr ( source_id , 1 , instr ( substr ( source_id , 5 ) , ':' ) + 4 ) AS prefix , json_extract ( raw_data , '$.sender_name' ) AS sender , json_extract ( raw_data , '$.timestamp_ms' ) AS ts_ms , COALESCE ( content , '' ) AS content_key FROM events WHERE source = 'facebook' AND type LIKE 'message%' AND conversation_id IS NOT NULL AND source_id LIKE 'msg:%' ) , conv_sizes AS ( SELECT conversation_id , COUNT ( * ) AS n FROM msgs GROUP BY conversation_id ) , ranked AS ( SELECT m . id , m . title , m . conversation_id , m . prefix , ROW_NUMBER ( ) OVER ( PARTITION BY m . source_account , m . type , m . title , m . ts_ms , m . content_key ORDER BY cs . n DESC , m . id ASC ) AS rn , FIRST_VALUE ( m . conversation_id ) OVER ( PARTITION BY m . source_account , m . type , m . title , m . ts_ms , m . content_key ORDER BY cs . n DESC , m . id ASC ) AS keeper_conversation_id , FIRST_VALUE ( m . prefix ) OVER ( PARTITION BY m . source_account , m . type , m . title , m . ts_ms , m . content_key ORDER BY cs . n DESC , m . id ASC ) AS keeper_prefix FROM msgs m JOIN conv_sizes cs ON cs . conversation_id = m . conversation_id ) SELECT id , title , conversation_id , keeper_conversation_id FROM ranked WHERE rn > 1 AND prefix != keeper_prefix ORDER BY id",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "conv_sizes:automatic-index"
+      ]
+    },
+    {
+      "database": "app-state",
+      "sql": "SELECT * FROM jobs WHERE kind = ? ORDER BY id DESC LIMIT ? OFFSET ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "jobs:table-scan"
+      ]
+    },
+    {
+      "database": "app-state",
+      "sql": "SELECT source , COUNT ( * ) as syncs , SUM ( CASE WHEN success = 1 AND skipped = 0 THEN 1 ELSE 0 END ) as successes , SUM ( CASE WHEN skipped = 1 THEN 1 ELSE 0 END ) as deferred , SUM ( CASE WHEN success = 0 THEN 1 ELSE 0 END ) as failures , COALESCE ( SUM ( events_added ) , 0 ) as events_added , AVG ( CASE WHEN skipped = 0 THEN duration_ms ELSE NULL END ) as avg_duration FROM sync_log WHERE started_at > datetime ( 'now' , '-7 days' ) GROUP BY source ORDER BY source",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "sync_log:index-scan"
+      ]
+    },
+    {
+      "database": "app-state",
+      "sql": "SELECT * FROM sync_log ORDER BY started_at DESC LIMIT ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "sync_log:index-scan"
+      ]
+    },
+    {
+      "database": "app-state",
+      "sql": "SELECT source , COUNT ( * ) as file_count , ( SELECT file_size FROM processed_files p2 WHERE p2 . source = processed_files . source ORDER BY processed_at DESC LIMIT 1 ) as total_size , COALESCE ( SUM ( events_added ) , 0 ) as total_events , MAX ( processed_at ) as last_processed FROM processed_files GROUP BY source ORDER BY source",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "processed_files:index-scan"
+      ]
+    },
+    {
+      "database": "app-state",
+      "sql": "SELECT source , detected_type FROM processed_files WHERE ( source , processed_at ) IN ( SELECT source , MAX ( processed_at ) FROM processed_files GROUP BY source )",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "processed_files:index-scan"
+      ]
+    },
+    {
+      "database": "app-state",
+      "sql": "SELECT c . id , c . name , c . category , c . notes , c . created_at , ( SELECT COUNT ( * ) FROM eval_queries q WHERE q . case_id = c . id ) AS query_count , ( SELECT COUNT ( * ) FROM eval_expectations e WHERE e . case_id = c . id ) AS expectation_count FROM eval_cases c ORDER BY c . category , c . name",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "eval_cases:table-scan"
+      ]
+    },
+    {
+      "database": "app-state",
+      "sql": "SELECT * FROM jobs ORDER BY id DESC LIMIT ? OFFSET ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "jobs:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) as count FROM contacts WHERE hidden = 0",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "contacts:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "WITH contact_stats AS ( SELECT contact_id , COUNT ( * ) as identity_count , COALESCE ( SUM ( event_count ) , 0 ) as total_event_count FROM identities WHERE contact_id IS NOT NULL GROUP BY contact_id ) SELECT u . platform as u_platform , u . platform_id as u_platform_id , u . display_name as u_display_name , u . username as u_username , u . event_count as u_event_count , u . avatar_url as u_avatar_url , c . id as c_id , c . display_name as c_display_name , COALESCE ( cs . identity_count , 0 ) as c_identity_count , COALESCE ( cs . total_event_count , 0 ) as c_event_count , ( l . platform || ':' || l . platform_id ) as matched_identity FROM identities u JOIN identities l ON u . normalized_name = l . normalized_name JOIN contacts c ON l . contact_id = c . id LEFT JOIN contact_stats cs ON cs . contact_id = c . id WHERE u . contact_id IS NULL AND u . skipped = 0 AND u . event_count > 0 AND l . contact_id IS NOT NULL AND LENGTH ( u . normalized_name ) > 2 AND c . hidden = 0 GROUP BY u . platform , u . platform_id ORDER BY u . event_count DESC LIMIT ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "contact_stats:automatic-index"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "WITH unlinked AS ( SELECT DISTINCT ep . person , ep . source , TRIM ( LOWER ( REPLACE ( REPLACE ( REPLACE ( CASE WHEN i . display_name IS NOT NULL AND LENGTH ( TRIM ( i . display_name ) ) > 0 THEN i . display_name WHEN i . username IS NOT NULL AND LENGTH ( TRIM ( i . username ) ) > 0 THEN i . username WHEN i . platform_id LIKE 'name:%' THEN substr ( i . platform_id , 6 ) WHEN i . platform_id IS NOT NULL AND LENGTH ( TRIM ( i . platform_id ) ) > 0 THEN i . platform_id ELSE ep . person END , '_' , ' ' ) , '.' , ' ' ) , '-' , ' ' ) ) ) as normalized FROM event_people ep LEFT JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) WHERE ep . source IN ( ? , ? , ? , ? , ? , ? , ? , ? , ? , ? ) AND ( i . id IS NULL OR ( i . contact_id IS NULL AND i . skipped = 0 ) ) AND length ( ep . person ) > 2 ) SELECT a . person as alias_a , a . source as source_a , b . person as alias_b , b . source as source_b , a . normalized FROM unlinked a JOIN unlinked b ON a . normalized = b . normalized WHERE ( a . source , a . person ) < ( b . source , b . person ) ORDER BY a . normalized , a . source , b . source LIMIT ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "event_people:index-scan",
+        "identities:table-scan",
+        "unlinked:automatic-index"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) as count FROM identities WHERE skipped = 1",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "identities:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT * FROM events e WHERE 1 = 1 AND e . source NOT IN ( ? , ? , ? , ? , ? , ? , ? ) ORDER BY e . timestamp DESC , e . id DESC LIMIT ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT * FROM events e WHERE e . timestamp >= ? AND e . timestamp < ? AND e . id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) ORDER BY e . timestamp ASC",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "contacts:automatic-index"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT * FROM events e WHERE 1 = 1 AND timestamp >= ? AND timestamp < ? AND source = ? AND e . id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) ORDER BY timestamp ASC LIMIT ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "identities:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT * FROM events e WHERE e . timestamp IS NOT NULL AND e . source = ? AND e . source NOT IN ( ? , ? , ? , ? , ? , ? , ? ) AND e . id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) ORDER BY e . timestamp DESC , e . id DESC LIMIT ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "identities:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT * FROM events e WHERE 1 = 1 AND e . id IN ( SELECT rowid FROM events_fts_stemmed WHERE events_fts_stemmed MATCH ? ) AND e . source = ? AND e . id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) ORDER BY e . timestamp DESC , e . id DESC LIMIT ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "identities:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT e . source as source , e . type as type , COUNT ( * ) as count FROM events e WHERE 1 = 1 AND e . id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) GROUP BY e . source , e . type ORDER BY e . source , count DESC",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "contacts:automatic-index",
+        "events:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) AS count FROM attachments",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "attachments:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT status , COUNT ( * ) AS count FROM attachments GROUP BY status",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "attachments:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT model , COUNT ( * ) AS count FROM attachment_descriptions GROUP BY model ORDER BY count DESC , model ASC",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "attachment_descriptions:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT source , COUNT ( * ) AS count FROM attachments GROUP BY source ORDER BY count DESC , source ASC",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "attachments:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) AS count FROM event_people ep WHERE NOT EXISTS ( SELECT 1 FROM events e WHERE e . id = ep . event_id )",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "event_people:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) AS count FROM event_people ep JOIN events e ON e . id = ep . event_id WHERE NOT EXISTS ( SELECT 1 FROM json_each ( COALESCE ( e . people , '[]' ) ) p WHERE p . value = ep . person AND p . value IS NOT NULL AND p . value != '' )",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "event_people:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) AS count FROM events e , json_each ( e . people ) p WHERE e . people IS NOT NULL AND p . value IS NOT NULL AND p . value != '' AND NOT EXISTS ( SELECT 1 FROM event_people ep WHERE ep . event_id = e . id AND ep . person = p . value )",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) AS count FROM event_people ep JOIN events e ON e . id = ep . event_id WHERE ep . source != e . source OR ( ep . timestamp IS NULL AND e . timestamp IS NOT NULL ) OR ( ep . timestamp IS NOT NULL AND e . timestamp IS NULL ) OR ep . timestamp != e . timestamp",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "event_people:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT ep . event_id AS eventId , ep . person , ep . source , 'orphaned (event deleted)' AS issue FROM event_people ep WHERE NOT EXISTS ( SELECT 1 FROM events e WHERE e . id = ep . event_id ) LIMIT ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "event_people:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT ep . event_id AS eventId , ep . person , ep . source , 'stale (person removed from event)' AS issue FROM event_people ep JOIN events e ON e . id = ep . event_id WHERE NOT EXISTS ( SELECT 1 FROM json_each ( COALESCE ( e . people , '[]' ) ) p WHERE p . value = ep . person AND p . value IS NOT NULL AND p . value != '' ) LIMIT ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "event_people:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT e . id AS eventId , p . value AS person , e . source , 'missing (not in event_people)' AS issue FROM events e , json_each ( e . people ) p WHERE e . people IS NOT NULL AND p . value IS NOT NULL AND p . value != '' AND NOT EXISTS ( SELECT 1 FROM event_people ep WHERE ep . event_id = e . id AND ep . person = p . value ) LIMIT ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "events:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT ep . event_id AS eventId , ep . person , ep . source , 'metadata mismatch (source: ' || ep . source || ' vs ' || e . source || ')' AS issue FROM event_people ep JOIN events e ON e . id = ep . event_id WHERE ep . source != e . source OR ( ep . timestamp IS NULL AND e . timestamp IS NOT NULL ) OR ( ep . timestamp IS NOT NULL AND e . timestamp IS NULL ) OR ep . timestamp != e . timestamp LIMIT ?",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "event_people:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT ep . person AS person , COUNT ( * ) AS count FROM events e JOIN event_people ep ON ep . event_id = e . id AND ep . is_sender = 1 WHERE e . source = 'discord' AND e . conversation_id IS NOT NULL AND ( e . type LIKE '%message%' OR e . type LIKE 'sms:%' OR e . type LIKE 'mms:%' OR e . type LIKE 'rcs:%' OR e . type LIKE 'call:%' ) AND ( ( e . source_account = ? AND e . conversation_id IN ( ? , ? , ? , ? ) ) ) AND ep . person NOT IN ( SELECT i . platform || ':' || i . platform_id FROM identities i JOIN contacts c ON c . id = i . contact_id AND c . hidden = 1 ) GROUP BY ep . person ORDER BY count DESC LIMIT 100",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "identities:table-scan"
+      ]
+    },
+    {
+      "database": "app-state",
+      "sql": "SELECT COALESCE ( MAX ( id ) , 0 ) AS id FROM sync_log",
+      "reason": "found by the first run; under review",
+      "findings": [
+        "sync_log:table-scan"
+      ]
+    }
+  ]
+}
