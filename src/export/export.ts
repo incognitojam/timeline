@@ -1,4 +1,5 @@
 import type { ContactWithStats } from "../db/contacts";
+import { conversationTypeClause } from "../db/conversation-types";
 import type { QueryExecutor } from "../db/pool";
 import { getAliasesForContact, listContacts } from "../db/queries";
 import type { ContactAlias, TimelineEvent } from "../db/schema";
@@ -223,31 +224,41 @@ export async function exportContact(
   // Get unique sources from primary contact's aliases
   const aliasSources = [...new Set(aliases.map((a) => a.source).filter((source): source is string => Boolean(source)))];
 
-  // Build query using JOIN on event_people (handles large result sets efficiently)
-  // For each alias, we need to match person and optionally source
-  const conditions: string[] = [];
-  const params: (string | number)[] = [];
+  // An alias matches a person, and the event's source when the alias has one.
+  const aliasMatch = (person: string, source: string) => aliases
+    .map((alias) => alias.source ? `(${person} = ? AND ${source} = ?)` : `${person} = ?`)
+    .join(" OR ");
+  const aliasParams = aliases.flatMap((alias) => alias.source ? [alias.alias, alias.source] : [alias.alias]);
 
-  for (const alias of aliases) {
-    if (alias.source) {
-      conditions.push(`(ep.person = ? AND ep.source = ?)`);
-      params.push(alias.alias, alias.source);
-    } else {
-      conditions.push(`ep.person = ?`);
-      params.push(alias.alias);
-    }
-  }
-
+  // event_people finds the events the contact is indexed on. Every other
+  // message in those conversations that lists the contact is read from the
+  // conversation itself, since a group message may index only its sender.
+  // event_people.source is the event's source, so the source filter applies there.
+  const sourceFilter = options.source ? " AND ep.source = ?" : "";
   let sql = `
-    SELECT DISTINCT e.* FROM events e
-    INNER JOIN event_people ep ON ep.event_id = e.id
-    WHERE (${conditions.join(" OR ")})
+    WITH direct AS (
+      SELECT ep.event_id FROM event_people ep WHERE (${aliasMatch("ep.person", "ep.source")})${sourceFilter}
+    ),
+    conversations AS (
+      SELECT DISTINCT e.source, e.source_account, e.conversation_id
+      FROM direct JOIN events e ON e.id = direct.event_id
+      WHERE e.conversation_id IS NOT NULL AND ${conversationTypeClause("e.")}
+    )
+    SELECT e.* FROM events e
+    WHERE e.id IN (
+      SELECT event_id FROM direct
+      UNION
+      SELECT m.id FROM conversations c
+      JOIN events m ON m.source = c.source AND m.source_account IS c.source_account AND m.conversation_id = c.conversation_id
+      WHERE ${conversationTypeClause("m.")}
+        AND EXISTS (SELECT 1 FROM json_each(m.people) p WHERE ${aliasMatch("p.value", "m.source")})
+    )
   `;
-
-  if (options.source) {
-    sql += ` AND e.source = ?`;
-    params.push(options.source);
-  }
+  const params: (string | number)[] = [
+    ...aliasParams,
+    ...(options.source ? [options.source] : []),
+    ...aliasParams,
+  ];
 
   sql += ` ORDER BY e.timestamp ASC`;
 

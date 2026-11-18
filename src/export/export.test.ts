@@ -112,4 +112,32 @@ describe("exportContact", () => {
     if (result.kind !== "export") throw new Error("Expected a resolved contact export");
     expect(result.events.map((event) => event.id)).toEqual([1, 2, 3, 4, 5, 6]);
   });
+
+  test("reads group context from the conversation when only senders are indexed", async () => {
+    db.exec("DELETE FROM events");
+    const members = ["discord:alice", "discord:bob", "discord:carol", "discord:dana", "discord:erin"];
+    const senders = ["discord:alice", "discord:carol", "discord:bob", "discord:dana", "discord:alice", "discord:carol"];
+    const times = ["10:00", "10:01", "10:02", "10:03", "10:30", "12:30"];
+    senders.forEach((sender, index) => {
+      db.prepare(`
+        INSERT INTO events (id, source, source_id, source_account, type, timestamp, title, content, people, raw_data, conversation_id)
+        VALUES (?, 'discord', ?, 'alex', 'message:group', ?, 'Project chat', 'Message', ?, '{}', 'discord:project')
+      `).run(index + 1, `group-${index + 1}`, `2026-01-01T${times[index]}:00Z`,
+        JSON.stringify([sender, ...members.filter((member) => member !== sender)]));
+    });
+    // Index only each message's sender, as group messages are indexed from now on.
+    db.exec("DELETE FROM event_people WHERE is_sender = 0");
+
+    const result = await exportContact(wrapDatabase(db), { names: ["Bob"] }, {
+      all: false,
+      ...filterOptions,
+      compactAuthors: true,
+      noSummaries: false,
+      fullTimestamps: false,
+    });
+
+    if (result.kind !== "export") throw new Error("Expected a resolved contact export");
+    expect(result.totalBeforeFilter).toBe(6);
+    expect(result.events.map((event) => event.id)).toEqual([2, 3, 4, 5]);
+  });
 });
