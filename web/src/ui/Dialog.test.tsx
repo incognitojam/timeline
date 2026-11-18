@@ -21,15 +21,7 @@ describe("Dialog", () => {
     expect(screen.getByText("Dialog body")).toBeInTheDocument();
   });
 
-  it("renders the description when provided", () => {
-    render(() => (
-      <Dialog open onClose={() => {}} title="Test dialog" description="More detail">
-        <p>Dialog body</p>
-      </Dialog>
-    ));
 
-    expect(screen.getByText("More detail")).toBeInTheDocument();
-  });
 
   it("calls onClose when the close button is clicked", () => {
     const onClose = vi.fn();

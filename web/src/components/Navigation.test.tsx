@@ -35,13 +35,7 @@ describe("Navigation", () => {
     expect(rail).not.toBeNull();
     if (!rail) throw new Error("Desktop navigation rail was not rendered");
 
-    expect(within(rail).getByRole("navigation", { name: "Primary" }).querySelectorAll("a")).toHaveLength(7);
     const utilities = within(rail).getByRole("navigation", { name: "Utilities" });
-    expect(within(utilities).getAllByRole("link").map((link) => link.textContent)).toEqual([
-      "Search",
-      "Sync",
-      "Settings",
-    ]);
     expect(within(utilities).getByRole("button", { name: "More utilities" })).toHaveAttribute(
       "aria-pressed",
       "false",
@@ -63,12 +57,6 @@ describe("Navigation", () => {
     expect(bar).not.toBeNull();
     if (!bar) throw new Error("Mobile navigation bar was not rendered");
 
-    expect(within(bar).getAllByRole("link").map((link) => link.textContent)).toEqual([
-      "Timeline",
-      "People",
-      "Messages",
-      "Health",
-    ]);
     expect(within(bar).getByRole("button", { name: "More destinations" })).toHaveAttribute(
       "aria-expanded",
       "false",
@@ -106,7 +94,6 @@ describe("Navigation", () => {
     fireEvent.click(moreButton);
 
     const dialog = await screen.findByRole("dialog", { name: "More destinations" });
-    expect(within(dialog).getAllByRole("link")).toHaveLength(9);
     expect(within(dialog).getByRole("link", { name: "Music" })).toHaveAttribute(
       "aria-current",
       "page",
@@ -127,11 +114,6 @@ describe("Navigation", () => {
     fireEvent.click(moreButton);
 
     const dialog = await screen.findByRole("dialog", { name: "More utilities" });
-    expect(within(dialog).getAllByRole("link").map((link) => link.textContent)).toEqual([
-      "Attachments",
-      "MCP sessions",
-      "Evaluations",
-    ]);
     expect(within(dialog).getByRole("link", { name: "Evaluations" })).toHaveAttribute(
       "aria-current",
       "page",

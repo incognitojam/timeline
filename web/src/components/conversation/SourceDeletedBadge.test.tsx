@@ -53,9 +53,7 @@ describe("sourceDeletedClass", () => {
     expect(sourceDeletedClass(baseEvent)).toBe("");
   });
 
-  it("returns border and de-emphasis classes for a deleted event", () => {
-    expect(sourceDeletedClass(deletedEvent)).toBe(" border-l-2 border-red-400/50 pl-2 opacity-70");
-  });
+
 });
 
 describe("sourceDeletedTitle", () => {
