@@ -89,7 +89,6 @@ describe("createLocalStorageSignal", () => {
     });
   });
 
-
   it("handles null as a stored value", () => {
     window.localStorage.setItem("key", JSON.stringify(null));
     createRoot((dispose) => {

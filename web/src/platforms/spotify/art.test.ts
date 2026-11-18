@@ -158,7 +158,6 @@ describe("getEventAlbumArt", () => {
 });
 
 describe("getSessionAlbumArts", () => {
-
   it("deduplicates URLs from the same album", () => {
     const events = [
       makeEvent({ id: 1, raw_data: JSON.stringify({ track: { imageUrl: "https://art/same" } }) }),
