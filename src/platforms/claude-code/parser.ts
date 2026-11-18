@@ -4,13 +4,11 @@ import { conversationSourceAccountKey, getDb, initDb } from "../../db/schema";
 import {
   onImportComplete,
   upsertIdentities,
-  formatIdentifier,
-  type UpsertIdentityOptions,
 } from "../../db/queries";
-import { readdir } from "fs/promises";
+import { readdir, lstat } from "fs/promises";
 import type { Dirent } from "fs";
 import { join, basename } from "path";
-import { markConversationsSuperseded } from "../../db/superseded-conversations";
+import { changedSupersededConversations, markConversationsSuperseded, type SupersededConversation } from "../../db/superseded-conversations";
 import { insertStoredAttachment } from "../../media/attachments";
 import {
   type ContentBlock,
@@ -23,6 +21,12 @@ import {
   type StoredImageAttachment,
 } from "../../ingest/ai/image-blocks";
 
+import { createBoundedWriter, type BoundedWriterLimits } from "../../db/bounded-writes";
+import { fileCheckpoints, fileFingerprint, type FileFingerprint } from "../../ingest/file-checkpoints";
+import { createIdentityCollector } from "../../ingest/ai/import";
+
+// Bump when dependency discovery or emitted history changes, including format-content, image blocks or project naming.
+export const CLAUDE_CODE_PARSER_VERSION = 1;
 const DEFAULT_CLAUDE_DIR = `${process.env.HOME}/.claude/projects`;
 
 interface ClaudeCodeMessage {
@@ -65,13 +69,16 @@ interface SessionInfo {
   messages: ClaudeCodeMessage[];
 }
 
-interface ImportStats {
+export interface ImportStats {
   sessions: number;
   messages: number;
   refreshed: number;
   skipped: number;
   titleGenerationSessions: number;
   identitiesUpserted: number;
+  filesSkipped: number;
+  writeTransactions: number;
+  longestWriteHoldMs: number;
 }
 
 export type StoredClaudeCodeImageAttachment = StoredImageAttachment;
@@ -88,6 +95,9 @@ export interface StoredClaudeCodeImageRawContent {
 
 export interface ImportClaudeCodeOptions {
   refreshRawData?: boolean;
+  /** Bypass checkpoints without rewriting existing events. */
+  full?: boolean;
+  writeLimits?: BoundedWriterLimits;
 }
 
 /**
@@ -306,25 +316,35 @@ export async function importClaudeCode(
     skipped: 0,
     titleGenerationSessions: 0,
     identitiesUpserted: 0,
+    filesSkipped: 0,
+    writeTransactions: 0,
+    longestWriteHoldMs: 0,
   };
 
-  // Collect identities for batch upsert
-  const identities = new Map<string, UpsertIdentityOptions>();
-
-  // User identity (always present)
-  const userIdentifier = formatIdentifier("claude-code", sourceAccount);
-  identities.set(userIdentifier, {
-    platform: "claude-code",
-    platformId: sourceAccount,
-    displayName: sourceAccount,
-    username: sourceAccount,
+  const identities = createIdentityCollector("claude-code", sourceAccount,
+    model => formatModelDisplayName(model ?? undefined));
+  const userIdentifier = identities.userIdentifier;
+  const checkpoints = fileCheckpoints(db, "claude-code", sourceAccount, claudeDir);
+  const pendingCounts = { messages: 0, refreshed: 0, skipped: 0, identitiesUpserted: 0 };
+  const writer = createBoundedWriter(db, options.writeLimits, {
+    beforeCommit: () => onImportComplete(db),
+    afterCommit: () => {
+      for (const key of Object.keys(pendingCounts) as (keyof typeof pendingCounts)[]) {
+        stats[key] += pendingCounts[key];
+        pendingCounts[key] = 0;
+      }
+    },
   });
-
+  const suppress = async (rows: SupersededConversation[]) => {
+    for (const row of changedSupersededConversations(db, rows)) {
+      await writer.add(() => markConversationsSuperseded(db, [row]));
+    }
+  };
   const insert = db.prepare(`
     INSERT OR IGNORE INTO events (
       source, source_id, source_account, type, timestamp,
       title, content, people, tags, raw_data, import_batch, conversation_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
   `);
 
   const updateRefresh = db.prepare(`
@@ -338,9 +358,6 @@ export async function importClaudeCode(
 
   // Find all project directories
   const projectDirs = await readdir(claudeDir);
-
-  // Wrap entire import in a transaction for massive speedup
-  db.run("BEGIN TRANSACTION");
 
   console.log(`Found ${projectDirs.length} project directories`);
 
@@ -356,6 +373,7 @@ export async function importClaudeCode(
     parentToolUseId?: string,
     orphanSidechain?: boolean
   ) => {
+    await writer.breathe();
     if (msg.type !== "user" && msg.type !== "assistant") return;
     if (!msg.message || !msg.uuid || !msg.timestamp) return;
 
@@ -365,6 +383,9 @@ export async function importClaudeCode(
       return;
     }
 
+    // Keep identities recoverable if an earlier attempt committed an event
+    // but failed before its identity batch. Empty messages create no identity.
+    if (msg.type === "assistant") identities.registerAssistant(msg.message.model ?? null);
     const sourceId = `${sessionId}:${msg.uuid}`;
     const existingEvent = findEventId.get(
       "claude-code",
@@ -400,19 +421,7 @@ export async function importClaudeCode(
     if (msg.type === "user") {
       people = [userIdentifier];
     } else {
-      const model = msg.message.model;
-      const assistantPlatformId = model || "assistant";
-      const assistantIdentifier = formatIdentifier("claude-code", assistantPlatformId);
-      people = [assistantIdentifier, userIdentifier];
-
-      if (!identities.has(assistantIdentifier)) {
-        identities.set(assistantIdentifier, {
-          platform: "claude-code",
-          platformId: assistantPlatformId,
-          displayName: formatModelDisplayName(model),
-          username: assistantPlatformId,
-        });
-      }
+      people = [identities.registerAssistant(msg.message.model ?? null), userIdentifier];
     }
 
     const rawData = JSON.stringify({
@@ -431,61 +440,35 @@ export async function importClaudeCode(
       content: normalizedBlocks,
     });
 
-    let eventId: number;
-    if (existingEvent) {
-      updateRefresh.run(
-        contentText,
-        rawData,
-        "claude-code",
-        sourceId,
-        sourceAccount
-      );
-      eventId = existingEvent.id;
-      stats.refreshed++;
-    } else {
-      const result = insert.run(
-        "claude-code",
-        sourceId,
-        sourceAccount,
-        eventType,
-        msg.timestamp,
-        title,
-        contentText,
-        JSON.stringify(people),
-        tags.length > 0 ? JSON.stringify(tags) : null,
-        rawData,
-        importBatch,
-        sessionId
-      );
-
-      if (result.changes === 0) {
-        stats.skipped++;
-        return;
+    await writer.add(() => {
+      // Earlier queued messages may share this UUID; recheck after they land.
+      const current = findEventId.get("claude-code", sourceId, sourceAccount) as { id: number } | null;
+      let eventId: number;
+      if (current) {
+        if (!refreshRawData) { pendingCounts.skipped++; return; }
+        updateRefresh.run(contentText, rawData, "claude-code", sourceId, sourceAccount);
+        eventId = current.id;
+        pendingCounts.refreshed++;
+      } else {
+        const inserted = insert.get("claude-code", sourceId, sourceAccount, eventType,
+          msg.timestamp ?? null, title, contentText, JSON.stringify(people),
+          tags.length ? JSON.stringify(tags) : null, rawData, importBatch, sessionId) as { id: number } | null;
+        if (!inserted) throw new Error(`Failed to insert Claude Code event ${sourceId}`);
+        eventId = inserted.id;
+        pendingCounts.messages++;
       }
-
-      const insertedEvent = findEventId.get(
-        "claude-code",
-        sourceId,
-        sourceAccount
-      ) as { id: number } | undefined;
-      if (!insertedEvent) {
-        throw new Error(`Failed to resolve inserted Claude Code event ${sourceId}`);
+      for (const attachment of storedImageBlocks.attachments) {
+        insertStoredAttachment(db, {
+          eventId,
+          source: "claude-code",
+          sourceId: attachment.sourceId,
+          filename: attachment.filename,
+          mimeType: attachment.mimeType,
+          width: attachment.width,
+          height: attachment.height,
+        }, attachment.stored);
       }
-      eventId = insertedEvent.id;
-      stats.messages++;
-    }
-
-    for (const attachment of storedImageBlocks.attachments) {
-      insertStoredAttachment(db, {
-        eventId,
-        source: "claude-code",
-        sourceId: attachment.sourceId,
-        filename: attachment.filename,
-        mimeType: attachment.mimeType,
-        width: attachment.width,
-        height: attachment.height,
-      }, attachment.stored);
-    }
+    }, rawData.length + contentText.length);
   };
 
   try {
@@ -505,8 +488,7 @@ export async function importClaudeCode(
         } catch {
           continue;
         }
-        markConversationsSuperseded(
-          db,
+        await suppress(
           sessionFiles.map((file) => ({
             source: "claude-code",
             sourceAccount,
@@ -530,21 +512,46 @@ export async function importClaudeCode(
       }
 
       const files: string[] = [];
-      const sessionSubdirs = new Set<string>();
       for (const entry of entries) {
         if (entry.isFile() && entry.name.endsWith(".jsonl")) {
           files.push(entry.name);
-        } else if (entry.isDirectory()) {
-          sessionSubdirs.add(entry.name);
         }
       }
 
       if (files.length === 0) continue;
 
       for (const file of files) {
+        await writer.breathe();
         const sessionId = basename(file, ".jsonl");
         const filePath = join(projectPath, file);
 
+        const dependencySnapshot = async () => {
+          const subagentDir = join(projectPath, sessionId, "subagents");
+          let agentFiles: string[] = [];
+          try {
+            if (!(await lstat(join(projectPath, sessionId))).isDirectory()) return [];
+            agentFiles = (await readdir(subagentDir)).filter(f => f.startsWith("agent-") && f.endsWith(".jsonl"));
+          } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+          }
+          const snapshot: [string, FileFingerprint | null][] = [];
+          for (const name of agentFiles) {
+            const path = join(subagentDir, name);
+            snapshot.push([path, await fileFingerprint(path)]);
+          }
+          return snapshot;
+        };
+        const fingerprint = await fileFingerprint(filePath);
+        if (!fingerprint) continue;
+        const dependencies = await dependencySnapshot();
+        const dependencyKey = JSON.stringify(dependencies.map(([path, snapshot]) => [path, snapshot?.value ?? null]));
+        const saved = checkpoints.saved.get(filePath);
+        if (!options.full && !refreshRawData && saved?.version === CLAUDE_CODE_PARSER_VERSION &&
+            saved.fingerprint === fingerprint.value && saved.dependencies === dependencyKey) {
+          stats.filesSkipped += 1 + dependencies.length;
+          continue;
+        }
         const messages = await parseJsonlMessages(filePath);
 
         // Capture session metadata. For the project name we want the launch
@@ -575,22 +582,8 @@ export async function importClaudeCode(
         // up with parent_tool_use_id: null and appear inline in the main
         // flow instead of nested under their spawning Task.
         const sidechainFiles: { name: string; messages: ClaudeCodeMessage[] }[] = [];
-        if (sessionSubdirs.has(sessionId)) {
-          const subagentDir = join(projectPath, sessionId, "subagents");
-          let agentFiles: string[] = [];
-          try {
-            agentFiles = (await readdir(subagentDir)).filter(
-              (f) => f.startsWith("agent-") && f.endsWith(".jsonl")
-            );
-          } catch {
-            // No subagents/ directory; skip.
-          }
-          for (const agentFile of agentFiles) {
-            const agentMessages = await parseJsonlMessages(
-              join(subagentDir, agentFile)
-            );
-            sidechainFiles.push({ name: agentFile, messages: agentMessages });
-          }
+        for (const [path] of dependencies) {
+          sidechainFiles.push({ name: basename(path), messages: await parseJsonlMessages(path) });
         }
 
         // Build two indexes over main + sidechain messages: an
@@ -636,6 +629,15 @@ export async function importClaudeCode(
           }
         }
 
+        for (const identity of identities.findStale(db)) {
+          await writer.add(() => { upsertIdentities(db, [identity]); pendingCounts.identitiesUpserted++; });
+        }
+        if ((saved?.version !== CLAUDE_CODE_PARSER_VERSION || saved.fingerprint !== fingerprint.value || saved.dependencies !== dependencyKey) &&
+            fingerprint.checkpointable && dependencies.every(([, snapshot]) => snapshot?.checkpointable)) {
+          await writer.add(() => checkpoints.save({ path: filePath, version: CLAUDE_CODE_PARSER_VERSION,
+            fingerprint: fingerprint.value, dependencies: dependencyKey, metadata: "{}" }));
+        }
+
         stats.sessions++;
 
         // Progress indicator
@@ -647,31 +649,28 @@ export async function importClaudeCode(
       }
     }
 
-    // Commit the transaction
-    db.run("COMMIT");
+    const importedTitleSessions = db.prepare(`
+      SELECT conversation_id FROM conversation_summaries
+      WHERE source = 'claude-code' AND source_account_key = ? AND title LIKE 't3code-claude-title-%'
+    `).all(conversationSourceAccountKey(sourceAccount)) as { conversation_id: string }[];
+    await suppress(
+      importedTitleSessions.map((row) => ({
+        source: "claude-code",
+        sourceAccount,
+        conversationId: row.conversation_id,
+        reason: "title_generation",
+      }))
+    );
+
+    for (const path of checkpoints.saved.keys()) {
+      if (await fileFingerprint(path) === null) await writer.add(() => checkpoints.remove(path));
+    }
+    await writer.flush();
   } catch (error) {
-    db.run("ROLLBACK");
-    throw error;
-  }
-
-  const importedTitleSessions = db.prepare(`
-    SELECT conversation_id FROM conversation_summaries
-    WHERE source = 'claude-code' AND source_account_key = ? AND title LIKE 't3code-claude-title-%'
-  `).all(conversationSourceAccountKey(sourceAccount)) as { conversation_id: string }[];
-  markConversationsSuperseded(
-    db,
-    importedTitleSessions.map((row) => ({
-      source: "claude-code",
-      sourceAccount,
-      conversationId: row.conversation_id,
-      reason: "title_generation",
-    }))
-  );
-
-  // Upsert all collected identities
-  if (identities.size > 0) {
-    upsertIdentities(db, [...identities.values()]);
-    stats.identitiesUpserted = identities.size;
+    throw new ClaudeCodeImportError(error, stats);
+  } finally {
+    stats.writeTransactions = writer.stats.transactions;
+    stats.longestWriteHoldMs = writer.stats.longestHoldMs;
   }
 
   // Print summary
@@ -687,16 +686,20 @@ export async function importClaudeCode(
   console.log(`  T3 title-generation sessions skipped: ${stats.titleGenerationSessions}`);
   console.log(`  Batch ID: ${importBatch}`);
 
-  onImportComplete(db);
-
   return stats;
+}
+
+export class ClaudeCodeImportError extends Error {
+  constructor(cause: unknown, readonly stats: ImportStats) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+  }
 }
 
 // CLI
 if (import.meta.main) {
   const args = parserCliArgs({
     usage: "bun run src/platforms/claude-code/parser.ts [projects-dir] [account-name]",
-    flags: ["--refresh-raw-data"],
+    flags: ["--refresh-raw-data", "--full"],
   });
   const refreshRawData = args.includes("--refresh-raw-data");
   const positional = args.filter((a) => !a.startsWith("--"));
@@ -719,7 +722,7 @@ if (import.meta.main) {
   const db = getDb();
   initDb(db);
 
-  await importClaudeCode(db, claudeDir, accountName, { refreshRawData });
+  await importClaudeCode(db, claudeDir, accountName, { refreshRawData, full: args.includes("--full") });
 
   db.close();
 }
