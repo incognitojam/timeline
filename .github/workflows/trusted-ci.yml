@@ -39,8 +39,6 @@ jobs:
           install_args: bun go
       - run: bun install --frozen-lockfile
       - run: (cd web && bun install --frozen-lockfile)
-      - name: Build and smoke-test the relocatable service
-        run: ./scripts/smoke-service-artifact.sh
       - name: Build the Timeline menu bar app
         env:
           TIMELINE_CODESIGN_IDENTITY: "-"
@@ -59,3 +57,6 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Smoke-test source service boot and shutdown
         run: ./scripts/smoke-service.sh
+
+  service-artifact:
+    uses: ./.github/workflows/service-artifact.yml

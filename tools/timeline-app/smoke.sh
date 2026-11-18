@@ -43,11 +43,7 @@ for plist in "$SERVICE_PLIST" "$RECALL_PLIST" "$TAILSCALE_PLIST" "$INFO_PLIST"; 
   plutil -lint "$plist" >/dev/null
 done
 
-test -x "$RESOURCES/timeline-service/bin/timeline-service"
-test -x "$RESOURCES/timeline-service/bin/bun"
 SIDECAR="$RESOURCES/timeline-service/bin/timeline-gmessages"
-sidecar_absolute="$(cd "$(dirname "$SIDECAR")" && pwd)/timeline-gmessages"
-test -x "$SIDECAR"
 codesign --verify --strict "$SIDECAR"
 codesign -d --verbose=4 "$SIDECAR" > "$TMP/sidecar-codesign" 2>&1
 grep -q 'flags=.*runtime' "$TMP/sidecar-codesign"
@@ -55,19 +51,9 @@ test -f "$RESOURCES/timeline-service/Resources/licenses/timeline-gmessages/LICEN
 test -f "$RESOURCES/timeline-service/Resources/licenses/timeline-gmessages/NOTICE.txt"
 tar -tzf "$RESOURCES/timeline-service/Resources/licenses/timeline-gmessages/source.tar.gz" > "$TMP/sidecar-source-files"
 grep -q 'timeline-gmessages/vendor/modules.txt' "$TMP/sidecar-source-files"
-# Help does not read cookies/session.json or connect to the phone.
-(cd "$TMP" && "$sidecar_absolute" --help) 2> "$TMP/sidecar-help"
-grep -q -- '-existing-media' "$TMP/sidecar-help"
-"$RESOURCES/timeline-service/bin/bun" --no-env-file "$ROOT/tools/timeline-app/check-sidecar.ts" "$RESOURCES/timeline-service"
 
-test -r "$RESOURCES/timeline-service/bin/timeline-environment"
-grep -q 'NODE_ENV:=production' "$RESOURCES/timeline-service/bin/timeline-environment"
-grep -q '/opt/homebrew/bin:/usr/local/bin' "$RESOURCES/timeline-service/bin/timeline-environment"
 test ! -e "$RESOURCES/capture.sh"
 test -x "$RESOURCES/run-tailscale.sh"
-test -f "$RESOURCES/timeline-service/Resources/version.json"
-test -f "$RESOURCES/timeline-service/Resources/web/index.html"
-test -f "$RESOURCES/timeline-service/Resources/runtime/platforms/monzo/parser.js"
 
 for name in service recall tailscale; do
   plist="$APP/Contents/Library/LaunchAgents/dev.incognitojam.timeline-$name.plist"
@@ -110,20 +96,10 @@ codesign --verify --deep --strict "$APP"
 "$ROOT/tools/timeline-app/smoke-updater.sh" "$APP"
 
 COPIED_APP="$TMP/Timeline.app"
-RUN_CWD="$TMP/run"
 ditto "$APP" "$COPIED_APP"
-mkdir -p "$RUN_CWD"
 COPIED_SERVICE="$COPIED_APP/Contents/Resources/timeline-service"
-commit="$($COPIED_SERVICE/bin/bun --no-env-file -e \
-  'process.stdout.write((await Bun.file(process.argv[1]).json()).commit)' \
-  "$COPIED_SERVICE/Resources/version.json")"
-
-PATH="/usr/bin:/bin" \
-  PORT=3019 \
-  TIMELINE_SERVICE_EXECUTABLE="$COPIED_SERVICE/bin/timeline-service" \
-  TIMELINE_SERVICE_CWD="$RUN_CWD" \
-  TIMELINE_SMOKE_EXPECT_COMMIT="$commit" \
-  TIMELINE_SMOKE_EXPECT_WEB=1 \
-  "$ROOT/scripts/smoke-service.sh"
+# Run the artifact probes against the relocated, signed bundle, including its
+# Darwin Sharp and sqlite-vec binaries, without rebuilding a second artifact.
+"$ROOT/scripts/smoke-service-artifact.sh" "$COPIED_SERVICE"
 
 echo "OK: Timeline.app owns and runs its packaged service."

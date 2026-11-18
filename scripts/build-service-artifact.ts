@@ -98,8 +98,15 @@ function copyRuntimePackage(packageName: string, modulesRoot: string): void {
 }
 
 async function buildArtifact(outputPath: string): Promise<void> {
-  if (process.platform !== "darwin" || !["arm64", "x64"].includes(process.arch)) {
-    throw new Error(`service artifacts currently support macOS arm64/x64, not ${process.platform}-${process.arch}`);
+  if (!["darwin", "linux"].includes(process.platform) || !["arm64", "x64"].includes(process.arch)) {
+    throw new Error(`service artifacts support macOS and glibc Linux arm64/x64, not ${process.platform}-${process.arch}`);
+  }
+
+  if (process.platform === "linux") {
+    const libc = Bun.spawnSync(["getconf", "GNU_LIBC_VERSION"], { stdout: "pipe", stderr: "pipe" });
+    if (libc.exitCode !== 0 || !libc.stdout.toString().startsWith("glibc ")) {
+      throw new Error("Linux service artifacts require glibc (musl is not supported)");
+    }
   }
 
   const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf-8")) as {
@@ -139,6 +146,8 @@ async function buildArtifact(outputPath: string): Promise<void> {
         join(repoRoot, "src", "service.ts"),
         join(repoRoot, "src", "scheduler", "worker.ts"),
         join(repoRoot, "src", "db", "pool-worker.ts"),
+        // Artifact probes use the same SQLite entry point as the service.
+        join(repoRoot, "src", "db", "sqlite.ts"),
         join(repoRoot, "src", "platforms", "monzo", "parser.ts"),
       ],
       root: join(repoRoot, "src"),
