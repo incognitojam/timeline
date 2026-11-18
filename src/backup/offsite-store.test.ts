@@ -199,5 +199,4 @@ describe("createBackupOffsiteStore (fail-fast)", () => {
     if (env) delete process.env[env];
     expect(() => createBackupOffsiteStore({ ...cfg, ...missing })).toThrow(new RegExp(field));
   });
-
 });

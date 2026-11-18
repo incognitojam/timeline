@@ -184,6 +184,12 @@ describe("attachmentDescriptionsSyncSource", () => {
     expect(await attachmentDescriptionsSyncSource.canSync({})).toBe("not configured: models is required");
   });
 
+  it("requires models to be configured as a list", () => {
+    expect(attachmentDescriptionsSyncSource.configSchema).toContainEqual(
+      expect.objectContaining({ key: "models", type: "string-list", required: true }),
+    );
+  });
+
   it("accepts preferred models and falls back to the legacy model setting", () => {
     expect(parseAttachmentDescriptionsSettings({ models: ["preferred/model", "fallback/model"] })).toEqual({
       models: ["preferred/model", "fallback/model"],

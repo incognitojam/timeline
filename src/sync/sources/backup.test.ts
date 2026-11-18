@@ -24,7 +24,6 @@ afterAll(() => {
 });
 
 describe("backupDatabase", () => {
-
   test("backs up a database", async () => {
     const result = await backupDatabase({
       dbPath: TIMELINE_DB_PATH,
