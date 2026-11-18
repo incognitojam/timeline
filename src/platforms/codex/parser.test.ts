@@ -897,7 +897,6 @@ describe("importCodex", () => {
 
     expect(first.messages).toBe(3);
     expect(second.messages).toBe(0);
-    expect(second.skipped).toBe(3);
     expect(getEvents().length).toBe(3);
   });
 
@@ -916,7 +915,6 @@ describe("importCodex", () => {
 
     expect(first.messages).toBe(1);
     expect(second.messages).toBe(0);
-    expect(second.skipped).toBe(1);
     expect(getAttachments("idempotent-image-session:2")).toHaveLength(1);
   });
 

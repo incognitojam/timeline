@@ -49,19 +49,21 @@ import { projectNameFromWorkspacePath } from "../../db/coding-projects";
 import {
   onImportComplete,
   upsertIdentities,
-  formatIdentifier,
-  type UpsertIdentityOptions,
 } from "../../db/queries";
 import { insertStoredAttachment } from "../../media/attachments";
-import { formatModelName } from "../../ingest/ai/model-names";
+import { createBoundedWriter, type BoundedWriterLimits } from "../../db/bounded-writes";
+import { fileCheckpoints, fileFingerprint, type FileFingerprint } from "../../ingest/file-checkpoints";
 import type { ContentBlock } from "../../ingest/ai/format-content";
-import { createEventWriter, type WriteOutcome } from "../../ingest/ai/import";
+import { createEventWriter, createIdentityCollector } from "../../ingest/ai/import";
 import {
   decodeBase64ImageData,
   errorMessage,
   storeDecodedImage,
   type StoredImageAttachment,
 } from "../../ingest/ai/image-blocks";
+
+// Bump when dependency discovery or emitted history changes, including format-content, image blocks or project naming.
+export const CODEX_PARSER_VERSION = 1;
 
 export const DEFAULT_CODEX_SESSIONS_DIR = `${process.env.HOME}/.codex/sessions`;
 
@@ -95,11 +97,17 @@ export interface ImportStats {
   replayLinesSkipped: number;
   skippedT3Sessions: number;
   identitiesUpserted: number;
+  filesSkipped: number;
+  writeTransactions: number;
+  longestWriteHoldMs: number;
 }
 
 export interface ImportCodexOptions {
   dryRun?: boolean;
   refreshRawData?: boolean;
+  /** Bypass checkpoints without rewriting existing events. */
+  full?: boolean;
+  writeLimits?: BoundedWriterLimits;
 }
 
 function str(value: unknown): string | undefined {
@@ -186,12 +194,6 @@ interface DecodedCodexImage {
   content: Buffer;
   mediaType: string;
 }
-
-type EmittedEvent = {
-  eventId: number | null;
-  sourceId: string;
-  outcome: WriteOutcome;
-};
 
 /**
  * Map a function_call (+ optional output text) to tool_use/tool_result
@@ -521,19 +523,18 @@ export async function importCodex(
     replayLinesSkipped: 0,
     skippedT3Sessions: 0,
     identitiesUpserted: 0,
+    filesSkipped: 0,
+    writeTransactions: 0,
+    longestWriteHoldMs: 0,
   };
 
-  const identities = new Map<string, UpsertIdentityOptions>();
-  const userIdentifier = formatIdentifier("codex", sourceAccount);
-  identities.set(userIdentifier, {
-    platform: "codex",
-    platformId: sourceAccount,
-    displayName: sourceAccount,
-    username: sourceAccount,
-  });
-
+  const identities = createIdentityCollector("codex", sourceAccount);
+  const userIdentifier = identities.userIdentifier;
+  const checkpoints = dryRun ? null : fileCheckpoints(db, "codex", sourceAccount, sessionsDir);
   const files = await findRolloutFiles(sessionsDir);
   console.log(`Found ${files.length.toLocaleString()} rollout files`);
+  const fingerprints = new Map<string, FileFingerprint | null>();
+  for (const file of files) fingerprints.set(file, await fileFingerprint(file));
 
   // Rollout filenames embed the session id, so a subagent's parent rollout
   // can be resolved without reading any file contents.
@@ -577,10 +578,32 @@ export async function importCodex(
         refreshRawData,
       });
 
-  if (!dryRun) db.run("BEGIN TRANSACTION");
+  const pendingCounts = { messages: 0, toolCalls: 0, reasoning: 0, refreshed: 0, skipped: 0, identitiesUpserted: 0 };
+  const writer = dryRun ? null : createBoundedWriter(db, options.writeLimits, {
+    beforeCommit: () => onImportComplete(db),
+    afterCommit: () => {
+      for (const key of Object.keys(pendingCounts) as (keyof typeof pendingCounts)[]) {
+        stats[key] += pendingCounts[key];
+        pendingCounts[key] = 0;
+      }
+    },
+  });
+  const dependenciesFor = (parentId: string | undefined) => {
+    const parent = parentId ? fileBySessionId.get(parentId) : undefined;
+    return JSON.stringify(parent ? [parent, fingerprints.get(parent)?.value ?? null] : [parentId ?? null, null]);
+  };
 
   try {
     for (const filePath of files) {
+      await writer?.breathe();
+      const fingerprint = fingerprints.get(filePath);
+      if (!fingerprint) continue;
+      const saved = checkpoints?.saved.get(filePath);
+      if (!options.full && !refreshRawData && saved?.version === CODEX_PARSER_VERSION &&
+          saved.fingerprint === fingerprint.value && saved.dependencies === dependenciesFor(JSON.parse(saved.metadata).parentId)) {
+        stats.filesSkipped++;
+        continue;
+      }
       const text = await Bun.file(filePath).text();
       const lines = text.split("\n");
 
@@ -592,10 +615,26 @@ export async function importCodex(
       }
       if (!meta) continue;
 
+      const saveCheckpoint = async () => {
+        if (!writer || !checkpoints) return;
+        const parentId = meta.sessionSource === "subagent" ? meta.parentThreadId : undefined;
+        const parent = parentId ? fileBySessionId.get(parentId) : undefined;
+        const dependencies = dependenciesFor(parentId);
+        const metadata = JSON.stringify({ parentId });
+        if (saved?.version === CODEX_PARSER_VERSION && saved.fingerprint === fingerprint.value &&
+            saved.dependencies === dependencies && saved.metadata === metadata) return;
+        if (fingerprint.checkpointable && (!parent || fingerprints.get(parent)?.checkpointable)) {
+          await writer.add(() => checkpoints.save({
+            path: filePath, version: CODEX_PARSER_VERSION, fingerprint: fingerprint.value, dependencies, metadata,
+          }));
+        }
+      };
+
       // T3 Code drives codex as a provider; its rollouts duplicate threads
       // already imported by the t3code parser.
       if (meta.originator === "t3code_desktop") {
         stats.skippedT3Sessions++;
+        await saveCheckpoint();
         continue;
       }
 
@@ -640,31 +679,18 @@ export async function importCodex(
         pendingUsage = acc;
       };
 
-      const assistantIdentity = (model: string | undefined): string => {
-        const assistantPlatformId = model || "assistant";
-        const assistantIdentifier = formatIdentifier("codex", assistantPlatformId);
-        if (!identities.has(assistantIdentifier)) {
-          identities.set(assistantIdentifier, {
-            platform: "codex",
-            platformId: assistantPlatformId,
-            displayName: formatModelName(model ?? null),
-            username: assistantPlatformId,
-          });
-        }
-        return assistantIdentifier;
-      };
-
       // Insert one event and bump the given stats counter; on duplicate,
       // optionally refresh content+raw_data.
-      const emitEvent = (
+      const emitEvent = async (
         lineIndex: number,
         timestamp: string,
         isUser: boolean,
         model: string | undefined,
         content: string,
         extraRaw: Record<string, unknown>,
-        counter: "messages" | "toolCalls" | "reasoning"
-      ): EmittedEvent => {
+        counter: "messages" | "toolCalls" | "reasoning",
+        images: CodexImageDataUrl[] = []
+      ): Promise<void> => {
         const tags = [
           "editor:codex",
           project && `project:${project}`,
@@ -674,7 +700,7 @@ export async function importCodex(
 
         const people = isUser
           ? [userIdentifier]
-          : [assistantIdentity(model), userIdentifier];
+          : [identities.registerAssistant(model ?? null), userIdentifier];
 
         const rawData = JSON.stringify({
           session_id: sessionMeta.sessionId,
@@ -694,11 +720,11 @@ export async function importCodex(
         const sourceId = `${sessionMeta.sessionId}:${lineIndex}`;
         if (dryRun) {
           stats[counter]++;
-          return { eventId: null, sourceId, outcome: "inserted" };
+          return;
         }
 
-        if (!eventWriter) throw new Error("event writer not prepared");
-        const { outcome, eventId } = eventWriter.write({
+        if (!eventWriter || !writer) throw new Error("event writer not prepared");
+        const row = {
           sourceId,
           eventType: isUser ? "codex:message:user" : "codex:message:assistant",
           timestamp,
@@ -708,25 +734,39 @@ export async function importCodex(
           tags,
           rawData,
           conversationId,
-        });
-        if (outcome === "inserted") {
-          stats[counter]++;
-        } else if (outcome === "refreshed") {
-          stats.refreshed++;
-        } else {
+        };
+        if (!eventWriter.needsWrite(row)) {
+          await writer.breathe();
           stats.skipped++;
+          return;
         }
-        return { eventId, sourceId, outcome };
+        const attachments = await storeCodexImageAttachments({
+          images, sourceAccount, sessionId: sessionMeta.sessionId, eventSourceId: sourceId,
+        });
+        await writer.add(() => {
+          const { outcome, eventId } = eventWriter.write(row);
+          if (outcome === "inserted") pendingCounts[counter]++;
+          else if (outcome === "refreshed") pendingCounts.refreshed++;
+          else pendingCounts.skipped++;
+          if (eventId === null || outcome === "skipped") return;
+          for (const attachment of attachments) {
+            insertStoredAttachment(db, {
+              eventId, source: "codex", sourceId: attachment.sourceId,
+              filename: attachment.filename, mimeType: attachment.mimeType,
+              width: attachment.width, height: attachment.height,
+            }, attachment.stored);
+          }
+        }, row.rawData.length + row.content.length);
       };
 
       // function_calls awaiting their function_call_output (paired by call_id)
       const pendingCalls = new Map<string, PendingCall>();
-      const emitToolCall = (pending: PendingCall, callId: string, output: string | undefined) => {
+      const emitToolCall = async (pending: PendingCall, callId: string, output: string | undefined) => {
         const blocks = functionCallToBlocks(
           { name: pending.name, arguments: pending.arguments, callId },
           output
         );
-        emitEvent(
+        await emitEvent(
           pending.line,
           pending.timestamp,
           false,
@@ -743,8 +783,8 @@ export async function importCodex(
       // custom_tool_call_output (paired by call_id); arguments holds the
       // JS script from the call's input.
       const pendingExecCalls = new Map<string, PendingCall>();
-      const emitExecCall = (pending: PendingCall, callId: string, output: string | undefined) => {
-        emitEvent(
+      const emitExecCall = async (pending: PendingCall, callId: string, output: string | undefined) => {
+        await emitEvent(
           pending.line,
           pending.timestamp,
           false,
@@ -777,6 +817,7 @@ export async function importCodex(
       let inReplayPrefix = parentPayloads !== null;
 
       for (let i = 0; i < lines.length; i++) {
+        if (i % 200 === 0) await writer?.breathe();
         if (!lines[i].trim()) continue;
         let line: RolloutLine;
         try {
@@ -825,7 +866,7 @@ export async function importCodex(
             const pending = callId ? pendingCalls.get(callId) : undefined;
             if (callId && pending) {
               pendingCalls.delete(callId);
-              emitToolCall(pending, callId, str(payload.output) ?? "");
+              await emitToolCall(pending, callId, str(payload.output) ?? "");
             }
           } else if (payloadType === "custom_tool_call") {
             // apply_patch envelopes split into per-file blocks; their paired
@@ -835,7 +876,7 @@ export async function importCodex(
             const callId = str(payload.call_id) ?? `ctc-${i}`;
             const input = str(payload.input);
             if (payload.name === "apply_patch" && input) {
-              emitEvent(i, line.timestamp, false, currentModel, "", {
+              await emitEvent(i, line.timestamp, false, currentModel, "", {
                 call_id: callId,
                 tool: "apply_patch",
                 content: applyPatchToBlocks(input, callId),
@@ -854,7 +895,7 @@ export async function importCodex(
             const pending = callId ? pendingExecCalls.get(callId) : undefined;
             if (callId && pending) {
               pendingExecCalls.delete(callId);
-              emitExecCall(pending, callId, customToolCallOutputText(payload.output) ?? "");
+              await emitExecCall(pending, callId, customToolCallOutputText(payload.output) ?? "");
             }
           } else if (payloadType === "web_search_call") {
             const action = asRecord(payload.action);
@@ -867,14 +908,14 @@ export async function importCodex(
                 input: query ? { query } : undefined,
               },
             ];
-            emitEvent(i, line.timestamp, false, currentModel, "", {
+            await emitEvent(i, line.timestamp, false, currentModel, "", {
               tool: "web_search",
               content: blocks,
             }, "toolCalls");
           } else if (payloadType === "reasoning") {
             const blocks = reasoningToBlocks(payload);
             if (blocks.length > 0) {
-              emitEvent(i, line.timestamp, false, currentModel, "", {
+              await emitEvent(i, line.timestamp, false, currentModel, "", {
                 content: blocks,
               }, "reasoning");
             }
@@ -938,45 +979,29 @@ export async function importCodex(
 
         const isUser = payloadType === "user_message";
         const usage = isUser ? undefined : pendingUsage ?? undefined;
-        const written = emitEvent(i, line.timestamp, isUser, currentModel, message ?? "", {
+        await emitEvent(i, line.timestamp, isUser, currentModel, message ?? "", {
           phase: isUser ? undefined : str(payload.phase),
           images: images.length > 0 ? images.length : undefined,
           usage,
           content: blocks,
-        }, "messages");
+        }, "messages", imageDataUrls);
         if (usage) pendingUsage = null;
-        if (
-          written.eventId !== null &&
-          written.outcome !== "skipped" &&
-          imageDataUrls.length > 0
-        ) {
-          const attachments = await storeCodexImageAttachments({
-            images: imageDataUrls,
-            sourceAccount,
-            sessionId: sessionMeta.sessionId,
-            eventSourceId: written.sourceId,
-          });
-          for (const attachment of attachments) {
-            insertStoredAttachment(db, {
-              eventId: written.eventId,
-              source: "codex",
-              sourceId: attachment.sourceId,
-              filename: attachment.filename,
-              mimeType: attachment.mimeType,
-              width: attachment.width,
-              height: attachment.height,
-            }, attachment.stored);
-          }
-        }
       }
 
       // Calls that never got an output (session interrupted): keep the
       // tool_use so the conversation still shows what was attempted.
       for (const [callId, pending] of pendingCalls) {
-        emitToolCall(pending, callId, undefined);
+        await emitToolCall(pending, callId, undefined);
       }
       for (const [callId, pending] of pendingExecCalls) {
-        emitExecCall(pending, callId, undefined);
+        await emitExecCall(pending, callId, undefined);
+      }
+
+      if (writer && checkpoints) {
+        for (const identity of identities.findStale(db)) {
+          await writer.add(() => { upsertIdentities(db, [identity]); pendingCounts.identitiesUpserted++; });
+        }
+        await saveCheckpoint();
       }
 
       if (sessionHasMessages) {
@@ -989,15 +1014,17 @@ export async function importCodex(
       }
     }
 
-    if (!dryRun) db.run("COMMIT");
+    if (writer && checkpoints) {
+      for (const path of checkpoints.saved.keys()) {
+        if (!fingerprints.has(path)) await writer.add(() => checkpoints.remove(path));
+      }
+      await writer.flush();
+    }
   } catch (error) {
-    if (!dryRun) db.run("ROLLBACK");
-    throw error;
-  }
-
-  if (!dryRun && identities.size > 0) {
-    upsertIdentities(db, [...identities.values()]);
-    stats.identitiesUpserted = identities.size;
+    throw new CodexImportError(error, stats);
+  } finally {
+    stats.writeTransactions = writer?.stats.transactions ?? 0;
+    stats.longestWriteHoldMs = writer?.stats.longestHoldMs ?? 0;
   }
 
   console.log(`\n${"=".repeat(50)}`);
@@ -1015,16 +1042,20 @@ export async function importCodex(
   console.log(`  Skipped T3 Code sessions: ${stats.skippedT3Sessions}`);
   console.log(`  Batch ID: ${importBatch}`);
 
-  if (!dryRun) onImportComplete(db);
-
   return stats;
+}
+
+export class CodexImportError extends Error {
+  constructor(cause: unknown, readonly stats: ImportStats) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+  }
 }
 
 // CLI
 if (import.meta.main) {
   const args = parserCliArgs({
     usage: "bun run src/platforms/codex/parser.ts [sessions-dir] [account-name]",
-    flags: ["--dry-run", "--refresh-raw-data"],
+    flags: ["--dry-run", "--refresh-raw-data", "--full"],
   });
   const dryRun = args.includes("--dry-run");
   const refreshRawData = args.includes("--refresh-raw-data");
@@ -1062,7 +1093,7 @@ if (import.meta.main) {
     db as ReturnType<typeof getDb>,
     sessionsDir,
     accountName,
-    { dryRun, refreshRawData }
+    { dryRun, refreshRawData, full: args.includes("--full") }
   );
 
   if (db) {
