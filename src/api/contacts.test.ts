@@ -610,61 +610,6 @@ describe("Contact API Tests", () => {
       db.close();
     });
 
-    test("GET /api/contacts/suggestions returns matching aliases", async () => {
-      const res = await app.request("/api/contacts/suggestions");
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      expect(json).toHaveProperty("suggestions");
-      expect(json).toHaveProperty("count");
-      expect(Array.isArray(json.suggestions)).toBe(true);
-
-      // Should find matches for the two synthetic fixture identities.
-      expect(json.count).toBeGreaterThanOrEqual(2);
-      expect(json.suggestions).toContainEqual({
-        alias_a: "alice_suggestion_example",
-        source_a: "discord",
-        alias_b: "Alice Suggestion Example",
-        source_b: "facebook",
-        normalized: "alice suggestion example",
-      });
-      expect(json.suggestions).toContainEqual({
-        alias_a: "Bob Suggestion Example",
-        source_a: "facebook",
-        alias_b: "bob.suggestion.example",
-        source_b: "skype",
-        normalized: "bob suggestion example",
-      });
-    });
-
-    test("GET /api/contacts/suggestions respects limit", async () => {
-      const res = await app.request("/api/contacts/suggestions?limit=1");
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      expect(json.suggestions.length).toBeLessThanOrEqual(1);
-    });
-
-    test("GET /api/contacts/suggestions excludes skipped identities", async () => {
-      const res = await app.request("/api/contacts/suggestions");
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      const hasSkipped = json.suggestions.some(
-        (s: { alias_a: string; alias_b: string }) =>
-          s.alias_a === "discord:skip_me" || s.alias_b === "discord:skip_me"
-      );
-      expect(hasSkipped).toBe(false);
-    });
-
-    test("GET /api/contacts/suggestions excludes linked identities", async () => {
-      const res = await app.request("/api/contacts/suggestions");
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      const hasLinked = json.suggestions.some(
-        (s: { alias_a: string; alias_b: string }) =>
-          s.alias_a === "discord:linked_user" || s.alias_b === "discord:linked_user"
-      );
-      expect(hasLinked).toBe(false);
-    });
-
     test("POST /api/identities/resolve returns resolved identities", async () => {
       const res = await app.request("/api/identities/resolve", {
         method: "POST",

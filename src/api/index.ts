@@ -82,7 +82,6 @@ import {
 import { getMediaStore, readOrRestore } from "../media/storage";
 import { streamDaySummary, SUMMARY_EXCLUDED_SOURCES } from "../summary/day-summary";
 import { waitForModels, initProviders, getDefaultModel, getVisionAvailability, resolveLanguageModel } from "../llm";
-import { PERSONAL_SOURCES } from "../shared/grouping";
 import { recordingAudioResponse } from "../platforms/call-recordings/audio";
 import { findCallLinks } from "../platforms/call-recordings/links";
 import { EVENT_SOURCE as CALL_RECORDINGS_SOURCE } from "../platforms/call-recordings/parser";
@@ -1802,56 +1801,6 @@ app.get("/api/contacts/resolve", async (c) => {
   }
   const contact = await resolveAlias(readDb, query.alias, query.source);
   return c.json({ contact });
-});
-
-// Find aliases that normalize to the same value (e.g., "Alice Example" and "alice_example")
-app.get("/api/contacts/suggestions", async (c) => {
-  const query = c.req.query();
-  const limit = query.limit ? parseInt(query.limit) : 50;
-
-  return c.json(await getCached(`contacts:suggestions:${limit}`, async () => {
-    // Find unlinked aliases that normalize to the same value
-    const suggestions = await readDb.query<{
-      alias_a: string;
-      source_a: string;
-      alias_b: string;
-      source_b: string;
-      normalized: string;
-    }>(`
-      WITH unlinked AS (
-        SELECT DISTINCT
-          ep.person,
-          ep.source,
-          TRIM(LOWER(REPLACE(REPLACE(REPLACE(
-            CASE
-              WHEN i.display_name IS NOT NULL AND LENGTH(TRIM(i.display_name)) > 0 THEN i.display_name
-              WHEN i.username IS NOT NULL AND LENGTH(TRIM(i.username)) > 0 THEN i.username
-              WHEN i.platform_id LIKE 'name:%' THEN substr(i.platform_id, 6)
-              WHEN i.platform_id IS NOT NULL AND LENGTH(TRIM(i.platform_id)) > 0 THEN i.platform_id
-              ELSE ep.person
-            END
-          , '_', ' '), '.', ' '), '-', ' '))) as normalized
-        FROM event_people ep
-        LEFT JOIN identities i ON ep.person = (i.platform || ':' || i.platform_id)
-        WHERE ep.source IN (${PERSONAL_SOURCES.map(() => "?").join(",")})
-          AND (i.id IS NULL OR (i.contact_id IS NULL AND i.skipped = 0))
-          AND length(ep.person) > 2
-      )
-      SELECT
-        a.person as alias_a,
-        a.source as source_a,
-        b.person as alias_b,
-        b.source as source_b,
-        a.normalized
-      FROM unlinked a
-      JOIN unlinked b ON a.normalized = b.normalized
-      WHERE (a.source, a.person) < (b.source, b.person)
-      ORDER BY a.normalized, a.source, b.source
-      LIMIT ?
-    `, ...PERSONAL_SOURCES, limit);
-
-    return { suggestions, count: suggestions.length };
-  }, c));
 });
 
 app.get("/api/identities/events", async (c) => {

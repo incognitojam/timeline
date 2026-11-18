@@ -44,7 +44,6 @@ const exempt = {
   "/api/contacts/:id/suggestions": "Returns contact-link suggestions only.",
   "/api/contacts/count": "Returns a contact count only.",
   "/api/contacts/resolve": "Returns an explicitly resolved contact only.",
-  "/api/contacts/suggestions": "Returns contact-link suggestions only.",
   "/api/conversation": "Direct thread access stays unfiltered and is tested below.",
   "/api/conversation/around": "Direct thread access stays unfiltered.",
   "/api/conversation/media": "Direct thread media access stays unfiltered.",
