@@ -2,6 +2,17 @@ import { QueryClient } from "@tanstack/solid-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { queryClientDefaultOptions } from "./query-client";
 import { queryOptions } from "./queries";
+import { getToday } from "./timelineDate";
+
+describe("map events query", () => {
+  it("polls today but not historic days", () => {
+    const todayOptions = queryOptions.mapEventsForDay(getToday(), []);
+    const historicOptions = queryOptions.mapEventsForDay("2000-01-01", []);
+
+    expect(todayOptions.refetchInterval).toBe(60_000);
+    expect(historicOptions.refetchInterval).toBe(false);
+  });
+});
 
 describe("conversation query cache", () => {
   afterEach(() => {
