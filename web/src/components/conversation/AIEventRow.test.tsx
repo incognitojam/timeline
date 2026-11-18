@@ -75,7 +75,6 @@ function renderRow(
 
 describe("AIEventRow", () => {
 
-
   it("renders a top-level stored image inline once, not in a trailing group", () => {
     const { getAllByAltText, queryByText } = renderRow([makeAttachment()]);
 

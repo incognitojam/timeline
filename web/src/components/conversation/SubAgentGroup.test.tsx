@@ -87,7 +87,6 @@ function renderAtNestingCap(
 
 describe("SubAgentGroup", () => {
 
-
   it("traverses capped descendants once", () => {
     const rootEvent = makeEvent(1, "Root");
     const deepEvents = Array.from({ length: 8 }, (_, index) =>

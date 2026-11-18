@@ -29,7 +29,7 @@ function renderNavigation(path = "/") {
 }
 
 describe("Navigation", () => {
-  test("renders the seven primary destinations and separates utilities", () => {
+  test("marks the active rail destination and starts with utilities closed", () => {
     const { container } = renderNavigation();
     const rail = container.querySelector<HTMLElement>("aside");
     expect(rail).not.toBeNull();
@@ -51,7 +51,7 @@ describe("Navigation", () => {
     }
   });
 
-  test("renders four compact destinations plus the More action", () => {
+  test("starts with the compact More sheet closed", () => {
     const { container } = renderNavigation();
     const bar = container.querySelector<HTMLElement>(".mobile-navigation-bar");
     expect(bar).not.toBeNull();

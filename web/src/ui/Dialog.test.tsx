@@ -21,8 +21,6 @@ describe("Dialog", () => {
     expect(screen.getByText("Dialog body")).toBeInTheDocument();
   });
 
-
-
   it("calls onClose when the close button is clicked", () => {
     const onClose = vi.fn();
     render(() => (

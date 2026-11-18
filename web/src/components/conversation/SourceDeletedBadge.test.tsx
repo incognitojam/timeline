@@ -52,8 +52,6 @@ describe("sourceDeletedClass", () => {
   it("returns no classes for an ordinary event", () => {
     expect(sourceDeletedClass(baseEvent)).toBe("");
   });
-
-
 });
 
 describe("sourceDeletedTitle", () => {
