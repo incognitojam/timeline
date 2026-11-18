@@ -32,7 +32,7 @@ if (command === "bun") {
   else if (args[1] === "build") step = "build";
   else step = args[1];
 } else if (command === "bunx") {
-  step = args[0] === "tsc" ? (inWeb ? "types-web" : "types-root")
+  step = args[0] === "tsc" ? (inWeb ? (args.includes("e2e/tsconfig.json") ? "types-e2e" : "types-web") : "types-root")
     : args[1] === "install" ? "browser-install" : "browser-native";
 }
 const trace = process.env.RUNNER_TEST_TRACE;
@@ -103,7 +103,7 @@ describe("test suite runner", () => {
     const result = await runSuite(["unit"], { requireOverlap: true });
     expect(result.exitCode).toBe(0);
     expect(result.records.filter((record) => record.state === "end").map((record) => record.step).sort())
-      .toEqual(["backend", "frontend", "install-root", "install-web", "scripts", "types-root", "types-web"]);
+      .toEqual(["backend", "frontend", "install-root", "install-web", "scripts", "types-e2e", "types-root", "types-web"]);
   });
 
   test("propagates backend failure even when script tests would succeed", async () => {
@@ -126,7 +126,7 @@ describe("test suite runner", () => {
     const result = await runSuite(["frontend"]);
     expect(result.exitCode).toBe(0);
     expect(result.records.filter((record) => record.state === "end").map((record) => record.step).sort())
-      .toEqual(["frontend", "install-root", "install-web", "types-web"]);
+      .toEqual(["frontend", "install-root", "install-web", "types-e2e", "types-web"]);
   });
 
   test("propagates a frontend failure and waits for the other checks", async () => {

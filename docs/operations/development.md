@@ -89,9 +89,10 @@ runs the unit checks without browsers or a production build. `./test.sh backend`
 its duration and prints its log on failure. PR and trusted CI run browser projects
 on separate Linux runners, while trusted CI keeps backend and app checks on macOS.
 
-PR chart sweeps check representative widths and layout boundaries. Trusted CI on
-main and local runs retain the exhaustive sweep. Set `PLAYWRIGHT_CHART_SWEEP=smoke`
-to reproduce the PR coverage locally; the default is `full`. Dense health screenshots
+Local chart sweeps default to `smoke`, checking representative widths and layout
+boundaries; PR CI selects this mode explicitly. Set `PLAYWRIGHT_CHART_SWEEP=full`
+for the exhaustive width grid used by trusted CI on main. Both modes sweep
+forwards and backwards and check clipping, overlap, and overflow. Dense health screenshots
 cover compact, desktop, and wide windows.
 
 To run only browser tests or update baselines after an intentional visual change:
