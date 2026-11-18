@@ -6,6 +6,7 @@ import {
   formatIdentifier,
   type UpsertIdentityOptions,
 } from "../../../db/queries";
+import { decodeEntities } from "../../../ingest/entities";
 
 interface YouTubeActivity {
   type: "watch" | "search" | "like" | "subscribe" | "view" | "comment";
@@ -127,23 +128,6 @@ function buildChannelIdentity(
   return null;
 }
 
-function decodeHtmlEntities(text: string): string {
-  return text
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&#(\d+);/g, (match, code) => {
-      const num = Number(code);
-      return num >= 0 && num <= 0x10ffff ? String.fromCodePoint(num) : match;
-    })
-    .replace(/&#x([0-9a-fA-F]+);/g, (match, code) => {
-      const num = parseInt(code, 16);
-      return num >= 0 && num <= 0x10ffff ? String.fromCodePoint(num) : match;
-    })
-    .replace(/&amp;/g, "&");
-}
-
 function parseYouTubeActivityHtml(html: string): YouTubeActivity[] {
   const activities: YouTubeActivity[] = [];
 
@@ -179,9 +163,9 @@ function parseYouTubeActivityHtml(html: string): YouTubeActivity[] {
         const channelMatch = content.match(/<\/a><br><a href="(https:\/\/www\.youtube\.com\/channel\/[^"]+)">([^<]*)<\/a>/);
         activities.push({
           type: "watch",
-          title: decodeHtmlEntities(urlMatch[2]),
+          title: decodeEntities(urlMatch[2]),
           url: urlMatch[1],
-          channel: channelMatch ? decodeHtmlEntities(channelMatch[2]) : undefined,
+          channel: channelMatch ? decodeEntities(channelMatch[2]) : undefined,
           channelUrl: channelMatch ? channelMatch[1] : undefined,
           timestamp,
           videoId: extractVideoId(urlMatch[1]) || undefined,
@@ -192,7 +176,7 @@ function parseYouTubeActivityHtml(html: string): YouTubeActivity[] {
       if (searchMatch) {
         activities.push({
           type: "search",
-          title: decodeHtmlEntities(searchMatch[2]),
+          title: decodeEntities(searchMatch[2]),
           url: searchMatch[1],
           timestamp,
         });
@@ -203,9 +187,9 @@ function parseYouTubeActivityHtml(html: string): YouTubeActivity[] {
         const channelMatch = content.match(/<\/a><br><a href="(https:\/\/www\.youtube\.com\/channel\/[^"]+)">([^<]*)<\/a>/);
         activities.push({
           type: "like",
-          title: decodeHtmlEntities(likeMatch[2]),
+          title: decodeEntities(likeMatch[2]),
           url: likeMatch[1],
-          channel: channelMatch ? decodeHtmlEntities(channelMatch[2]) : undefined,
+          channel: channelMatch ? decodeEntities(channelMatch[2]) : undefined,
           channelUrl: channelMatch ? channelMatch[1] : undefined,
           timestamp,
           videoId: extractVideoId(likeMatch[1]) || undefined,
@@ -216,9 +200,9 @@ function parseYouTubeActivityHtml(html: string): YouTubeActivity[] {
       if (subMatch) {
         activities.push({
           type: "subscribe",
-          title: decodeHtmlEntities(subMatch[2]),
+          title: decodeEntities(subMatch[2]),
           url: subMatch[1],
-          channel: decodeHtmlEntities(subMatch[2]),
+          channel: decodeEntities(subMatch[2]),
           channelUrl: subMatch[1],
           timestamp,
         });
@@ -229,9 +213,9 @@ function parseYouTubeActivityHtml(html: string): YouTubeActivity[] {
         const channelMatch = content.match(/<\/a><br><a href="(https:\/\/www\.youtube\.com\/channel\/[^"]+)">([^<]*)<\/a>/);
         activities.push({
           type: "view",
-          title: decodeHtmlEntities(viewMatch[2].substring(0, 200)),
+          title: decodeEntities(viewMatch[2].substring(0, 200)),
           url: viewMatch[1],
-          channel: channelMatch ? decodeHtmlEntities(channelMatch[2]) : undefined,
+          channel: channelMatch ? decodeEntities(channelMatch[2]) : undefined,
           channelUrl: channelMatch ? channelMatch[1] : undefined,
           timestamp,
         });

@@ -145,6 +145,32 @@ describe("importLegacySkypeData", () => {
     expect(row?.conversation_id).toBe("#alice/$deadbeef12345678;aa11bb22cc33dd44");
   });
 
+  it("decodes numeric entities in message text and keeps the raw body", async () => {
+    const bodyXml = "see you &#128578; &amp; bye";
+    writeLegacyDb(
+      [{ id: 29, displayname: "Bob Example", identity: "bob" }],
+      [
+        {
+          id: 5,
+          timestamp: 1300000400,
+          author: "alice",
+          from_dispname: "Alice",
+          dialog_partner: "bob",
+          chatname: "#alice/$bob;1a2b3c4d5e6f7890",
+          body_xml: bodyXml,
+          type: 61,
+          convo_id: 29,
+        },
+      ],
+    );
+
+    await importLegacySkypeData(db, skypeDbPath, "alice");
+
+    expect(getRow("legacy:5")?.content).toBe("see you 🙂 & bye");
+    const raw = db.prepare("SELECT raw_data FROM events WHERE source_id = 'legacy:5'").get() as { raw_data: string };
+    expect(JSON.parse(raw.raw_data).body_xml).toBe(bodyXml);
+  });
+
   it("skips rows with no conversation identity without crashing", async () => {
     writeLegacyDb(
       [{ id: 240, displayname: "Dana Example", identity: "dana" }],
