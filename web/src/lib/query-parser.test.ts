@@ -10,22 +10,22 @@ import {
 } from "./query-parser";
 
 describe("parseQuery", () => {
-  it("extracts source filter", () => {
-    const result = parseQuery("hello source:discord world");
-    expect(result.source).toBe("discord");
-    expect(result.text).toBe("hello world");
+  it.each([
+    ["hello source:discord world", "source", "discord", "hello world"],
+    ["type:message hello", "type", "message", "hello"],
+    ["from:alice hello", "from", "alice", "hello"],
+    ["at:london", "location", "london", ""],
+    ["contact:42", "contact", "42", ""],
+  ] as const)("extracts %s into %s", (query, field, expected, text) => {
+    const result = parseQuery(query);
+    expect(result[field]).toBe(expected);
+    expect(result.text).toBe(text);
   });
 
   it("handles multiple sources", () => {
     const result = parseQuery("source:discord source:spotify test");
     expect(result.source).toBe("discord,spotify");
     expect(result.text).toBe("test");
-  });
-
-  it("extracts type filter", () => {
-    const result = parseQuery("type:message hello");
-    expect(result.type).toBe("message");
-    expect(result.text).toBe("hello");
   });
 
   it("parses date filter with full date", () => {
@@ -59,22 +59,6 @@ describe("parseQuery", () => {
     expect(parseQuery("sort:newest").sort).toBe("desc");
     expect(parseQuery("sort:asc").sort).toBe("asc");
     expect(parseQuery("sort:desc").sort).toBe("desc");
-  });
-
-  it("extracts from filter", () => {
-    const result = parseQuery("from:alice hello");
-    expect(result.from).toBe("alice");
-    expect(result.text).toBe("hello");
-  });
-
-  it("extracts location filter", () => {
-    const result = parseQuery("at:london");
-    expect(result.location).toBe("london");
-  });
-
-  it("extracts contact filter", () => {
-    const result = parseQuery("contact:42");
-    expect(result.contact).toBe("42");
   });
 
   it("preserves a bare contact filter for validation", () => {

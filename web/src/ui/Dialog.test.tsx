@@ -21,29 +21,18 @@ describe("Dialog", () => {
     expect(screen.getByText("Dialog body")).toBeInTheDocument();
   });
 
-  it("calls onClose when the close button is clicked", () => {
+  it.each(["close button", "Escape"])("calls onClose on %s", (intent) => {
     const onClose = vi.fn();
     render(() => (
       <Dialog open onClose={onClose} title="Test dialog">
         <p>Dialog body</p>
       </Dialog>
     ));
-
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
-
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it("calls onClose on Escape", () => {
-    const onClose = vi.fn();
-    render(() => (
-      <Dialog open onClose={onClose} title="Test dialog">
-        <p>Dialog body</p>
-      </Dialog>
-    ));
-
-    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
-
+    if (intent === "close button") {
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    } else {
+      fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    }
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
