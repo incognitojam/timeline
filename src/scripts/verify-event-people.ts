@@ -312,7 +312,7 @@ async function main() {
   if (result.rowsBeforeSenderRule > 0 && !rebuildRan) {
     console.log("\nThe table predates the rule that indexes only the sender of a group message:");
     console.log(`${formatCount(result.rowsBeforeSenderRule)} rows still index group members. They are not drift, but the`);
-    console.log("table needs a rebuild to drop them. This script does not rebuild for them.");
+    console.log("table needs a rebuild to drop them. --rebuild does not rebuild for them; use --force-rebuild.");
   }
   console.log("=".repeat(70));
 
