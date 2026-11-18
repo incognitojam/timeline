@@ -190,18 +190,13 @@ describe("createBackupOffsiteStore (fail-fast)", () => {
   test("builds a store when fully configured", () => {
     expect(createBackupOffsiteStore(cfg)).toBeInstanceOf(BackupOffsiteStore);
   });
-  test("throws without account_id", () => {
-    expect(() => createBackupOffsiteStore({ ...cfg, account_id: "" })).toThrow(/account_id/);
-  });
-  test("throws without bucket", () => {
-    expect(() => createBackupOffsiteStore({ ...cfg, bucket: "" })).toThrow(/bucket/);
-  });
-  test("throws without R2 credentials", () => {
-    delete process.env.R2_ACCESS_KEY_ID;
-    expect(() => createBackupOffsiteStore(cfg)).toThrow(/R2_ACCESS_KEY_ID/);
-  });
-  test("throws without an encryption key", () => {
-    delete process.env.BACKUP_ENCRYPTION_KEY;
-    expect(() => createBackupOffsiteStore(cfg)).toThrow(/BACKUP_ENCRYPTION_KEY/);
+  test.each([
+    { field: "account_id", missing: { account_id: "" }, env: undefined },
+    { field: "bucket", missing: { bucket: "" }, env: undefined },
+    { field: "R2_ACCESS_KEY_ID", missing: {}, env: "R2_ACCESS_KEY_ID" },
+    { field: "BACKUP_ENCRYPTION_KEY", missing: {}, env: "BACKUP_ENCRYPTION_KEY" },
+  ])("throws without $field", ({ field, missing, env }) => {
+    if (env) delete process.env[env];
+    expect(() => createBackupOffsiteStore({ ...cfg, ...missing })).toThrow(new RegExp(field));
   });
 });

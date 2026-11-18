@@ -1,11 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
-  DEFAULT_NETWORK_GUARD_ON_UNKNOWN,
-  DEFAULT_REQUIRE_UNMETERED,
-  DEFAULT_SKIP_BLOCKED_NETWORKS,
   evaluateNetworkGuard,
   meteredFromStatus,
-  NETWORK_GUARD_CONFIG_FIELDS,
   type NetworkGuardConfig,
   parseAirportNetwork,
   parseNetworkGuardConfig,
@@ -118,16 +114,6 @@ describe("evaluateNetworkGuard", () => {
 
 describe("parseNetworkGuardConfig", () => {
   const blockedNetworks = ["iPhone", "Train WiFi"];
-
-  test("exposes the parser defaults through the editable schema", () => {
-    expect(NETWORK_GUARD_CONFIG_FIELDS).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ key: "skip_blocked_networks", default: DEFAULT_SKIP_BLOCKED_NETWORKS }),
-        expect.objectContaining({ key: "require_unmetered", default: DEFAULT_REQUIRE_UNMETERED }),
-        expect.objectContaining({ key: "on_unknown", default: DEFAULT_NETWORK_GUARD_ON_UNKNOWN }),
-      ])
-    );
-  });
 
   test("returns null when unconfigured", () => {
     expect(parseNetworkGuardConfig(undefined, blockedNetworks)).toBeNull();

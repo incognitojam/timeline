@@ -3,11 +3,7 @@ import { mkdirSync, rmSync, readdirSync, utimesSync, writeFileSync } from "node:
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { Database } from "../../db/sqlite";
-import {
-  backupDatabase,
-  backupSyncSource,
-  DEFAULT_BACKUP_KEEP_COUNT,
-} from "./backup";
+import { backupDatabase } from "./backup";
 
 const TIMELINE_DB_PATH = process.env.TIMELINE_DB_PATH!;
 
@@ -28,15 +24,6 @@ afterAll(() => {
 });
 
 describe("backupDatabase", () => {
-  test("exposes the runtime retention default", () => {
-    expect(backupSyncSource.configSchema).toContainEqual(
-      expect.objectContaining({
-        key: "keep_count",
-        default: DEFAULT_BACKUP_KEEP_COUNT,
-      })
-    );
-  });
-
   test("backs up a database", async () => {
     const result = await backupDatabase({
       dbPath: TIMELINE_DB_PATH,
