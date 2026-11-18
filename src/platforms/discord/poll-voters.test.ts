@@ -1,6 +1,7 @@
 import { Database } from "../../db/sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { initDb } from "../../db/schema";
+import { COUNT_POLL_VOTER_CANDIDATES, FIND_POLL_VOTER_CANDIDATES, PENDING_POLL_VOTERS_INDEX, PENDING_POLL_VOTERS_WHERE } from "./poll-voter-queries";
 import type { PollVoter } from "./shared/forward";
 import { DiscordClient } from "./client";
 import {
@@ -171,4 +172,40 @@ describe("captureExpiredPollVoters", () => {
     expect(stats).toEqual({ captured: POLL_VOTER_CAPTURE_LIMIT, failed: 0, remaining: 1 });
     expect(calls).toBe(0);
   });
+
+  test("both queries use the pending index without a temporary sort", () => {
+  for (const [sql, params] of [
+    [FIND_POLL_VOTER_CANDIDATES, [ACCOUNT, new Date().toISOString(), 25]],
+    [COUNT_POLL_VOTER_CANDIDATES, [ACCOUNT, new Date().toISOString()]],
+  ] as const) {
+    const plan = db.query(`EXPLAIN QUERY PLAN ${sql}`).all(...params) as { detail: string }[];
+    expect(plan.some(row => row.detail.includes(PENDING_POLL_VOTERS_INDEX))).toBe(true);
+    expect(plan.some(row => row.detail.includes("TEMP B-TREE"))).toBe(false);
+  }
+ });
+
+ test("polls on ordinary message types age into eligibility without a write and leave the index after capture", async () => {
+  insertPoll("legacy", poll({ expiry: "2026-01-02T00:00:00.000Z" }));
+  db.exec("UPDATE events SET type = 'message:guild'");
+  const find = db.query(FIND_POLL_VOTER_CANDIDATES);
+  expect(find.all(ACCOUNT, "2026-01-01T00:00:00.000Z", 25)).toHaveLength(0);
+  expect(find.all(ACCOUNT, "2026-01-03T00:00:00.000Z", 25)).toHaveLength(1);
+  let requests = 0;
+  const client = { fetchPollAnswerVoters: async () => { requests++; return []; } };
+  expect(await captureExpiredPollVoters(client, db, ACCOUNT)).toEqual({ captured: 1, failed: 0, remaining: 0 });
+  expect(db.query(`SELECT source_id FROM events INDEXED BY ${PENDING_POLL_VOTERS_INDEX} WHERE ${PENDING_POLL_VOTERS_WHERE}`).all()).toHaveLength(0);
+  expect(await captureExpiredPollVoters(client, db, ACCOUNT)).toEqual({ captured: 0, failed: 0, remaining: 0 });
+  expect(requests).toBe(2);
+ });
+
+});
+
+test("malformed archived payloads remain stored without breaking index initialization or sweeps", async () => {
+  db.exec(`DROP INDEX ${PENDING_POLL_VOTERS_INDEX}`);
+  db.exec("INSERT INTO events(source,source_id,source_account,type,raw_data) VALUES('discord','malformed','user-1','message:dm','not json')");
+  initDb(db);
+  db.exec("INSERT INTO events(source,source_id,source_account,type,raw_data) VALUES('discord','also-malformed','user-1','message:dm','{')");
+  const stats = await captureExpiredPollVoters({ fetchPollAnswerVoters: async () => { throw new Error("must not request malformed payloads"); } }, db, ACCOUNT);
+  expect(stats).toEqual({ captured: 0, failed: 0, remaining: 0 });
+  expect(db.query("SELECT raw_data FROM events WHERE source_id='malformed'").get()).toEqual({raw_data: "not json"});
 });

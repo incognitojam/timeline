@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { COUNT_POLL_VOTER_CANDIDATES, FIND_POLL_VOTER_CANDIDATES } from "./poll-voter-queries";
 import type { PollVoter } from "./shared/forward";
 
 export const POLL_VOTER_CAPTURE_LIMIT = 25;
@@ -27,17 +28,6 @@ interface PollVoterCandidate {
   poll_json: string;
 }
 
-const POLL_VOTER_CANDIDATE_WHERE = `
-  source = 'discord'
-    AND source_account = ?
-    AND json_extract(raw_data, '$.poll') IS NOT NULL
-    AND json_extract(raw_data, '$.poll.voters') IS NULL
-    AND (
-      json_extract(raw_data, '$.poll.expiry') <= ?
-      OR json_extract(raw_data, '$.poll.results.is_finalized') = 1
-    )
-`;
-
 /**
  * Capture final poll voter lists once. Poll votes remain mutable until expiry,
  * so open polls are deliberately excluded; the stored `poll.voters` object is
@@ -50,18 +40,8 @@ export async function captureExpiredPollVoters(
   signal?: AbortSignal,
 ): Promise<PollVoterCaptureStats> {
   const now = new Date().toISOString();
-  const countCandidates = db.prepare(
-    `SELECT COUNT(*) AS count FROM events WHERE ${POLL_VOTER_CANDIDATE_WHERE}`,
-  );
-  const findCandidates = db.prepare(`
-    SELECT source_id,
-           json_extract(raw_data, '$._channel.id') AS channel_id,
-           json_extract(raw_data, '$.poll') AS poll_json
-    FROM events
-    WHERE ${POLL_VOTER_CANDIDATE_WHERE}
-    ORDER BY timestamp DESC, source_id
-    LIMIT ?
-  `);
+  const countCandidates = db.prepare(COUNT_POLL_VOTER_CANDIDATES);
+  const findCandidates = db.prepare(FIND_POLL_VOTER_CANDIDATES);
   const updateVoters = db.prepare(
     "UPDATE events SET raw_data = json_set(raw_data, '$.poll.voters', json(?)) WHERE source = 'discord' AND source_id = ? AND source_account = ?",
   );
