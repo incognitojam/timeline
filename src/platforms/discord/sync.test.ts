@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, test, expect, setSystemTime } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, test, expect, setSystemTime } from "bun:test";
 import { randomUUID } from "crypto";
 import { mkdir, rm } from "fs/promises";
 import { tmpdir } from "os";
@@ -25,6 +25,7 @@ import {
   setDiscordClientSleepForTests,
 } from "./client";
 import { getDb, initDb } from "../../db/schema";
+import { Database } from "../../db/sqlite";
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -336,6 +337,7 @@ describe("discord full guild thread discovery gates", () => {
   });
 
   test("probes known threads while skipping parent search when full sweep is fresh", async () => {
+    setSystemTime(new Date("2026-06-22T12:00:00.000Z"));
     const originalFetch = globalThis.fetch;
     const originalToken = process.env.DISCORD_TOKEN;
     const appDb = getAppStateDb();
@@ -403,6 +405,7 @@ describe("discord full guild thread discovery gates", () => {
         ]);
       }
       if (url.pathname.endsWith("/channels/200000000000000001")) {
+        setSystemTime(new Date(Date.now() + 5));
         return responseJson({
           id: "200000000000000001",
           type: CHANNEL_TYPE.PUBLIC_THREAD,
@@ -453,10 +456,11 @@ describe("discord full guild thread discovery gates", () => {
       expect(nextState?.knownGuildThreadIds?.["guild-1"]).toContain("200000000000000001");
       expect(metadata.phaseTimings["full-guilds"].routeCounts["/channels/:id"]).toBe(1);
       expect(metadata.phaseTimings["full-guilds"].routeCounts["/channels/:id/messages?after"]).toBe(2);
-      expect(metadata.phaseTimings["full-guilds"].routeDurationMs).toBeDefined();
+      expect(metadata.phaseTimings["full-guilds"].routeDurationMs["/channels/:id"]).toBe(5);
       expect(metadata.optimization.knownThreadsChecked).toBe(1);
       expect(metadata.optimization.knownThreadsSkipped).toBe(0);
     } finally {
+      setSystemTime();
       globalThis.fetch = originalFetch;
       if (originalToken === undefined) {
         delete process.env.DISCORD_TOKEN;
@@ -692,6 +696,16 @@ describe("discord full guild thread discovery gates", () => {
       expect(calls.some((call) => call.includes("/threads/search"))).toBe(false);
       expect(metadata.optimization.forbiddenChannelsMarked).toBe(1);
       expect(metadata.optimization.knownThreadsChecked).toBe(0);
+      if (!nextState) throw new Error("Sync state was not saved");
+      calls.length = 0;
+      const second = await discordSyncSource.sync({
+        verbose: false,
+        intervalMs: HOUR_MS,
+        config: { sources: { discord: { guilds: { "guild-1": { mode: "full" } } } } },
+      });
+      expect(second.success).toBe(true);
+      expect(calls.some((call) => call.includes("/channels/parent-1/messages"))).toBe(false);
+      expect(calls.some((call) => call.includes("/threads/search"))).toBe(false);
     } finally {
       globalThis.fetch = originalFetch;
       if (originalToken === undefined) {
@@ -848,6 +862,9 @@ describe("discordSyncSource auth telemetry", () => {
 });
 
 describe("loadKnownGuildThreadIds", () => {
+  let db: Database;
+  beforeEach(() => { db = new Database(":memory:"); initDb(db); });
+  afterEach(() => db.close());
   function insertThreadEvent(
     db: ReturnType<typeof getDb>,
     guildId: string,
@@ -875,8 +892,6 @@ describe("loadKnownGuildThreadIds", () => {
   }
 
   test("bootstraps the thread index from events when a guild has no entry", () => {
-    const db = getDb();
-    initDb(db);
     const guildId = "gate-guild-bootstrap";
     const threadId = "900000000000000001";
     insertThreadEvent(db, guildId, threadId);
@@ -890,8 +905,6 @@ describe("loadKnownGuildThreadIds", () => {
   });
 
   test("skips the events scan once a guild has an entry", () => {
-    const db = getDb();
-    initDb(db);
     const guildId = "gate-guild-gated";
     const known = "900000000000000010";
     const newlyInDb = "900000000000000011";
@@ -910,8 +923,6 @@ describe("loadKnownGuildThreadIds", () => {
   });
 
   test("records an empty entry for a guild with no thread events so it stops re-scanning", () => {
-    const db = getDb();
-    initDb(db);
     const guildId = "gate-guild-empty";
 
     const state = baseState();
@@ -923,8 +934,6 @@ describe("loadKnownGuildThreadIds", () => {
   });
 
   test("pruning the last known thread keeps the migrated marker so the scan stays gated", () => {
-    const db = getDb();
-    initDb(db);
     const guildId = "gate-guild-prune";
     const threadId = "900000000000000020";
     // A thread exists in events with a cursor; the old code would re-scan and
@@ -1616,9 +1625,10 @@ describe("Discord attachment recovery sweep", () => {
     attachmentIds: string[],
     timestamp = new Date().toISOString(),
     sourceAccount = "user-1",
+    connection?: ReturnType<typeof getDb>,
   ): number {
-    const db = getDb();
-    initDb(db);
+    const db = connection ?? getDb();
+    if (!connection) initDb(db);
     const rawData = {
       _channel: { id: channelId },
       attachments: attachmentIds.map((id) => ({
@@ -1636,7 +1646,7 @@ describe("Discord attachment recovery sweep", () => {
       )
       .run(messageId, sourceAccount, timestamp, JSON.stringify(rawData));
     const eventId = Number(inserted.lastInsertRowid);
-    db.close();
+    if (!connection) db.close();
     return eventId;
   }
 
@@ -2208,14 +2218,16 @@ describe("Discord attachment recovery sweep", () => {
     clearMessages(messageIds);
     const db = getDb();
     initDb(db);
-    for (const [index, messageId] of messageIds.entries()) {
-      const attachmentId = `810000000000000${String(400 + index).padStart(3, "0")}`;
-      const eventId = seedEvent(messageId, [attachmentId]);
-      db.prepare(
-        `INSERT INTO attachments (event_id, source, source_id, filename, status)
-         VALUES (?, 'discord', ?, ?, 'failed')`,
-      ).run(eventId, attachmentId, `${attachmentId}.png`);
-    }
+    db.transaction(() => {
+      for (const [index, messageId] of messageIds.entries()) {
+        const attachmentId = `810000000000000${String(400 + index).padStart(3, "0")}`;
+        const eventId = seedEvent(messageId, [attachmentId], undefined, undefined, db);
+        db.prepare(
+          `INSERT INTO attachments (event_id, source, source_id, filename, status)
+           VALUES (?, 'discord', ?, ?, 'failed')`,
+        ).run(eventId, attachmentId, `${attachmentId}.png`);
+      }
+    })();
     db.close();
 
     process.env.DISCORD_TOKEN = "test-token";
@@ -2363,7 +2375,8 @@ describe("active-thread search rotation", () => {
       expect(metadata.optimization.activeThreadSearchBudget).toBe(2);
       expect(searches.length).toBeLessThanOrEqual(2);
       expect(searches.every((s) => !s.archived)).toBe(true);
-      expect(metadata.phaseTimings["full-guilds"].routeCounts["/channels/:id/threads/search"]).toBeUndefined();
+      expect(metadata.phaseTimings["active-thread-search"].routeCounts["/channels/:id/threads/search?archived=false"] ?? 0).toBe(searches.length);
+      expect(metadata.phaseTimings["active-thread-search"].routeCounts["/channels/:id/threads/search?archived=true"]).toBeUndefined();
       for (const search of searches) searchedAt.get(search.channelId)?.push(now);
     }
 

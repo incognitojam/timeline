@@ -250,10 +250,10 @@ describe("rescanReactionTiers", () => {
     const client = fakeClient(messagesByChannel, { "👍": reactors });
     const stats = await rescanReactionTiers(client, db, cursors, ["channel-1"], channelHigh, ACCOUNT);
 
-    expect(stats.channelsChecked).toBeGreaterThan(0);
-    expect(stats.messagesReFetched).toBeGreaterThanOrEqual(1);
-    expect(stats.reactionsUpdated).toBeGreaterThanOrEqual(1);
-    expect(stats.observationsRecorded).toBeGreaterThanOrEqual(1);
+    expect(stats.channelsChecked).toBe(1);
+    expect(stats.messagesReFetched).toBe(1);
+    expect(stats.reactionsUpdated).toBe(1);
+    expect(stats.observationsRecorded).toBe(1);
 
     // raw_data.reactions reflects the API count AND the captured reactors.
     const row = db
