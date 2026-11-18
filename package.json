@@ -48,7 +48,7 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@ai-sdk/openai-compatible": "^3.0.22",
+    "@ai-sdk/openai-compatible": "^3.0.92",
     "@effect/platform-bun": "^4.1.4",
     "@iarna/toml": "^2.2.5",
     "@modelcontextprotocol/sdk": "^1.32.2",
