@@ -1,3 +1,6 @@
+import { SOURCE_REGISTRY } from "@shared/sources";
+import { getSourceIcon } from "../lib/source-styles";
+import { IconCircle } from "../ui/icons";
 import { render } from "@solidjs/testing-library";
 import { describe, expect, it } from "vitest";
 import SourceIcon from "./SourceIcon";
@@ -37,5 +40,9 @@ describe("SourceIcon", () => {
     expect(inherited.container.innerHTML).toBe(fallback.container.innerHTML);
   });
 
-
+  it("has a non-fallback icon for every registered source", () => {
+    for (const source of SOURCE_REGISTRY) {
+      expect(getSourceIcon(source.id)).not.toBe(IconCircle);
+    }
+  });
 });
