@@ -1,9 +1,11 @@
 import { describe, test, expect, spyOn } from "bun:test";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as configModule from "../../config";
 import { deleteSyncState, getAppStateDb, getSyncState, setSyncState } from "../../db/app-state";
+import { getDb, initDb } from "../../db/schema";
 import { LocalMediaStore } from "../../media/storage";
 import { MEDIA_EVICTION_RECONCILE_MS } from "../../media/eviction";
 import { mediaEvictSyncSource } from "./media-evict";
@@ -63,12 +65,53 @@ describe("mediaEvictSyncSource", () => {
   });
 
   test("sync is a clean no-op when nothing is configured", async () => {
-    const result = await mediaEvictSyncSource.sync({
-      verbose: false,
-      config: { sources: {} },
-    } as unknown as SyncOptions);
-    expect(result.source).toBe("media-evict");
-    expect(result.success).toBe(true);
-    expect(result.eventsUpdated).toBe(0);
+    const priorMediaPath = process.env.TIMELINE_MEDIA_PATH;
+    const appDb = getAppStateDb();
+    const previousState = getSyncState(appDb, "media-evict");
+    const mediaPath = mkdtempSync(join(tmpdir(), "media-evict-"));
+    process.env.TIMELINE_MEDIA_PATH = mediaPath;
+    const db = getDb();
+    let eventId: number | undefined;
+    try {
+      initDb(db);
+      // A cached blob with no remote copy: evicting it would lose it.
+      const stored = await new LocalMediaStore(mediaPath).storeFile({
+        source: "discord",
+        relativePath: "media-evict/only-copy.png",
+        content: Buffer.from("the only copy"),
+      });
+      eventId = (
+        db
+          .prepare(
+            "INSERT INTO events (source, source_id, source_account, type, raw_data) VALUES ('discord', 'media-evict-noop', 'test', 'message:dm', '{}') RETURNING id",
+          )
+          .get() as { id: number }
+      ).id;
+      db.prepare(
+        "INSERT INTO attachments (event_id, source, source_id, content_hash, storage_path, status) VALUES (?, 'discord', 'media-evict-noop', ?, ?, 'stored')",
+      ).run(eventId, stored.hash, stored.storagePath);
+
+      const result = await mediaEvictSyncSource.sync({
+        verbose: false,
+        config: { sources: {} },
+      } as unknown as SyncOptions);
+      expect(result.source).toBe("media-evict");
+      expect(result.success).toBe(true);
+      expect(result.eventsUpdated).toBe(0);
+      // The run saw the blob and left it in place.
+      expect(result.metadata).toMatchObject({ localBlobs: 1, evicted: 0, limitBytes: null });
+      expect(existsSync(join(mediaPath, stored.storagePath))).toBe(true);
+    } finally {
+      if (eventId !== undefined) {
+        db.prepare("DELETE FROM attachments WHERE event_id = ?").run(eventId);
+        db.prepare("DELETE FROM events WHERE id = ?").run(eventId);
+      }
+      db.close();
+      if (previousState === null) deleteSyncState(appDb, "media-evict");
+      else setSyncState(appDb, "media-evict", previousState);
+      if (priorMediaPath === undefined) delete process.env.TIMELINE_MEDIA_PATH;
+      else process.env.TIMELINE_MEDIA_PATH = priorMediaPath;
+      rmSync(mediaPath, { recursive: true, force: true });
+    }
   });
 });

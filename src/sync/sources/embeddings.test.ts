@@ -6,26 +6,13 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { getEmbeddingsDb, initEmbeddingsDb, insertVector } from "../../embeddings/db";
 import { IMAGE_MAX_SIDE, prepareImageForEmbedding } from "../../embeddings/images";
-import { configureBunSqliteForSqliteVec } from "../../embeddings/sqlite-vec";
 import { LocalMediaStore, setMediaStoreOverride } from "../../media/storage";
 import { seed } from "../../testing/seed";
+import { skipWithoutSqliteVec } from "../../testing/sqlite-vec";
 import type { SyncConfig } from "../config";
 import { embeddingsSyncSource, parseEmbeddingsSyncSettings } from "./embeddings";
 
-function sqliteVecAvailable(): boolean {
-  configureBunSqliteForSqliteVec();
-  const probe = new Database(":memory:");
-  try {
-    initEmbeddingsDb(probe);
-    return true;
-  } catch {
-    return false;
-  } finally {
-    probe.close();
-  }
-}
-
-const vecIt = sqliteVecAvailable() ? it : it.skip;
+const vecIt = it.skipIf(skipWithoutSqliteVec);
 
 describe("embeddings sync settings", () => {
   it("defaults the time budget and concurrency and rejects invalid values", () => {
