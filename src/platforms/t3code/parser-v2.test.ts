@@ -5,6 +5,7 @@ import { mkdir, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { initDb } from "../../db/schema";
+import { seed } from "../../testing/seed";
 import { computeHash } from "../../media/storage";
 import {
   createT3CodeV2Fixture,
@@ -77,7 +78,7 @@ describe("importT3Code (v2 store)", () => {
   function withT3Db(fn: (t3Db: Database) => void): void {
     const t3Db = new Database(t3DbPath);
     try {
-      fn(t3Db);
+      seed(t3Db, () => fn(t3Db));
     } finally {
       t3Db.close();
     }
@@ -376,13 +377,15 @@ describe("importT3Code (v2 store)", () => {
     const snapshotPath = join(root, "snapshot.sqlite");
     const snapshot = new Database(snapshotPath);
     snapshot.run("ATTACH DATABASE ? AS full", [t3DbPath]);
-    for (const table of T3_V2_TABLES) {
-      const { sql } = snapshot
-        .prepare("SELECT sql FROM full.sqlite_master WHERE type = 'table' AND name = ?")
-        .get(table) as { sql: string };
-      snapshot.run(sql);
-      snapshot.run(`INSERT INTO main.${table} SELECT * FROM full.${table}`);
-    }
+    seed(snapshot, () => {
+      for (const table of T3_V2_TABLES) {
+        const { sql } = snapshot
+          .prepare("SELECT sql FROM full.sqlite_master WHERE type = 'table' AND name = ?")
+          .get(table) as { sql: string };
+        snapshot.run(sql);
+        snapshot.run(`INSERT INTO main.${table} SELECT * FROM full.${table}`);
+      }
+    });
     snapshot.run("DETACH DATABASE full");
     snapshot.close();
 
