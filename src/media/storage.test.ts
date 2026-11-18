@@ -70,16 +70,16 @@ describe("storeFile path containment", () => {
   });
 
   test("does not leak files when traversal is attempted", async () => {
-    try {
-      await storeFile({
+    const relativePath = "../../../tmp-leak-target";
+    await expect(
+      storeFile({
         source: "discord",
-        relativePath: "../../../tmp-leak-target",
+        relativePath,
         content: Buffer.from("pwned"),
-      });
-    } catch {
-      // expected
-    }
-    expect(existsSync(resolve(mediaRoot, "..", "..", "..", "tmp-leak-target"))).toBe(false);
+      }),
+    ).rejects.toThrow(/outside media root/);
+    // Where the store would have written it: the source directory joined with the path.
+    expect(existsSync(resolve(mediaRoot, "discord", relativePath))).toBe(false);
   });
 });
 

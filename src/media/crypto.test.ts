@@ -1,5 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { randomBytes } from "crypto";
+import { readFileSync } from "fs";
+import { join } from "path";
 import {
   parseMasterKey,
   objectKeyFor,
@@ -137,5 +139,33 @@ describe("authentication and integrity", () => {
 describe("assertEncryptionRoundTrips (startup self-test)", () => {
   test("passes for a valid key", () => {
     expect(() => assertEncryptionRoundTrips(parseMasterKey(KEY_A))).not.toThrow();
+  });
+});
+
+// Known-answer test. Offsite media and backup objects are stored under this
+// object key and in this byte format, so any change to the key derivation, salt,
+// labels, nonce, cipher or layout makes every existing object unreadable. The
+// fixture was produced once by encryptBlob; never regenerate it to make this pass.
+describe("known answer (format v1)", () => {
+  const key = parseMasterKey("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=");
+  const knownPlaintext = plaintext("Synthetic Timeline media fixture, not personal data.\n");
+  const knownHash = "a6b822da87c5cec05558a0a2d6201e9035c5b9490c6abd19e73cf61bd5ac0404";
+  const stored = readFileSync(join(import.meta.dir, "fixtures", "encrypted-blob-v1.bin"));
+
+  test("the stored object decrypts to the known plaintext", () => {
+    expect(hashOf(knownPlaintext)).toBe(knownHash);
+    expect(decryptBlob(key, knownHash, stored).equals(knownPlaintext)).toBe(true);
+  });
+
+  test("the object key is unchanged", () => {
+    expect(objectKeyFor(key, knownHash)).toBe("95/95a36d4c1fa0ba7e8ec7645d91ce2108fca222607d6e955b832b99e3533615ac");
+  });
+
+  test("encrypting the known plaintext reproduces the stored bytes", () => {
+    const encrypted = encryptBlob(key, knownHash, knownPlaintext);
+    // version(1) || tag(16) || ciphertext, the same length as the plaintext
+    expect(encrypted[0]).toBe(1);
+    expect(encrypted.length).toBe(1 + 16 + knownPlaintext.length);
+    expect(encrypted.toString("hex")).toBe(stored.toString("hex"));
   });
 });
