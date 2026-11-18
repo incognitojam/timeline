@@ -1,8 +1,8 @@
 /**
  * Media Cache Eviction Sync Source
  *
- * Periodically evicts the oldest R2-durable media blobs to keep the local cache
- * under [media].cache_limit_gib. A local maintenance job (like thumbhash), not
+ * Periodically evicts the oldest R2-durable media blobs to leave headroom below
+ * [media].cache_limit_gib once that limit is exceeded. A local maintenance job (like thumbhash), not
  * an external sync — read-through restores any evicted blob from R2 on demand.
  * Opt-in: only runs when a `[sync.media-evict]` section schedules it.
  */
@@ -24,7 +24,7 @@ interface EvictionState {
 
 export const mediaEvictSyncSource: SyncSource = {
   name: "media-evict",
-  description: "Evict oldest R2-durable media to keep the local cache under its bound",
+  description: "Evict oldest R2-durable media to leave headroom below the cache limit",
   enabled: true,
 
   async canSync(sourceConfig?: Record<string, unknown>): Promise<string | null> {

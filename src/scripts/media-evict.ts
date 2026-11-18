@@ -4,8 +4,8 @@
  *   bun run media-evict              # DRY RUN — reports the plan, deletes nothing
  *   bun run media-evict --execute    # evict oldest R2-durable blobs to the target
  *
- * Drops the oldest (by cache mtime) blobs that are confirmed in R2 to keep local
- * usage under [media].cache_limit_gib. Read-through restores any evicted blob on
+ * Drops the oldest (by cache mtime) blobs that are confirmed in R2 to leave
+ * headroom below [media].cache_limit_gib once that limit is exceeded. Read-through restores any evicted blob on
  * demand. Reads the timeline DB read-only; the only writes are local file
  * deletions. Idempotent/resumable.
  */
