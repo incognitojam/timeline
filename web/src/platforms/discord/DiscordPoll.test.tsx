@@ -1,7 +1,9 @@
 import {
   type DiscordPoll,
   type ParsedDiscordPoll,
+  type StoredPollVoters,
   type PollVoter,
+  getDiscordPollText,
   parseDiscordPoll,
 } from "@platforms/discord/shared/forward";
 import { fireEvent, render, screen, within } from "@solidjs/testing-library";
@@ -10,7 +12,7 @@ import { clearCache } from "../../lib/identities";
 import { DiscordPoll as DiscordPollCard } from "./DiscordPoll";
 
 type StoredPoll = DiscordPoll & {
-  voters?: { captured_at: string; answers?: Record<string, PollVoter[]> };
+  voters?: StoredPollVoters;
 };
 
 function buildPoll(overrides: Partial<StoredPoll> = {}): StoredPoll {
@@ -431,4 +433,13 @@ describe("parseDiscordPoll", () => {
       within(screen.getByRole("dialog")).getByRole("button", { name: /yes.*0/ }),
     ).toBeInTheDocument();
   });
+});
+
+it("shows unavailable voters without inventing zero votes in the card or export", () => {
+  const poll = buildPoll({ results: undefined, voters: {status: "unavailable", reason: "Discord returned HTTP 403", http_status: 403, recorded_at: "2026-01-01T00:00:00.000Z"} });
+  render(() => <DiscordPoll poll={poll} />);
+  expect(screen.getByText("Voters unavailable: Discord returned HTTP 403")).toBeInTheDocument();
+  expect(screen.queryByRole("button", {name: "0 votes"})).not.toBeInTheDocument();
+  expect(screen.queryByText("0 votes", {exact: false})).not.toBeInTheDocument();
+  expect(getDiscordPollText({poll})).toContain("Voters unavailable: Discord returned HTTP 403");
 });

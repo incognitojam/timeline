@@ -29,6 +29,10 @@ export interface PollVoter {
   avatar: string | null;
 }
 
+export type StoredPollVoters =
+  | { captured_at: string; answers?: Record<string, PollVoter[]> }
+  | { status: "unavailable"; reason: string; http_status: number; recorded_at: string };
+
 export interface DiscordRawAttachment {
   id: string;
   filename: string;
@@ -229,6 +233,7 @@ export interface ParsedDiscordPoll {
   poll: DiscordPoll;
   hasAnswerCounts: boolean;
   hasVoterCapture: boolean;
+  votersUnavailableReason: string | null;
   votersByAnswerId: Map<string, PollVoter[]>;
 }
 
@@ -250,7 +255,7 @@ function parsePollVoters(value: unknown): Map<string, PollVoter[]> {
   const voters = asRecord(value);
   const answers = asRecord(voters?.answers);
   const votersByAnswerId = new Map<string, PollVoter[]>();
-  if (!answers) return votersByAnswerId;
+  if (!answers || voters?.status === "unavailable") return votersByAnswerId;
 
   for (const [answerId, value] of Object.entries(answers)) {
     if (!Array.isArray(value)) continue;
@@ -307,6 +312,7 @@ export function parseDiscordPoll(rawData: unknown): ParsedDiscordPoll | null {
     results = { is_finalized: resultsRecord.is_finalized, answer_counts: answerCounts };
   }
 
+  const voters = asRecord(poll.voters);
   return {
     poll: {
       question,
@@ -317,7 +323,10 @@ export function parseDiscordPoll(rawData: unknown): ParsedDiscordPoll | null {
       results,
     },
     hasAnswerCounts,
-    hasVoterCapture: asRecord(poll.voters) !== null,
+    hasVoterCapture: voters !== null && voters.status !== "unavailable",
+    votersUnavailableReason: voters?.status === "unavailable"
+      ? (typeof voters.reason === "string" ? voters.reason : "Discord did not provide voters")
+      : null,
     votersByAnswerId: parsePollVoters(poll.voters),
   };
 }
@@ -355,6 +364,7 @@ export function getDiscordPollText(
     return `${text} (${votes} vote${votes === 1 ? "" : "s"}${votersDescription})`;
   });
   const notes = [
+    parsed.votersUnavailableReason ? `Voters unavailable: ${parsed.votersUnavailableReason}` : null,
     poll.allow_multiselect ? "multiple selections allowed" : null,
     poll.results?.is_finalized ? "finalized" : null,
   ].filter((note): note is string => note !== null);

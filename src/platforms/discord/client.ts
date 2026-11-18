@@ -35,6 +35,20 @@ export function setDiscordClientSleepForTests(
   sleep = fn ?? realSleep;
 }
 
+export class DiscordAuthenticationError extends Error {
+  constructor() {
+    super("Discord token rejected (HTTP 401)");
+    this.name = "DiscordAuthenticationError";
+  }
+}
+
+export class PollVotersUnavailableError extends Error {
+  constructor(readonly status: number) {
+    super(`Failed to fetch poll answer voters: ${status}`);
+    this.name = "PollVotersUnavailableError";
+  }
+}
+
 export interface DiscordClientStats {
   totalRequests: number;
   routeCounts: Record<string, number>;
@@ -1173,7 +1187,8 @@ export class DiscordClient {
       const url = `${API_BASE}/channels/${channelId}/polls/${messageId}/answers/${answerId}?${params}`;
       const res = await this.fetchWithRetry(url);
       if (!res.ok) {
-        if (!after && (res.status === 400 || res.status === 403 || res.status === 404)) return [];
+        if (res.status === 401) throw new DiscordAuthenticationError();
+        if ([400, 403, 404].includes(res.status)) throw new PollVotersUnavailableError(res.status);
         throw new Error(`Failed to fetch poll answer voters: ${res.status}`);
       }
 

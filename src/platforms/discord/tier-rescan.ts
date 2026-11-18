@@ -76,7 +76,7 @@ export interface RescanStats {
   deletionConfirmations: number; // per-message presence checks
 }
 
-type StoredPoll = DiscordPoll & { voters?: unknown };
+type StoredPoll = DiscordPoll & { voters?: unknown; voter_attempted_at?: string };
 
 // The rescan can only update messages already stored locally (unknown ids in a
 // re-fetched batch are skipped), so a band with no local events is a
@@ -266,9 +266,11 @@ export async function rescanReactionTiers(
       const storedPoll: StoredPoll | null = found.poll_json
         ? JSON.parse(found.poll_json)
         : null;
-      const nextPoll: StoredPoll = storedPoll?.voters
-        ? { ...msg.poll, voters: storedPoll.voters }
-        : msg.poll;
+      const nextPoll: StoredPoll = {
+        ...msg.poll,
+        ...(storedPoll?.voters ? { voters: storedPoll.voters } : {}),
+        ...(storedPoll?.voter_attempted_at ? { voter_attempted_at: storedPoll.voter_attempted_at } : {}),
+      };
       if (JSON.stringify(storedPoll) !== JSON.stringify(nextPoll)) {
         updatePoll.run(JSON.stringify(nextPoll), msg.id, sourceAccount);
         stats.pollsUpdated++;
