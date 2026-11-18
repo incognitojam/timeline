@@ -8,7 +8,8 @@ import subprocess
 import sys
 
 
-# Keep the policy beside the detector. src/ and web/ use the Linux artifact job.
+# Most src/ and web/ changes use Linux; Darwin-only code and dependency pins
+# below are narrow exceptions. Keep the exact policy beside the detector.
 NATIVE_DIRECTORIES = (
     "tools/timeline-app/",       # Swift, plists, Sparkle, signing and DMG assets
     "tools/timeline-gmessages/", # Darwin sidecar and its Go dependencies
@@ -22,9 +23,15 @@ NATIVE_DIRECTORIES = (
 )
 NATIVE_FILES = {
     "mise.toml",
+    "bunfig.toml",              # Installation policy also affects native packages
     "package.json",             # Bun pin and native runtime dependencies
     "bun.lock",                 # Includes Darwin Sharp/libvips/sqlite-vec packages
     "bun.lockb",
+    "web/package.json",         # Darwin esbuild/Rollup/Tailwind binaries
+    "web/bun.lock",
+    "web/bun.lockb",
+    "web/bunfig.toml",
+    "src/lib/background-priority.ts", # Darwin FFI runs during worker startup
     "scripts/build-service-artifact.ts",
     "scripts/smoke-service-artifact.sh",
     "scripts/smoke-service.sh",

@@ -193,3 +193,5 @@ When implementing import-time SQLite selection, preserve the diagnostic’s expl
 ## Native CI checks
 
 See [the agent testing guidance](../../AGENTS.md#test-guidelines) for automatic native coverage and how to request it. The PR check remains required under its existing name; [GitHub accepts a job skipped by a job-level condition](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-jobs-with-conditions), so no branch-rule change is needed. Removing a label does not cancel an existing run. Release packaging and the signing check retain their full signed smoke; Trusted CI is reserved for main pushes.
+
+Cancelled or superseded workflows are not validation: a native job cancelled while waiting for detection can appear skipped. Before merging, use the latest completed CI run; rerun it if cancellation left coverage uncertain.

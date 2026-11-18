@@ -46,6 +46,10 @@ class NativeCheckTests(unittest.TestCase):
         self.write(".changeset/synthetic.md", "---\n---\n")
         self.assertFalse(detect(self.base, self.commit(), self.repo)[0])
 
+    def test_darwin_only_source_change_runs(self):
+        self.write("src/lib/background-priority.ts", "// Darwin FFI change\n")
+        self.assertTrue(detect(self.base, self.commit(), self.repo)[0])
+
     def test_native_addition_and_odd_filename_run(self):
         self.write("tools/timeline-app/space and\nnewline.swift", "// native\n")
         self.assertTrue(detect(self.base, self.commit(), self.repo)[0])
@@ -103,7 +107,9 @@ class NativeCheckTests(unittest.TestCase):
         self.assertIn("could not determine", result.stdout)
 
     def test_native_dependency_and_coverage_paths(self):
-        for path in ["mise.toml", "package.json", "bun.lock", "scripts/print-build-number.sh",
+        for path in ["mise.toml", "bunfig.toml", "package.json", "bun.lock",
+                     "web/package.json", "web/bun.lock", "web/bunfig.toml",
+                     "src/lib/background-priority.ts", "scripts/print-build-number.sh",
                      "scripts/build-service-artifact.ts", "scripts/artifact/timeline-service",
                      "scripts/sqlite/build.ts", "scripts/smoke-service.sh",
                      "tools/timeline-app/sparkle.sh", "tools/timeline-app/package-dmg.sh",
@@ -113,7 +119,7 @@ class NativeCheckTests(unittest.TestCase):
                      "scripts/ci/native_check.py"]:
             with self.subTest(path=path):
                 self.assertTrue(native_path(path))
-        for path in ["src/service.ts", "web/bun.lock", "docs/operations/development.md",
+        for path in ["src/service.ts", "web/src/app.tsx", "docs/operations/development.md",
                      "tools/timeline-app-other/file", "AGENTS.md"]:
             with self.subTest(path=path):
                 self.assertFalse(native_path(path))

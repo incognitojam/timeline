@@ -25,7 +25,7 @@ jobs:
       - name: Test native change detection
         run: |
           git check-ignore -q .scratch || printf '\n.scratch/\n' >> "$(git rev-parse --git-path info/exclude)"
-          python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
+          python3 -B -m unittest discover -s scripts/ci -p 'test_*.py' -v
       - name: Detect native changes
         id: detect
         env:
