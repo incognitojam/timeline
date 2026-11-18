@@ -29,6 +29,7 @@ To roll back, quit Timeline and restore the previous app bundle using [macOS hos
 - The menu shows the latest successful capture time and reports permission, migration, or capture errors.
 - When recording stops because of a capture error that repeats for three captures in a row, lost Screen Recording permission, or a capture that never finishes, Timeline posts one notification and removes it once a capture succeeds again. A single failed capture is only written to the capture log. Allow notifications when macOS asks. A stuck capture also writes a stack sample to `~/.local/share/timeline-recall/stuck-<time>.txt` and names that file in the capture log; quit and reopen Timeline to recover.
 - Exclude an app by adding its name or bundle identifier to `~/.config/timeline/recall-exclude.txt`, one per line. Blank lines and `#` comments are accepted. An excluded frontmost app skips the whole tick; excluded background windows are also omitted. Changes apply on the next tick.
+- A window playing fullscreen video is recorded without an image or OCR text: the record keeps its app, title, position, and display. A window counts as playing video while its app keeps the display awake, which video players and browsers do during playback and stop doing when paused. Paused, windowed, and maximised video is captured as usual.
 
 ```bash
 # Pause capture; remove the flag to resume while the app is open.
@@ -45,7 +46,7 @@ echo 'Tor Browser' >> ~/.config/timeline/recall-exclude.txt
 
 ## Data flow and storage
 
-The app captures each eligible window with ScreenCaptureKit, recognizes its text with Vision, and compresses the image with `cwebp`. Complete image/JSON pairs are published to `~/.local/share/timeline/recall/<date>/<HHMMSS>-NN.{webp,json}`. The sidecar preserves app identity, window title, OCR text, capture time, geometry, display, and stacking information. The service imports these pairs into the existing recall event and media format, then deletes the input pairs. Content-addressed storage deduplicates identical images.
+The app captures each eligible window with ScreenCaptureKit, recognizes its text with Vision, and compresses the image with `cwebp`. Complete image/JSON pairs, and JSON-only records for fullscreen video, are published to `~/.local/share/timeline/recall/<date>/<HHMMSS>-NN.{webp,json}`. The sidecar preserves app identity, window title, OCR text, capture time, geometry, display, and stacking information. The service imports these pairs into the existing recall event and media format, then deletes the input pairs. Content-addressed storage deduplicates identical images.
 
 Unfinished captures are staged outside the import tree and removed when the tick finishes. Staging files left by a quit or crash are cleaned up on the next capture attempt. Unimported image/JSON files older than 90 days are pruned as a storage backstop. Imported images remain in the content-addressed media root.
 

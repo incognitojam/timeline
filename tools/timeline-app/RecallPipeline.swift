@@ -72,37 +72,56 @@ struct RecallPipeline {
     func publish(work: URL, to directory: URL, encoder: String) throws -> Int {
         let fm = FileManager.default
         let files = try fm.contentsOfDirectory(at: work, includingPropertiesForKeys: nil)
-            .filter { $0.pathExtension == "png" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
-        if files.isEmpty { return 0 }
+        let sidecars = files.filter { $0.pathExtension == "json" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+        let stems = Set(sidecars.map { $0.deletingPathExtension().lastPathComponent })
+        guard files.allSatisfy({ $0.pathExtension != "png" || stems.contains($0.deletingPathExtension().lastPathComponent) }) else {
+            throw RecallError("Capture sidecar is missing.")
+        }
+        if sidecars.isEmpty { return 0 }
         try fm.createDirectory(at: directory, withIntermediateDirectories: true)
         var written = 0
-        for png in files {
+        for json in sidecars {
             try checkRecording()
-            let stem = png.deletingPathExtension()
-            let json = stem.appendingPathExtension("json")
+            let stem = json.deletingPathExtension()
+            let png = stem.appendingPathExtension("png")
             let webp = stem.appendingPathExtension("webp")
-            guard fm.fileExists(atPath: json.path) else { throw RecallError("Capture sidecar is missing.") }
-            guard let result = runCommand(encoder, ["-quiet", "-q", "80", "-mt", png.path, "-o", webp.path]), result.succeeded else {
-                throw RecallError("WebP encoding failed.")
+            let hasImage = fm.fileExists(atPath: png.path)
+            if !hasImage, try !Self.isMetadataOnly(json) {
+                throw RecallError("Capture image is missing.")
             }
-            try checkRecording()
+            if hasImage {
+                guard let result = runCommand(encoder, ["-quiet", "-q", "80", "-mt", png.path, "-o", webp.path]), result.succeeded else {
+                    throw RecallError("WebP encoding failed.")
+                }
+                try checkRecording()
+            }
             let targetJSON = directory.appendingPathComponent(json.lastPathComponent)
             let targetWebP = directory.appendingPathComponent(webp.lastPathComponent)
-            // The importer discovers WebP files; publish the sidecar first.
-            // Never overwrite an existing pair (including rapid restart ticks).
+            // The importer waits for the WebP of a sidecar that declares an
+            // image; publish the sidecar first. A metadata-only sidecar is
+            // complete on its own. Never overwrite an existing record
+            // (including rapid restart ticks).
             guard !fm.fileExists(atPath: targetJSON.path), !fm.fileExists(atPath: targetWebP.path) else {
                 throw RecallError("A capture already exists for this timestamp.")
             }
             try fm.moveItem(at: json, to: targetJSON)
-            do {
-                try fm.moveItem(at: webp, to: targetWebP)
-            } catch {
-                try? fm.removeItem(at: targetJSON)
-                throw error
+            if hasImage {
+                do {
+                    try fm.moveItem(at: webp, to: targetWebP)
+                } catch {
+                    try? fm.removeItem(at: targetJSON)
+                    throw error
+                }
             }
             written += 1
         }
         return written
+    }
+
+    // A window record that declares it carries no image.
+    static func isMetadataOnly(_ sidecar: URL) throws -> Bool {
+        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: sidecar))
+        return (object as? [String: Any])?["image"] as? Bool == false
     }
 
     func appendLog(_ message: String) throws {

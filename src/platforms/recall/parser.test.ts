@@ -216,6 +216,72 @@ describe("importRecall", () => {
     expect(code?.timestamp).toBe(safari?.timestamp);
   });
 
+  async function writeSidecar(stamp: string, sidecar: Record<string, unknown>) {
+    await writeFile(join(recallDir, HOST, DATE, `${stamp}.json`), JSON.stringify(sidecar));
+  }
+
+  const playerWindow = {
+    schema_version: 2,
+    captured_at: "2026-05-13T21:00:00Z",
+    hostname: HOST,
+    app: "VLC",
+    bundle_id: "org.videolan.vlc",
+    window_title: "synthetic-test-pattern.mp4",
+    is_frontmost: true,
+    window_id: 77,
+    window_index: 0,
+    frame: { x: 0, y: 0, w: 1800, h: 1169 },
+    window_layer: 0,
+    display_id: 1,
+    display_frame: { x: 0, y: 0, w: 1800, h: 1169 },
+  };
+
+  it("imports a metadata-only window record as an event without an attachment", async () => {
+    await writeSidecar("210000-00", { ...playerWindow, image: false, image_omitted: "fullscreen_video" });
+    await writeCapture("210000-01", {
+      ...playerWindow,
+      app: "Code",
+      bundle_id: "com.example.code",
+      window_index: 1,
+      image: true,
+      ocr_text: "second display",
+    });
+
+    const stats = await importRecall(db, recallDir);
+
+    expect(stats).toMatchObject({ scanned: 2, imported: 2, failed: 0, skipped: 0 });
+    const event = getEvent("210000-00");
+    expect(event?.type).toBe("screen:capture");
+    expect(event?.title).toBe("VLC");
+    expect(event?.content).toBeNull();
+    const raw = JSON.parse(event!.raw_data);
+    expect(raw).toMatchObject({ image: false, image_omitted: "fullscreen_video", window_title: "synthetic-test-pattern.mp4" });
+    expect(raw.frame).toEqual(playerWindow.frame);
+    expect(raw.content_hash).toBeUndefined();
+    expect(getAttachment(event!.id)).toBeNull();
+    expect(getAttachment(getEvent("210000-01")!.id)?.mime_type).toBe("image/webp");
+    expect(await readdir(join(recallDir, HOST, DATE))).toHaveLength(0);
+  });
+
+  it("waits for the WebP of a sidecar that declares an image", async () => {
+    // The capture app publishes the sidecar before its WebP.
+    await writeSidecar("211500-00", { ...playerWindow, image: true, ocr_text: "half published" });
+    // Sidecars from before schema 2 always had an image.
+    await writeSidecar("211500-01", { ...playerWindow, schema_version: 1, window_index: 1 });
+
+    const first = await importRecall(db, recallDir);
+    expect(first).toMatchObject({ scanned: 2, imported: 0, skipped: 2, failed: 0 });
+    expect(getEvent("211500-00")).toBeNull();
+    expect((await readdir(join(recallDir, HOST, DATE))).sort()).toEqual(["211500-00.json", "211500-01.json"]);
+
+    await writeFile(join(recallDir, HOST, DATE, "211500-00.webp"), FAKE_WEBP_BYTES);
+    const second = await importRecall(db, recallDir);
+    expect(second).toMatchObject({ imported: 1, skipped: 1 });
+    const event = getEvent("211500-00");
+    expect(event?.content).toBe("half published");
+    expect(getAttachment(event!.id)).toBeDefined();
+  });
+
   it("is FTS-searchable on OCR text", async () => {
     await writeCapture("121500", {
       captured_at: "2026-05-13T12:15:00Z",

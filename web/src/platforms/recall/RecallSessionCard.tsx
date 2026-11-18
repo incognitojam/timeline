@@ -56,8 +56,12 @@ function ThumbnailTile(props: { event: TimelineEvent; attachment: Attachment | u
     <Show
       when={storedAttachment()}
       fallback={
-        <div class="aspect-video bg-muted rounded-sm flex items-center justify-center text-xs text-muted-foreground">
-          —
+        <div
+          class="aspect-video bg-muted rounded-sm flex flex-col items-center justify-center px-1 text-xs text-muted-foreground"
+          title={`${props.event.title ?? ""} · ${formatTime(props.event.timestamp)}`}
+        >
+          <span class="max-w-full truncate">{props.event.title || "—"}</span>
+          <span class="text-[10px] tabular-nums">{formatTime(props.event.timestamp)}</span>
         </div>
       }
     >
