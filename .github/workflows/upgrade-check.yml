@@ -1,0 +1,37 @@
+name: Upgrade check
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  upgrade:
+    name: upgrade from last release
+    runs-on: ubuntu-latest
+    env:
+      NO_COLOR: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The last release's tag and its seed code come from history.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: bun
+      - name: Install archive tools for seed exports
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zip unzip
+      - run: bun install --frozen-lockfile
+      # The published latest release, not the newest tag: release automation tags before it publishes.
+      - name: Find the latest published release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: echo "tag=$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)" >> "$GITHUB_OUTPUT"
+      - name: Boot this commit's service on a database seeded by that release
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: ./scripts/smoke-upgrade.sh "$RELEASE_TAG"

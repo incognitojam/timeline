@@ -156,6 +156,10 @@ The service artifact builder can run natively on glibc Linux (x64 or arm64) for 
 
 `./scripts/smoke-service-artifact.sh` builds and checks a throwaway artifact. Pass an existing artifact directory to check it without rebuilding. The app smoke uses that path against its relocated bundle, including after release signing. Linux loads sqlite-vec with Bun's SQLite; macOS retains the existing optional custom/Homebrew SQLite probe until SQLite is bundled.
 
+### Upgrading from the last release
+
+`./scripts/smoke-upgrade.sh` seeds a synthetic database with the code of the latest published release (GitHub's latest release), then boots this checkout's service against it and checks that the schema initialises, the service reports healthy, and no events were lost. Pass a tag such as `v0.20.0` to upgrade from an older release. CI runs it on pull requests and on every push to `main`.
+
 ## Changing SQLite
 
 The Linux runtime is SQLite compiled into Bun. `bun run sqlite:pin bun-v<Bun.version>` runs on Linux with that Bun installed and regenerates `src/db/sqlite-pin.ts` from Bun's source and build recipe. Review the manifest when upgrading Bun; the runtime tests reject a changed SQLite version, source id or compile options. The macOS runtime tests explicitly wait for the separate bundled-runtime rollout.

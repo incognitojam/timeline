@@ -17,10 +17,16 @@ set -euo pipefail
 # `bun install` must have run before a source smoke.
 #
 # Usage: ./scripts/smoke-service.sh   (override the port with PORT=NNNN)
+# TIMELINE_SMOKE_SEED_DIR: copy its timeline.db and app-state.db (with WAL files) in and boot
+# against those copies instead of an empty database.
+# TIMELINE_SMOKE_SAVE_DIR: after a clean shutdown, copy the databases to this
+# new directory (it must not exist yet).
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVICE_CWD="${TIMELINE_SERVICE_CWD:-$ROOT}"
 SERVICE_EXECUTABLE="${TIMELINE_SERVICE_EXECUTABLE:-}"
+SEED_DIR="${TIMELINE_SMOKE_SEED_DIR:-}"
+SAVE_DIR="${TIMELINE_SMOKE_SAVE_DIR:-}"
 
 if [ -n "$SERVICE_EXECUTABLE" ] && [ ! -x "$SERVICE_EXECUTABLE" ]; then
   echo "FAIL: TIMELINE_SERVICE_EXECUTABLE is not executable: $SERVICE_EXECUTABLE" >&2
@@ -43,6 +49,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
+if [ -n "$SEED_DIR" ]; then
+  # Nothing has them open, so each database and its WAL files copy consistently.
+  cp "$SEED_DIR"/timeline.db* "$SEED_DIR"/app-state.db* "$TMP/"
+fi
+
 # Put the database path in config rather than the environment. This verifies
 # the bootstrap resolves config before schema.ts captures the DB path.
 cat > "${TMP}/config.toml" <<EOF
@@ -57,23 +68,49 @@ stagger = false
 watch_enabled = false
 EOF
 
-echo "Booting service (port ${PORT}, db ${TMP}/timeline.db)..."
+if [ -n "$SERVICE_EXECUTABLE" ]; then
+  service_command=("$SERVICE_EXECUTABLE")
+  bun_bin="$(dirname "$SERVICE_EXECUTABLE")/bun"
+  service_path="$PATH"
+else
+  bun_bin="$(bun -e 'process.stdout.write(process.execPath)')"
+  service_command=("$bun_bin" --no-env-file "$ROOT/src/service.ts")
+  service_path="$(dirname "$bun_bin"):/usr/bin:/bin"
+fi
+# The service sees only these variables, so an exported TIMELINE_DB_PATH or the
+# real HOME (and its ~/.config/timeline) can never point it at real data.
+mkdir "$TMP/home"
+service_env=(
+  HOME="$TMP/home"
+  PATH="$service_path"
+  TIMELINE_CONFIG="$TMP/config.toml"
+  TIMELINE_ENV_FILE="$TMP/missing.env"
+  TIMELINE_MEDIA_PATH="$TMP/media"
+  TIMELINE_INBOX_PATH="$TMP/inbox"
+  TIMELINE_HOST=127.0.0.1
+  TIMELINE_PORT="$PORT"
+  AUTH_PASSWORD=smoke-test-password
+  NODE_ENV=production
+)
+
+# Resolve the database path as the service will, and refuse one outside this run's directory.
+# shellcheck disable=SC2016 # the TypeScript is for bun, not the shell
+db_path="$(cd "$SERVICE_CWD" && env -i "${service_env[@]}" "$bun_bin" --no-env-file -e '
+  const { loadConfig } = await import(process.argv[1]);
+  process.stdout.write((await loadConfig()).database.path);
+' "$ROOT/src/config/index.ts")"
+case "$db_path" in
+  "$TMP"/*) ;;
+  *)
+    echo "FAIL: the service would open '$db_path', outside $TMP" >&2
+    exit 1
+    ;;
+esac
+
+echo "Booting service (port ${PORT}, db ${db_path})..."
 (
   cd "$SERVICE_CWD"
-  if [ -n "$SERVICE_EXECUTABLE" ]; then
-    service_command=("$SERVICE_EXECUTABLE")
-  else
-    service_command=(bun run "$ROOT/src/service.ts")
-  fi
-  exec env \
-    TIMELINE_CONFIG="${TMP}/config.toml" \
-    TIMELINE_ENV_FILE="${TMP}/missing.env" \
-    TIMELINE_MEDIA_PATH="${TMP}/media" \
-    TIMELINE_HOST="127.0.0.1" \
-    TIMELINE_PORT="${PORT}" \
-    AUTH_PASSWORD="smoke-test-password" \
-    NODE_ENV=production \
-    "${service_command[@]}"
+  exec env -i "${service_env[@]}" "${service_command[@]}"
 ) > "${TMP}/service.log" 2>&1 &
 SVC_PID=$!
 
@@ -134,6 +171,11 @@ if [ "${code}" -ne 0 ]; then
   echo "FAIL: service did not exit cleanly on SIGTERM (exit ${code})"
   cat "${TMP}/service.log"
   exit 1
+fi
+
+if [ -n "$SAVE_DIR" ]; then
+  mkdir "$SAVE_DIR"
+  cp "$TMP"/timeline.db* "$TMP"/app-state.db* "$SAVE_DIR/"
 fi
 
 echo "OK: service booted, served /api/health, and shut down cleanly."
