@@ -4,15 +4,16 @@ on:
   workflow_call:
     inputs:
       tag:
+        description: The release the assets are for; an edge build names the rolling edge release
         required: true
         type: string
       commit:
         required: true
         type: string
-      nightly:
-        description: Build a nightly prerelease, stamping its version from the tag
-        type: boolean
-        default: false
+      edge-version:
+        description: Build this commit as an edge build (X.Y.Z-edge.BUILD) and save the signed files as an artifact
+        type: string
+        default: ""
   workflow_dispatch:
     inputs:
       tag:
@@ -39,7 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: refs/tags/${{ inputs.tag }}
+          ref: ${{ inputs.edge-version != '' && inputs.commit || format('refs/tags/{0}', inputs.tag) }}
           fetch-depth: 0
           persist-credentials: false
       - uses: jdx/mise-action@v5
@@ -50,19 +51,18 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.15"
-      # Nightlies are built from main as it stands, so they carry their version only in the tag.
-      - name: Stamp the nightly version
-        if: inputs.nightly
+      # Edge builds are built from main as it stands, so their version exists only on the runner.
+      - name: Stamp the edge version
+        if: inputs.edge-version != ''
         env:
-          RELEASE_TAG: ${{ inputs.tag }}
+          EDGE_VERSION: ${{ inputs.edge-version }}
         run: |
-          # Uses no repository script: the tagged checkout may predate it. The caller
-          # validated the exact tag; this keeps publishing on the prerelease path.
-          if [[ "$RELEASE_TAG" != v*-nightly.* ]]; then
-            echo "Not a nightly tag: $RELEASE_TAG" >&2
+          # Uses no repository script: the commit may predate it.
+          if [[ "$EDGE_VERSION" != *-edge.* ]]; then
+            echo "Not an edge version: $EDGE_VERSION" >&2
             exit 1
           fi
-          jq --arg version "${RELEASE_TAG#v}" '.version = $version' package.json > "$RUNNER_TEMP/package.json"
+          jq --arg version "$EDGE_VERSION" '.version = $version' package.json > "$RUNNER_TEMP/package.json"
           mv "$RUNNER_TEMP/package.json" package.json
           # Keep the runner-only stamp out of version.json's dirty flag.
           git update-index --skip-worktree package.json
@@ -70,11 +70,17 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.tag }}
           EXPECTED_COMMIT: ${{ inputs.commit }}
+          EDGE_VERSION: ${{ inputs.edge-version }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
           git merge-base --is-ancestor HEAD origin/main
+          if [ -n "$EDGE_VERSION" ]; then
+            # The version's build number must be the one this checkout builds with.
+            test "${EDGE_VERSION##*.}" = "$(scripts/print-build-number.sh)"
+            exit 0
+          fi
           test "$RELEASE_TAG" = "v$(bun run scripts/print-product-version.ts)"
           releases="$(gh api "repos/$GH_REPO/releases" --paginate --slurp)"
           jq -e --arg tag "$RELEASE_TAG" '[.[][] | select(.tag_name == $tag)] | length == 1' <<< "$releases"
@@ -108,7 +114,19 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ inputs.tag }}
         run: ./generate-appcast.sh
+      - name: Save the signed edge build
+        if: inputs.edge-version != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: edge-${{ inputs.edge-version }}
+          path: |
+            dist/macos/*.dmg
+            dist/macos/*.sha256
+            dist/macos/appcast.xml
+          if-no-files-found: error
+          retention-days: 7
       - name: Attach assets to draft release
+        if: inputs.edge-version == ''
         env:
           RELEASE_TAG: ${{ inputs.tag }}
           EXPECTED_COMMIT: ${{ inputs.commit }}
@@ -123,6 +141,7 @@ jobs:
           gh release upload "$RELEASE_TAG" dist/macos/*.dmg dist/macos/*.sha256 --clobber
           gh release upload "$RELEASE_TAG" dist/macos/appcast.xml --clobber
       - name: Publish the completed release
+        if: inputs.edge-version == ''
         env:
           RELEASE_TAG: ${{ inputs.tag }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
