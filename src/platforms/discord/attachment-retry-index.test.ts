@@ -83,3 +83,13 @@ test("recovery tombstones a missing message and the next sweep makes no requests
     expect(requests).toBe(1); equivalent();
   } finally { globalThis.fetch = original; }
 });
+
+test("malformed archived JSON is preserved but never indexed for recovery", () => {
+  db.exec("DROP TABLE discord_attachment_retry_pending");
+  for (const row of db.query("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'discord_attachment_retry_%'").all() as {name:string}[]) db.exec(`DROP TRIGGER ${row.name}`);
+  db.exec("INSERT INTO events(source,source_id,source_account,type,raw_data) VALUES('discord','malformed','account','message:dm','not json')");
+  ensureDiscordAttachmentRetryIndex(db);
+  db.exec("INSERT INTO events(source,source_id,source_account,type,raw_data) VALUES('discord','also-malformed','account','message:dm','{')");
+  expect(candidates()).toEqual([]);
+  expect(db.query("SELECT raw_data FROM events WHERE source_id='malformed'").get()).toEqual({raw_data: "not json"});
+});

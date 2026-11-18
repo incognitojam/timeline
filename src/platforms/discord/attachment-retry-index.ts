@@ -21,7 +21,8 @@ const rawAssetCount = `
 
 export const DISCORD_ATTACHMENT_RETRY_WHERE = `
 e.source = 'discord'
-      AND (${rawAssetCount}) > 0
+      AND CASE WHEN json_valid(e.raw_data) THEN
+      (${rawAssetCount}) > 0
       AND json_extract(e.raw_data, '$._channel.id') IS NOT NULL
       AND (
         EXISTS (
@@ -37,6 +38,7 @@ e.source = 'discord'
           WHERE a.event_id = e.id AND a.source = 'discord'
         ) < (${rawAssetCount})
       )
+      ELSE 0 END
 `;
 
 export const FIND_ATTACHMENT_RETRY_CANDIDATES = `
