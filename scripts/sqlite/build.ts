@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../../src/db/sqlite";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, rm } from "node:fs/promises";
 import { resolve, join } from "node:path";
@@ -6,9 +6,14 @@ import { SQLITE_PIN } from "../../src/db/sqlite-pin";
 import { assertSqlitePin } from "../../src/db/sqlite-runtime";
 
 const root = resolve(import.meta.dir, "../..");
+// Bump when compiler, linker or strip flags outside the pinned defines change.
 const revision = 1;
+export function buildTarget(arch = process.arch): string {
+  if (arch !== "x64" && arch !== "arm64") throw new Error(`Unsupported macOS architecture ${arch}`);
+  return `${arch === "x64" ? "x86_64" : arch}-apple-macos14.0`;
+}
 export function buildId(arch = process.arch, pin = SQLITE_PIN): string {
-  const target = `${arch}-apple-macos14.0`;
+  const target = buildTarget(arch);
   const input = JSON.stringify([pin.source.sha256, Object.entries(pin.defines).sort(), target, revision]);
   return `sqlite-${pin.version}-${createHash("sha256").update(input).digest("hex").slice(0, 12)}`;
 }
@@ -17,7 +22,7 @@ export function verifySource(source: Uint8Array, expected = SQLITE_PIN.source.sh
   if (actual !== expected) throw new Error(`SQLite source sha256 mismatch: expected ${expected}, got ${actual}. Remove the cached source and retry bun run sqlite:build; do not compile unverified bytes.`);
 }
 function run(args: string[]): void {
-  const result = Bun.spawnSync(args, { stdout: "inherit", stderr: "inherit" });
+  const result = Bun.spawnSync(args, { stdout: 2, stderr: "inherit" });
   if (result.exitCode !== 0) throw new Error(`${args[0]} failed (${result.exitCode})`);
 }
 export async function ensureSqliteLibrary(): Promise<string | null> {
@@ -31,7 +36,11 @@ export async function ensureSqliteLibrary(): Promise<string | null> {
   const directory = join(root, ".cache/sqlite", buildId());
   const library = join(directory, "libsqlite3.dylib");
   if (await Bun.file(library).exists()) {
-    run([process.execPath, "--no-env-file", resolve(import.meta.dir, "verify-library.ts"), library]);
+    try {
+      run([process.execPath, "--no-env-file", resolve(import.meta.dir, "verify-library.ts"), library]);
+    } catch (cause) {
+      throw new Error(`Cached SQLite failed verification. Remove ${directory} and rerun bun run sqlite:build.`, { cause });
+    }
     return library;
   }
   const sourceDir = join(root, ".cache/sqlite/src");
@@ -50,7 +59,7 @@ export async function ensureSqliteLibrary(): Promise<string | null> {
   await mkdir(directory, { recursive: true });
   const temporary = join(directory, `${crypto.randomUUID()}.dylib`);
   try {
-    run(["cc", "-O2", "-DNDEBUG", "-fPIC", "-dynamiclib", "-target", `${process.arch === "x64" ? "x86_64" : "arm64"}-apple-macos14.0`, "-install_name", "@rpath/libsqlite3.dylib", ...Object.entries(SQLITE_PIN.defines).map(([key, value]) => `-D${key}=${value}`), sourcePath, "-o", temporary]);
+    run(["cc", "-O2", "-DNDEBUG", "-fPIC", "-dynamiclib", "-target", buildTarget(), "-install_name", "@rpath/libsqlite3.dylib", ...Object.entries(SQLITE_PIN.defines).map(([key, value]) => `-D${key}=${value}`), sourcePath, "-o", temporary]);
     run(["strip", "-x", temporary]);
     // Validate in a fresh process: selecting a library is process-global on macOS.
     run([process.execPath, "--no-env-file", resolve(import.meta.dir, "verify-library.ts"), temporary]);

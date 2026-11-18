@@ -150,9 +150,9 @@ The Linux runtime is SQLite compiled into Bun. `bun run sqlite:pin bun-v<Bun.ver
 
 `bun run sqlite:build` checks Linux's runtime or builds a native macOS dylib using Xcode Command Line Tools. It prints the library path on macOS, verifies downloaded source against the manifest's SHA-256, and validates the compiled library before publishing it to the repository-local cache. This command does not select the library for Timeline or change the installed app.
 
-Before switching a host's SQLite, compare disposable snapshots in a checkout containing these commands. Keep the host's existing SQLite setting, whether written as `TIMELINE_SQLITE_LIBRARY_PATH=…` or `export TIMELINE_SQLITE_LIBRARY_PATH=…`. The diagnostic uses only its explicit `--library` argument.
+Before switching a host's SQLite, compare disposable snapshots in a checkout containing these commands. Leave the host environment file unchanged during comparison, including its existing setting written as `TIMELINE_SQLITE_LIBRARY_PATH=…` or `export TIMELINE_SQLITE_LIBRARY_PATH=…`. The diagnostic uses only its explicit `--library` argument.
 
-The following macOS commands use the default data location; substitute your configured database and embeddings locations if different. `prepare-full` refreshes a development snapshot without its live WAL, so it can lag recent writes (see [Local development database](#local-development-database)). Do not use these results as a backup or proof of the live database's exact current contents.
+The following Apple Silicon macOS commands use the default data location; substitute your configured database and embeddings locations if different. `prepare-full` refreshes a development snapshot without its live WAL, so it can lag recent writes (see [Local development database](#local-development-database)). Do not use these results as a backup or proof of the live database's exact current contents.
 
 ```bash
 bun run prepare-full -- --refresh --no-copy
@@ -178,6 +178,8 @@ bun run sqlite:check-compat -- --library "$pinned_library" --db "$comparison_dir
 diff -u "$comparison_dir/before.json" "$comparison_dir/after.json"
 ```
 
-The checker opens supplied files read-only and creates its own consistent working copies under `.scratch/`. It runs integrity checks, hashes the schema and fixed FTS/JSON queries, counts every table, reports `sqlite_stat*` tables and query plans, applies schema initialization, and exercises REPLACE triggers. With `--embeddings` it also checks sqlite-vec and nearest-neighbour results. Without that argument the output explicitly says vector checks were not performed. Working copies are removed after the command; reports remain in `comparison_dir` and contain no event text.
+The checker opens supplied files read-only and creates its own consistent working copies under `.scratch/`. It checks the original database pages before rebuilding working copies with VACUUM, hashes the schema and fixed FTS/JSON queries, counts every table, reports `sqlite_stat*` tables and query plans, applies schema initialization, and exercises REPLACE triggers. With `--embeddings` it also checks sqlite-vec and nearest-neighbour results. Without that argument the output explicitly says vector checks were not performed. Read-only SQLite can create `-wal` and `-shm` sidecars beside a supplied snapshot; the main database bytes remain unchanged. Working copies are removed after the command; reports remain in `comparison_dir` and contain no event text.
 
 Expect only `version`, `sourceId` and `compileOptions` to differ. Other differences need investigation before any switch, especially query plans when `sqlite_stat4` exists. Repeat this procedure for future Bun/SQLite updates, comparing the current library against the new build. On Linux, `--library builtin` checks Bun's embedded SQLite; selecting a dylib there is rejected instead of silently ignored.
+
+When implementing import-time SQLite selection, preserve the diagnostic’s explicit library selection before schema or sqlite-vec modules load. Otherwise the new initialization would reject the old library during the “before” comparison.

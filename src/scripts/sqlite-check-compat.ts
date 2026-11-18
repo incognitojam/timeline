@@ -13,15 +13,23 @@ function hashRows(rows: Iterable<unknown>): string {
   return digest.digest("hex");
 }
 function tables(db: Database) { return db.query<{ name: string; sql: string | null }, []>("SELECT name, sql FROM sqlite_schema WHERE type='table' ORDER BY name").all(); }
-function structure(db: Database) {
+function checkIntegrity(db: Database) {
   const integrity = db.query<{ integrity_check: string }, []>("PRAGMA integrity_check").all().map(row => row.integrity_check);
   if (JSON.stringify(integrity) !== '["ok"]') throw new Error(`SQLite integrity check failed: ${JSON.stringify(integrity)}`);
+  return integrity;
+}
+function structure(db: Database) {
   return {
-    integrity,
+    integrity: checkIntegrity(db),
     schemaHash: hash(db.query("SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name").all()),
     rowCounts: Object.fromEntries(tables(db).map(({ name }) => [name, db.query(`SELECT count(*) count FROM ${quote(name)}`).get()])),
     statisticsTables: tables(db).map(row => row.name).filter(name => name.startsWith("sqlite_stat")),
   };
+}
+interface QueryPlanRow { id: number; parent: number; detail: string }
+export function normalizeQueryPlan(rows: QueryPlanRow[]) {
+  const ids = new Map(rows.map((row, index) => [row.id, index]));
+  return rows.map((row, index) => ({ id: index, parent: ids.get(row.parent) ?? null, detail: row.detail }));
 }
 function timeline(db: Database) {
   const fts = Object.fromEntries(["events_fts", "events_fts_stemmed"].map(table => {
@@ -39,23 +47,27 @@ function timeline(db: Database) {
   return {
     ...structure(db), fts,
     jsonHash: hashRows(db.query("SELECT id, json_extract(raw_data, '$.type') value FROM events WHERE json_valid(raw_data) ORDER BY id").iterate()),
-    queries: queries.map(sql => ({ resultHash: hash(db.query(sql).all()), plan: db.query(`EXPLAIN QUERY PLAN ${sql}`).all() })),
+    queries: queries.map(sql => ({ resultHash: hash(db.query(sql).all()), plan: normalizeQueryPlan(db.query<QueryPlanRow, []>(`EXPLAIN QUERY PLAN ${sql}`).all()) })),
   };
 }
 
-export async function checkCompatibility(database: string, embeddings?: string) {
+export async function checkCompatibility(database: string, embeddings?: string, workDirectory?: string) {
   const root = resolve(import.meta.dir, "../..");
-  if (Bun.spawnSync(["git", "check-ignore", "-q", ".scratch"], { cwd: root }).exitCode !== 0) {
+  if (!workDirectory && Bun.spawnSync(["git", "check-ignore", "-q", ".scratch/"], { cwd: root }).exitCode !== 0) {
     throw new Error("Ignore .scratch/ in .git/info/exclude before running sqlite:check-compat");
   }
   const { mkdir } = await import("node:fs/promises");
-  await mkdir(join(root, ".scratch"), { recursive: true });
-  const directory = await mkdtemp(join(root, ".scratch/sqlite-compat-"));
+  const workspace = workDirectory ?? join(root, ".scratch");
+  await mkdir(workspace, { recursive: true });
+  const directory = await mkdtemp(join(workspace, "sqlite-compat-"));
+  const inputIntegrity: Record<string, string[]> = {};
   const { loadSqliteVec } = await import("../embeddings/sqlite-vec");
   function copy(input: string, name: string, vector = false): Database {
     // SQLite copies a consistent snapshot including WAL; never migrate the supplied file.
     using original = new Database(resolve(input), { readonly: true, strict: true });
     if (vector) loadSqliteVec(original);
+    // VACUUM rebuilds ordinary indexes: inspect the original pages first.
+    inputIntegrity[vector ? "embeddings" : "timeline"] = checkIntegrity(original);
     const output = join(directory, name);
     original.query("VACUUM INTO ?").run(output);
     const db = new Database(output, { strict: true });
@@ -96,7 +108,7 @@ export async function checkCompatibility(database: string, embeddings?: string) 
         }),
       };
     }
-    return { ...runtime, before, afterInit, triggerProbe, vectors };
+    return { ...runtime, inputIntegrity, before, afterInit, triggerProbe, vectors };
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
 
