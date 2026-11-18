@@ -7,6 +7,8 @@ import { Worker } from "worker_threads";
 import type { InboxSourceConfig } from "../../../inbox/config";
 import type { ProcessResult } from "../../../inbox/process";
 import type { InboxWorkerData } from "../../../testing/inbox-worker";
+import { initDb } from "../../../db/schema";
+import { processGoogleTakeoutZip } from "./handler";
 
 type TakeoutFiles = Record<string, string>;
 
@@ -76,6 +78,19 @@ const ALL_SERVICES: TakeoutFiles = {
   "Takeout/Timeline.json": JSON.stringify({ semanticSegments: [{ startTime: "2021-03-09T10:00:00.000Z", endTime: "2021-03-09T11:00:00.000Z", visit: { topCandidate: { placeId: "place-2", semanticType: "UNKNOWN", placeLocation: { latLng: "51.5°, -0.1°" } } } }] }),
 };
 
+/** Writes the files into a Takeout zip at `zipPath`, staging them under `stage`. */
+function writeTakeoutZip(files: TakeoutFiles, stage: string, zipPath: string): void {
+  for (const [path, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(stage, path)), { recursive: true });
+    writeFileSync(join(stage, path), content);
+  }
+  const zip = Bun.spawnSync(["zip", "-qr", zipPath, "Takeout"], { cwd: stage });
+  if (zip.exitCode !== 0) throw new Error(`zip failed: ${zip.stderr.toString()}`);
+}
+
+// The inbox runs the handler on the scheduler's worker thread, where a parser
+// that calls process.exit or reads process.argv would end or misdirect the
+// worker; these tests run it there.
 describe("Google Takeout through the inbox on a worker thread", () => {
   let root: string;
   let zipCount: number;
@@ -93,13 +108,8 @@ describe("Google Takeout through the inbox on a worker thread", () => {
 
   /** Writes a Takeout zip to the inbox and processes it, returning the result or the code that ended the worker. */
   async function importTakeout(files: TakeoutFiles): Promise<ProcessResult> {
-    const stage = join(root, `stage-${++zipCount}`);
-    for (const [path, content] of Object.entries(files)) {
-      mkdirSync(dirname(join(stage, path)), { recursive: true });
-      writeFileSync(join(stage, path), content);
-    }
-    const zip = Bun.spawnSync(["zip", "-qr", join(root, "inbox", `takeout-${zipCount}.zip`), "Takeout"], { cwd: stage });
-    if (zip.exitCode !== 0) throw new Error(`zip failed: ${zip.stderr.toString()}`);
+    ++zipCount;
+    writeTakeoutZip(files, join(root, `stage-${zipCount}`), join(root, "inbox", `takeout-${zipCount}.zip`));
 
     const source: InboxSourceConfig = { type: "local", local: "inbox", parser: "google-takeout", patterns: ["*.zip"] };
     const workerData: InboxWorkerData = {
@@ -161,45 +171,77 @@ describe("Google Takeout through the inbox on a worker thread", () => {
     expect(eventCounts()).toEqual(counts);
   });
 
-  test("Search ignores the other My Activity products", async () => {
-    const result = await importTakeout({ ...profile("alex@example.com"), "Takeout/My Activity/Image Search/My Activity.html": SEARCH["Takeout/My Activity/Image Search/My Activity.html"] as string });
-
-    expect(result).toMatchObject({ filesProcessed: 1, eventsAdded: 0, errors: [] });
-    expect(eventCounts()).toEqual({});
-  });
-
-  test("Location imports Semantic Location History and otherwise leaves the rest of the zip alone", async () => {
-    const recordsOnly = await importTakeout({ ...profile("alex@example.com"), ...RECORDS_ONLY_LOCATION, ...CHROME });
-    expect(recordsOnly).toMatchObject({ filesProcessed: 1, eventsAdded: 1, errors: [] });
-    expect(eventCounts()).toEqual({ chrome: 1 });
-
-    const semanticOnly = await importTakeout({ ...profile("alex@example.com"), ...SEMANTIC_LOCATION });
-    expect(semanticOnly).toMatchObject({ filesProcessed: 1, eventsAdded: 1, errors: [] });
-    expect(eventCounts()).toEqual({ chrome: 1, "google-location": 1 });
-  });
-
-  test("Fit imports each segment once per account", async () => {
-    const first = await importTakeout({ ...profile("alice@example.com"), ...fit(RUN, STILL) });
-    expect(first).toMatchObject({ filesProcessed: 1, eventsAdded: 1, errors: [] });
-
-    const reimport = await importTakeout({ ...profile("alice@example.com"), ...fit(RUN), [`${FIT_FILE}.txt`]: "changes the zip's hash" });
-    expect(reimport).toMatchObject({ filesProcessed: 1, eventsAdded: 0, errors: [] });
-
-    const otherAccount = await importTakeout({ ...profile("bob@example.com"), ...fit(RUN, WALK) });
-    expect(otherAccount).toMatchObject({ filesProcessed: 1, eventsAdded: 2, errors: [] });
-
-    expect(query(`SELECT source_account, type FROM events ORDER BY source_account, timestamp`)).toEqual([
-      { source_account: "alice", type: "activity:running" },
-      { source_account: "bob", type: "activity:running" },
-      { source_account: "bob", type: "activity:walking" },
-    ]);
-  });
-
   test("an unreadable Fit file fails the zip so it can be retried", async () => {
     const result = await importTakeout({ ...profile("alex@example.com"), ...fit(RUN), [`${FIT_FILE.slice(0, -5)}_2.json`]: '{"Data Points": [' });
 
     expect(result).toMatchObject({ filesProcessed: 0, eventsAdded: 0 });
     expect(result.errors).toEqual([expect.stringContaining("Google Fit import hit 1 unreadable")]);
     expect(eventCounts()).toEqual({ "google-fit": 1 });
+  });
+});
+
+// What the handler imports from a zip, run on this thread against an in-memory
+// database; the inbox's tracking, retries and worker are covered above.
+describe("Google Takeout zip import", () => {
+  let root: string;
+  let db: Database;
+  let zipCount: number;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "takeout-zip-"));
+    db = new Database(":memory:");
+    initDb(db);
+    zipCount = 0;
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  async function importZip(files: TakeoutFiles) {
+    const zipPath = join(root, `takeout-${++zipCount}.zip`);
+    writeTakeoutZip(files, join(root, `stage-${zipCount}`), zipPath);
+    return processGoogleTakeoutZip(db, zipPath, null);
+  }
+
+  const eventCounts = () =>
+    Object.fromEntries(
+      (db.query(`SELECT source, count(*) AS count FROM events GROUP BY source`).all() as { source: string; count: number }[])
+        .map((row) => [row.source, row.count]),
+    );
+
+  test("Search ignores the other My Activity products", async () => {
+    const result = await importZip({ ...profile("alex@example.com"), "Takeout/My Activity/Image Search/My Activity.html": SEARCH["Takeout/My Activity/Image Search/My Activity.html"] as string });
+
+    expect(result.eventsAdded).toBe(0);
+    expect(eventCounts()).toEqual({});
+  });
+
+  test("Location imports Semantic Location History and otherwise leaves the rest of the zip alone", async () => {
+    const recordsOnly = await importZip({ ...profile("alex@example.com"), ...RECORDS_ONLY_LOCATION, ...CHROME });
+    expect(recordsOnly.eventsAdded).toBe(1);
+    expect(eventCounts()).toEqual({ chrome: 1 });
+
+    const semanticOnly = await importZip({ ...profile("alex@example.com"), ...SEMANTIC_LOCATION });
+    expect(semanticOnly.eventsAdded).toBe(1);
+    expect(eventCounts()).toEqual({ chrome: 1, "google-location": 1 });
+  });
+
+  test("Fit imports each segment once per account", async () => {
+    const first = await importZip({ ...profile("alice@example.com"), ...fit(RUN, STILL) });
+    expect(first.eventsAdded).toBe(1);
+
+    const reimport = await importZip({ ...profile("alice@example.com"), ...fit(RUN) });
+    expect(reimport.eventsAdded).toBe(0);
+
+    const otherAccount = await importZip({ ...profile("bob@example.com"), ...fit(RUN, WALK) });
+    expect(otherAccount.eventsAdded).toBe(2);
+
+    expect(db.query(`SELECT source_account, type FROM events ORDER BY source_account, timestamp`).all()).toEqual([
+      { source_account: "alice", type: "activity:running" },
+      { source_account: "bob", type: "activity:running" },
+      { source_account: "bob", type: "activity:walking" },
+    ]);
   });
 });

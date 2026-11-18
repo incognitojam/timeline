@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { getAppStateDb, getSyncState } from "../db/app-state";
 import { getDb, initDb } from "../db/schema";
 import { runSourceOnce, SourceRunError } from "./once";
+import { prepareRun, UsageError } from "./once-cli";
 import type { SyncSource } from "./types";
 
 function claudeSession(dir: string, account: string): void {
@@ -188,6 +189,19 @@ describe("sync:once CLI", () => {
     return { stdout, stderr, exitCode };
   }
 
+  // Host-data refusals happen before the sandbox exists or a child starts, so
+  // they run in-process; "rejected requests …" below covers UsageError's exit 2.
+  function expectHostDataRefusal(args: string[]): void {
+    let refusal: unknown;
+    try {
+      prepareRun(args);
+    } catch (error) {
+      refusal = error;
+    }
+    expect(refusal).toBeInstanceOf(UsageError);
+    expect((refusal as Error).message).toContain("inside host data");
+  }
+
   it("gives the source sandbox paths and resolves settings against the caller", async () => {
     // Bun loads .env from the working directory unless told not to.
     writeFileSync(join(dir, ".env"), "SYNC_ONCE_DOTENV_SECRET=leaked\n");
@@ -283,8 +297,7 @@ describe("sync:once CLI", () => {
     mkdirSync(scratch);
     symlinkSync(hostFile, join(scratch, "embeddings.db-wal"));
     const sandbox = join(dir, "s");
-    const { exitCode } = await cli(["render-sweep", "--dry-run", "--db", join(scratch, "timeline.db"), "--sandbox", sandbox]);
-    expect(exitCode).toBe(2);
+    expectHostDataRefusal(["render-sweep", "--dry-run", "--db", join(scratch, "timeline.db"), "--sandbox", sandbox]);
     expect(existsSync(sandbox)).toBe(false);
     rmSync(hostDir, { recursive: true, force: true });
   });
@@ -335,9 +348,9 @@ describe("sync:once CLI", () => {
     mkdirSync(scratch);
     symlinkSync(hostState, join(scratch, "app-state.db"));
 
-    const { stderr, exitCode } = await cli(["render-sweep", "--db", join(scratch, "timeline.db"), "--sandbox", join(dir, "s")]);
-    expect(exitCode).toBe(2);
-    expect(stderr).toContain("inside host data");
+    const sandbox = join(dir, "s");
+    expectHostDataRefusal(["render-sweep", "--db", join(scratch, "timeline.db"), "--sandbox", sandbox]);
+    expect(existsSync(sandbox)).toBe(false);
     expect(readFileSync(hostState, "utf8")).toBe("synthetic host state");
     rmSync(hostDir, { recursive: true, force: true });
   });

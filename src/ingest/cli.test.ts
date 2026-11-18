@@ -27,17 +27,23 @@ function sandbox() {
     },
   };
 }
-function run(name: string, args: string[], env: NodeJS.ProcessEnv) {
-  const result = Bun.spawnSync({
+// Each parser CLI runs in its own process, so the spawning tests run concurrently.
+async function run(name: string, args: string[], env: NodeJS.ProcessEnv) {
+  const proc = Bun.spawn({
     cmd: [process.execPath, resolve(`src/platforms/${name}/parser.ts`), ...args],
     env, stdout: "pipe", stderr: "pipe",
   });
-  return { code: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() };
+  const [code, stdout, stderr] = await Promise.all([
+    proc.exited,
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  return { code, stdout, stderr };
 }
 for (const name of parsers) {
-  test(`${name}: help never opens storage`, () => {
+  test.concurrent(`${name}: help never opens storage`, async () => {
     const box = sandbox();
-    const result = run(name, ["--help"], box.env);
+    const result = await run(name, ["--help"], box.env);
     expect(result.code).toBe(0);
     expect(result.stdout).toContain("Usage:");
     expect(existsSync(box.db)).toBe(false);
@@ -45,9 +51,9 @@ for (const name of parsers) {
     expect(readdirSync(join(box.root, "home"))).toEqual([]);
     expect(readdirSync(box.root).sort()).toEqual(["home", "logs", "media"]);
   });
-  test(`${name}: rejects flags after positional arguments`, () => {
+  test.concurrent(`${name}: rejects flags after positional arguments`, async () => {
     const box = sandbox();
-    const result = run(name, [box.logs, "alice", "--dryrun"], box.env);
+    const result = await run(name, [box.logs, "alice", "--dryrun"], box.env);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("Unknown option: --dryrun");
     expect(existsSync(box.db)).toBe(false);
@@ -66,7 +72,7 @@ test("keeps defaults and valid argument ordering", () => {
     expect(parserCliArgs({ usage: "test", flags: ["--dry-run", "--refresh-raw-data"] }, args)).toEqual(args);
   }
 });
-test("shared wrapper imports synthetic Spotify data with requested account", () => {
+test.concurrent("shared wrapper imports synthetic Spotify data with requested account", async () => {
   const box = sandbox();
   mkdirSync(join(box.logs, "Spotify Extended Streaming History"));
   writeFileSync(
@@ -79,7 +85,7 @@ test("shared wrapper imports synthetic Spotify data with requested account", () 
       spotify_track_uri: "spotify:track:synthetic",
     }]),
   );
-  const result = run("spotify", [box.logs, "alice"], box.env);
+  const result = await run("spotify", [box.logs, "alice"], box.env);
   expect(result.stderr).toBe("");
   expect(result.code).toBe(0);
   const db = new Database(box.db, { readonly: true });
@@ -91,26 +97,26 @@ test("shared wrapper imports synthetic Spotify data with requested account", () 
   }
 });
 for (const name of ["amp", "claude-code", "opencode"]) {
-  test(`${name}: explicit empty logs and account still import`, () => {
+  test.concurrent(`${name}: explicit empty logs and account still import`, async () => {
     const box = sandbox();
     if (name === "opencode") mkdirSync(join(box.logs, "storage", "session"), { recursive: true });
-    const result = run(name, [box.logs, "alice", "--refresh-raw-data"], box.env);
+    const result = await run(name, [box.logs, "alice", "--refresh-raw-data"], box.env);
     expect(result.stderr).toBe("");
     expect(result.code).toBe(0);
     expect(result.stdout).toContain("Account: alice");
     expect(existsSync(box.db)).toBe(true);
   });
 }
-test("Codex dry run preserves arguments without creating storage", () => {
+test.concurrent("Codex dry run preserves arguments without creating storage", async () => {
   const box = sandbox();
-  const result = run("codex", ["--dry-run", box.logs, "alice", "--refresh-raw-data"], box.env);
+  const result = await run("codex", ["--dry-run", box.logs, "alice", "--refresh-raw-data"], box.env);
   expect(result.stderr).toBe("");
   expect(result.code).toBe(0);
   expect(result.stdout).toContain("Account: alice");
   expect(existsSync(box.db)).toBe(false);
 });
 
-test("conductor: valid dry run preserves account and input path", () => {
+test.concurrent("conductor: valid dry run preserves account and input path", async () => {
   const box = sandbox();
   const input = join(box.logs, "input.sqlite");
   const source = new Database(input);
@@ -123,14 +129,14 @@ test("conductor: valid dry run preserves account and input path", () => {
       );
     INSERT INTO workspaces (id, branch) VALUES ('workspace-1', 'alice/example');`);
   source.close();
-  const result = run("conductor", [input, "--dry-run", "--refresh-raw-data"], box.env);
+  const result = await run("conductor", [input, "--dry-run", "--refresh-raw-data"], box.env);
   expect(result.stderr).toBe("");
   expect(result.code).toBe(0);
   expect(result.stdout).toContain("Account: alice");
   expect(existsSync(box.db)).toBe(false);
 });
 
-test("t3code: valid dry run preserves account and input path", () => {
+test.concurrent("t3code: valid dry run preserves account and input path", async () => {
   const box = sandbox();
   const input = join(box.logs, "input.sqlite");
   const source = new Database(input);
@@ -150,7 +156,7 @@ test("t3code: valid dry run preserves account and input path", () => {
       );
     `);
   source.close();
-  const result = run("t3code", ["alice", input, "--dry-run", "--refresh-raw-data"], box.env);
+  const result = await run("t3code", ["alice", input, "--dry-run", "--refresh-raw-data"], box.env);
   expect(result.stderr).toBe("");
   expect(result.code).toBe(0);
   expect(result.stdout).toContain("Account: alice");
@@ -158,11 +164,11 @@ test("t3code: valid dry run preserves account and input path", () => {
 });
 
 
-test("Codex retains its default directory and default account", () => {
+test.concurrent("Codex retains its default directory and default account", async () => {
   const box = sandbox();
   const logs = join(box.env.HOME, ".codex", "sessions");
   mkdirSync(logs, { recursive: true });
-  const result = run("codex", ["--dry-run"], box.env);
+  const result = await run("codex", ["--dry-run"], box.env);
   expect(result.code).toBe(0);
   expect(result.stdout).toContain(logs);
   expect(result.stdout).toContain("Account: default");
@@ -170,28 +176,28 @@ test("Codex retains its default directory and default account", () => {
 });
 
 for (const name of ["t3code", "spotify", "claude"]) {
-  test(`${name}: missing required arguments still fail without storage`, () => {
+  test.concurrent(`${name}: missing required arguments still fail without storage`, async () => {
     const box = sandbox();
-    const result = run(name, [], box.env);
+    const result = await run(name, [], box.env);
     expect(result.code).toBe(1);
     expect(result.stdout + result.stderr).toContain("Usage:");
     expect(existsSync(box.db)).toBe(false);
   });
 }
 
-test("WakaTime keeps its export, account, and heartbeat option", () => {
+test.concurrent("WakaTime keeps its export, account, and heartbeat option", async () => {
   const box = sandbox();
   const input = join(box.logs, "export.json");
   writeFileSync(input, JSON.stringify({ user: {}, range: { start: 0, end: 1 }, days: [] }));
-  const result = run("wakatime", ["--include-heartbeats", input, "alice"], box.env);
+  const result = await run("wakatime", ["--include-heartbeats", input, "alice"], box.env);
   expect(result.stderr).toBe("");
   expect(result.code).toBe(0);
   expect(result.stdout).toContain("wakatime-alice-");
 });
 
-test("Monzo status accepts its headless option without syncing", () => {
+test.concurrent("Monzo status accepts its headless option without syncing", async () => {
   const box = sandbox();
-  const result = run("monzo", ["status", "--headless"], box.env);
+  const result = await run("monzo", ["status", "--headless"], box.env);
   expect(result.code).toBe(0);
   expect(result.stdout).toContain("Not configured.");
   expect(existsSync(box.db)).toBe(false);
