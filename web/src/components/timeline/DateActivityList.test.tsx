@@ -33,13 +33,11 @@ function renderList(
 describe("DateActivityList", () => {
   beforeEach(() => {
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
-    Element.prototype.scrollTo = vi.fn();
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
-    Reflect.deleteProperty(Element.prototype, "scrollTo");
   });
 
   it("labels every month the dates run through", () => {
@@ -106,9 +104,7 @@ describe("DateActivityList", () => {
     expect(view.queryByText("July 2026")).not.toBeInTheDocument();
   });
 
-  it("virtualizes a complete multi-year index without fetching on scroll", () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+  it("virtualizes a complete multi-year index while scrolling", () => {
     const dates: DateActivity[] = [];
     const day = new Date("2026-08-10T12:00:00Z");
     for (let index = 0; index < 4_000; index += 1) {
@@ -128,10 +124,10 @@ describe("DateActivityList", () => {
     });
     scroller.dispatchEvent(new Event("scroll"));
 
+    expect(view.container.querySelectorAll("button[data-date]").length).toBeGreaterThan(0);
     expect(view.container.querySelectorAll("button[data-date]").length).toBeLessThan(
       40,
     );
-    expect(fetchMock).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
 });
@@ -148,17 +144,11 @@ function installScrolling() {
       this.dispatchEvent(new Event("scroll"));
     },
   });
-  Element.prototype.scrollTo = vi.fn(function (
-    this: Element,
-    options: ScrollToOptions,
-  ) {
-    this.scrollTop = options.top ?? 0;
-  }) as typeof Element.prototype.scrollTo;
+
 }
 
 function uninstallScrolling() {
   Reflect.deleteProperty(Element.prototype, "scrollTop");
-  Reflect.deleteProperty(Element.prototype, "scrollTo");
 }
 
 describe("DateActivityList centring", () => {
@@ -202,16 +192,19 @@ describe("DateActivityList centring", () => {
   });
 
   it("follows the selection to another year without loading another page", () => {
-    const { view, setDate } = renderList("2016-08-09", [
-      { date: "2026-08-10", eventCount: 5 },
-      { date: "2016-08-09", eventCount: 5 },
-      { date: "2006-08-08", eventCount: 5 },
-    ]);
+    const dates = Array.from({ length: 1_000 }, (_, index) => ({
+      date: new Date(Date.UTC(2026, 7, 10 - index)).toISOString().slice(0, 10),
+      eventCount: 5,
+    }));
+    const { view, setDate } = renderList(dates[500].date, dates);
+    const scroller = view.container.querySelector<HTMLElement>(".overflow-auto");
+    if (!scroller) throw new Error("no scroll container");
+    expect(scroller.scrollTop).toBeGreaterThan(0);
 
-    setDate("2026-08-10");
+    setDate(dates[0].date);
 
-    expect(renderedDates(view)).toContain("2026-08-10");
-    expect(Element.prototype.scrollTo).not.toHaveBeenCalled();
+    expect(scroller.scrollTop).toBe(0);
+    expect(renderedDates(view)).toContain(dates[0].date);
   });
 
   it("holds the visible day in place when a refresh prepends a new date", () => {

@@ -123,6 +123,8 @@ describe("ServiceVersionCard", () => {
       />
     ));
 
+    expect(view.getByText("Packaged build")).toBeInTheDocument();
+    expect(view.getByText("0.8.1")).toBeInTheDocument();
     expect(view.queryByRole("button")).not.toBeInTheDocument();
     expect(view.queryByRole("link")).not.toBeInTheDocument();
     expect(view.container.textContent ?? "").not.toMatch(/update|changelog|upstream|behind/i);
