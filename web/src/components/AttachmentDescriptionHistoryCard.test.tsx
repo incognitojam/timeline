@@ -95,7 +95,7 @@ function makePoints(
 interface ChartOption {
   baseOption: {
     tooltip: { formatter: (params: unknown) => string };
-    series: { name: string; data: unknown[] }[];
+    series: { name: string; type: string; stack?: string; data: unknown[] }[];
   };
 }
 
@@ -151,7 +151,13 @@ describe("AttachmentDescriptionHistoryCard", () => {
     expect(view.getByText("+16 pts since Aug 27")).toBeInTheDocument();
     expect(view.getByRole("img").getAttribute("aria-label"))
       .toMatch(/^Attachment description backlog by day, Jul 16 to Aug 28, 2026\..*Coverage 78 percent/);
-    expect(chartOption().series.find((series) => series.name === "Backlog")?.data).toHaveLength(44);
+    const series = (name: string) => chartOption().series.find((entry) => entry.name === name);
+    expect(series("Backlog")?.data).toHaveLength(44);
+    expect(series("Backlog")?.data[0]).toEqual([START_MS, 5000]);
+    expect(series("Backlog")?.data[43]).toEqual([START_MS + 43 * DAY_MS, 700]);
+    // One bar per day: the three outcomes stack rather than sit side by side.
+    expect(["Described", "Skipped", "Failed"].map((name) => [series(name)?.data[0], series(name)?.stack]))
+      .toEqual([[[START_MS, 100], "outcomes"], [[START_MS, 2], "outcomes"], [[START_MS, 1], "outcomes"]]);
 
     fireEvent.click(view.getByRole("radio", { name: "30d" }));
 
