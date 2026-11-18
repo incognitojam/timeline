@@ -1,4 +1,9 @@
-import type { SyncSourceConfigField, SyncSourceInfo, SyncSourceSettingsPatch } from "./api";
+import type {
+  SyncSourceConfigField,
+  SyncSourceConfigurationPatch,
+  SyncSourceInfo,
+  SyncSourceSettingsPatch,
+} from "./api";
 
 interface InvalidStoredOverride {
   readonly kind: "invalid-stored-override";
@@ -108,7 +113,7 @@ export function sourceFingerprint(source: SyncSourceInfo): string {
   });
 }
 
-export function settingValueForPatch(
+function settingValueForPatch(
   field: SyncSourceConfigField,
   draft: ConfigurationDraftValue
 ): string | number | boolean | string[] | null {
@@ -146,7 +151,7 @@ export function numberSettingError(
   return undefined;
 }
 
-export function settingValuesEqual(
+function settingValuesEqual(
   left: SyncSourceSettingsPatch[string],
   right: unknown
 ): boolean {
@@ -173,4 +178,39 @@ export function hasDraftValue(field: SyncSourceConfigField, value: Configuration
 export function stringDraft(field: SyncSourceConfigField, value: ConfigurationDraftValue): string {
   const effective = effectiveDraftValue(field, value);
   return typeof effective === "string" ? effective : "";
+}
+
+/**
+ * The minimal PATCH for a draft: only the fields edited away from the
+ * source's own draft, and only where the result differs from what is stored,
+ * so an untouched invalid stored override is left alone.
+ */
+export function buildConfigurationPatch(
+  source: SyncSourceInfo,
+  values: ConfigurationDraft
+): SyncSourceConfigurationPatch {
+  const patch: SyncSourceConfigurationPatch = {};
+  if (values.enabled !== source.enabled) {
+    patch.enabled = values.enabled;
+  }
+
+  if (values.interval !== (source.interval ?? "")) {
+    const interval = values.interval.trim() === "" ? null : values.interval.trim();
+    if (interval !== source.interval) patch.interval = interval;
+  }
+
+  const settings: SyncSourceSettingsPatch = {};
+  for (const field of source.settingsSchema) {
+    const draft = values.settings[field.key];
+    if (draft === undefined) {
+      throw new Error(`Missing configuration draft for ${settingsFieldPath(field.key)}`);
+    }
+    if (draft === draftValueFromSettings(field, source.settings)) continue;
+    const value = settingValueForPatch(field, draft);
+    if (!settingValuesEqual(value, source.settings[field.key])) {
+      settings[field.key] = value;
+    }
+  }
+  if (Object.keys(settings).length > 0) patch.settings = settings;
+  return patch;
 }

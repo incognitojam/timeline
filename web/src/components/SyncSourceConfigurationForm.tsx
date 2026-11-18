@@ -4,13 +4,11 @@ import { createEffect, createSignal, For, type JSX, Match, on, onCleanup, Show, 
 import {
   type SyncSourceConfigField,
   SyncSourceConfigurationError,
-  type SyncSourceConfigurationPatch,
   type SyncSourceInfo,
-  type SyncSourceSettingsPatch,
 } from "../lib/api";
 import {
+  buildConfigurationPatch,
   canRemoveSettingOverride,
-  type ConfigurationDraft,
   type ConfigurationDraftValue,
   type ConfigurationFieldPath,
   draftFromSource,
@@ -23,8 +21,6 @@ import {
   selectSegments,
   settingDefaultActionLabel,
   settingsFieldPath,
-  settingValueForPatch,
-  settingValuesEqual,
   sourceFingerprint,
   stringDraft,
 } from "../lib/sync-source-draft";
@@ -202,7 +198,7 @@ export default function SyncSourceConfigurationForm(props: SyncSourceConfigurati
       const submittedSource = source();
       const epoch = sourceEpoch();
       setSubmitError(null);
-      const patch = buildPatch(value, submittedSource);
+      const patch = buildConfigurationPatch(submittedSource, value);
       if (Object.keys(patch).length === 0) {
         reseed(submittedSource);
         return;
@@ -252,10 +248,6 @@ export default function SyncSourceConfigurationForm(props: SyncSourceConfigurati
     form.reset(values);
   }
 
-  function fieldChanged(path: ConfigurationFieldPath): boolean {
-    return form.getFieldMeta(path)?.isDefaultValue === false;
-  }
-
   function setFieldError(path: ConfigurationFieldPath, message: string | undefined) {
     setServerFieldErrors((previous) => {
       const next = { ...previous };
@@ -279,34 +271,6 @@ export default function SyncSourceConfigurationForm(props: SyncSourceConfigurati
       form.setFieldValue(path, null);
       clearServerError(path);
     }
-  }
-
-  function buildPatch(values: ConfigurationDraft, source: SyncSourceInfo): SyncSourceConfigurationPatch {
-    const patch: SyncSourceConfigurationPatch = {};
-    if (fieldChanged("enabled") && values.enabled !== source.enabled) {
-      patch.enabled = values.enabled;
-    }
-
-    if (fieldChanged("interval")) {
-      const interval = values.interval.trim() === "" ? null : values.interval.trim();
-      if (interval !== source.interval) patch.interval = interval;
-    }
-
-    const settings: SyncSourceSettingsPatch = {};
-    for (const field of source.settingsSchema) {
-      const path = settingsFieldPath(field.key);
-      if (!fieldChanged(path)) continue;
-      const draft = values.settings[field.key];
-      if (draft === undefined) {
-        throw new Error(`Missing configuration draft for ${path}`);
-      }
-      const value = settingValueForPatch(field, draft);
-      if (!settingValuesEqual(value, source.settings[field.key])) {
-        settings[field.key] = value;
-      }
-    }
-    if (Object.keys(settings).length > 0) patch.settings = settings;
-    return patch;
   }
 
   createEffect(on(

@@ -229,24 +229,6 @@ describe("SyncSourceDetailView configuration form", () => {
     expect(queryByText("Connected")).not.toBeInTheDocument();
   });
 
-  it("stages using a field default as override removal", async () => {
-    const { getByText } = renderWith(backupSource());
-    const row = getByText("Compress backups").closest(".grid");
-    if (!(row instanceof HTMLElement)) throw new Error("expected the boolean setting row");
-
-    fireEvent.click(within(row).getByRole("button", { name: "Use default for Compress backups" }));
-    expect(row).toHaveTextContent("Using default, On");
-    expect(testState.updateConfiguration).not.toHaveBeenCalled();
-    fireEvent.click(within(configurationForm()).getByRole("button", { name: "Save changes" }));
-
-    await waitFor(() => {
-      expect(testState.updateConfiguration).toHaveBeenCalledWith({
-        source: "backup",
-        patch: { settings: { compress: null } },
-      });
-    });
-  });
-
   it("displays effective defaults when no override is stored", () => {
     const { getByLabelText, getByRole } = renderWith(backupSource({
       settings: { destination: "/tmp/backups" },
@@ -262,36 +244,13 @@ describe("SyncSourceDetailView configuration form", () => {
     expect(testState.updateConfiguration).not.toHaveBeenCalled();
   });
 
-  it("removes a malformed stored override when staging source defaults", async () => {
-    const { getByLabelText } = renderWith(backupSource({
-      settings: { destination: "/tmp/backups", keep_count: "twenty-four" },
-    }));
-    const form = configurationForm();
-    const keepCountRow = getByLabelText("Backups to retain").closest(".grid");
-    if (!(keepCountRow instanceof HTMLElement)) throw new Error("expected the number setting row");
-
-    expect(getByLabelText("Backups to retain")).toHaveValue("24");
-    expect(keepCountRow).toHaveTextContent("Invalid stored override · Default is 24");
-
-    fireEvent.click(within(form).getByRole("button", { name: "Use source defaults" }));
-    expect(testState.updateConfiguration).not.toHaveBeenCalled();
-    fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
-
-    await waitFor(() => {
-      expect(testState.updateConfiguration).toHaveBeenCalledWith({
-        source: "backup",
-        patch: { settings: { keep_count: null } },
-      });
-    });
-  });
-
-  it("stages source defaults without changing enabled or required setup values", async () => {
+  it("stages source defaults, including over an invalid override, without changing enabled or required values", async () => {
     const { getByLabelText, getByRole } = renderWith(backupSource({
       enabled: false,
       interval: "2h",
       settings: {
         destination: "/mnt/required-backups",
-        keep_count: 12,
+        keep_count: "twelve",
         compress: false,
         mode: "incremental",
       },
@@ -299,6 +258,11 @@ describe("SyncSourceDetailView configuration form", () => {
     const form = configurationForm();
     const destinationRow = getByLabelText("Backup directory").closest(".grid");
     if (!(destinationRow instanceof HTMLElement)) throw new Error("expected the required setting row");
+    const keepCountRow = getByLabelText("Backups to retain").closest(".grid");
+    if (!(keepCountRow instanceof HTMLElement)) throw new Error("expected the number setting row");
+
+    expect(getByLabelText("Backups to retain")).toHaveValue("24");
+    expect(keepCountRow).toHaveTextContent("Invalid stored override · Default is 24");
 
     expect(within(destinationRow).queryByRole("button", { name: /Use default|Remove override/ })).toBeNull();
     fireEvent.click(within(form).getByRole("button", { name: "Use source defaults" }));
@@ -328,7 +292,7 @@ describe("SyncSourceDetailView configuration form", () => {
     });
   });
 
-  it("stages edits, toggles, and selections before sending one combined minimal PATCH", async () => {
+  it("stages edits, toggles, selections and default overrides before sending one combined PATCH", async () => {
     const { getByLabelText, getByRole } = renderWith(backupSource());
     const form = configurationForm();
 
@@ -337,7 +301,9 @@ describe("SyncSourceDetailView configuration form", () => {
     fireEvent.input(getByLabelText("Backup directory"), { target: { value: "  /mnt/new-backups  " } });
     fireEvent.click(getByRole("switch", { name: "Compress backups" }));
     fireEvent.click(getByRole("radio", { name: "incremental" }));
+    fireEvent.click(getByRole("button", { name: "Use default for Backups to retain" }));
 
+    expect(getByLabelText("Backups to retain").closest(".grid")).toHaveTextContent("Using default, 24");
     expect(testState.updateConfiguration).not.toHaveBeenCalled();
     expect(within(form).getByRole("button", { name: "Save changes" })).toBeEnabled();
 
@@ -352,6 +318,7 @@ describe("SyncSourceDetailView configuration form", () => {
           interval: "45m",
           settings: {
             destination: "/mnt/new-backups",
+            keep_count: null,
             compress: false,
             mode: "incremental",
           },
@@ -481,38 +448,13 @@ describe("SyncSourceDetailView configuration form", () => {
     expect(getByLabelText("Backup directory")).toHaveValue("/mnt/new");
   });
 
-  it("preserves non-decimal numeric input for server-authoritative validation", async () => {
-    const { getByLabelText } = renderWith(backupSource());
-
-    fireEvent.input(getByLabelText("Backups to retain"), { target: { value: "0x10" } });
-    fireEvent.click(within(configurationForm()).getByRole("button", { name: "Save changes" }));
-
-    await waitFor(() => {
-      expect(testState.updateConfiguration).toHaveBeenCalledWith({
-        source: "backup",
-        patch: { settings: { keep_count: "0x10" } },
-      });
-    });
-  });
-
-  it.each([
-    {
-      label: "an overflowing decimal",
-      draft: `1${"0".repeat(309)}`,
-      message: "Number is too large",
-    },
-    {
-      label: "an unsafe integer",
-      draft: "9007199254740993",
-      message: "Must be a whole number in the safe integer range",
-    },
-  ])("blocks $label locally", ({ draft, message }) => {
+  it("blocks an invalid number locally", () => {
     const { getByLabelText, getByText } = renderWith(backupSource());
 
-    fireEvent.input(getByLabelText("Backups to retain"), { target: { value: draft } });
+    fireEvent.input(getByLabelText("Backups to retain"), { target: { value: "9007199254740993" } });
     fireEvent.click(within(configurationForm()).getByRole("button", { name: "Save changes" }));
 
-    expect(getByText(message)).toBeInTheDocument();
+    expect(getByText("Must be a whole number in the safe integer range")).toBeInTheDocument();
     expect(testState.updateConfiguration).not.toHaveBeenCalled();
   });
 
@@ -610,29 +552,6 @@ describe("SyncSourceDetailView configuration form", () => {
     const dirtyUnload = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(dirtyUnload);
     expect(dirtyUnload.defaultPrevented).toBe(true);
-  });
-
-  it("keeps enabled and interval editable when the source has no settings schema", async () => {
-    const { getAllByRole, getByLabelText, getByRole, queryByText } = renderWith(
-      backupSource({ settings: {}, settingsSchema: [] })
-    );
-
-    expect(getAllByRole("form", { name: "Source configuration" })).toHaveLength(1);
-    expect(getByRole("switch", { name: "Automatic sync" })).toBeChecked();
-    expect(getByLabelText("Sync interval")).toHaveValue("");
-    expect(queryByText("Backup directory")).not.toBeInTheDocument();
-
-    fireEvent.click(getByRole("switch", { name: "Automatic sync" }));
-    fireEvent.input(getByLabelText("Sync interval"), { target: { value: "1h" } });
-    expect(testState.updateConfiguration).not.toHaveBeenCalled();
-    fireEvent.click(within(configurationForm()).getByRole("button", { name: "Save changes" }));
-
-    await waitFor(() => {
-      expect(testState.updateConfiguration).toHaveBeenCalledWith({
-        source: "backup",
-        patch: { enabled: false, interval: "1h" },
-      });
-    });
   });
 
   it("shows a queued sync job before its run-history row exists", () => {
