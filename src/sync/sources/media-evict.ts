@@ -8,11 +8,19 @@
  */
 
 import { getDb, initDb } from "../../db/schema";
+import { getAppStateDb, getSyncState, setSyncState } from "../../db/app-state";
+import { resolve } from "node:path";
 import { loadConfig } from "../../config";
 import { LocalMediaStore } from "../../media/storage";
 import { createR2BlobStore } from "../../media/r2";
-import { cacheLimitBytes, evictMedia } from "../../media/eviction";
+import { cacheLimitBytes, evictMediaIfNeeded } from "../../media/eviction";
 import type { SyncOptions, SyncResult, SyncSource } from "../types";
+
+interface EvictionState {
+  lastInventoryAt: number;
+  mediaRoot: string;
+  limitBytes: number | null;
+}
 
 export const mediaEvictSyncSource: SyncSource = {
   name: "media-evict",
@@ -47,7 +55,26 @@ export const mediaEvictSyncSource: SyncSource = {
     const db = getDb();
     try {
       initDb(db);
-      const result = await evictMedia(db, local, remote, limitBytes, { dryRun: false });
+      const appDb = getAppStateDb();
+      const state = getSyncState<EvictionState>(appDb, "media-evict");
+      const mediaRoot = resolve(config.media.path);
+      const lastInventoryAt = state?.mediaRoot === mediaRoot && state.limitBytes === limitBytes
+        && typeof state.lastInventoryAt === "number" ? state.lastInventoryAt : null;
+      const result = await evictMediaIfNeeded(db, local, remote, limitBytes, lastInventoryAt);
+      if ("inventorySkipped" in result) {
+        return {
+          source: "media-evict",
+          success: true,
+          eventsAdded: 0,
+          eventsUpdated: 0,
+          durationMs: Date.now() - startTime,
+          // Do not report the estimate as an exact inventory gauge.
+          metadata: { ...result, evicted: 0, reclaimedBytes: 0, failed: 0 },
+        };
+      }
+      if (result.failed === 0) {
+        setSyncState(appDb, "media-evict", { lastInventoryAt: startTime, mediaRoot, limitBytes } satisfies EvictionState);
+      }
       return {
         source: "media-evict",
         success: result.failed === 0,

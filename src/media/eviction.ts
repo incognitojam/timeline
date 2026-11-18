@@ -23,6 +23,7 @@ import { MEDIA_TABLES, type MediaTable } from "./registry";
 
 const GIB = 1024 ** 3;
 export const DEFAULT_TARGETED_EVICTION_HEAD_CHECK_LIMIT = 128;
+export const MEDIA_EVICTION_RECONCILE_MS = 6 * 60 * 60 * 1000;
 
 /**
  * Resolve `[media].cache_limit_gib` to a byte bound (null when unset), validating
@@ -223,6 +224,33 @@ export interface EvictionResult extends EvictionPlan {
   reclaimedBytes: number;
   /** Blobs whose deletion errored (e.g. a non-removable link); left for re-run. */
   failed: number;
+}
+
+export interface CacheInventorySkipped {
+  inventorySkipped: true;
+  estimatedCacheBytes: number;
+  limitBytes: number;
+}
+
+/** Scheduled execution may skip inventory, but never use an estimate to delete. */
+export async function evictMediaIfNeeded(
+  db: Database,
+  local: LocalEvictor & { cacheSizeEstimate(): Promise<number | null> },
+  remote: RemoteBlobStore | null,
+  limitBytes: number | null,
+  lastInventoryAt: number | null,
+): Promise<EvictionResult | CacheInventorySkipped> {
+  assertLimitBytes(limitBytes);
+  const age = lastInventoryAt === null ? Infinity : Date.now() - lastInventoryAt;
+  // Persisted by the scheduled caller, so restarts cannot postpone reconciliation.
+  // A future/invalid timestamp, first run or changed configuration also reconciles.
+  if (limitBytes !== null && age >= 0 && age < MEDIA_EVICTION_RECONCILE_MS) {
+    const bytes = await local.cacheSizeEstimate();
+    if (bytes !== null && bytes <= limitBytes) {
+      return { inventorySkipped: true, estimatedCacheBytes: bytes, limitBytes };
+    }
+  }
+  return evictMedia(db, local, remote, limitBytes, { dryRun: false });
 }
 
 async function planExecutableEviction(
