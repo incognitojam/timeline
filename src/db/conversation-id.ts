@@ -38,10 +38,6 @@ export function extractConversationId(source: string, rawData: unknown): string 
   const data = rawData as Record<string, unknown>;
 
   switch (source) {
-    case "discord": {
-      const channel = data._channel as { id?: unknown } | undefined;
-      return typeof channel?.id === "string" ? channel.id : null;
-    }
     case "skype": {
       const conv = data._conversation as { id?: unknown } | undefined;
       if (typeof conv?.id === "string") return conv.id;
@@ -61,15 +57,6 @@ export function extractConversationId(source: string, rawData: unknown): string 
       // the chatname is stable for these.
       return chatname;
     }
-    case "claude":
-      return typeof data.conversation_uuid === "string" ? data.conversation_uuid : null;
-    case "chatgpt":
-      return typeof data.conversation_id === "string" ? data.conversation_id : null;
-    case "conductor":
-    case "claude-code":
-    case "opencode":
-    case "codex":
-      return typeof data.session_id === "string" ? data.session_id : null;
     case "amp":
     case "t3code":
       return typeof data.thread_id === "string" ? data.thread_id : null;
@@ -143,24 +130,3 @@ export function extractConversationId(source: string, rawData: unknown): string 
       return null;
   }
 }
-
-/** Sources for which `extractConversationId` can return a non-null value. */
-export const SOURCES_WITH_CONVERSATION_ID = [
-  "discord",
-  "skype",
-  "claude",
-  "chatgpt",
-  "conductor",
-  "claude-code",
-  "opencode",
-  "amp",
-  "t3code",
-  "codex",
-  "linkedin",
-  "instagram",
-  "phone",
-  "google-messages",
-  "reddit",
-  "google-chat",
-  "facebook",
-] as const;

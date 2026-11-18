@@ -107,13 +107,6 @@ export function resolveSyncIntervalMs(
   return intervalMs;
 }
 
-export function getSourceConfig(
-  config: SyncConfig,
-  sourceName: string
-): SyncSourceConfig | null {
-  return config.sources[sourceName] || null;
-}
-
 export function isSyncSourceEnabled(sourceName: string, db: Database = getAppStateDb()): boolean {
   const row = getSyncSourceRow(sourceName, db);
   return row !== null && row.enabled !== 0;

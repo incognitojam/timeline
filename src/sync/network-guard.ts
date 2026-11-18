@@ -91,7 +91,6 @@ export interface NetworkStatus {
 export type GuardDecision = { skip: false } | { skip: true; reason: string };
 
 /** Detection function shape; swappable in tests. */
-export type DetectNetworkStatus = () => Promise<NetworkStatus>;
 
 export function meteredFromStatus(status: NetworkStatus): boolean | undefined {
   if (status.isExpensive === true || status.isConstrained === true) return true;
@@ -206,10 +205,8 @@ function meteredReason(status: NetworkStatus): string {
  */
 export async function checkNetworkGuard(
   config: NetworkGuardConfig,
-  options: { detect?: DetectNetworkStatus } = {},
 ): Promise<{ decision: GuardDecision; status: NetworkStatus }> {
-  const detect = options.detect ?? detectNetworkStatus;
-  const status = await detect();
+  const status = await detectNetworkStatus();
   return { decision: evaluateNetworkGuard(config, status), status };
 }
 

@@ -367,13 +367,3 @@ export class InboxWatcher {
     }
   }
 }
-
-/**
- * Create an inbox watcher instance from config
- */
-export function createInboxWatcher(
-  config: ServiceConfig,
-  options?: WatcherOptions
-): InboxWatcher {
-  return new InboxWatcher(config, options);
-}

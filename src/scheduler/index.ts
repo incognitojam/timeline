@@ -727,13 +727,3 @@ export class Scheduler {
     return this.db.prepare("SELECT * FROM scheduler_state ORDER BY source").all() as SchedulerState[];
   }
 }
-
-/**
- * Create a scheduler instance from config
- */
-export function createScheduler(
-  config: ServiceConfig,
-  options?: { verbose?: boolean; syncSources?: SyncSource[] }
-): Scheduler {
-  return new Scheduler(config, options);
-}

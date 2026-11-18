@@ -97,10 +97,6 @@ function addSummary(
     stats.eventsWithSkippedEntries++;
     addSample(stats.skippedEventIds, row.id, report.sampleLimit);
   }
-  if (summary.abortsCurrentConsumer) {
-    stats.abortedEvents++;
-    addSample(stats.abortedEventIds, row.id, report.sampleLimit);
-  }
 }
 
 function parseCliOptions(): CliOptions {

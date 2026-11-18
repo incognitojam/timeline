@@ -264,7 +264,6 @@ describe("getReactionSummary", () => {
       reactionEntries: 4,
       summarizedEntries: 2,
       skippedEntries: 2,
-      abortsCurrentConsumer: false,
     });
     expect(getReactionsDescription(event)).toBe("[reactions: 👍 ×1; :pepe: ×2]");
   });
@@ -309,7 +308,6 @@ describe("getReactionSummary", () => {
       reactionEntries: 2,
       summarizedEntries: 1,
       skippedEntries: 1,
-      abortsCurrentConsumer: false,
     });
     expect(getReactionsDescription(event)).toBe("[reactions: 👍 ×1]");
   });
@@ -330,7 +328,6 @@ describe("getReactionSummary", () => {
       reactionEntries: 2,
       summarizedEntries: 2,
       skippedEntries: 0,
-      abortsCurrentConsumer: false,
     });
   });
 
@@ -347,7 +344,6 @@ describe("getReactionSummary", () => {
       reactionEntries: 2,
       summarizedEntries: 1,
       skippedEntries: 1,
-      abortsCurrentConsumer: false,
     });
     expect(getReactionsDescription(event)).toBe("[reactions: ❤️ Alice]");
   });
