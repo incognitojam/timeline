@@ -288,10 +288,10 @@ describe("Auth - Enabled Mode", () => {
       const json = await res.json();
       expect(json).toEqual({ success: true });
 
-      // Check that cookie is cleared (expires in past or empty value)
+      // The cookie is cleared: an empty value that expires immediately.
       const setCookie = res.headers.get("Set-Cookie");
-      expect(setCookie).toBeTruthy();
-      expect(setCookie).toContain("timeline_session=");
+      expect(setCookie).toStartWith("timeline_session=;");
+      expect(setCookie).toContain("Max-Age=0");
     });
   });
 
@@ -384,11 +384,18 @@ describe("Auth - Enabled Mode", () => {
     });
 
     test("Basic Auth with malformed header is ignored, falls back to cookie check", async () => {
-      // Malformed Basic Auth should be ignored, resulting in 401 since no cookie
+      // Malformed Basic Auth is ignored: without a cookie the request is rejected...
       const res = await app.request("/api/stats", {
         headers: { Authorization: "Basic notbase64!!!" },
       });
       expect(res.status).toBe(401);
+
+      // ...and with a valid session cookie it is accepted.
+      const token = await createTestToken(TEST_PASSWORD);
+      const withCookie = await app.request("/api/stats", {
+        headers: { Authorization: "Basic notbase64!!!", Cookie: `timeline_session=${token}` },
+      });
+      expect(withCookie.status).toBe(200);
     });
 
     test("Basic Auth with missing colon separator is ignored", async () => {

@@ -28,13 +28,15 @@ import {
 } from "../platforms/spotify/playlist-follows";
 import { getDb } from "../db/schema";
 import { seed } from "../testing/seed";
-import { MANUAL_ATTACHMENT_DESCRIPTION_TIMEOUT_MS, type AttachmentsStats } from "../shared/attachments";
+import type { AttachmentsStats } from "../shared/attachments";
 import {
   LocalMediaStore,
   type RemoteBlobStore,
   setMediaStoreOverride,
   WriteThroughMediaStore,
 } from "../media/storage";
+import { cancelJob, enqueueJob } from "../jobs/store";
+import { getDefaultModel } from "../llm";
 import { parseInterval } from "../config";
 import { SYNC_SOURCES } from "../sync/sources";
 import { app, fetchApiRequest } from "./index";
@@ -138,15 +140,9 @@ describe("API Smoke Tests", () => {
       const res = await app.request("/api/summary/models");
       expect(res.status).toBe(200);
       const json = await res.json();
-      expect(json).toHaveProperty("models");
-      expect(Array.isArray(json.models)).toBe(true);
-      // Models may be empty if OpenRouter fetch hasn't run (test environment)
-      if (json.models.length > 0) {
-        expect(json.models[0]).toHaveProperty("id");
-        expect(json.models[0]).toHaveProperty("name");
-        expect(json.models[0]).toHaveProperty("price");
-        expect(json.models[0]).toHaveProperty("contextLength");
-      }
+      // The test preload configures an offline provider, so its default model is listed.
+      const model = json.models.find((entry: { id: string }) => entry.id === getDefaultModel());
+      expect(model).toMatchObject({ name: expect.any(String), price: expect.any(String), contextLength: expect.any(Number) });
     });
 
     test("GET /api/sources returns grouped sources", async () => {
@@ -1791,7 +1787,6 @@ describe("API Smoke Tests", () => {
 
       expect(response.status).toBe(404);
       expect(timedOutRequests).toEqual([{ request, seconds: 0 }]);
-      expect(MANUAL_ATTACHMENT_DESCRIPTION_TIMEOUT_MS).toBe(10 * 60 * 1_000);
     });
 
     test("GET /api/media/* returns 400 for empty path", async () => {
@@ -1806,6 +1801,29 @@ describe("API Smoke Tests", () => {
       expect(res.status).toBe(404);
       const json = await res.json();
       expect(json).toHaveProperty("error");
+    });
+
+    test("GET /api/media/* refuses paths outside the media root", async () => {
+      const root = mkdtempSync(join(tmpdir(), "api-media-traversal-"));
+      const priorMediaPath = process.env.TIMELINE_MEDIA_PATH;
+
+      try {
+        const mediaRoot = join(root, "media");
+        mkdirSync(mediaRoot);
+        writeFileSync(join(root, "secret.txt"), "outside the media root");
+        process.env.TIMELINE_MEDIA_PATH = mediaRoot;
+
+        // URL parsing collapses a literal "../", so traversal arrives encoded.
+        for (const path of ["%2e%2e%2fsecret.txt", "..%2Fsecret.txt", encodeURIComponent(join(root, "secret.txt"))]) {
+          const res = await app.request(`/api/media/${path}`);
+          expect(res.status).toBe(400);
+          expect(await res.json()).toEqual({ error: "Invalid path" });
+        }
+      } finally {
+        if (priorMediaPath === undefined) delete process.env.TIMELINE_MEDIA_PATH;
+        else process.env.TIMELINE_MEDIA_PATH = priorMediaPath;
+        rmSync(root, { recursive: true, force: true });
+      }
     });
 
     test("GET /api/media/* serves a stored local file", async () => {
@@ -1933,9 +1951,26 @@ describe("API Smoke Tests", () => {
     });
 
     test("GET /api/discord/emoji/:id strips a .png/.gif suffix from the id", async () => {
-      const res = await app.request("/api/discord/emoji/abc.png");
-      // Same 400 as plain `abc` - extension stripped, then id validation rejects
-      expect(res.status).toBe(400);
+      const { getDb, initDb } = await import("../db/schema");
+      const db = getDb();
+      initDb(db);
+      const id = `9${Date.now()}${crypto.getRandomValues(new Uint32Array(1))[0]}`;
+      db.prepare(
+        `INSERT INTO discord_emojis (emoji_id, name, animated, status) VALUES (?, 'suffixed-test', 0, 'tombstoned')`,
+      ).run(id);
+
+      try {
+        // Reaching the tombstoned row's 404 means the suffix was stripped; an
+        // unstripped id fails validation with a 400 instead.
+        for (const suffix of [".png", ".gif"]) {
+          const res = await app.request(`/api/discord/emoji/${id}${suffix}`);
+          expect(res.status).toBe(404);
+          expect(res.headers.get("Cache-Control")).toBe("public, max-age=86400");
+        }
+      } finally {
+        db.prepare("DELETE FROM discord_emojis WHERE emoji_id = ?").run(id);
+        db.close();
+      }
     });
   });
 
@@ -3233,12 +3268,23 @@ describe("API Smoke Tests", () => {
     });
 
     test("GET /api/jobs filters by status", async () => {
-      const res = await app.request("/api/jobs?status=queued&limit=5");
-      expect(res.status).toBe(200);
-      const json = await res.json();
-      expect(Array.isArray(json.jobs)).toBe(true);
-      for (const job of json.jobs) {
-        expect(job.status).toBe("queued");
+      const appDb = getAppStateDb();
+      const source = `jobs-status-filter-${crypto.randomUUID()}`;
+      try {
+        const queued = enqueueJob({ kind: "sync", source, dedupeKey: `${source}:queued` }, appDb).jobId;
+        const cancelled = enqueueJob({ kind: "sync", source, dedupeKey: `${source}:cancelled` }, appDb).jobId;
+        expect(cancelJob(cancelled, appDb)).toBe(true);
+
+        const jobIds = async (status: string) => {
+          const res = await app.request(`/api/jobs?source=${source}&status=${status}`);
+          expect(res.status).toBe(200);
+          return ((await res.json()).jobs as Array<{ id: number }>).map((job) => job.id);
+        };
+        expect(await jobIds("queued")).toEqual([queued]);
+        expect(await jobIds("cancelled")).toEqual([cancelled]);
+        expect((await jobIds("queued,cancelled")).sort((a, b) => a - b)).toEqual([queued, cancelled]);
+      } finally {
+        appDb.prepare("DELETE FROM jobs WHERE source = ?").run(source);
       }
     });
 

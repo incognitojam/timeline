@@ -5,6 +5,7 @@ import { initAppStateDb } from "./db/app-state";
 import { QUERY_TIMEOUT_MS, QueryTimeoutError, type QueryExecutor, wrapDatabase } from "./db/pool";
 import { initDb, type TimelineEvent } from "./db/schema";
 import { formatEvents, registerTools, resolveContact, type RegisterToolsOptions } from "./mcp-tools";
+import { skipWithoutSqliteVec } from "./testing/sqlite-vec";
 
 type ToolHandlerExtra = {
   sessionId?: string;
@@ -583,14 +584,15 @@ describe("MCP tool handlers — identity-aware contact lookup workflow", () => {
   });
 
   test("list_contacts prefers a name match over the identity fallback", async () => {
-    const alice = makeContact("Alice");
-    linkIdentity("discord", "111", alice);
+    makeContact("Alice");
+    // The identity fallback treats the search as a bare platform id, which
+    // would resolve to this other contact.
+    linkIdentity("discord", "Alice", makeContact("Zed Example"));
 
     const handlers = captureHandlers(db);
     const result = await handlers.get("list_contacts")!({ search: "Alice" });
     expect(result.content[0].text).toContain("Alice");
-    // The fallback path would have to dedupe; if it ran we'd see "111" or "discord:" in the text.
-    expect(result.content[0].text).not.toContain("discord:111");
+    expect(result.content[0].text).not.toContain("Zed Example");
   });
 
   test("get_contact_info resolves a Discord snowflake in one call", async () => {
@@ -617,7 +619,7 @@ describe("MCP tool handlers — identity-aware contact lookup workflow", () => {
 
   // Bun only allows Database.setCustomSQLite() before the first opened
   // database, so isolate the sqlite-vec success case in a fresh process.
-  test("semantic_search returns formatted events from a seeded embeddings index", async () => {
+  test.skipIf(skipWithoutSqliteVec)("semantic_search returns formatted events from a seeded embeddings index", async () => {
     const script = String.raw`
       import { Database } from "./src/db/sqlite.ts";
       import { mkdtempSync, rmSync } from "node:fs";
@@ -657,77 +659,69 @@ describe("MCP tool handlers — identity-aware contact lookup workflow", () => {
         const embeddingsDb = getEmbeddingsDb(embeddingsDbPath);
         try {
           initDb(timelineDb);
-          let sqliteVecReady = true;
-          try {
-            initEmbeddingsDb(embeddingsDb);
-          } catch (error) {
-            console.log("SKIP sqlite-vec unavailable: " + (error instanceof Error ? error.message : String(error)));
-            sqliteVecReady = false;
-          }
+          initEmbeddingsDb(embeddingsDb);
 
-          if (sqliteVecReady) {
-            const legacyThumbsUp = String.fromCodePoint(0xFEB97);
-            const unicodeThumbsUp = String.fromCodePoint(0x1F44D);
-            timelineDb.prepare(
-              "INSERT INTO events (id, source, source_id, source_account, type, timestamp, title, content, raw_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-            ).run(
-              42,
-              "facebook",
-              "semantic-42",
-              null,
-              "post",
-              "2026-05-06T08:09:53.525Z",
-              "Cafe " + legacyThumbsUp,
-              "Coffee planning " + legacyThumbsUp,
-              "{}",
-            );
+          const legacyThumbsUp = String.fromCodePoint(0xFEB97);
+          const unicodeThumbsUp = String.fromCodePoint(0x1F44D);
+          timelineDb.prepare(
+            "INSERT INTO events (id, source, source_id, source_account, type, timestamp, title, content, raw_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+          ).run(
+            42,
+            "facebook",
+            "semantic-42",
+            null,
+            "post",
+            "2026-05-06T08:09:53.525Z",
+            "Cafe " + legacyThumbsUp,
+            "Coffee planning " + legacyThumbsUp,
+            "{}",
+          );
 
-            const contentProfile = ensureContentProfile(embeddingsDb, EVENT_LEAN_PROFILE);
-            const modelProfile = ensureModelProfile(embeddingsDb, {
-              name: "test-model:3",
-              provider: "openai-compatible",
-              endpoint: server.url + "v1/embeddings",
-              model: "test-model",
-              dimensions: 3,
-              api_key_env: null,
-              document_prefix: "",
-            });
-            const document = upsertDocument(embeddingsDb, {
-              sourceKind: "event",
-              sourceKey: "42",
-              title: "Cafe",
-              snippet: "Coffee planning",
-              startTimestamp: "2026-05-06T08:09:53.525Z",
-              endTimestamp: null,
-              contentProfileId: contentProfile.id,
-              contentProfileVersion: contentProfile.version,
-              renderedContent: "Coffee planning",
-              contentHash: contentHash("Coffee planning"),
-              eventIds: [42],
-            });
-            insertVector(embeddingsDb, document.id, modelProfile.id, [1, 0, 0]);
+          const contentProfile = ensureContentProfile(embeddingsDb, EVENT_LEAN_PROFILE);
+          const modelProfile = ensureModelProfile(embeddingsDb, {
+            name: "test-model:3",
+            provider: "openai-compatible",
+            endpoint: server.url + "v1/embeddings",
+            model: "test-model",
+            dimensions: 3,
+            api_key_env: null,
+            document_prefix: "",
+          });
+          const document = upsertDocument(embeddingsDb, {
+            sourceKind: "event",
+            sourceKey: "42",
+            title: "Cafe",
+            snippet: "Coffee planning",
+            startTimestamp: "2026-05-06T08:09:53.525Z",
+            endTimestamp: null,
+            contentProfileId: contentProfile.id,
+            contentProfileVersion: contentProfile.version,
+            renderedContent: "Coffee planning",
+            contentHash: contentHash("Coffee planning"),
+            eventIds: [42],
+          });
+          insertVector(embeddingsDb, document.id, modelProfile.id, [1, 0, 0]);
 
-            const handlers = new Map();
-            const fakeServer = {
-              tool: (name, _description, _schema, handler) => handlers.set(name, handler),
-            };
-            // The service's path: vector search on its own pool worker.
-            const vectorPool = await DbPool.create(embeddingsDbPath, { workers: 1, vectorSearch: true });
-            registerTools(fakeServer, wrapDatabase(timelineDb), timelineDb, {
-              semanticSearch: {
-                config: { base_url: server.url + "v1", model: "test-model", dimensions: 3, query_prefix: "query: " },
-                embeddingsDb: async () => vectorPool,
-              },
-            });
-            const result = await handlers.get("semantic_search")({ query: "coffee", limit: 1, full_content: false });
-            await vectorPool.closeAndWait();
-            const text = result.content[0].text;
-            if (!text.includes("1 event(s) most similar")) throw new Error(text);
-            if (!text.includes("#42 [facebook/post]")) throw new Error(text);
-            if (!text.includes(unicodeThumbsUp)) throw new Error(text);
-            if (text.includes(legacyThumbsUp)) throw new Error(text);
-            console.log("semantic_search success path ok");
-          }
+          const handlers = new Map();
+          const fakeServer = {
+            tool: (name, _description, _schema, handler) => handlers.set(name, handler),
+          };
+          // The service's path: vector search on its own pool worker.
+          const vectorPool = await DbPool.create(embeddingsDbPath, { workers: 1, vectorSearch: true });
+          registerTools(fakeServer, wrapDatabase(timelineDb), timelineDb, {
+            semanticSearch: {
+              config: { base_url: server.url + "v1", model: "test-model", dimensions: 3, query_prefix: "query: " },
+              embeddingsDb: async () => vectorPool,
+            },
+          });
+          const result = await handlers.get("semantic_search")({ query: "coffee", limit: 1, full_content: false });
+          await vectorPool.closeAndWait();
+          const text = result.content[0].text;
+          if (!text.includes("1 event(s) most similar")) throw new Error(text);
+          if (!text.includes("#42 [facebook/post]")) throw new Error(text);
+          if (!text.includes(unicodeThumbsUp)) throw new Error(text);
+          if (text.includes(legacyThumbsUp)) throw new Error(text);
+          console.log("semantic_search success path ok");
         } finally {
           timelineDb.close();
           embeddingsDb.close();
@@ -752,7 +746,6 @@ describe("MCP tool handlers — identity-aware contact lookup workflow", () => {
     if (proc.exitCode !== 0) {
       throw new Error(`semantic_search child test failed with ${proc.exitCode}\nstdout:\n${stdout}\nstderr:\n${stderr}`);
     }
-    if (stdout.includes("SKIP sqlite-vec unavailable")) return;
     expect(stderr).toBe("");
     expect(stdout).toContain("semantic_search success path ok");
   });
