@@ -16,13 +16,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5
+      - name: Require pinned Go for sidecar tests
+        run: ./tools/timeline-gmessages/build-bundled.sh --check
       - run: ./test.sh static && ./test.sh unit
 
   browser:
     uses: ./.github/workflows/browser-tests.yml
 
-  # Exercise the macOS local-first host: the service boots directly, the menu
-  # bar app compiles, and its bundled service runs without the checkout.
+  # Exercise the macOS local-first host: the menu bar app compiles and its
+  # bundled service runs without the checkout.
   # CI must not register the SMAppService agent or touch the runner user's live
   # launchd/Login Items state. Uses only throwaway local credentials; macOS-only.
   macos-service:
@@ -37,8 +39,6 @@ jobs:
           install_args: bun go
       - run: bun install --frozen-lockfile
       - run: (cd web && bun install --frozen-lockfile)
-      - name: Smoke-test the service boots
-        run: ./scripts/smoke-service.sh
       - name: Build and smoke-test the relocatable service
         run: ./scripts/smoke-service-artifact.sh
       - name: Build the Timeline menu bar app
@@ -47,3 +47,15 @@ jobs:
         run: (cd tools/timeline-app && ./build.sh)
       - name: Smoke-test the Timeline app bundle
         run: (cd tools/timeline-app && ./smoke.sh)
+
+  source-service:
+    name: source service boot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: bun
+      - run: bun install --frozen-lockfile
+      - name: Smoke-test source service boot and shutdown
+        run: ./scripts/smoke-service.sh
