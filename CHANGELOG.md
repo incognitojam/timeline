@@ -1,5 +1,16 @@
 # Timeline
 
+## 0.20.0
+
+### Minor Changes
+
+- 4fd5d1a: The status page and the Sync view now warn when a source has gone quiet: its newest event is older than the source normally goes without new events. Each source's newest event time is listed on `/status`, `/status.md`, and its sync card.
+
+### Patch Changes
+
+- a51bc40: Retired sources with no registered sync or current importer event types now show “Not checked: source retired” instead of quiet warnings. Historical events and stored sync settings are preserved.
+- 0933480: Show actionable Monzo sync failures instead of the Bun version banner, and fail promptly when a background sync needs login or app approval. Retry temporary API failures without misreporting them as expired credentials.
+
 ## 0.19.0
 
 ### Minor Changes
