@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "./sqlite";
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
