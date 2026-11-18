@@ -4,9 +4,9 @@ export interface BoundedWriterLimits {
   /** Commit once a transaction has been open this long, checked between writes. */
   maxHoldMs: number;
   /**
-   * Gap left after each commit. SQLite's busy handler sleeps up to 100 ms
-   * between retries, so a shorter gap can pass without a waiting writer
-   * noticing the lock was free.
+   * Gap left between one commit and the next transaction. SQLite's busy
+   * handler sleeps up to 100 ms between retries, so a shorter gap can pass
+   * without a waiting writer noticing the lock was free.
    */
   pauseMs: number;
   /** Flush once this many writes are queued. */
@@ -68,6 +68,9 @@ export function createBoundedWriter(
   let queue: (() => void)[] = [];
   let queuedBytes = 0;
   let lastPause = performance.now();
+  // Set by a commit and cleared by the pause before the next transaction, so
+  // the final commit returns at once and a later flush still pauses first.
+  let pauseOwed = false;
   const stats = { writes: 0, transactions: 0, longestHoldMs: 0 };
 
   const tryBegin = (): boolean => {
@@ -90,6 +93,11 @@ export function createBoundedWriter(
     queuedBytes = 0;
     let next = 0;
     while (next < writes.length) {
+      if (pauseOwed) {
+        await sleep(limits.pauseMs);
+        lastPause = performance.now();
+        pauseOwed = false;
+      }
       // No await between a successful begin and the commit: other work on this
       // thread must never run while the lock is held.
       const deadline = performance.now() + limits.acquireTimeoutMs;
@@ -115,8 +123,7 @@ export function createBoundedWriter(
       stats.transactions++;
       stats.longestHoldMs = Math.max(stats.longestHoldMs, performance.now() - start);
       hooks.afterCommit?.();
-      await sleep(limits.pauseMs);
-      lastPause = performance.now();
+      pauseOwed = true;
     }
   };
 
