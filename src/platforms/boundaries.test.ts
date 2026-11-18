@@ -121,7 +121,7 @@ describe("moduleSpecifiers", () => {
 
   test("finds require forms and dynamic imports with options", () => {
     const source = `
-      import type Sqlite = require("./src/db/sqlite.ts");
+      import type Sqlite = require("bun:sqlite");
       const fs = require("node:fs");
       const data = await import("./data", { with: { type: "json" } });
     `;
