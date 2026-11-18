@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { ReadableStream as NodeReadableStream } from "node:stream/web";
+import { ReadableStream as NodeReadableStream, TransformStream as NodeTransformStream } from "node:stream/web";
 import { afterEach } from "vitest";
 
 class MemoryStorage implements Storage {
@@ -39,6 +39,11 @@ class NoopResizeObserver implements ResizeObserver {
 // jsdom omits ReadableStream, which tests of streamed responses need.
 if (typeof globalThis.ReadableStream === "undefined") {
   globalThis.ReadableStream = NodeReadableStream as typeof ReadableStream;
+}
+
+// jsdom omits TransformStream; @pierre/highlights subclasses it at import.
+if (typeof globalThis.TransformStream === "undefined") {
+  globalThis.TransformStream = NodeTransformStream as typeof TransformStream;
 }
 
 if (typeof globalThis.ResizeObserver === "undefined") {

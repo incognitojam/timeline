@@ -24,7 +24,7 @@ export function TextBlock(props: {
           <p class="text-base whitespace-pre-wrap break-words">{annotated()}</p>
         }
       >
-        <div class="prose dark:prose-invert max-w-none prose-p:my-1 prose-pre:my-1 prose-pre:text-sm prose-code:text-sm">
+        <div class="prose dark:prose-invert max-w-none prose-p:my-1 prose-pre:text-sm prose-code:text-sm">
           <Markdown markdown={annotated()} />
         </div>
       </Show>
