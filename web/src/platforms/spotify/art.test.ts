@@ -158,15 +158,6 @@ describe("getEventAlbumArt", () => {
 });
 
 describe("getSessionAlbumArts", () => {
-  it("collects unique album art URLs", () => {
-    const events = [
-      makeEvent({ id: 1, raw_data: JSON.stringify({ track: { imageUrl: "https://art/a" } }) }),
-      makeEvent({ id: 2, raw_data: JSON.stringify({ track: { imageUrl: "https://art/b" } }) }),
-      makeEvent({ id: 3, raw_data: JSON.stringify({ track: { imageUrl: "https://art/c" } }) }),
-    ];
-    expect(getSessionAlbumArts(events)).toEqual(["https://art/a", "https://art/b", "https://art/c"]);
-  });
-
   it("deduplicates URLs from the same album", () => {
     const events = [
       makeEvent({ id: 1, raw_data: JSON.stringify({ track: { imageUrl: "https://art/same" } }) }),

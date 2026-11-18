@@ -8,25 +8,18 @@ import { DiscordContent } from "./DiscordContent";
 import { DiscordEmoji } from "./DiscordEmoji";
 
 describe("DiscordContent", () => {
-  it("renders text and custom emoji as <img> with the emoji endpoint", () => {
+  it.each([
+    ["hi <:smile:111>", "111", ":smile:"],
+    ["<a:wave:222>", "222", ":wave:"],
+  ])("renders custom emoji in %s using the emoji endpoint", (content, id, name) => {
     const { container } = render(() => (
-      <DiscordContent content="hi <:smile:111>" rawData={null} />
+      <DiscordContent content={content} rawData={null} />
     ));
     const img = container.querySelector("img");
     expect(img).not.toBeNull();
-    expect(img).toHaveAttribute("src", "/api/discord/emoji/111");
-    expect(img).toHaveAttribute("alt", ":smile:");
-    expect(img).toHaveAttribute("title", ":smile:");
-  });
-
-  it("renders animated custom emoji using the same endpoint (the API resolves the extension)", () => {
-    const { container } = render(() => (
-      <DiscordContent content="<a:wave:222>" rawData={null} />
-    ));
-    const img = container.querySelector("img");
-    expect(img).not.toBeNull();
-    expect(img).toHaveAttribute("src", "/api/discord/emoji/222");
-    expect(img).toHaveAttribute("alt", ":wave:");
+    expect(img).toHaveAttribute("src", `/api/discord/emoji/${id}`);
+    expect(img).toHaveAttribute("alt", name);
+    expect(img).toHaveAttribute("title", name);
   });
 
   it("renders mentions and channels alongside emoji without losing other tokens", () => {

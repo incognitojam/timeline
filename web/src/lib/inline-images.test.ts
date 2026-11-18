@@ -48,48 +48,16 @@ describe("splitInlineImages", () => {
     expect(trailing).toHaveLength(0);
   });
 
-  it("keeps a nested (dotted) source_id path in trailing", () => {
-    const a = attachment({ source_id: "0.content.1" });
-    const { inline, trailing } = splitInlineImages(imageBlocks, [a]);
-    expect(inline.size).toBe(0);
-    expect(trailing).toEqual([a]);
-  });
-
-  it("keeps non-image mime types in trailing", () => {
-    const blocks: ContentBlock[] = [{ type: "image", media_type: "image/png" }];
-    const a = attachment({ source_id: "0", mime_type: "application/pdf" });
+  it.each<{ name: string; blocks: ContentBlock[]; overrides: Partial<Attachment> }>([
+    { name: "a nested source_id", blocks: imageBlocks, overrides: { source_id: "0.content.1" } },
+    { name: "a non-image MIME type", blocks: [{ type: "image", media_type: "image/png" }], overrides: { source_id: "0", mime_type: "application/pdf" } },
+    { name: "an attachment not stored", blocks: [{ type: "image", media_type: "image/png" }], overrides: { source_id: "0", status: "pending" } },
+    { name: "a non-image block", blocks: [{ type: "text", text: "hi" }], overrides: { source_id: "0" } },
+    { name: "a missing storage path", blocks: [{ type: "image", media_type: "image/png" }], overrides: { source_id: "0", storage_path: null } },
+    { name: "a null source_id", blocks: imageBlocks, overrides: { source_id: null } },
+  ])("keeps $name in trailing", ({ blocks, overrides }) => {
+    const a = attachment(overrides);
     const { inline, trailing } = splitInlineImages(blocks, [a]);
-    expect(inline.size).toBe(0);
-    expect(trailing).toEqual([a]);
-  });
-
-  it("keeps attachments that are not stored in trailing", () => {
-    const blocks: ContentBlock[] = [{ type: "image", media_type: "image/png" }];
-    const a = attachment({ source_id: "0", status: "pending" });
-    const { inline, trailing } = splitInlineImages(blocks, [a]);
-    expect(inline.size).toBe(0);
-    expect(trailing).toEqual([a]);
-  });
-
-  it("keeps the attachment in trailing when the block at its index is not an image", () => {
-    const blocks: ContentBlock[] = [{ type: "text", text: "hi" }];
-    const a = attachment({ source_id: "0" });
-    const { inline, trailing } = splitInlineImages(blocks, [a]);
-    expect(inline.size).toBe(0);
-    expect(trailing).toEqual([a]);
-  });
-
-  it("keeps attachments with no storage_path in trailing", () => {
-    const blocks: ContentBlock[] = [{ type: "image", media_type: "image/png" }];
-    const a = attachment({ source_id: "0", storage_path: null });
-    const { inline, trailing } = splitInlineImages(blocks, [a]);
-    expect(inline.size).toBe(0);
-    expect(trailing).toEqual([a]);
-  });
-
-  it("keeps a null source_id attachment in trailing", () => {
-    const a = attachment({ source_id: null });
-    const { inline, trailing } = splitInlineImages(imageBlocks, [a]);
     expect(inline.size).toBe(0);
     expect(trailing).toEqual([a]);
   });

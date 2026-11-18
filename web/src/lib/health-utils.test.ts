@@ -11,16 +11,6 @@ describe("niceAxisBounds", () => {
     expect(bounds.max).toBeGreaterThan(bounds.min);
     expect(bounds.max - bounds.min).toBeGreaterThanOrEqual(1);
   });
-
-  it("pads a single-point heart-rate series to finite axis bounds", () => {
-    const heartRates = [62];
-    const bounds = niceAxisBounds(Math.min(...heartRates), Math.max(...heartRates));
-
-    expect(Number.isFinite(bounds.min)).toBe(true);
-    expect(Number.isFinite(bounds.max)).toBe(true);
-    expect(bounds.max).toBeGreaterThan(bounds.min);
-    expect(bounds.max - bounds.min).toBeGreaterThanOrEqual(1);
-  });
 });
 
 describe("referenceRangeExtent", () => {

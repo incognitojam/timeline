@@ -24,31 +24,16 @@ describe("createLocalStorageSignal", () => {
     });
   });
 
-  it("persists value to localStorage on set", () => {
+  it.each([
+    { name: "strings", initial: "default", updated: "updated" },
+    { name: "objects", initial: { a: 1 }, updated: { a: 2 } },
+  ])("updates and persists $name", ({ initial, updated }) => {
     createRoot((dispose) => {
-      const [, setValue] = createLocalStorageSignal("key", "default");
-      setValue("updated");
-      expect(window.localStorage.getItem("key")).toBe(JSON.stringify("updated"));
-      dispose();
-    });
-  });
-
-  it("updates the signal on set", () => {
-    createRoot((dispose) => {
-      const [value, setValue] = createLocalStorageSignal("key", "default");
-      setValue("updated");
-      expect(value()).toBe("updated");
-      dispose();
-    });
-  });
-
-  it("works with non-string types", () => {
-    createRoot((dispose) => {
-      const [value, setValue] = createLocalStorageSignal("key", { a: 1 });
-      expect(value()).toEqual({ a: 1 });
-      setValue({ a: 2 });
-      expect(value()).toEqual({ a: 2 });
-      expect(window.localStorage.getItem("key")).toBe(JSON.stringify({ a: 2 }));
+      const [value, setValue] = createLocalStorageSignal<string | { a: number }>("key", initial);
+      expect(value()).toEqual(initial);
+      setValue(updated);
+      expect(value()).toEqual(updated);
+      expect(window.localStorage.getItem("key")).toBe(JSON.stringify(updated));
       dispose();
     });
   });
@@ -89,27 +74,17 @@ describe("createLocalStorageSignal", () => {
     });
   });
 
-  it("supports custom serialize/deserialize", () => {
+  it("reads and writes with custom serialize/deserialize", () => {
+    window.localStorage.setItem("key", "raw-value");
     createRoot((dispose) => {
       const [value, setValue] = createLocalStorageSignal("key", "default", {
         serialize: (v) => v,
         deserialize: (v) => v,
       });
+      expect(value()).toBe("raw-value");
       setValue("raw-string");
       expect(window.localStorage.getItem("key")).toBe("raw-string");
       expect(value()).toBe("raw-string");
-      dispose();
-    });
-  });
-
-  it("reads with custom deserialize", () => {
-    window.localStorage.setItem("key", "raw-value");
-    createRoot((dispose) => {
-      const [value] = createLocalStorageSignal("key", "default", {
-        serialize: (v) => v,
-        deserialize: (v) => v,
-      });
-      expect(value()).toBe("raw-value");
       dispose();
     });
   });
