@@ -200,10 +200,11 @@ const CORE_FILES = ["src/render/types.ts", "src/seed/context.ts", "src/sync/type
  * The second test below holds them to that. `src/export` needs this one to quote
  * replies and it needs the database types, which keeps it out of `shared/`.
  */
-// Schema initialization maintains Discord's cross-table attachment retry index.
+// Schema initialization shares server-only SQL with Discord's poll and attachment retry queries.
 const CORE_IMPORTABLE_PLATFORM_FILES = new Set([
   "src/platforms/discord/reply-references.ts",
   "src/platforms/discord/attachment-retry-index.ts",
+  "src/platforms/discord/poll-voter-queries.ts",
 ]);
 
 /** The bundle's entry points in scripts/build-service-artifact.ts, plus the module the service runs. */
