@@ -92,15 +92,22 @@ function makePoints(
   });
 }
 
-interface ChartOption {
+/** The option is the responsive `baseOption` + `media` form. */
+interface ResponsiveChartOption {
   baseOption: {
     tooltip: { formatter: (params: unknown) => string };
+    xAxis: { min: number; max: number; minInterval: number; splitNumber: number; axisLabel: { hideOverlap: boolean } };
     series: { name: string; type: string; stack?: string; data: unknown[] }[];
   };
+  media: { query: { maxWidth: number }; option: { xAxis: { splitNumber: number } } }[];
+}
+
+function responsiveOption() {
+  return testState.getOption() as ResponsiveChartOption;
 }
 
 function chartOption() {
-  return (testState.getOption() as ChartOption).baseOption;
+  return responsiveOption().baseOption;
 }
 
 function loaded(points: AttachmentDescriptionHistoryPoint[]) {
@@ -216,6 +223,24 @@ describe("AttachmentDescriptionHistoryCard", () => {
       "143 described · 2 skipped · 0 failed",
       "12 runs · 1 failed · 2 deferred",
       "Coverage: 78%",
+    ]);
+  });
+
+  it("keeps the time axis sparse and collision-free at phone widths", () => {
+    loaded(makePoints(44));
+    renderCard();
+
+    const option = responsiveOption();
+    // ECharts makes room for the edge bars, so no additional date padding is needed.
+    expect(option.baseOption.xAxis.min).toBe(START_MS);
+    expect(option.baseOption.xAxis.max).toBe(START_MS + 43 * DAY_MS);
+    // Base contract: never tick finer than a day, drop overlapping labels.
+    expect(option.baseOption.xAxis.minInterval).toBe(DAY_MS);
+    expect(option.baseOption.xAxis.splitNumber).toBe(5);
+    expect(option.baseOption.xAxis.axisLabel.hideOverlap).toBe(true);
+    // Narrow containers (phone-width cards) ask for roughly 3–5 date ticks.
+    expect(option.media).toEqual([
+      { query: { maxWidth: 480 }, option: { xAxis: { splitNumber: 3 } } },
     ]);
   });
 
