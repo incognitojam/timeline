@@ -336,6 +336,8 @@ Also apply the project-specific checks in `.agents/checks/` (parser/importer saf
 
 ## Test Guidelines
 
+The required `macOS app bundle` PR job runs automatically for native app, packaging, workflow and toolchain changes; its exact path policy lives in [scripts/ci/native_check.py](scripts/ci/native_check.py). Add the `native-check` label to force it for any other PR when Darwin-specific behavior needs validation. Source/web-only changes normally use Linux coverage, and every main push still builds the native app.
+
 - **No real personal data in tests** - Use generic names ("Alice", "Bob"), `example.com` emails, and placeholder locations
 - **New API endpoints need smoke tests** - Basic coverage ensuring the endpoint responds correctly
 - **Tests must run fast** - Slow tests get skipped; keep the feedback loop tight
