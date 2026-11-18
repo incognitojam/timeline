@@ -583,6 +583,7 @@ export function normalizeMessage(msg: DiscordMessage): NormalizedMessage {
 export class DiscordClient {
   private headers: Record<string, string>;
   private lastRequestTime = 0;
+  private retryNotBefore = 0;
   private signal?: AbortSignal;
   private stats = createStats();
 
@@ -623,6 +624,12 @@ export class DiscordClient {
   }
 
   private async rateLimit() {
+    const cooldown = this.retryNotBefore - Date.now();
+    if (cooldown > 0) {
+      this.stats.proactiveRateLimitSleepCount++;
+      this.stats.proactiveRateLimitSleepMs += await this.trackedSleep(cooldown);
+    }
+    this.retryNotBefore = 0;
     const now = Date.now();
     const elapsed = now - this.lastRequestTime;
     if (elapsed < 100) {
@@ -652,6 +659,19 @@ export class DiscordClient {
         incrementCounter(this.stats.statusCounts, status);
         const routeStatusCounts = (this.stats.routeStatusCounts[route] ??= {});
         incrementCounter(routeStatusCounts, status);
+
+        // A terminal failure has no next attempt to wait for. Keep server cooldowns
+        // for the next request on this client instead of delaying the error.
+        if (attempt === maxRetries && (res.status === 429 || res.status >= 500 || res.status === 408)) {
+          const reset = res.headers.get("X-RateLimit-Remaining") === "0"
+            ? Number.parseFloat(res.headers.get("X-RateLimit-Reset-After") ?? "") : NaN;
+          const retry = res.status === 429 ? Number.parseFloat(res.headers.get("Retry-After") ?? "1") : 0;
+          const cooldown = Math.max(Number.isFinite(reset) ? reset * 1000 + 500 : 0,
+            Number.isFinite(retry) ? retry * 1000 : 1000);
+          this.retryNotBefore = Date.now() + cooldown;
+          if (res.status === 429) this.stats.rateLimit429Count++;
+          throw new Error("Max retries exceeded");
+        }
 
         // Handle rate limit headers proactively
         const remaining = res.headers.get("X-RateLimit-Remaining");
