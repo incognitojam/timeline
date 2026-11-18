@@ -212,10 +212,6 @@ describe("API Smoke Tests", () => {
     });
   });
 
-  describe("Search & Events", () => {
-
-  });
-
   describe("Search source excludes", () => {
     beforeAll(() => {
       const db = getDb();
@@ -3131,6 +3127,26 @@ describe("API Smoke Tests", () => {
   });
 
   describe("Jobs API", () => {
+    test("GET /api/jobs falls back for negative limit", async () => {
+      const appDb = getAppStateDb();
+      const prefix = `jobs-negative-limit-${crypto.randomUUID()}`;
+
+      try {
+        // enqueueJob commits each job in its own transaction, so insert the rows directly.
+        seed(appDb, () => {
+          const insert = appDb.prepare("INSERT INTO jobs (kind, source, dedupe_key) VALUES ('sync', ?, ?)");
+          for (let i = 0; i < 55; i++) insert.run(`${prefix}-${i}`, `${prefix}:${i}`);
+        });
+
+        const res = await app.request("/api/jobs?limit=-1");
+        expect(res.status).toBe(200);
+        const json = await res.json();
+        expect(json.jobs).toHaveLength(50);
+        expect(json.count).toBe(50);
+      } finally {
+        appDb.prepare("DELETE FROM jobs WHERE source LIKE ?").run(`${prefix}-%`);
+      }
+    });
 
     test("GET /api/jobs rejects invalid status", async () => {
       const res = await app.request("/api/jobs?status=banana");
@@ -3357,6 +3373,31 @@ describe("API Smoke Tests", () => {
         expect(Math.round(json.stats.avg_duration_ms)).toBe(103);
       } finally {
         appDb.prepare("DELETE FROM mcp_sessions WHERE id = ?").run(sessionId);
+      }
+    });
+
+    test("GET /api/mcp/sessions falls back for negative limit", async () => {
+      const appDb = getAppStateDb();
+      const prefix = `api-mcp-limit-${crypto.randomUUID()}`;
+
+      try {
+        const insert = appDb.prepare(`
+          INSERT INTO mcp_sessions (id, transport, created_at, last_activity_at)
+          VALUES (?, 'http', datetime('now'), datetime('now'))
+        `);
+        seed(appDb, () => {
+          for (let i = 0; i < 55; i++) {
+            insert.run(`${prefix}-${i}`);
+          }
+        });
+
+        const res = await app.request("/api/mcp/sessions?limit=-1");
+        expect(res.status).toBe(200);
+        const json = await res.json();
+        expect(json.sessions).toHaveLength(50);
+        expect(json.count).toBe(50);
+      } finally {
+        appDb.prepare("DELETE FROM mcp_sessions WHERE id LIKE ?").run(`${prefix}-%`);
       }
     });
 

@@ -148,7 +148,6 @@ describe("Filtered contact events", () => {
 
 describe("Contact API Tests", () => {
   describe("Contacts", () => {
-
     test("GET /api/contacts reflects newly created contact (cache invalidation)", async () => {
       // Prime the cache
       const res1 = await app.request("/api/contacts");
