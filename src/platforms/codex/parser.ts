@@ -52,7 +52,7 @@ import {
 } from "../../db/queries";
 import { insertStoredAttachment } from "../../media/attachments";
 import { createBoundedWriter, type BoundedWriterLimits } from "../../db/bounded-writes";
-import { fileCheckpoints, fileFingerprint } from "../../ingest/file-checkpoints";
+import { fileCheckpoints, fileFingerprint, type FileFingerprint } from "../../ingest/file-checkpoints";
 import type { ContentBlock } from "../../ingest/ai/format-content";
 import { createEventWriter, createIdentityCollector } from "../../ingest/ai/import";
 import {
@@ -62,7 +62,7 @@ import {
   type StoredImageAttachment,
 } from "../../ingest/ai/image-blocks";
 
-// Bump when parsing or dependency discovery changes to revisit every rollout.
+// Bump when dependency discovery or emitted history changes, including format-content, image blocks or project naming.
 export const CODEX_PARSER_VERSION = 1;
 
 export const DEFAULT_CODEX_SESSIONS_DIR = `${process.env.HOME}/.codex/sessions`;
@@ -533,7 +533,7 @@ export async function importCodex(
   const checkpoints = dryRun ? null : fileCheckpoints(db, "codex", sourceAccount, sessionsDir);
   const files = await findRolloutFiles(sessionsDir);
   console.log(`Found ${files.length.toLocaleString()} rollout files`);
-  const fingerprints = new Map<string, string | null>();
+  const fingerprints = new Map<string, FileFingerprint | null>();
   for (const file of files) fingerprints.set(file, await fileFingerprint(file));
 
   // Rollout filenames embed the session id, so a subagent's parent rollout
@@ -590,7 +590,7 @@ export async function importCodex(
   });
   const dependenciesFor = (parentId: string | undefined) => {
     const parent = parentId ? fileBySessionId.get(parentId) : undefined;
-    return JSON.stringify(parent ? [parent, fingerprints.get(parent)] : [parentId ?? null, null]);
+    return JSON.stringify(parent ? [parent, fingerprints.get(parent)?.value ?? null] : [parentId ?? null, null]);
   };
 
   try {
@@ -600,7 +600,7 @@ export async function importCodex(
       if (!fingerprint) continue;
       const saved = checkpoints?.saved.get(filePath);
       if (!options.full && !refreshRawData && saved?.version === CODEX_PARSER_VERSION &&
-          saved.fingerprint === fingerprint && saved.dependencies === dependenciesFor(JSON.parse(saved.metadata).parentId)) {
+          saved.fingerprint === fingerprint.value && saved.dependencies === dependenciesFor(JSON.parse(saved.metadata).parentId)) {
         stats.filesSkipped++;
         continue;
       }
@@ -621,12 +621,11 @@ export async function importCodex(
         const parent = parentId ? fileBySessionId.get(parentId) : undefined;
         const dependencies = dependenciesFor(parentId);
         const metadata = JSON.stringify({ parentId });
-        if (saved?.version === CODEX_PARSER_VERSION && saved.fingerprint === fingerprint &&
+        if (saved?.version === CODEX_PARSER_VERSION && saved.fingerprint === fingerprint.value &&
             saved.dependencies === dependencies && saved.metadata === metadata) return;
-        if (await fileFingerprint(filePath) === fingerprint &&
-            (!parent || await fileFingerprint(parent) === fingerprints.get(parent))) {
+        if (fingerprint.checkpointable && (!parent || fingerprints.get(parent)?.checkpointable)) {
           await writer.add(() => checkpoints.save({
-            path: filePath, version: CODEX_PARSER_VERSION, fingerprint, dependencies, metadata,
+            path: filePath, version: CODEX_PARSER_VERSION, fingerprint: fingerprint.value, dependencies, metadata,
           }));
         }
       };

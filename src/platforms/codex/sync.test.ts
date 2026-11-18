@@ -8,7 +8,7 @@ import type { SyncOptions } from "../../sync/types";
 import { codexSyncSource } from "./sync";
 
 it("an unchanged sync takes no schema or event write lock", async () => {
-  const clock = spyOn(Date, "now").mockReturnValue(Date.now());
+  const clock = spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
   const root = await mkdtemp(join(tmpdir(), "codex-sync-"));
   const path = join(root, "events.db");
   const setup = new Database(path);

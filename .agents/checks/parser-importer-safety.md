@@ -17,6 +17,7 @@ Look for:
 - Raw data loss: dropping original source fields from `raw_data` without an explicit storage reason and test coverage, especially fields needed for future reprocessing.
 - Normalized content/schema drift: new event types, content block shapes, tags, or normalized metadata emitted by a parser are handled by downstream formatters, exporters, renderers, and search/context surfaces, or are explicitly rejected with tests.
 - Multi-account regressions: changes that ignore or conflate `source_account`, account config, or import batches.
+- Changes to what Codex or Claude Code emit, including shared format-content, image blocks and project naming, must bump the affected `CODEX_PARSER_VERSION` / `CLAUDE_CODE_PARSER_VERSION` so unchanged history is reread.
 - Incremental sync regressions: cursor/state changes that can skip history, repeat work indefinitely, or make backfills impossible.
 - Test gaps for risky cases: missing coverage for duplicate/missing IDs, repeated imports, multiple accounts, absent or malformed timestamps, raw export schema drift, or newly emitted normalized content shapes.
 

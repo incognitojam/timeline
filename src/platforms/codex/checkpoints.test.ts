@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { Database } from "../../db/sqlite";
 import { appendFile, mkdtemp, rm, stat, utimes, writeFile } from "node:fs/promises";
+import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initDb } from "../../db/schema";
@@ -20,7 +21,7 @@ const rows = (database: Database) => (database.prepare("SELECT * FROM events ORD
   .map(row => Object.fromEntries(Object.entries(row).filter(([key]) => !["id", "imported_at", "import_batch"].includes(key))));
 
 beforeEach(async () => {
-  clock = spyOn(Date, "now").mockReturnValue(Date.now());
+  clock = spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
   root = await mkdtemp(join(tmpdir(), "codex-checkpoints-"));
   db = new Database(join(root, "events.db"));
   reference = new Database(":memory:");
@@ -46,7 +47,7 @@ it("matches a full reread through append, rewrite, parent changes, deletion and 
   expect((await compare()).filesSkipped).toBe(2);
   await appendFile(file("parent"), `${message("three")}\n`);
   expect((await compare()).filesSkipped).toBe(0);
-  // Restore mtime after a same-size rewrite: ctime still invalidates it.
+  // Same-size rewrites are reread; the focused fingerprint test isolates ctime.
   const before = await stat(file("parent"));
   await writeFile(file("parent"), `${meta("parent")}\n${message("six")}\n${message("seven")}\n`);
   expect((await stat(file("parent"))).size).toBe(before.size);
@@ -79,14 +80,16 @@ it("retries the unfinished file after a later batch fails, without losing commit
   expect((await importCodex(db, root, "alice", options)).filesSkipped).toBe(2);
 });
 
-it("does not checkpoint a file appended while its batches commit", async () => {
+it("rereads a file appended during import and converges on the next run", async () => {
   await writeFile(file("a"), `${meta("a")}\n${message("one")}\n${message("two")}\n`);
   const run = importCodex(db, root, "alice", { writeLimits: { ...limits, maxQueuedWrites: 1 } });
   // Wait for real progress, then change input before the remaining batches.
   while (rows(db).length === 0) await new Promise<void>(resolve => setImmediate(resolve));
   await appendFile(file("a"), `${message("late")}\n`);
   await run;
-  await importCodex(db, root, "alice", options);
+  expect((await importCodex(db, root, "alice", options)).filesSkipped).toBe(0);
+  await importCodex(reference, root, "alice", { ...options, full: true });
+  expect(rows(db)).toEqual(rows(reference));
   expect(rows(db)).toHaveLength(3);
 });
 
@@ -126,4 +129,39 @@ it("does not save progress over events deleted after comparison", async () => {
   db.exec("DROP TRIGGER delete_during_import");
   expect((await importCodex(db, root, "alice", options)).messages).toBe(1);
   expect(rows(db)).toHaveLength(2);
+});
+
+
+it("rereads a same-tick same-size rewrite with identical stat fields until quiet", async () => {
+  await writeFile(file("a"), `${meta("a")}\n${message("one")}\n`);
+  const metadata = await stat(file("a"), { bigint: true });
+  clock.mockReturnValue(Number(metadata.ctimeNs / 1_000_000n));
+  const fingerprintStat = spyOn(fs, "stat").mockResolvedValue(metadata);
+  try {
+    await importCodex(db, root, "alice", options);
+    expect(db.prepare("SELECT * FROM file_import_checkpoints").all()).toHaveLength(0);
+    // Simulate the observed coarse-tick collision, including exact nanosecond mtime.
+    await writeFile(file("a"), `${meta("b")}\n${message("two")}\n`);
+    const retry = await importCodex(db, root, "alice", options);
+    expect(retry.filesSkipped).toBe(0);
+    expect(retry.messages).toBe(1);
+    expect(rows(db)).toHaveLength(2);
+    expect(db.prepare("SELECT * FROM file_import_checkpoints").all()).toHaveLength(0);
+    clock.mockReturnValue(Number(metadata.ctimeNs / 1_000_000n) + 60_000);
+    expect((await importCodex(db, root, "alice", options)).filesSkipped).toBe(0);
+    expect((await importCodex(db, root, "alice", options)).filesSkipped).toBe(1);
+  } finally { fingerprintStat.mockRestore(); }
+});
+
+it("does not checkpoint a quiet child while its parent has a fresh timestamp", async () => {
+  await writeFile(file("parent"), `${meta("parent")}\n${message("one")}\n`);
+  await writeFile(file("child"), `${meta("child", "parent")}\n${message("two")}\n`);
+  const future = new Date(Date.now() + 120_000);
+  await utimes(file("parent"), future, future);
+  await importCodex(db, root, "alice", options);
+  expect(db.prepare("SELECT * FROM file_import_checkpoints").all()).toHaveLength(0);
+  const past = new Date("2026-01-01T00:00:00Z");
+  await utimes(file("parent"), past, past);
+  expect((await importCodex(db, root, "alice", options)).filesSkipped).toBe(0);
+  expect((await importCodex(db, root, "alice", options)).filesSkipped).toBe(2);
 });

@@ -2,20 +2,24 @@ import type { Database } from "../db/sqlite";
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
-// Files can be rewritten within one ctime tick (the git "racy clean" case).
-// Hash recent inputs as well; old, stable logs need only stat. Use --full on
-// filesystems that do not maintain stat metadata reliably.
-const RACY_WINDOW_NS = 2_000_000_000n;
-export async function fileFingerprint(path: string): Promise<string | null> {
+export const CHECKPOINT_SOURCES = ["codex"] as const;
+type CheckpointSource = (typeof CHECKPOINT_SOURCES)[number];
+
+// Do not checkpoint timestamps that may still share a filesystem clock tick.
+export const CHECKPOINT_QUIET_WINDOW_MS = 2_000;
+export interface FileFingerprint {
+  value: string;
+  checkpointable: boolean;
+}
+
+export async function fileFingerprint(path: string): Promise<FileFingerprint | null> {
   try {
     const s = await stat(path, { bigint: true });
-    let hash = "";
-    if (BigInt(Date.now()) * 1_000_000n - s.ctimeNs <= RACY_WINDOW_NS) {
-      const hasher = new Bun.CryptoHasher("sha256");
-      for await (const chunk of Bun.file(path).stream()) hasher.update(chunk);
-      hash = hasher.digest("hex");
-    }
-    return [s.dev, s.ino, s.size, s.mtimeNs, s.ctimeNs, hash].join(":");
+    const quietBefore = BigInt(Date.now() - CHECKPOINT_QUIET_WINDOW_MS) * 1_000_000n;
+    return {
+      value: [s.dev, s.ino, s.size, s.mtimeNs, s.ctimeNs].join(":"),
+      checkpointable: s.mtimeNs < quietBefore && s.ctimeNs < quietBefore,
+    };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
@@ -45,10 +49,10 @@ export interface FileCheckpoint {
 
 /** Kept with events so restoring/replacing the database also restores its progress.
  * Deleting source events invalidates its checkpoints; --full bypasses them.
- * Queue save after all file writes, in the same or a later transaction, and
- * only after checking that inputs stayed stable throughout preparation.
+ * Queue save after all file writes, in the same or a later transaction, using the
+ * pre-read fingerprint; fresh inputs and dependencies must not be checkpointed.
  */
-export function fileCheckpoints(db: Database, source: string, account: string, root: string) {
+export function fileCheckpoints(db: Database, source: CheckpointSource, account: string, root: string) {
   const scope = [source, account, resolve(root)];
   const epochQuery = db.prepare("SELECT epoch FROM file_import_epochs WHERE source = ? AND account = ?");
   const epoch = () => (epochQuery.get(source, account) as { epoch: number } | null)?.epoch ?? 0;

@@ -1,7 +1,7 @@
 import { Database } from "./sqlite";
 import { ensureDiscordAttachmentRetryIndex } from "../platforms/discord/attachment-retry-index";
 import { PENDING_POLL_VOTERS_INDEX, PENDING_POLL_VOTERS_WHERE, POLL_VOTER_ORDER } from "../platforms/discord/poll-voter-queries";
-import { initFileCheckpoints } from "../ingest/file-checkpoints";
+import { CHECKPOINT_SOURCES, initFileCheckpoints } from "../ingest/file-checkpoints";
 import { PLATFORM_METAS } from "../platforms/metas";
 import type { PlatformMeta } from "../platforms/types";
 import type { AttachmentStatus } from "../shared/attachments";
@@ -505,7 +505,7 @@ function createSchema(db: Database) {
   initFileCheckpoints(db);
   ensureTrigger(db, "file_import_checkpoints_deleted_event", `
     CREATE TRIGGER file_import_checkpoints_deleted_event AFTER DELETE ON events
-    WHEN OLD.source IN ('codex', 'claude-code')
+    WHEN OLD.source IN (${CHECKPOINT_SOURCES.map(source => `'${source}'`).join(", ")})
     BEGIN
       DELETE FROM file_import_checkpoints WHERE source = OLD.source
         AND account = COALESCE(OLD.source_account, '');
