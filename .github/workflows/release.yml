@@ -65,6 +65,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5
+      - name: Require pinned Go for sidecar tests
+        if: matrix.suite == 'static'
+        run: ./tools/timeline-gmessages/build-bundled.sh --check
       # Same provisioning as ci.yml's test job, for timeline-export's sandbox tests.
       - name: Install remote-agents pull test tools
         if: matrix.suite == 'backend'

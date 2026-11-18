@@ -12,9 +12,9 @@ set -euo pipefail
 # GET /api/health to report healthy and SIGTERMs the process, asserting a clean
 # (exit 0) graceful shutdown.
 #
-# Used by the `macos-service` CI job to gate the claim that the service runs on
-# macOS — the foundation the launchd LaunchAgent (deploy/macos, slice 1b) sits
-# on. Runs anywhere Bun + curl exist; `bun install` must have run first.
+# Linux CI runs the source smoke; artifact and app smoke drivers also use it
+# to check the packaged runtime. Runs anywhere Bun + curl exist;
+# `bun install` must have run before a source smoke.
 #
 # Usage: ./scripts/smoke-service.sh   (override the port with PORT=NNNN)
 

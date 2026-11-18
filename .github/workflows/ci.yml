@@ -60,6 +60,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5
+      - name: Require pinned Go for sidecar tests
+        if: matrix.suite == 'static'
+        run: ./tools/timeline-gmessages/build-bundled.sh --check
       # The remote-agents pull tests run timeline-export's bubblewrap sandbox,
       # which needs unprivileged user namespaces (restricted by AppArmor on Ubuntu 24.04).
       - name: Install remote-agents pull test tools
@@ -93,3 +96,15 @@ jobs:
           TIMELINE_CODESIGN_IDENTITY: '-'
           VITE_MAPTILER_API_KEY: 'ci-test'
         run: ./build.sh && ./smoke.sh
+
+  source-service:
+    name: source service boot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: bun
+      - run: bun install --frozen-lockfile
+      - name: Smoke-test source service boot and shutdown
+        run: ./scripts/smoke-service.sh
