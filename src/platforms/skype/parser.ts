@@ -1,6 +1,7 @@
 import { Database } from "../../db/sqlite";
 import { getDb, initDb } from "../../db/schema";
 import { parseSkypeUserId } from "./identity";
+import { decodeHtmlEntities } from "./utils";
 import {
   onImportComplete,
   upsertIdentities,
@@ -50,17 +51,6 @@ interface Stats {
 
 // Maximum member count for a group to be imported (spam groups have 400-600 members)
 const MAX_GROUP_MEMBERS = 200;
-
-// Decode HTML entities that Skype uses in message content
-function decodeHtmlEntities(text: string | null | undefined): string | null {
-  if (!text) return null;
-  return text
-    .replace(/&apos;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&");
-}
 
 // Parse call duration from XML content like <partlist><part><duration>123.456</duration></part></partlist>
 function parseCallDuration(content: string): number | null {

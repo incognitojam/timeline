@@ -4,23 +4,17 @@
  * Handles partlist XML parsing for call events.
  */
 
+import { decodeEntities } from "../../ingest/entities";
+
 export interface CallParticipant {
   identity: string; // Skype username or phone number
   name: string | null; // Display name from <name> tag
   duration: number | null; // Duration in ms (null = didn't connect)
 }
 
-/**
- * Decode HTML entities commonly found in Skype data
- */
+/** Decodes entities in optional Skype text; empty or missing text is null. */
 export function decodeHtmlEntities(text: string | null | undefined): string | null {
-  if (!text) return null;
-  return text
-    .replace(/&apos;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&");
+  return text ? decodeEntities(text) : null;
 }
 
 /**

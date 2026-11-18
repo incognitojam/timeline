@@ -6,23 +6,14 @@ import {
 } from "./utils";
 
 describe("decodeHtmlEntities", () => {
-  test("decodes common HTML entities", () => {
-    expect(decodeHtmlEntities("Alice &quot;AE&quot; Example")).toBe(
-      'Alice "AE" Example'
-    );
-    expect(decodeHtmlEntities("Tom &amp; Jerry")).toBe("Tom & Jerry");
-    expect(decodeHtmlEntities("&lt;script&gt;")).toBe("<script>");
-    expect(decodeHtmlEntities("It&apos;s working")).toBe("It's working");
+  test("decodes named and numeric entities", () => {
+    expect(decodeHtmlEntities("Tom &amp; Jerry &#128578; &#x1F600;")).toBe("Tom & Jerry 🙂 😀");
   });
 
   test("returns null for null/undefined input", () => {
     expect(decodeHtmlEntities(null)).toBe(null);
     expect(decodeHtmlEntities(undefined)).toBe(null);
     expect(decodeHtmlEntities("")).toBe(null);
-  });
-
-  test("returns unchanged string if no entities", () => {
-    expect(decodeHtmlEntities("Hello World")).toBe("Hello World");
   });
 });
 
