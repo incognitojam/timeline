@@ -11,6 +11,7 @@ import { join, dirname, extname, resolve, sep } from "path";
 import { createHash } from "crypto";
 import { loadConfig, type MediaConfig } from "../config";
 import { putRemoteBlobWithRetry, type MediaUploadRetryOptions } from "./upload-retry";
+import { mediaCacheSizeEstimate } from "./cache-size";
 
 export interface StoreFileOptions {
   /** Source name (e.g., "facebook", "discord") */
@@ -112,6 +113,10 @@ function assertWithinMediaRoot(mediaRoot: string, absPath: string): void {
 
 export class LocalMediaStore implements MediaStore {
   constructor(private readonly mediaRoot: string) {}
+
+  cacheSizeEstimate(): Promise<number | null> {
+    return mediaCacheSizeEstimate(this.mediaRoot);
+  }
 
   /**
    * Store a file with content-addressed deduplication.
