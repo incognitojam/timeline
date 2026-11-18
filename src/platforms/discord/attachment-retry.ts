@@ -11,6 +11,7 @@ import {
   getDiscordMessageAttachments,
   getDiscordStickerItems,
 } from "./shared/forward";
+import { FIND_ATTACHMENT_RETRY_CANDIDATES } from "./attachment-retry-index";
 import { downloadAndStoreAttachments } from "./attachment-downloader";
 import type { DiscordClient, NormalizedMessage } from "./client";
 import {
@@ -117,50 +118,7 @@ function findCandidates(
   limit: number,
 ): RetryCandidate[] {
   const cutoff = new Date(now.getTime() - DISCORD_ATTACHMENT_RETRY_MAX_AGE_MS).toISOString();
-  const rawAssetCount = `
-    COALESCE(json_array_length(json_extract(e.raw_data, '$.attachments')), 0)
-    + COALESCE((
-      SELECT SUM(COALESCE(
-        json_array_length(json_extract(snapshot.value, '$.message.attachments')),
-        0
-      ))
-      FROM json_each(e.raw_data, '$.message_snapshots') snapshot
-    ), 0)
-    + COALESCE(json_array_length(json_extract(e.raw_data, '$.sticker_items')), 0)
-    + COALESCE((
-      SELECT SUM(COALESCE(
-        json_array_length(json_extract(snapshot.value, '$.message.sticker_items')),
-        0
-      ))
-      FROM json_each(e.raw_data, '$.message_snapshots') snapshot
-    ), 0)
-  `;
-  const rows = db.query(`
-    SELECT e.id AS event_id, e.source_id AS message_id,
-           json_extract(e.raw_data, '$._channel.id') AS channel_id, e.raw_data
-    FROM events e
-    WHERE e.source = 'discord'
-      AND e.source_account = ?
-      AND e.timestamp >= ?
-      AND (${rawAssetCount}) > 0
-      AND json_extract(e.raw_data, '$._channel.id') IS NOT NULL
-      AND (
-        EXISTS (
-          SELECT 1 FROM attachments a
-          WHERE a.event_id = e.id AND a.source = 'discord' AND a.status = 'failed'
-        )
-        OR NOT EXISTS (
-          SELECT 1 FROM attachments a
-          WHERE a.event_id = e.id AND a.source = 'discord'
-        )
-        OR (
-          SELECT COUNT(*) FROM attachments a
-          WHERE a.event_id = e.id AND a.source = 'discord'
-        ) < (${rawAssetCount})
-      )
-    ORDER BY e.timestamp DESC, e.id DESC
-    LIMIT ?
-  `).all(sourceAccount, cutoff, limit) as CandidateRow[];
+  const rows = db.query(FIND_ATTACHMENT_RETRY_CANDIDATES).all(sourceAccount, cutoff, limit) as CandidateRow[];
 
   const attachmentRows = db.prepare(
     "SELECT source_id, status FROM attachments WHERE event_id = ? AND source = 'discord'",

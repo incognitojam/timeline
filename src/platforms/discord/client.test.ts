@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifyDiscordRoute, DiscordClient } from "./client";
+import { classifyDiscordRoute, DiscordClient, setDiscordClientSleepForTests } from "./client";
 
 describe("classifyDiscordRoute", () => {
   test("sanitizes channel and message IDs", () => {
@@ -280,4 +280,42 @@ describe("DiscordClient stats", () => {
       globalThis.fetch = originalFetch;
     }
   });
+});
+
+for (const status of [503, 429]) {
+  test(`terminal ${status} makes nine attempts but only eight retry waits`, async () => {
+    const original = globalThis.fetch;
+    let requests = 0;
+    const sleeps: number[] = [];
+    setDiscordClientSleepForTests(async ms => { sleeps.push(ms); });
+    globalThis.fetch = (async () => { requests++; return new Response(null, {status, headers:{"Retry-After":"3"}}); }) as unknown as typeof fetch;
+    try {
+      const client = new DiscordClient("test-token");
+      await expect(client.getCurrentUser()).rejects.toThrow("Max retries exceeded");
+      expect(requests).toBe(9);
+      expect(client.getStats().retrySleepCount).toBe(8);
+      expect(sleeps.filter(ms=>ms>=1000)).toEqual(status===503 ? [2000,3000,5000,9000,17000,33000,65000,129000] : Array(8).fill(3000));
+    } finally { globalThis.fetch = original; setDiscordClientSleepForTests(null); }
+  });
+}
+
+test("terminal rate-limit headers defer the next request instead of delaying failure", async () => {
+  const original = globalThis.fetch;
+  const sleeps: number[] = [];
+  let requests=0;
+  setDiscordClientSleepForTests(async ms => { sleeps.push(ms); });
+  globalThis.fetch = (async () => {
+    requests++;
+    if(requests===10) return Response.json({id:"user",username:"alice"});
+    return new Response(null,{status:503,headers:requests===9 ? {"X-RateLimit-Remaining":"0","X-RateLimit-Reset-After":"60"} : {}});
+  }) as unknown as typeof fetch;
+  try {
+    const client=new DiscordClient("test-token");
+    await expect(client.getCurrentUser()).rejects.toThrow("Max retries exceeded");
+    expect(client.getStats().proactiveRateLimitSleepCount).toBe(0);
+    sleeps.length=0;
+    await client.getCurrentUser();
+    expect(sleeps[0]).toBeGreaterThan(59000);
+    expect(sleeps[0]).toBeLessThanOrEqual(60500);
+  } finally {globalThis.fetch=original;setDiscordClientSleepForTests(null);}
 });

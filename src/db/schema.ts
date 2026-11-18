@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { ensureDiscordAttachmentRetryIndex } from "../platforms/discord/attachment-retry-index";
 import { PLATFORM_METAS } from "../platforms/metas";
 import type { PlatformMeta } from "../platforms/types";
 import type { AttachmentStatus } from "../shared/attachments";
@@ -851,6 +852,7 @@ function createSchema(db: Database) {
       checked_at   TEXT NOT NULL      -- ISO 8601: when created_at was last computed
     )
   `);
+  ensureDiscordAttachmentRetryIndex(db);
 }
 
 function ensureEventDaySources(db: Database): void {
