@@ -1,19 +1,11 @@
-import type { Element, Root, RootContent, Text } from "hast";
-import { find, html } from "property-information";
-import remarkGfm from "remark-gfm";
-import remarkParse from "remark-parse";
-import remarkRehype from "remark-rehype";
-import { createComputed, createRenderEffect, For, type JSX, Match, Switch } from "solid-js";
-import { createStore, reconcile } from "solid-js/store";
-import { Dynamic } from "solid-js/web";
-import { unified } from "unified";
-
-// Raw HTML is discarded by remark-rehype; only parser-generated elements reach the renderer.
-const processor = unified().use(remarkParse).use(remarkGfm).use(remarkRehype).freeze();
+import { createDomRenderer, createHtmlRenderer, type HtmlOptions } from "@pierre/words/html";
+import { createRenderEffect, type JSX, onCleanup } from "solid-js";
 
 interface MarkdownProps {
   markdown: string;
   class?: string;
+  /** Text is still arriving: complete unfinished syntax and patch only the open block. */
+  streaming?: boolean;
 }
 
 const ALLOWED_PROTOCOLS = /^(https?|mailto|tel):/i;
@@ -27,73 +19,81 @@ export function sanitizeLinkUri(href: string): string {
   return "";
 }
 
-function elementProperties(node: Element) {
-  const attributes: Record<string, string | number | boolean | JSX.CSSProperties> = {};
-  for (const [name, value] of Object.entries(node.properties)) {
-    if (value === null || value === undefined) continue;
-    const info = find(html, name);
-    attributes[info.attribute] = Array.isArray(value)
-      ? value.join(info.commaSeparated ? ", " : " ")
-      : value;
-  }
+// Words' DOM renderer never emits raw HTML from the source. Every link and
+// image address must also pass sanitizeLinkUri. A rejected image keeps a
+// marker address so `finish` can show its alt text in its place; a rejected
+// link loses its href and `finish` unwraps it to plain text.
+const REJECTED_IMAGE = "#md-rejected-image";
+const baseOptions: HtmlOptions = {
+  controls: false,
+  lineNumbers: false,
+  urlTransform: (url, key) => sanitizeLinkUri(url) || (key === "src" ? REJECTED_IMAGE : null),
+};
 
-  if (node.tagName === "a") {
-    attributes.href = sanitizeLinkUri(String(node.properties.href ?? ""));
-    attributes.target = "_blank";
-    attributes.rel = "noopener noreferrer";
-  }
-  if ((node.tagName === "td" || node.tagName === "th") && typeof node.properties.align === "string") {
-    attributes.style = { "text-align": node.properties.align as JSX.CSSProperties["text-align"] };
-    delete attributes.align;
-  }
-  return attributes;
-}
+const REJECTED_IMAGE_TAG = new RegExp(`<img data-markdown="img" src="${REJECTED_IMAGE}"(?: alt="([^"]*)")?[^>]*>`, "g");
 
-function MarkdownElement(props: { node: Element }): JSX.Element {
-  return (
-    <Dynamic component={props.node.tagName as keyof JSX.IntrinsicElements} {...elementProperties(props.node)}>
-      <MarkdownChildren nodes={props.node.children} />
-    </Dynamic>
-  );
-}
-
-function MarkdownText(props: { node: Text }): JSX.Element {
-  // A stable Text node prevents array updates from moving siblings and losing focus.
-  const text = document.createTextNode("");
-  createRenderEffect(() => {
-    text.data = props.node.value;
+/** Drop each link Words left without an href, keeping its content, including nested links. */
+function unwrapRejectedLinks(html: string): string {
+  const dropped: boolean[] = [];
+  return html.replace(/<a\b[^>]*>|<\/a>/g, (tag) => {
+    if (tag === "</a>") return dropped.pop() ? "" : tag;
+    const drop = tag.startsWith('<a data-markdown="a"') && !tag.includes(' href="');
+    dropped.push(drop);
+    return drop ? "" : tag;
   });
-  return text;
 }
 
-function MarkdownChildren(props: { nodes: RootContent[] }): JSX.Element {
-  return (
-    <For each={props.nodes}>
-      {(node) => (
-        <Switch>
-          <Match when={node.type === "element" && node}>
-            {(element) => <MarkdownElement node={element()} />}
-          </Match>
-          <Match when={node.type === "text" && node}>
-            {(text) => <MarkdownText node={text()} />}
-          </Match>
-        </Switch>
-      )}
-    </For>
-  );
+/**
+ * Final touches on the HTML Words formats, applied before it reaches the DOM so
+ * that Words patches it like its own output. A `components` hook could do some
+ * of this, but any hook turns off Words' line-by-line patching of a code block
+ * that is still streaming. Alt text arrives escaped; `<` is escaped again in
+ * case that ever changes.
+ */
+const finish = (html: string) =>
+  unwrapRejectedLinks(html.replace(REJECTED_IMAGE_TAG, (_, alt = "") => alt.replace(/</g, "&lt;")))
+    .replace(/<a data-markdown="a"(?= href="(?!#))/g, '<a data-markdown="a" target="_blank" rel="noopener noreferrer"')
+    .replace(/(data-footnote-backref-idx="[^"]*-(\d+)"[^>]*>↩)<\/a>/g, "$1<sup>$2</sup></a>")
+    .replace(/(<section data-markdown="section" class="footnotes" data-footnotes>)/g, '$1<h2 class="sr-only">Footnotes</h2>');
+
+// The `formatter` argument of createDomRenderer: Words' own formatter, with
+// `finish` applied to each piece of HTML the DOM renderer reads.
+function finishingFormatter(options: HtmlOptions) {
+  const formatter = createHtmlRenderer(options);
+  return {
+    configure: formatter.configure,
+    dispose: formatter.dispose,
+    render(source: string, incomplete: boolean, active?: boolean) {
+      const update = formatter.render(source, incomplete, active);
+      return {
+        revision: update.revision,
+        reset: update.reset,
+        code: update.code,
+        get stable() {
+          return finish(update.stable);
+        },
+        get addition() {
+          return finish(update.addition);
+        },
+        get pending() {
+          return finish(update.pending);
+        },
+      };
+    },
+  };
 }
+
+let instances = 0;
 
 export function Markdown(props: MarkdownProps): JSX.Element {
-  const [tree, setTree] = createStore<Root>({ type: "root", children: [] });
-  createComputed(() => {
-    const next = processor.runSync(processor.parse(props.markdown));
-    // Parser nodes have no stable keys. Merge by position to retain DOM during streaming.
-    setTree(reconcile(next, { key: null, merge: true }));
+  const root = (<div class={props.class} />) as HTMLDivElement;
+  // Footnote ids must not collide between messages on the same page.
+  const instanceOptions = { ...baseOptions, idPrefix: `md${++instances}-` };
+  const renderer = createDomRenderer(root, instanceOptions, finishingFormatter(instanceOptions));
+  createRenderEffect(() => {
+    const streaming = props.streaming === true;
+    renderer.update(props.markdown, streaming, streaming);
   });
-
-  return (
-    <div class={props.class}>
-      <MarkdownChildren nodes={tree.children} />
-    </div>
-  );
+  onCleanup(() => renderer.disconnect());
+  return root;
 }

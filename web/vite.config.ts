@@ -52,10 +52,6 @@ export default defineConfig({
     },
     dedupe: ["date-fns"],
   },
-  optimizeDeps: {
-    // Force pre-bundling of remark's CJS dependencies
-    include: ["debug", "extend"],
-  },
   server: {
     proxy: apiTarget === undefined ? undefined : {
       [MANUAL_ATTACHMENT_DESCRIPTION_PATH_PATTERN]: {
