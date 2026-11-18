@@ -21,9 +21,9 @@ export interface AiImportOptions {
 
 /**
  * Collect the user identity plus one assistant identity per model seen
- * during an import run, for a single batch upsert at the end.
+ * during an import run. Callers can upsert changed identities in bounded batches.
  */
-export function createIdentityCollector(platform: Platform, sourceAccount: string) {
+export function createIdentityCollector(platform: Platform, sourceAccount: string, modelName = formatModelName) {
   const identities = new Map<string, UpsertIdentityOptions>();
 
   const userIdentifier = formatIdentifier(platform, sourceAccount);
@@ -42,7 +42,7 @@ export function createIdentityCollector(platform: Platform, sourceAccount: strin
       identities.set(identifier, {
         platform,
         platformId,
-        displayName: formatModelName(modelId),
+        displayName: modelName(modelId),
         username: platformId,
       });
     }

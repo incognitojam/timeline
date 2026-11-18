@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { getDb, initDb } from "../../db/schema";
-import { importClaudeCode } from "./parser";
+import { getDb } from "../../db/schema";
+import { importClaudeCode, ClaudeCodeImportError } from "./parser";
 import type { SyncSource, SyncOptions, SyncResult } from "../../sync/types";
 
 export const claudeCodeSyncSource: SyncSource = {
@@ -75,25 +75,27 @@ export const claudeCodeSyncSource: SyncSource = {
       }
 
       const db = getDb();
-      initDb(db);
-
-      const stats = await importClaudeCode(db, claudeDir, accountName);
-      // Note: importClaudeCode already calls onImportComplete internally
-      db.close();
+      let stats;
+      try {
+        stats = await importClaudeCode(db, claudeDir, accountName);
+      } finally {
+        db.close();
+      }
 
       return {
         source: "claude-code",
         success: true,
         eventsAdded: stats.messages,
-        eventsUpdated: 0,
+        eventsUpdated: stats.refreshed,
+        metadata: { filesSkipped: stats.filesSkipped, writeTransactions: stats.writeTransactions, longestWriteHoldMs: stats.longestWriteHoldMs },
         durationMs: Date.now() - startTime,
       };
     } catch (error) {
       return {
         source: "claude-code",
         success: false,
-        eventsAdded: 0,
-        eventsUpdated: 0,
+        eventsAdded: error instanceof ClaudeCodeImportError ? error.stats.messages : 0,
+        eventsUpdated: error instanceof ClaudeCodeImportError ? error.stats.refreshed : 0,
         error: error instanceof Error ? error.message : String(error),
         durationMs: Date.now() - startTime,
       };
