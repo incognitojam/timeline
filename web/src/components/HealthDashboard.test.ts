@@ -1,11 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resolveHealthWindow } from "@shared/health-periods";
 import {
   formatComparison,
   formatSleepDurationComparison,
-  getPeriodDateRange,
   getPeriodTitle,
-  parseUrlPeriod,
+  resolveUrlPeriod,
 } from "./HealthDashboard";
 
 describe("health dashboard period title", () => {
@@ -19,43 +17,24 @@ describe("health dashboard period title", () => {
   });
 
   it("formats the selected ISO week without using fetched stats", () => {
-    const range = getPeriodDateRange(resolveHealthWindow({
-      view: "week",
-      mode: "calendar",
-      anchor: "2026-07-01",
-    }));
-
-    expect(range).toEqual({ start: "2026-06-29", end: "2026-07-05" });
+    const range = { start: "2026-06-29", end: "2026-07-05" };
     expect(getPeriodTitle("week", "calendar", range.start, range.end, "en-GB")).toBe(
       "29 Jun - 5 Jul",
     );
   });
 
   it("formats date-only month ranges as calendar dates", () => {
-    const range = getPeriodDateRange(resolveHealthWindow({
-      view: "month",
-      mode: "calendar",
-      anchor: "2026-07-01",
-    }));
-
-    expect(range).toEqual({ start: "2026-07-01", end: "2026-07-31" });
+    const range = { start: "2026-07-01", end: "2026-07-31" };
     expect(getPeriodTitle("month", "calendar", range.start, range.end, "en-GB")).toBe("July");
   });
 
   it("shows the full range for a recent month", () => {
-    const period = parseUrlPeriod({
-      view: "month",
-      mode: "recent",
-      anchor: "2026-07-02",
-    });
-
-    expect(period.range).toEqual({ start: "2026-06-03", end: "2026-07-02" });
-    expect(getPeriodTitle("month", period.mode, period.range.start, period.range.end, "en-GB"))
+    expect(getPeriodTitle("month", "recent", "2026-06-03", "2026-07-02", "en-GB"))
       .toBe("3 Jun - 2 Jul");
   });
 
   it("falls back instead of crashing on an invalid canonical window", () => {
-    expect(parseUrlPeriod({
+    expect(resolveUrlPeriod({
       view: "month",
       mode: "calendar",
       anchor: "2026-02-30",

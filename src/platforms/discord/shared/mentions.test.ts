@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import {
   discordMentionsToPlainText,
   extractCustomEmojiRefs,
@@ -125,7 +125,7 @@ describe("parseDiscordMentions", () => {
   });
 
   it("parses every documented timestamp style suffix", () => {
-    for (const style of ["t", "T", "d", "D", "f", "F", "R"]) {
+    for (const style of ["t", "T", "d", "D", "f", "F", "R"] as const) {
       expect(parseDiscordMentions(`<t:1686682800:${style}>`, null)).toEqual([
         { kind: "timestamp", seconds: 1686682800, style },
       ]);

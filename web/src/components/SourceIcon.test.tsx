@@ -1,7 +1,8 @@
-import { render } from "@solidjs/testing-library";
 import { SOURCE_REGISTRY } from "@shared/sources";
+import { getSourceIcon } from "../lib/source-styles";
+import { IconCircle } from "../ui/icons";
+import { render } from "@solidjs/testing-library";
 import { describe, expect, it } from "vitest";
-import { hasSourceIcon } from "../lib/source-styles";
 import SourceIcon from "./SourceIcon";
 
 describe("SourceIcon", () => {
@@ -37,10 +38,11 @@ describe("SourceIcon", () => {
     const inherited = render(() => <SourceIcon source="constructor" />);
 
     expect(inherited.container.innerHTML).toBe(fallback.container.innerHTML);
-    expect(hasSourceIcon("constructor")).toBe(false);
   });
 
-  it("has an icon for every registered source", () => {
-    expect(SOURCE_REGISTRY.filter((source) => !hasSourceIcon(source.id))).toEqual([]);
+  it("has a non-fallback icon for every registered source", () => {
+    for (const source of SOURCE_REGISTRY) {
+      expect(getSourceIcon(source.id)).not.toBe(IconCircle);
+    }
   });
 });
