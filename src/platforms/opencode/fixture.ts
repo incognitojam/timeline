@@ -22,6 +22,7 @@
 import { Database } from "bun:sqlite";
 import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
+import { seed } from "../../testing/seed";
 
 export const V1_PROJECT_DDL = `
 CREATE TABLE \`project\` (
@@ -525,9 +526,20 @@ async function writeStorage(storageDir: string): Promise<void> {
   }
 }
 
-function writeDb(dbPath: string, options: { v1: boolean; v2: boolean; v1SessionTable: boolean }): void {
+interface DbOptions {
+  v1: boolean;
+  v2: boolean;
+  v1SessionTable: boolean;
+}
+
+function writeDb(dbPath: string, options: DbOptions): void {
   const db = new Database(dbPath, { create: true });
   db.run("PRAGMA journal_mode = WAL");
+  seed(db, () => writeTables(db, options));
+  db.close();
+}
+
+function writeTables(db: Database, options: DbOptions): void {
   db.run(options.v2 ? V2_DDL : V1_PROJECT_DDL);
   if (options.v1) db.run(V1_SESSION_DDL);
 
@@ -589,8 +601,6 @@ function writeDb(dbPath: string, options: { v1: boolean; v2: boolean; v1SessionT
       insertMessage.run(row.id, row.sessionID, row.type, seq, row.created, row.created, JSON.stringify(row.data));
     }
   }
-
-  db.close();
 }
 
 /**

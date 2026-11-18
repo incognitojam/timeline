@@ -630,17 +630,19 @@ describe("importT3Code across store versions", () => {
     try {
       const v1Path = join(root, "v1", "state.sqlite");
       const v1 = createT3Fixture(v1Path);
-      v1.prepare("INSERT INTO projection_projects VALUES (?, 'demo-app', '/home/alice/code/demo-app')")
-        .run(FIXTURE.projectId);
-      v1.prepare(
-        `INSERT INTO projection_threads VALUES (?, ?, 'Legacy thread', NULL, NULL, '{"instanceId":"codex","model":"gpt-5.4"}', NULL, NULL)`
-      ).run(FIXTURE.threads.legacy, FIXTURE.projectId);
-      v1.prepare(
-        "INSERT INTO projection_thread_messages VALUES (?, ?, 'legacy-turn-1', 'user', 'Legacy question', 0, '2026-04-01T09:00:00.000Z', NULL)"
-      ).run(FIXTURE.legacy.messageId, FIXTURE.threads.legacy);
-      v1.prepare(
-        "INSERT INTO projection_thread_activities VALUES (?, ?, 'legacy-turn-1', 'tool', 'tool.completed', 'Ran command', ?, '2026-04-01T09:01:00.000Z', 1)"
-      ).run(FIXTURE.legacy.completedActivityId, FIXTURE.threads.legacy, codexCommandPayload);
+      seed(v1, () => {
+        v1.prepare("INSERT INTO projection_projects VALUES (?, 'demo-app', '/home/alice/code/demo-app')")
+          .run(FIXTURE.projectId);
+        v1.prepare(
+          `INSERT INTO projection_threads VALUES (?, ?, 'Legacy thread', NULL, NULL, '{"instanceId":"codex","model":"gpt-5.4"}', NULL, NULL)`
+        ).run(FIXTURE.threads.legacy, FIXTURE.projectId);
+        v1.prepare(
+          "INSERT INTO projection_thread_messages VALUES (?, ?, 'legacy-turn-1', 'user', 'Legacy question', 0, '2026-04-01T09:00:00.000Z', NULL)"
+        ).run(FIXTURE.legacy.messageId, FIXTURE.threads.legacy);
+        v1.prepare(
+          "INSERT INTO projection_thread_activities VALUES (?, ?, 'legacy-turn-1', 'tool', 'tool.completed', 'Ran command', ?, '2026-04-01T09:01:00.000Z', 1)"
+        ).run(FIXTURE.legacy.completedActivityId, FIXTURE.threads.legacy, codexCommandPayload);
+      });
       v1.close();
       const v2Path = join(root, "v2", "statev2.sqlite");
       createT3CodeV2Fixture(v2Path).close();
