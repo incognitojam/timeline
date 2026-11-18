@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, jest } from "bun:test";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -69,6 +69,76 @@ describe("createBoundedWriter", () => {
     expect(writer.stats.transactions).toBe(3);
     expect(otherWrites).toBeGreaterThan(0);
     expect(rows()).toEqual([1, 2, 3]);
+  });
+
+  describe("pauses", () => {
+    const PAUSE_MS = 110;
+    // Fake timers stand in for the pause, so nothing here waits on the clock.
+    beforeEach(() => {
+      jest.useFakeTimers();
+    });
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    const settle = async () => {
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+    };
+
+    /**
+     * Runs a flush to completion, releasing one pause at a time, and returns
+     * what happened in order. Each pause must last the full `PAUSE_MS`.
+     */
+    async function drive(writer: ReturnType<typeof createBoundedWriter>, log: string[]): Promise<string[]> {
+      let done = false;
+      const flushed = writer.flush().then(() => {
+        done = true;
+      });
+      await settle();
+      while (!done) {
+        expect(jest.getTimerCount()).toBe(1);
+        const commits = log.length;
+        jest.advanceTimersByTime(PAUSE_MS - 1);
+        await settle();
+        expect(log.length).toBe(commits);
+        log.push("pause");
+        jest.advanceTimersByTime(1);
+        await settle();
+      }
+      await flushed;
+      expect(jest.getTimerCount()).toBe(0);
+      return log;
+    }
+
+    async function writerWith(batches: number, log: string[]) {
+      // A zero hold limit commits each write in its own transaction.
+      const writer = createBoundedWriter(db, { ...FAST, pauseMs: PAUSE_MS, maxHoldMs: 0 }, {
+        afterCommit: () => log.push("commit"),
+      });
+      for (let n = 1; n <= batches; n++) await writer.add(insert(n));
+      return writer;
+    }
+
+    it("leaves a pause between consecutive commits and none after the last", async () => {
+      const log: string[] = [];
+      const writer = await writerWith(3, log);
+      expect(await drive(writer, log)).toEqual(["commit", "pause", "commit", "pause", "commit"]);
+      expect(rows()).toEqual([1, 2, 3]);
+    });
+
+    it("returns from a single commit without pausing", async () => {
+      const log: string[] = [];
+      const writer = await writerWith(1, log);
+      expect(await drive(writer, log)).toEqual(["commit"]);
+    });
+
+    it("pauses before a later flush's first commit", async () => {
+      const log: string[] = [];
+      const writer = await writerWith(1, log);
+      await drive(writer, log);
+      await writer.add(insert(2));
+      expect(await drive(writer, log)).toEqual(["commit", "pause", "commit"]);
+    });
   });
 
   it("waits for a transaction open on the same thread without blocking it", async () => {
