@@ -2,11 +2,21 @@ import type { EChartsOption } from "echarts";
 import { EChartsAutoSize } from "../ui/echarts";
 import { createMemo, createSignal, Show } from "solid-js";
 import type { AttachmentDescriptionHistoryPoint } from "../lib/api";
+import {
+  changeLabel,
+  coverageSnapshot,
+  DAY_MS,
+  deltaLabel,
+  fmt,
+  formatDay,
+  type HistoryRange,
+  historySummaryText,
+  parseDay,
+  summarizeHistory,
+} from "../lib/attachment-description-history";
 import { useChartTheme } from "../lib/echarts-theme";
 import { useAttachmentDescriptionHistory } from "../lib/queries";
 import SegmentedControl from "../ui/SegmentedControl";
-
-type HistoryRange = "30d" | "90d" | "all";
 
 const RANGE_OPTIONS = [
   { value: "30d", label: "30d" },
@@ -14,16 +24,11 @@ const RANGE_OPTIONS = [
   { value: "all", label: "All" },
 ] as const satisfies readonly { value: HistoryRange; label: string }[];
 
-/** Window length in days, counted back from today. `null` = everything recorded. */
-const RANGE_DAYS: Record<HistoryRange, number | null> = { "30d": 30, "90d": 90, all: null };
-
 const RANGE_EMPTY: Record<HistoryRange, string> = {
   "30d": "No description runs recorded in the last 30 days.",
   "90d": "No description runs recorded in the last 90 days.",
   all: "No description runs recorded yet.",
 };
-
-const DAY_MS = 86_400_000;
 
 /** Series names are the legend, tooltip, and test-facing contract of the chart. */
 const SERIES = {
@@ -45,44 +50,12 @@ const OUTCOME = {
   failed: "#e0524b",
 } as const;
 
-function fmt(n: number): string {
-  return n.toLocaleString();
-}
-
 function fmtCompact(n: number): string {
   return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 })
     .format(n);
 }
 
-/** `YYYY-MM-DD` → UTC midnight ms, so day boundaries never drift with the viewer's zone. */
-function parseDay(date: string): number {
-  const [year, month, day] = date.split("-").map(Number);
-  return Date.UTC(year ?? 1970, (month ?? 1) - 1, day ?? 1);
-}
-
-function formatDay(ms: number, withYear = false): string {
-  return new Date(ms).toLocaleDateString(undefined, {
-    timeZone: "UTC",
-    month: "short",
-    day: "numeric",
-    ...(withYear ? { year: "numeric" as const } : {}),
-  });
-}
-
 type Point = AttachmentDescriptionHistoryPoint;
-
-interface CoverageSnapshot {
-  date: string;
-  percent: number;
-}
-
-/** Only exact recorded snapshots count — a null denominator is never reconstructed. */
-function coverageSnapshot(point: Point): CoverageSnapshot | null {
-  const eligible = point.descriptionEligibleHashes;
-  const described = point.describedHashes;
-  if (eligible === null || described === null || eligible <= 0) return null;
-  return { date: point.date, percent: Math.round((described / eligible) * 100) };
-}
 
 /**
  * Long-horizon companion to the per-run queue chart on the sync source page:
@@ -108,115 +81,15 @@ export default function AttachmentDescriptionHistoryCard() {
     historyQuery.isPending || historyQuery.isLoadingError ? [] : historyQuery.data?.points ?? []
   );
 
-  // Client-side window over the single all-history response: switching ranges
-  // re-slices what is already cached and never issues another request. The
-  // window is counted back from today in UTC, matching how the daily points
-  // are bucketed, so a stale dataset reads as empty rather than as recent.
-  const points = createMemo<Point[]>(() => {
-    const recorded = allPoints();
-    const days = RANGE_DAYS[range()];
-    if (days === null || recorded.length === 0) return recorded;
-    const now = new Date();
-    const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-    const cutoff = today - (days - 1) * DAY_MS;
-    return recorded.filter((point) => parseDay(point.date) >= cutoff);
-  });
-
-  const queuePoints = createMemo(() => points().filter((point) => point.queueDepth !== null));
-
-  const totals = createMemo(() =>
-    points().reduce(
-      (acc, point) => ({
-        described: acc.described + point.described,
-        skipped: acc.skipped + point.skipped,
-        failed: acc.failed + point.failed,
-      }),
-      { described: 0, skipped: 0, failed: 0 },
-    )
-  );
-
+  const summary = createMemo(() => summarizeHistory(allPoints(), range(), new Date()));
+  const points = () => summary().points;
+  const totals = () => summary().totals;
   const hasQuietDetail = () => totals().skipped > 0 || totals().failed > 0;
-
-  // The header carries one date span and nothing else — the segmented control
-  // already states which window is selected.
-  const span = createMemo(() => {
-    const first = points()[0];
-    const last = points().at(-1);
-    if (!first || !last) return null;
-    return { from: formatDay(parseDay(first.date)), to: formatDay(parseDay(last.date), true) };
-  });
-
-  const queueSummary = createMemo(() => {
-    const first = queuePoints()[0];
-    const last = queuePoints().at(-1);
-    if (!first || !last || first.queueDepth === null || last.queueDepth === null) return null;
-    return {
-      latest: last.queueDepth,
-      latestDate: formatDay(parseDay(last.date)),
-      firstDepth: first.queueDepth,
-      firstDate: formatDay(parseDay(first.date)),
-      change: last.queueDepth - first.queueDepth,
-    };
-  });
-
-  // Coverage stays hidden until two exact snapshots exist in the window, and
-  // then reads as one figure plus its movement: the stats header above remains
-  // the live source of truth for the current percentage.
-  const coverage = createMemo(() => {
-    const snapshots = points()
-      .map(coverageSnapshot)
-      .filter((snapshot): snapshot is CoverageSnapshot => snapshot !== null);
-    const first = snapshots[0];
-    const last = snapshots.at(-1);
-    if (snapshots.length < 2 || !first || !last) return null;
-    return {
-      percent: last.percent,
-      delta: last.percent - first.percent,
-      sinceDate: formatDay(parseDay(first.date)),
-    };
-  });
-
-  const changeLabel = (change: number) =>
-    change === 0 ? "no net change" : `${fmt(Math.abs(change))} ${change < 0 ? "fewer" : "more"}`;
-
-  const deltaLabel = (delta: number) =>
-    delta === 0 ? "no change" : `${delta > 0 ? "+" : "−"}${Math.abs(delta)} pts`;
-
-  /** Spoken form of the same delta: "+16 pts" reads badly out loud. */
-  const spokenDelta = (delta: number) =>
-    delta === 0 ? "unchanged" : `${delta > 0 ? "up" : "down"} ${Math.abs(delta)} points`;
 
   const headerFallback = () => {
     if (historyQuery.isLoadingError) return "History unavailable";
     if (historyQuery.isPending) return "Daily backlog and outcomes";
     return "No recorded days";
-  };
-
-  const chartSummary = () => {
-    const recorded = span();
-    const queue = queueSummary();
-    const t = totals();
-    if (!recorded) return "No description history in the selected range.";
-    const parts = [
-      `Attachment description backlog by day, ${recorded.from} to ${recorded.to}.`,
-    ];
-    parts.push(
-      queue
-        ? `Backlog ${fmt(queue.latest)} files on ${queue.latestDate}, ` +
-          `${changeLabel(queue.change)} than ${fmt(queue.firstDepth)} on ${queue.firstDate}.`
-        : "No end-of-day backlog readings recorded in this range.",
-    );
-    parts.push(
-      `Description outcomes in range: ${fmt(t.described)} described, ${fmt(t.skipped)} skipped, ` +
-        `${fmt(t.failed)} failed.`,
-    );
-    const cov = coverage();
-    if (cov) {
-      parts.push(
-        `Coverage ${cov.percent} percent, ${spokenDelta(cov.delta)} since ${cov.sinceDate}.`,
-      );
-    }
-    return parts.join(" ");
   };
 
   const chartOption = createMemo((): EChartsOption | null => {
@@ -367,8 +240,10 @@ export default function AttachmentDescriptionHistoryCard() {
             >
               Description backlog
             </h2>
+            {/* One date span and nothing else: the segmented control already
+                states which window is selected. */}
             <p class="mt-0.5 text-xs text-muted-foreground">
-              <Show when={span()} fallback={headerFallback()}>
+              <Show when={summary().span} fallback={headerFallback()}>
                 {(recorded) => (
                   <span class="font-mono">{recorded().from} – {recorded().to}</span>
                 )}
@@ -437,7 +312,7 @@ export default function AttachmentDescriptionHistoryCard() {
                 <div class="mt-3 flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
                   <div class="flex flex-wrap gap-x-6 gap-y-2">
                     <Show
-                      when={queueSummary()}
+                      when={summary().queue}
                       fallback={<Metric label="Latest backlog" value="—" hint="no readings" />}
                     >
                       {(queue) => (
@@ -493,13 +368,13 @@ export default function AttachmentDescriptionHistoryCard() {
                   </span>
                 </div>
 
-                <div class="mt-2 h-40 sm:h-48" role="img" aria-label={chartSummary()}>
+                <div class="mt-2 h-40 sm:h-48" role="img" aria-label={historySummaryText(summary())}>
                   <EChartsAutoSize option={chart.option(option())} />
                 </div>
 
                 {/* Exact coverage only, as one figure and its movement. Fewer
                     than two recorded snapshots renders nothing at all. */}
-                <Show when={coverage()}>
+                <Show when={summary().coverage}>
                   {(cov) => (
                     <div class="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-border pt-2 text-[11px] text-muted-foreground">
                       <span class="uppercase tracking-wide">Eligible described</span>
