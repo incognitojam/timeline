@@ -21,170 +21,87 @@ import { Database } from "../db/sqlite";
 import { getDb, initDb } from "../db/schema";
 import { populateEventPeople } from "../db/queries";
 
-interface VerificationResult {
-  orphanedRows: number;
-  staleRows: number;
-  missingRows: number;
-  mismatchedMetadata: number;
+interface Check {
+  label: string;
+  from: string;
+  where: string;
+  /** Columns for a sample row: eventId, person, source and issue. */
+  sample: string;
 }
 
-interface SampleMismatch {
+const EVENT_PEOPLE_WITH_EVENT = "event_people ep JOIN events e ON e.id = ep.event_id";
+
+const CHECKS = {
+  // A row whose event no longer exists
+  orphanedRows: {
+    label: "Orphaned rows (event deleted)",
+    from: "event_people ep",
+    where: "NOT EXISTS (SELECT 1 FROM events e WHERE e.id = ep.event_id)",
+    sample: "ep.event_id AS eventId, ep.person, ep.source, 'orphaned (event deleted)' AS issue",
+  },
+  // A person removed from events.people whose row the trigger failed to delete
+  staleRows: {
+    label: "Stale rows (person removed)",
+    from: EVENT_PEOPLE_WITH_EVENT,
+    where: `NOT EXISTS (
+      SELECT 1 FROM json_each(COALESCE(e.people, '[]')) p
+      WHERE p.value = ep.person AND p.value IS NOT NULL AND p.value != ''
+    )`,
+    sample: "ep.event_id AS eventId, ep.person, ep.source, 'stale (person removed from event)' AS issue",
+  },
+  // A person added to events.people whose row the trigger failed to insert
+  missingRows: {
+    label: "Missing rows (not indexed)",
+    from: "events e, json_each(e.people) p",
+    where: `e.people IS NOT NULL
+      AND p.value IS NOT NULL
+      AND p.value != ''
+      AND NOT EXISTS (
+        SELECT 1 FROM event_people ep
+        WHERE ep.event_id = e.id AND ep.person = p.value
+      )`,
+    sample: "e.id AS eventId, p.value AS person, e.source, 'missing (not in event_people)' AS issue",
+  },
+  // A row whose source or timestamp no longer matches its event
+  mismatchedMetadata: {
+    label: "Metadata mismatches",
+    from: EVENT_PEOPLE_WITH_EVENT,
+    where: `ep.source != e.source
+      OR (ep.timestamp IS NULL AND e.timestamp IS NOT NULL)
+      OR (ep.timestamp IS NOT NULL AND e.timestamp IS NULL)
+      OR ep.timestamp != e.timestamp`,
+    sample: "ep.event_id AS eventId, ep.person, ep.source, 'metadata mismatch (source: ' || ep.source || ' vs ' || e.source || ')' AS issue",
+  },
+} as const satisfies Record<string, Check>;
+
+export type VerificationResult = Record<keyof typeof CHECKS, number>;
+
+export interface SampleMismatch {
   eventId: number;
   person: string;
   source: string;
   issue: string;
 }
 
-/**
- * Check 1: event_people rows without corresponding events (orphaned)
- */
-function countOrphanedRows(db: Database): number {
-  const result = db.prepare(`
-    SELECT COUNT(*) as count
-    FROM event_people ep
-    WHERE NOT EXISTS (SELECT 1 FROM events e WHERE e.id = ep.event_id)
-  `).get() as { count: number };
-  return result.count;
+/** Counts the rows that fail each check; all zeros means event_people matches events.people. */
+export function verifyEventPeople(db: Database): VerificationResult {
+  return Object.fromEntries(
+    Object.entries(CHECKS).map(([name, check]) => {
+      const row = db.prepare(`SELECT COUNT(*) AS count FROM ${check.from} WHERE ${check.where}`).get() as { count: number };
+      return [name, row.count];
+    }),
+  ) as VerificationResult;
 }
 
-/**
- * Check 2: event_people rows where person not in events.people JSON (stale)
- * This happens when a person was removed from events.people but the trigger failed
- */
-function countStaleRows(db: Database): number {
-  const result = db.prepare(`
-    SELECT COUNT(*) as count
-    FROM event_people ep
-    JOIN events e ON e.id = ep.event_id
-    WHERE NOT EXISTS (
-      SELECT 1 FROM json_each(COALESCE(e.people, '[]')) p
-      WHERE p.value = ep.person AND p.value IS NOT NULL AND p.value != ''
-    )
-  `).get() as { count: number };
-  return result.count;
+/** Up to `limit` failing rows per check, in check order. */
+export function sampleMismatches(db: Database, limit: number): SampleMismatch[] {
+  return Object.values(CHECKS).flatMap(
+    (check) => db.prepare(`SELECT ${check.sample} FROM ${check.from} WHERE ${check.where} LIMIT ?`).all(limit) as SampleMismatch[],
+  );
 }
 
-/**
- * Check 3: events.people values missing from event_people (missing)
- * This happens when a person was added to events.people but the trigger failed
- */
-function countMissingRows(db: Database): number {
-  const result = db.prepare(`
-    SELECT COUNT(*) as count
-    FROM events e, json_each(e.people) p
-    WHERE e.people IS NOT NULL
-      AND p.value IS NOT NULL
-      AND p.value != ''
-      AND NOT EXISTS (
-        SELECT 1 FROM event_people ep
-        WHERE ep.event_id = e.id AND ep.person = p.value
-      )
-  `).get() as { count: number };
-  return result.count;
-}
-
-/**
- * Check 4: event_people rows with mismatched source/timestamp
- * This happens when events were updated but event_people wasn't
- */
-function countMismatchedMetadata(db: Database): number {
-  const result = db.prepare(`
-    SELECT COUNT(*) as count
-    FROM event_people ep
-    JOIN events e ON e.id = ep.event_id
-    WHERE ep.source != e.source
-      OR (ep.timestamp IS NULL AND e.timestamp IS NOT NULL)
-      OR (ep.timestamp IS NOT NULL AND e.timestamp IS NULL)
-      OR ep.timestamp != e.timestamp
-  `).get() as { count: number };
-  return result.count;
-}
-
-/**
- * Get sample mismatches for debugging
- */
-function getSampleMismatches(db: Database, limit: number = 10): SampleMismatch[] {
-  const samples: SampleMismatch[] = [];
-
-  // Sample orphaned rows
-  const orphaned = db.prepare(`
-    SELECT ep.event_id, ep.person, ep.source
-    FROM event_people ep
-    WHERE NOT EXISTS (SELECT 1 FROM events e WHERE e.id = ep.event_id)
-    LIMIT ?
-  `).all(limit) as Array<{ event_id: number; person: string; source: string }>;
-  for (const row of orphaned) {
-    samples.push({
-      eventId: row.event_id,
-      person: row.person,
-      source: row.source,
-      issue: "orphaned (event deleted)",
-    });
-  }
-
-  // Sample stale rows
-  const stale = db.prepare(`
-    SELECT ep.event_id, ep.person, ep.source
-    FROM event_people ep
-    JOIN events e ON e.id = ep.event_id
-    WHERE NOT EXISTS (
-      SELECT 1 FROM json_each(COALESCE(e.people, '[]')) p
-      WHERE p.value = ep.person AND p.value IS NOT NULL AND p.value != ''
-    )
-    LIMIT ?
-  `).all(limit) as Array<{ event_id: number; person: string; source: string }>;
-  for (const row of stale) {
-    samples.push({
-      eventId: row.event_id,
-      person: row.person,
-      source: row.source,
-      issue: "stale (person removed from event)",
-    });
-  }
-
-  // Sample missing rows
-  const missing = db.prepare(`
-    SELECT e.id as event_id, p.value as person, e.source
-    FROM events e, json_each(e.people) p
-    WHERE e.people IS NOT NULL
-      AND p.value IS NOT NULL
-      AND p.value != ''
-      AND NOT EXISTS (
-        SELECT 1 FROM event_people ep
-        WHERE ep.event_id = e.id AND ep.person = p.value
-      )
-    LIMIT ?
-  `).all(limit) as Array<{ event_id: number; person: string; source: string }>;
-  for (const row of missing) {
-    samples.push({
-      eventId: row.event_id,
-      person: row.person,
-      source: row.source,
-      issue: "missing (not in event_people)",
-    });
-  }
-
-  // Sample mismatched metadata
-  const mismatched = db.prepare(`
-    SELECT ep.event_id, ep.person, ep.source, e.source as expected_source
-    FROM event_people ep
-    JOIN events e ON e.id = ep.event_id
-    WHERE ep.source != e.source
-      OR (ep.timestamp IS NULL AND e.timestamp IS NOT NULL)
-      OR (ep.timestamp IS NOT NULL AND e.timestamp IS NULL)
-      OR ep.timestamp != e.timestamp
-    LIMIT ?
-  `).all(limit) as Array<{ event_id: number; person: string; source: string; expected_source: string }>;
-  for (const row of mismatched) {
-    samples.push({
-      eventId: row.event_id,
-      person: row.person,
-      source: row.source,
-      issue: `metadata mismatch (source: ${row.source} vs ${row.expected_source})`,
-    });
-  }
-
-  return samples;
+function issueCount(result: VerificationResult): number {
+  return Object.values(result).reduce((sum, count) => sum + count, 0);
 }
 
 /**
@@ -268,36 +185,25 @@ async function main() {
 
     const startTime = Date.now();
 
-    result = {
-      orphanedRows: countOrphanedRows(db),
-      staleRows: countStaleRows(db),
-      missingRows: countMissingRows(db),
-      mismatchedMetadata: countMismatchedMetadata(db),
-    };
+    result = verifyEventPeople(db);
 
     duration = Date.now() - startTime;
 
-    const checks = [
-      { name: "Orphaned rows (event deleted)", count: result.orphanedRows },
-      { name: "Stale rows (person removed)", count: result.staleRows },
-      { name: "Missing rows (not indexed)", count: result.missingRows },
-      { name: "Metadata mismatches", count: result.mismatchedMetadata },
-    ];
-
-    for (const check of checks) {
-      const status = check.count === 0 ? "PASS" : "FAIL";
-      console.log(`  ${check.name.padEnd(35)} ${formatCount(check.count).padStart(12)}  ${status}`);
+    for (const [name, check] of Object.entries(CHECKS) as Array<[keyof typeof CHECKS, Check]>) {
+      const count = result[name];
+      const status = count === 0 ? "PASS" : "FAIL";
+      console.log(`  ${check.label.padEnd(35)} ${formatCount(count).padStart(12)}  ${status}`);
     }
 
     console.log(`\n  Verification completed in ${duration}ms`);
 
-    totalIssues = result.orphanedRows + result.staleRows + result.missingRows + result.mismatchedMetadata;
+    totalIssues = issueCount(result);
     hasIssues = totalIssues > 0;
 
     // Show sample mismatches if verbose and issues found
     if (verbose && hasIssues) {
       printSection("Sample Mismatches");
-      const samples = getSampleMismatches(db, 5);
+      const samples = sampleMismatches(db, 5);
       for (const sample of samples) {
         console.log(`  Event ${sample.eventId}: ${sample.person} (${sample.source})`);
         console.log(`    Issue: ${sample.issue}`);
@@ -339,12 +245,7 @@ async function main() {
       db.exec("BEGIN");
       let postResult: VerificationResult;
       try {
-        postResult = {
-          orphanedRows: countOrphanedRows(db),
-          staleRows: countStaleRows(db),
-          missingRows: countMissingRows(db),
-          mismatchedMetadata: countMismatchedMetadata(db),
-        };
+        postResult = verifyEventPeople(db);
         db.exec("COMMIT");
       } catch (err) {
         try {
@@ -355,7 +256,7 @@ async function main() {
         throw err;
       }
 
-      const postTotalIssues = postResult.orphanedRows + postResult.staleRows + postResult.missingRows + postResult.mismatchedMetadata;
+      const postTotalIssues = issueCount(postResult);
       finalHasIssues = postTotalIssues > 0;
       finalIssueCount = postTotalIssues;
 
@@ -396,7 +297,9 @@ async function main() {
   process.exit(finalHasIssues ? 1 : 0);
 }
 
-main().catch((err) => {
-  console.error("Verification failed with error:", err);
-  process.exit(1);
-});
+if (import.meta.main) {
+  main().catch((err) => {
+    console.error("Verification failed with error:", err);
+    process.exit(1);
+  });
+}
