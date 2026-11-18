@@ -4,12 +4,13 @@
  * directory, temporary files) from the developer's environment.
  */
 
+import { recordQueryPlans } from "../src/testing/query-plans/recorder";
 import { afterAll, mock } from "bun:test";
 import { Database } from "../src/db/sqlite";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { createRequire } from "module";
 import * as os from "os";
-import { join } from "path";
+import { join, resolve } from "path";
 import { createTestFetchGuard } from "../src/testing/fetch-guard";
 import { removeStaleRunDirectories, runDirectoryPrefix } from "../src/testing/run-directories";
 
@@ -34,7 +35,23 @@ const hostTmpdir = os.tmpdir();
 removeStaleRunDirectories(hostTmpdir);
 const runRoot = mkdtempSync(join(hostTmpdir, runDirectoryPrefix()));
 // A preload-level afterAll runs once, after every test file.
-afterAll(() => rmSync(runRoot, { recursive: true, force: true }));
+const queryPlanMode = process.env.TIMELINE_QUERY_PLAN_FULL_SUITE;
+if (queryPlanMode !== undefined && queryPlanMode !== "0" && queryPlanMode !== "1") throw new Error("TIMELINE_QUERY_PLAN_FULL_SUITE must be 0 or 1");
+const fullQueryPlanSuite = queryPlanMode === "1";
+delete process.env.TIMELINE_QUERY_PLAN_FULL_SUITE;
+const queryChecker = resolve(import.meta.dir, "../src/testing/query-plans/check.ts");
+const finishQueryRecording = recordQueryPlans();
+afterAll(() => {
+  try {
+    const recordingPath = join(runRoot, "query-plans.json");
+    const recording = { ...finishQueryRecording(), fullSuite: fullQueryPlanSuite };
+    writeFileSync(recordingPath, JSON.stringify(recording));
+    const result = Bun.spawnSync([process.execPath, "--no-env-file", queryChecker, recordingPath], { env: process.env, stdout: "inherit", stderr: "inherit" });
+    if (result.exitCode !== 0) throw new Error(`Recorded query-plan check failed (exit ${result.exitCode})`);
+  } finally {
+    rmSync(runRoot, { recursive: true, force: true });
+  }
+});
 
 function runPath(name: string, kind: "dir" | "file" = "dir"): string {
   const path = join(runRoot, name);

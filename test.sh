@@ -135,7 +135,10 @@ run_backend_tests() {
   elif [ "$(uname -s)" = Darwin ]; then
     echo "Skipping sqlite-vec tests: macOS's SQLite cannot load extensions. Install Homebrew's sqlite to run them." >&2
   fi
-  bun test --timeout 30000 --max-concurrency 4 || return "$?"
+  # The preload records application SQL and checks the combined plans in its final hook.
+  local full_query_plan_suite=0
+  if [ -n "${CI:-}" ]; then full_query_plan_suite=1; fi
+  TIMELINE_QUERY_PLAN_FULL_SUITE="$full_query_plan_suite" bun test --timeout 30000 --max-concurrency 4 || return "$?"
   # bunfig.toml pins discovery to src/, so scripts/ needs an explicit path.
   bun test --timeout 30000 ./scripts/
 }
