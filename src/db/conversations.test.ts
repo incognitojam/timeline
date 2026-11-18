@@ -136,35 +136,6 @@ describe("conversation linking by conversation_id", () => {
     expect(rows.map((row) => row.type)).toEqual(cases.filter(isConversationEventType));
   });
 
-  test("renamed channel collapses to one conversation in listConversations", async () => {
-    const channelId = "9100000000000000000";
-    insertDiscordMessage({
-      sourceId: "m1",
-      sourceAccount: "alice",
-      title: "Example Guild Archived #example-project",
-      conversationId: channelId,
-      content: "old title message",
-      timestamp: "2026-01-01T00:00:00Z",
-    });
-    insertDiscordMessage({
-      sourceId: "m2",
-      sourceAccount: "alice",
-      title: "Example Guild Archived #📍 example-project",
-      conversationId: channelId,
-      content: "new title message",
-      timestamp: "2026-02-01T00:00:00Z",
-    });
-
-    const { conversations, total } = await listConversations(wrapDatabase(db), { scope: "messages" });
-
-    expect(total).toBe(1);
-    expect(conversations).toHaveLength(1);
-    expect(conversations[0].conversationId).toBe(channelId);
-    expect(conversations[0].messageCount).toBe(2);
-    // The displayed title is the most recent one (after the rename).
-    expect(conversations[0].title).toBe("Example Guild Archived #📍 example-project");
-  });
-
   test("listConversationSources returns sources with conversation summaries", async () => {
     insertDiscordMessage({
       sourceId: "sources-discord-1",
@@ -257,37 +228,6 @@ describe("conversation linking by conversation_id", () => {
     });
 
     expect(metadata.server).toBeNull();
-  });
-
-  test("getConversation by conversation_id returns both pre- and post-rename messages", async () => {
-    const channelId = "9100000000000000000";
-    insertDiscordMessage({
-      sourceId: "m1",
-      sourceAccount: "alice",
-      title: "Example Guild Archived #example-project",
-      conversationId: channelId,
-      content: "old title message",
-      timestamp: "2026-01-01T00:00:00Z",
-    });
-    insertDiscordMessage({
-      sourceId: "m2",
-      sourceAccount: "alice",
-      title: "Example Guild Archived #📍 example-project",
-      conversationId: channelId,
-      content: "new title message",
-      timestamp: "2026-02-01T00:00:00Z",
-    });
-
-    const events = await getConversation(wrapDatabase(db), {
-      conversationId: channelId,
-      source: "discord",
-    });
-
-    expect(events).toHaveLength(2);
-    expect(events.map((e) => e.content).sort()).toEqual([
-      "new title message",
-      "old title message",
-    ]);
   });
 
   test("getConversationAround spans the rename boundary", async () => {
@@ -549,7 +489,7 @@ describe("conversation linking by conversation_id", () => {
 
   test("getConversation resolves conversation_id threads through summaries and uses the conversation-id index", async () => {
     insertDiscordMessage({ sourceId: "d1", sourceAccount: "me", title: "general", conversationId: "chan-1", content: "one", timestamp: "2026-01-01T00:00:00Z" });
-    insertDiscordMessage({ sourceId: "d2", sourceAccount: "me", title: "general", conversationId: "chan-1", content: "two", timestamp: "2026-01-02T00:00:00Z" });
+    insertDiscordMessage({ sourceId: "d2", sourceAccount: "me", title: "renamed", conversationId: "chan-1", content: "two", timestamp: "2026-01-02T00:00:00Z" });
     // Decoy: a different channel that happens to share the title — must not merge in.
     insertDiscordMessage({ sourceId: "d3", sourceAccount: "me", title: "general", conversationId: "chan-2", content: "other channel", timestamp: "2025-12-31T00:00:00Z" });
     const recording = createRecordingExecutor(db);
@@ -569,22 +509,6 @@ describe("conversation linking by conversation_id", () => {
     );
     if (!eventQuery) throw new Error("Expected getConversation to query events");
     expectBoundedConversationIdLookup(explainPlan(eventQuery.sql, eventQuery.params));
-  });
-
-  test("keyless stale rows are absent from conversation summaries", async () => {
-    allowLegacyNullConversationIds();
-    // Facebook-style: no stable ID, multiple events under one title.
-    db.prepare(`
-      INSERT INTO events (source, source_id, source_account, type, timestamp, title, raw_data, conversation_id)
-      VALUES ('facebook', 'm1', 'alice', 'message:dm', '2026-01-01T00:00:00Z', 'Bob', '{}', NULL),
-             ('facebook', 'm2', 'alice', 'message:dm', '2026-01-02T00:00:00Z', 'Bob', '{}', NULL),
-             ('facebook', 'm3', 'alice', 'message:dm', '2026-01-03T00:00:00Z', 'Carol', '{}', NULL)
-    `).run();
-
-    const { conversations, total } = await listConversations(wrapDatabase(db), { scope: "messages" });
-
-    expect(total).toBe(0);
-    expect(conversations).toEqual([]);
   });
 
   test("NULL and empty source accounts are rejected for new conversation events", () => {
@@ -628,13 +552,16 @@ describe("conversation linking by conversation_id", () => {
     });
     db.prepare(`
       INSERT INTO events (source, source_id, source_account, type, timestamp, title, raw_data, conversation_id)
-      VALUES ('facebook', 'fb1', 'alice', 'message:dm', '2026-01-15T00:00:00Z', 'Bob', '{}', NULL)
+      VALUES ('facebook', 'fb1', 'alice', 'message:dm', '2026-01-15T00:00:00Z', 'Bob', '{}', NULL),
+             ('facebook', 'fb2', 'alice', 'message:dm', '2026-01-16T00:00:00Z', 'Bob', '{}', NULL)
     `).run();
 
     const { conversations, total } = await listConversations(wrapDatabase(db), { scope: "messages" });
 
     expect(total).toBe(1);
     const discord = conversations.find((c) => c.source === "discord");
+    expect(conversations).toHaveLength(1);
+    expect(discord?.conversationId).toBe(channelId);
     expect(discord?.title).toBe("new title");
     expect(discord?.messageCount).toBe(2);
     expect(conversations.some((c) => c.source === "facebook")).toBe(false);

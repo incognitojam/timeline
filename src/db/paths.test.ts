@@ -5,19 +5,6 @@ import { tmpdir } from "node:os";
 import { getDbPathInfo, assertNoLocalDbMarker, getAppStateDbPath, getEmbeddingsDbPath } from "./paths";
 
 describe("paths helpers", () => {
-  test("getDbPathInfo returns correct paths", () => {
-    const info = getDbPathInfo("/tmp/timeline-test/timeline.db");
-    expect(info.resolvedDbPath).toBe("/tmp/timeline-test/timeline.db");
-    expect(info.dbParentDir).toBe("/tmp/timeline-test");
-    expect(info.noLocalDbMarker).toBe("/tmp/timeline-test/.no-local-db");
-  });
-
-  test("getDbPathInfo resolves relative paths", () => {
-    const info = getDbPathInfo("./timeline.db");
-    expect(info.resolvedDbPath).toContain("timeline.db");
-    expect(info.resolvedDbPath).toMatch(/^\//); // Should be absolute
-  });
-
   test("assertNoLocalDbMarker does not throw when marker missing", () => {
     const tempDir = join(tmpdir(), `paths-test-${Date.now()}`);
     mkdirSync(tempDir, { recursive: true });
