@@ -144,6 +144,12 @@ standalone packaged boundary from a temporary working directory with:
 ./scripts/smoke-service-artifact.sh
 ```
 
+### Linux artifact validation
+
+The service artifact builder can run natively on glibc Linux (x64 or arm64) for CI validation, including a matching Google Messages sidecar and native Sharp/sqlite-vec packages. macOS remains the supported app host. Builds use the executing Bun and the Go version pinned in mise; this is not a cross-build and the artifact layout is unchanged.
+
+`./scripts/smoke-service-artifact.sh` builds and checks a throwaway artifact. Pass an existing artifact directory to check it without rebuilding. The app smoke uses that path against its relocated bundle, including after release signing. Linux loads sqlite-vec with Bun's SQLite; macOS retains the existing optional custom/Homebrew SQLite probe until SQLite is bundled.
+
 ## Changing SQLite
 
 The Linux runtime is SQLite compiled into Bun. `bun run sqlite:pin bun-v<Bun.version>` runs on Linux with that Bun installed and regenerates `src/db/sqlite-pin.ts` from Bun's source and build recipe. Review the manifest when upgrading Bun; the runtime tests reject a changed SQLite version, source id or compile options. The macOS runtime tests explicitly wait for the separate bundled-runtime rollout.

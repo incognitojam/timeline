@@ -3,7 +3,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
-ARTIFACT="$TMP/timeline-service"
+if [ "$#" -gt 1 ]; then
+  echo "usage: $0 [existing-service-artifact]" >&2
+  exit 2
+fi
+ARTIFACT="${1:-$TMP/timeline-service}"
 RUN_CWD="$TMP/run"
 
 cleanup() {
@@ -12,16 +16,24 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$RUN_CWD"
-bun run "$ROOT/scripts/build-service-artifact.ts" --output "$ARTIFACT"
+if [ "$#" -eq 0 ]; then
+  bun run "$ROOT/scripts/build-service-artifact.ts" --output "$ARTIFACT"
+fi
+ARTIFACT="$(cd "$ARTIFACT" && pwd)"
 
 test -x "$ARTIFACT/bin/timeline-service"
 test -x "$ARTIFACT/bin/bun"
+test -x "$ARTIFACT/bin/timeline-gmessages"
+(cd "$RUN_CWD" && "$ARTIFACT/bin/timeline-gmessages" --help) 2> "$TMP/sidecar-help"
+grep -q -- '-existing-media' "$TMP/sidecar-help"
+"$ARTIFACT/bin/bun" --no-env-file "$ROOT/tools/timeline-app/check-sidecar.ts" "$ARTIFACT"
 test -r "$ARTIFACT/bin/timeline-environment"
 grep -q 'NODE_ENV:=production' "$ARTIFACT/bin/timeline-environment"
 grep -q '/opt/homebrew/bin:/usr/local/bin' "$ARTIFACT/bin/timeline-environment"
 test -f "$ARTIFACT/Resources/runtime/service.js"
 test -f "$ARTIFACT/Resources/runtime/scheduler/worker.js"
 test -f "$ARTIFACT/Resources/runtime/db/pool-worker.js"
+test -f "$ARTIFACT/Resources/runtime/db/sqlite.js"
 test -f "$ARTIFACT/Resources/runtime/platforms/monzo/parser.js"
 test -f "$ARTIFACT/Resources/web/index.html"
 test -f "$ARTIFACT/Resources/version.json"
@@ -132,7 +144,7 @@ if [[ "$empty_config_output" != *"TIMELINE_CONFIG must be an absolute path"* ]];
 fi
 
 "$ARTIFACT/bin/bun" --no-env-file -e '
-  import { Database } from "bun:sqlite";
+  const { Database } = await import(process.argv[2]);
   const db = new Database(process.argv[1]);
   db.exec("CREATE TABLE sync_sources (source TEXT PRIMARY KEY, settings TEXT NOT NULL)");
   db.prepare("INSERT INTO sync_sources VALUES (?, ?)").run(
@@ -140,7 +152,7 @@ fi
     JSON.stringify({ destination: "./backups" }),
   );
   db.close();
-' "$ENV_HOME/app-state.db"
+' "$ENV_HOME/app-state.db" "$ARTIFACT/Resources/runtime/db/sqlite.js"
 if sync_path_output="$(
   HOME="$ENV_HOME" TIMELINE_ENV_FILE="$TMP/config.env" \
     "$ARTIFACT/bin/timeline-service" --check-config 2>&1
@@ -235,15 +247,17 @@ if [ -z "$sqlite_library" ] && command -v brew >/dev/null 2>&1; then
   fi
 fi
 
-if [ -n "$sqlite_library" ]; then
+if [ -n "$sqlite_library" ] || [ "$(uname -s)" = Linux ]; then
   echo "Probing packaged sqlite-vec runtime..."
   (
     cd "$ARTIFACT/Resources/runtime"
     TIMELINE_SQLITE_LIBRARY_PATH="$sqlite_library" \
       "$ARTIFACT/bin/bun" --no-env-file -e '
-        import { Database } from "bun:sqlite";
+        import { Database } from "./db/sqlite.js";
         import * as sqliteVec from "sqlite-vec";
-        Database.setCustomSQLite(process.env.TIMELINE_SQLITE_LIBRARY_PATH);
+        if (process.env.TIMELINE_SQLITE_LIBRARY_PATH) {
+          Database.setCustomSQLite(process.env.TIMELINE_SQLITE_LIBRARY_PATH);
+        }
         const db = new Database(":memory:");
         try {
           sqliteVec.load(db);

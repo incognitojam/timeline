@@ -16,11 +16,16 @@ if [ "${1:-}" = --check ]; then exit 0; fi
 if [ "$#" -ne 1 ]; then echo "usage: $0 <service-artifact-directory> | --check" >&2; exit 2; fi
 artifact="$(cd "$1" && pwd)"
 case "$(uname -m)" in
-  arm64) export GOARCH=arm64 ;;
+  arm64 | aarch64) export GOARCH=arm64 ;;
   x86_64) export GOARCH=amd64 ;;
-  *) echo "Unsupported macOS architecture: $(uname -m)" >&2; exit 1 ;;
+  *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
-export GOOS=darwin CGO_ENABLED=0
+case "$(uname -s)" in
+  Darwin) export GOOS=darwin ;;
+  Linux) export GOOS=linux ;;
+  *) echo "Unsupported OS: $(uname -s)" >&2; exit 1 ;;
+esac
+export CGO_ENABLED=0
 cd "$ROOT"
 if ! git check-ignore -q .scratch; then
   printf '\n.scratch/\n' >> "$(git rev-parse --git-path info/exclude)"

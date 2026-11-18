@@ -108,3 +108,6 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Smoke-test source service boot and shutdown
         run: ./scripts/smoke-service.sh
+
+  service-artifact:
+    uses: ./.github/workflows/service-artifact.yml
