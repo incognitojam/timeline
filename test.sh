@@ -195,9 +195,14 @@ start_backend_checks() {
   start_step "Type checking backend" bunx tsc --noEmit
 }
 
+check_frontend_types() {
+  in_web bunx tsc --noEmit || return "$?"
+  in_web bunx tsc --noEmit --project e2e/tsconfig.json
+}
+
 start_frontend_checks() {
   start_step "Running frontend tests" in_web bun run test:run
-  start_step "Type checking frontend" in_web bunx tsc --noEmit
+  start_step "Type checking frontend" check_frontend_types
 }
 
 start_unit_suite() {

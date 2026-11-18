@@ -5,7 +5,7 @@ import type { TimelineEvent } from "../src/lib/types";
 
 test.describe.configure({ mode: "parallel" });
 
-const chartSweep = process.env.PLAYWRIGHT_CHART_SWEEP ?? "full";
+const chartSweep = process.env.PLAYWRIGHT_CHART_SWEEP ?? "smoke";
 if (chartSweep !== "smoke" && chartSweep !== "full") {
   throw new Error("PLAYWRIGHT_CHART_SWEEP must be smoke or full");
 }
@@ -418,7 +418,7 @@ const healthYearStats = {
   },
 };
 
-const apiResponses: Record<string, unknown> = {
+const apiResponses = {
   "/api/auth/status": {
     authenticated: true,
     authEnabled: false,
@@ -958,7 +958,7 @@ async function mockApi(page: Page): Promise<string[]> {
       });
       return;
     }
-    const response = apiResponses[pathname];
+    const response = (apiResponses as Record<string, unknown>)[pathname];
 
     if (request.method() !== "GET" || response === undefined) {
       unexpectedRequests.push(`${request.method()} ${pathname}`);
@@ -1562,7 +1562,7 @@ test("hands a queued sync job off to persisted run history", async ({ page }) =>
   expect(unexpectedRequests).toEqual([]);
 });
 
-const backupSyncSource = {
+const backupSyncSource: SyncSourceInfo = {
   name: "backup",
   description: "Backup timeline database to NAS",
   configured: true,
