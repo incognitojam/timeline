@@ -22,10 +22,10 @@ import {
 } from "../../ingest/ai/image-blocks";
 
 import { createBoundedWriter, type BoundedWriterLimits } from "../../db/bounded-writes";
-import { fileCheckpoints, fileFingerprint } from "../../ingest/file-checkpoints";
+import { fileCheckpoints, fileFingerprint, type FileFingerprint } from "../../ingest/file-checkpoints";
 import { createIdentityCollector } from "../../ingest/ai/import";
 
-// Bump when parsing or dependency discovery changes to revisit every session.
+// Bump when dependency discovery or emitted history changes, including format-content, image blocks or project naming.
 export const CLAUDE_CODE_PARSER_VERSION = 1;
 const DEFAULT_CLAUDE_DIR = `${process.env.HOME}/.claude/projects`;
 
@@ -532,9 +532,10 @@ export async function importClaudeCode(
             if (!(await lstat(join(projectPath, sessionId))).isDirectory()) return [];
             agentFiles = (await readdir(subagentDir)).filter(f => f.startsWith("agent-") && f.endsWith(".jsonl"));
           } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
           }
-          const snapshot: [string, string | null][] = [];
+          const snapshot: [string, FileFingerprint | null][] = [];
           for (const name of agentFiles) {
             const path = join(subagentDir, name);
             snapshot.push([path, await fileFingerprint(path)]);
@@ -544,10 +545,10 @@ export async function importClaudeCode(
         const fingerprint = await fileFingerprint(filePath);
         if (!fingerprint) continue;
         const dependencies = await dependencySnapshot();
-        const dependencyKey = JSON.stringify(dependencies);
+        const dependencyKey = JSON.stringify(dependencies.map(([path, snapshot]) => [path, snapshot?.value ?? null]));
         const saved = checkpoints.saved.get(filePath);
         if (!options.full && !refreshRawData && saved?.version === CLAUDE_CODE_PARSER_VERSION &&
-            saved.fingerprint === fingerprint && saved.dependencies === dependencyKey) {
+            saved.fingerprint === fingerprint.value && saved.dependencies === dependencyKey) {
           stats.filesSkipped += 1 + dependencies.length;
           continue;
         }
@@ -631,10 +632,10 @@ export async function importClaudeCode(
         for (const identity of identities.findStale(db)) {
           await writer.add(() => { upsertIdentities(db, [identity]); pendingCounts.identitiesUpserted++; });
         }
-        if ((saved?.version !== CLAUDE_CODE_PARSER_VERSION || saved.fingerprint !== fingerprint || saved.dependencies !== dependencyKey) &&
-            await fileFingerprint(filePath) === fingerprint && JSON.stringify(await dependencySnapshot()) === dependencyKey) {
+        if ((saved?.version !== CLAUDE_CODE_PARSER_VERSION || saved.fingerprint !== fingerprint.value || saved.dependencies !== dependencyKey) &&
+            fingerprint.checkpointable && dependencies.every(([, snapshot]) => snapshot?.checkpointable)) {
           await writer.add(() => checkpoints.save({ path: filePath, version: CLAUDE_CODE_PARSER_VERSION,
-            fingerprint, dependencies: dependencyKey, metadata: "{}" }));
+            fingerprint: fingerprint.value, dependencies: dependencyKey, metadata: "{}" }));
         }
 
         stats.sessions++;

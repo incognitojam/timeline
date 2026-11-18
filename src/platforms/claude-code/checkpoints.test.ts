@@ -19,7 +19,7 @@ const rows = (database: Database) => (database.prepare("SELECT * FROM events ORD
   .map(row => Object.fromEntries(Object.entries(row).filter(([key]) => !["id", "imported_at", "import_batch"].includes(key))));
 
 beforeEach(async () => {
-  clock = spyOn(Date, "now").mockReturnValue(Date.now());
+  clock = spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
   root = await mkdtemp(join(tmpdir(), "claude-checkpoints-"));
   await mkdir(join(root, "project", "main", "subagents"), { recursive: true });
   db = new Database(join(root, "events.db")); reference = new Database(":memory:");
@@ -100,13 +100,15 @@ it("does not rewrite title suppression or take the write lock on unchanged reads
   expect((await importClaudeCode(db, root, "alice", options)).messages).toBe(1);
 });
 
-it("notices a subagent created while the main session is committing", async () => {
+it("rereads after a subagent appears during import and converges on the next run", async () => {
   await writeFile(file("main"), `${message("one", "one")}\n${message("two", "two")}\n`);
   const run = importClaudeCode(db, root, "alice", { writeLimits: { ...options.writeLimits, maxQueuedWrites: 1 } });
   while (rows(db).length === 0) await new Promise<void>(resolve => setImmediate(resolve));
   await writeFile(subagent("late"), `${message("late", "late")}\n`);
   await run;
-  await importClaudeCode(db, root, "alice", options);
+  expect((await importClaudeCode(db, root, "alice", options)).filesSkipped).toBe(0);
+  await importClaudeCode(reference, root, "alice", { ...options, full: true });
+  expect(rows(db)).toEqual(rows(reference));
   expect(rows(db)).toHaveLength(3);
 });
 
@@ -127,4 +129,55 @@ it("does not create identities for empty assistant messages", async () => {
   await writeFile(file("main"), JSON.stringify({ type: "assistant", uuid: "empty", timestamp: "2026-01-01T00:00:00Z", message: { role: "assistant", content: [], model: "claude-ghost-9" } }));
   await importClaudeCode(db, root, "alice", options);
   expect(db.prepare("SELECT * FROM identities WHERE platform_id = 'claude-ghost-9'").all()).toHaveLength(0);
+});
+
+
+it("treats a regular subagents file as absent and notices its replacement directory", async () => {
+  const path = join(root, "project", "main", "subagents");
+  await rm(path, { recursive: true });
+  await writeFile(path, "not a directory");
+  await writeFile(file("main"), `${message("one", "one")}\n`);
+  expect((await importClaudeCode(db, root, "alice", options)).messages).toBe(1);
+  expect((await importClaudeCode(db, root, "alice", options)).filesSkipped).toBe(1);
+  await rm(path);
+  await mkdir(path);
+  await writeFile(subagent("child"), `${message("child", "child")}\n`);
+  expect((await importClaudeCode(db, root, "alice", options)).messages).toBe(1);
+  expect(rows(db)).toHaveLength(2);
+});
+
+it("refreshes existing raw data even when the log has a matching checkpoint", async () => {
+  await writeFile(file("main"), `${message("one", "one")}\n`);
+  await importClaudeCode(db, root, "alice", options);
+  const original = rows(db);
+  db.exec("UPDATE events SET content = 'stale', raw_data = '{}' WHERE source = 'claude-code'");
+  expect((await importClaudeCode(db, root, "alice", options)).filesSkipped).toBe(1);
+  const refreshed = await importClaudeCode(db, root, "alice", { ...options, refreshRawData: true });
+  expect(refreshed.filesSkipped).toBe(0);
+  expect(refreshed.refreshed).toBe(1);
+  expect(rows(db)).toEqual(original);
+});
+
+it("rechecks duplicate UUIDs queued before either event is written", async () => {
+  await writeFile(file("main"), `${message("same", "first")}\n${message("same", "new")}\n`);
+  const stats = await importClaudeCode(db, root, "alice", {
+    writeLimits: { ...options.writeLimits, maxQueuedWrites: 100 },
+  });
+  expect(stats.messages).toBe(1);
+  expect(stats.skipped).toBe(1);
+  expect(rows(db).map(row => row.content)).toEqual(["first"]);
+  expect(db.prepare("SELECT * FROM attachments").all()).toHaveLength(0);
+});
+
+it("does not checkpoint a quiet main log while a subagent timestamp is fresh", async () => {
+  await writeFile(file("main"), `${message("one", "one")}\n`);
+  await writeFile(subagent("child"), `${message("child", "child")}\n`);
+  const future = new Date(Date.now() + 120_000);
+  await utimes(subagent("child"), future, future);
+  await importClaudeCode(db, root, "alice", options);
+  expect(db.prepare("SELECT * FROM file_import_checkpoints").all()).toHaveLength(0);
+  const past = new Date("2026-01-01T00:00:00Z");
+  await utimes(subagent("child"), past, past);
+  expect((await importClaudeCode(db, root, "alice", options)).filesSkipped).toBe(0);
+  expect((await importClaudeCode(db, root, "alice", options)).filesSkipped).toBe(2);
 });

@@ -2,7 +2,7 @@ import type { Database } from "../db/sqlite";
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
-export const CHECKPOINT_SOURCES = ["codex"] as const;
+export const CHECKPOINT_SOURCES = ["codex", "claude-code"] as const;
 type CheckpointSource = (typeof CHECKPOINT_SOURCES)[number];
 
 // Do not checkpoint timestamps that may still share a filesystem clock tick.
