@@ -465,6 +465,38 @@ export class Scheduler {
     return true;
   }
 
+  /**
+   * A scheduled tick: enqueue a sync job unless the source is disabled or
+   * already running. The job runner executes the job.
+   */
+  onTick(sourceName: string): void {
+    try {
+      if (!isSyncSourceEnabled(sourceName, this.db)) {
+        if (this.verbose) {
+          console.log(`Scheduler: skipped ${sourceName}; source is disabled`);
+        }
+      } else if (this.runningTasks.has(sourceName)) {
+        if (this.verbose) {
+          console.log(`Scheduler: skipped ${sourceName}; sync is already running`);
+        }
+      } else {
+        const outcome = enqueueJob({
+          kind: "sync",
+          source: sourceName,
+          dedupeKey: `sync:${sourceName}`,
+          trigger: "scheduler",
+        });
+        if (this.verbose) {
+          console.log(
+            `Scheduler: enqueued ${sourceName} (job #${outcome.jobId}${outcome.deduped ? ", deduped" : ""})`
+          );
+        }
+      }
+    } catch (error) {
+      console.error(`Scheduler: failed to enqueue ${sourceName}:`, error);
+    }
+  }
+
   // Private methods
 
   private scheduleSource(
@@ -525,31 +557,7 @@ export class Scheduler {
 
     // Schedule the enqueue
     const timer = setTimeout(() => {
-      try {
-        if (!isSyncSourceEnabled(sourceName, this.db)) {
-          if (this.verbose) {
-            console.log(`Scheduler: skipped ${sourceName}; source is disabled`);
-          }
-        } else if (this.runningTasks.has(sourceName)) {
-          if (this.verbose) {
-            console.log(`Scheduler: skipped ${sourceName}; sync is already running`);
-          }
-        } else {
-          const outcome = enqueueJob({
-            kind: "sync",
-            source: sourceName,
-            dedupeKey: `sync:${sourceName}`,
-            trigger: "scheduler",
-          });
-          if (this.verbose) {
-            console.log(
-              `Scheduler: enqueued ${sourceName} (job #${outcome.jobId}${outcome.deduped ? ", deduped" : ""})`
-            );
-          }
-        }
-      } catch (error) {
-        console.error(`Scheduler: failed to enqueue ${sourceName}:`, error);
-      }
+      this.onTick(sourceName);
 
       // Always reschedule the next tick — the runner is responsible for executing
       // the queued job; the scheduler just decides when to enqueue.
