@@ -146,9 +146,16 @@ if [ -n "${TIMELINE_SMOKE_EXPECT_COMMIT:-}" ] &&
 fi
 
 if [ "${TIMELINE_SMOKE_EXPECT_WEB:-0}" = "1" ]; then
-  web_body="$(curl -fsS "http://127.0.0.1:${PORT}/")"
+  web_headers="${TMP}/web-headers"
+  web_body="$(curl -fsS -D "$web_headers" "http://127.0.0.1:${PORT}/")"
   if ! printf '%s' "$web_body" | grep -qi '<!doctype html>'; then
     echo "FAIL: packaged web frontend was not served"
+    exit 1
+  fi
+  # The policy is defined once, in src/api/index.ts; check its script rule reached the page.
+  if ! grep -qi "^content-security-policy:.*script-src 'self'" "$web_headers"; then
+    echo "FAIL: packaged web frontend was served without its Content-Security-Policy"
+    cat "$web_headers"
     exit 1
   fi
 fi

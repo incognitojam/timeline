@@ -255,9 +255,8 @@ function createPopupContent(event: MapEvent): { element: HTMLElement; dispose: (
       </div>
       <button
         id="map-event-view-${event.id}"
-        style="margin-top: 0.5rem; padding: 0.25rem 0.5rem; font-size: 0.75rem; color: var(--color-foreground); border-radius: 0.25rem; border: 1px solid var(--color-border); background: transparent; cursor: pointer; transition: background 0.15s; width: 100%;"
-        onmouseover="this.style.background='var(--color-accent)'"
-        onmouseout="this.style.background='transparent'"
+        class="bg-transparent hover:bg-accent transition-colors"
+        style="margin-top: 0.5rem; padding: 0.25rem 0.5rem; font-size: 0.75rem; color: var(--color-foreground); border-radius: 0.25rem; border: 1px solid var(--color-border); cursor: pointer; width: 100%;"
       >
         View in timeline
       </button>
