@@ -58,6 +58,18 @@ describe("verifyEventPeople", () => {
     expect(sampleMismatches(db, 5)).toEqual([]);
   });
 
+  test("lets an event whose people array repeats its sender be updated", () => {
+    const id = insertEvent({ people: ["Alice", "Bob", "Alice"] });
+
+    db.prepare("UPDATE events SET content = 'edited' WHERE id = ?").run(id);
+
+    expect(db.prepare("SELECT person, is_sender FROM event_people ORDER BY person").all()).toEqual([
+      { person: "Alice", is_sender: 1 },
+      { person: "Bob", is_sender: 0 },
+    ]);
+    expect(verifyEventPeople(db)).toEqual(IN_SYNC);
+  });
+
   const DRIFT: Array<{
     name: string;
     corrupt: () => void;
