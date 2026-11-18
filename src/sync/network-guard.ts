@@ -90,8 +90,6 @@ export interface NetworkStatus {
 /** A guard either proceeds, or skips the run with a human-readable reason. */
 export type GuardDecision = { skip: false } | { skip: true; reason: string };
 
-/** Detection function shape; swappable in tests. */
-
 export function meteredFromStatus(status: NetworkStatus): boolean | undefined {
   if (status.isExpensive === true || status.isConstrained === true) return true;
   if (status.isExpensive === false && status.isConstrained === false) return false;

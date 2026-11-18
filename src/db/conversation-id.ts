@@ -2,8 +2,8 @@
  * Extract a stable conversation identifier from a parser's `raw_data` payload.
  *
  * The events table groups conversations by `(source, source_account, title)`,
- * but `title` is derived from human-changeable names (Discord channel names,
- * Skype display names, Claude conversation titles, etc.). When a user renames
+ * but `title` is derived from human-changeable names (Skype display names, Instagram conversation
+ * titles, etc.). When a user renames
  * a chat, the messages before and after the rename land with different titles,
  * fragmenting the conversation.
  *
