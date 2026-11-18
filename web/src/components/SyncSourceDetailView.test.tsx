@@ -229,6 +229,43 @@ describe("SyncSourceDetailView configuration form", () => {
     expect(queryByText("Connected")).not.toBeInTheDocument();
   });
 
+  it("stages Use default as override removal on every kind of setting row", async () => {
+    const { getByLabelText, getByRole, getByText } = renderWith(backupSource());
+    const row = (label: string) => {
+      const found = getByText(label).closest(".grid");
+      if (!(found instanceof HTMLElement)) throw new Error(`expected the ${label} row`);
+      return found;
+    };
+
+    for (const label of ["Backups to retain", "Compress backups", "Backup mode"]) {
+      fireEvent.click(getByRole("button", { name: `Use default for ${label}` }));
+    }
+
+    expect(getByLabelText("Backups to retain")).toHaveValue("24");
+    expect(row("Backups to retain")).toHaveTextContent("Using default, 24");
+    expect(row("Compress backups")).toHaveTextContent("Using default, On");
+    expect(row("Backup mode")).toHaveTextContent("Using default, full");
+    expect(testState.updateConfiguration).not.toHaveBeenCalled();
+    fireEvent.click(within(configurationForm()).getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => {
+      expect(testState.updateConfiguration).toHaveBeenCalledWith({
+        source: "backup",
+        patch: { settings: { keep_count: null, compress: null, mode: null } },
+      });
+    });
+  });
+
+  it("keeps enabled and interval editable when the source has no settings schema", () => {
+    const { getByLabelText, getByRole, queryByText } = renderWith(
+      backupSource({ settings: {}, settingsSchema: [] })
+    );
+
+    expect(getByRole("switch", { name: "Automatic sync" })).toBeEnabled();
+    expect(getByLabelText("Sync interval")).toBeEnabled();
+    expect(queryByText("Backup directory")).not.toBeInTheDocument();
+  });
+
   it("displays effective defaults when no override is stored", () => {
     const { getByLabelText, getByRole } = renderWith(backupSource({
       settings: { destination: "/tmp/backups" },
@@ -292,7 +329,7 @@ describe("SyncSourceDetailView configuration form", () => {
     });
   });
 
-  it("stages edits, toggles, selections and default overrides before sending one combined PATCH", async () => {
+  it("stages edits, toggles, and selections before sending one combined minimal PATCH", async () => {
     const { getByLabelText, getByRole } = renderWith(backupSource());
     const form = configurationForm();
 
@@ -301,9 +338,7 @@ describe("SyncSourceDetailView configuration form", () => {
     fireEvent.input(getByLabelText("Backup directory"), { target: { value: "  /mnt/new-backups  " } });
     fireEvent.click(getByRole("switch", { name: "Compress backups" }));
     fireEvent.click(getByRole("radio", { name: "incremental" }));
-    fireEvent.click(getByRole("button", { name: "Use default for Backups to retain" }));
 
-    expect(getByLabelText("Backups to retain").closest(".grid")).toHaveTextContent("Using default, 24");
     expect(testState.updateConfiguration).not.toHaveBeenCalled();
     expect(within(form).getByRole("button", { name: "Save changes" })).toBeEnabled();
 
@@ -318,7 +353,6 @@ describe("SyncSourceDetailView configuration form", () => {
           interval: "45m",
           settings: {
             destination: "/mnt/new-backups",
-            keep_count: null,
             compress: false,
             mode: "incremental",
           },
