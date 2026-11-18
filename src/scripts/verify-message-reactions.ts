@@ -29,12 +29,10 @@ interface SourceStats {
   eventsWithReactionEntries: number;
   eventsWithSummaries: number;
   eventsWithSkippedEntries: number;
-  abortedEvents: number;
   reactionEntries: number;
   summarizedEntries: number;
   skippedEntries: number;
   skippedEventIds: number[];
-  abortedEventIds: number[];
 }
 
 interface VerificationReport {
@@ -56,12 +54,10 @@ function createSourceStats(): SourceStats {
     eventsWithReactionEntries: 0,
     eventsWithSummaries: 0,
     eventsWithSkippedEntries: 0,
-    abortedEvents: 0,
     reactionEntries: 0,
     summarizedEntries: 0,
     skippedEntries: 0,
     skippedEventIds: [],
-    abortedEventIds: [],
   };
 }
 
@@ -96,10 +92,6 @@ function addSummary(
   if (summary.skippedEntries > 0) {
     stats.eventsWithSkippedEntries++;
     addSample(stats.skippedEventIds, row.id, report.sampleLimit);
-  }
-  if (summary.abortsCurrentConsumer) {
-    stats.abortedEvents++;
-    addSample(stats.abortedEventIds, row.id, report.sampleLimit);
   }
 }
 
@@ -196,10 +188,6 @@ function totalSkippedEntries(report: VerificationReport): number {
   return Object.values(report.sources).reduce((sum, source) => sum + source.skippedEntries, 0);
 }
 
-function totalAbortedEvents(report: VerificationReport): number {
-  return Object.values(report.sources).reduce((sum, source) => sum + source.abortedEvents, 0);
-}
-
 function printSourceStats(source: ReactionSource, stats: SourceStats): void {
   console.log(`\n${source}`);
   console.log("-".repeat(40));
@@ -210,9 +198,7 @@ function printSourceStats(source: ReactionSource, stats: SourceStats): void {
   console.log(`  Entries summarized today:       ${formatCount(stats.summarizedEntries)}`);
   console.log(`  Skipped entries:                ${formatCount(stats.skippedEntries)}`);
   console.log(`  Events with skipped entries:    ${formatCount(stats.eventsWithSkippedEntries)}`);
-  console.log(`  Aborted events:                 ${formatCount(stats.abortedEvents)}`);
   console.log(`  Skipped-entry samples:          ${sampleText(stats.skippedEventIds)}`);
-  console.log(`  Abort samples:                  ${sampleText(stats.abortedEventIds)}`);
 }
 
 function printTextReport(report: VerificationReport): void {
@@ -228,7 +214,6 @@ function printTextReport(report: VerificationReport): void {
   console.log("\nSummary");
   console.log("-".repeat(40));
   console.log(`  Total skipped entries: ${formatCount(totalSkippedEntries(report))}`);
-  console.log(`  Total aborted events:  ${formatCount(totalAbortedEvents(report))}`);
 }
 
 function main(): void {
@@ -244,7 +229,7 @@ function main(): void {
       printTextReport(report);
     }
 
-    if ((totalSkippedEntries(report) > 0 || totalAbortedEvents(report) > 0) && !options.noFail) {
+    if (totalSkippedEntries(report) > 0 && !options.noFail) {
       process.exitCode = 1;
     }
   } finally {

@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  checkNetworkGuard,
   DEFAULT_NETWORK_GUARD_ON_UNKNOWN,
   DEFAULT_REQUIRE_UNMETERED,
   DEFAULT_SKIP_BLOCKED_NETWORKS,
@@ -209,15 +208,5 @@ describe("parseAirportNetwork", () => {
 
   test("treats powered-off Wi-Fi as definitively not on Wi-Fi", () => {
     expect(parseAirportNetwork("Wi-Fi power is currently off.")).toBeNull();
-  });
-});
-
-describe("checkNetworkGuard", () => {
-  test("uses the injected detector and returns the observed status", async () => {
-    const result = await checkNetworkGuard(config(), {
-      detect: async () => ({ ssid: "iPhone" }),
-    });
-    expect(result.decision.skip).toBe(true);
-    expect(result.status).toEqual({ ssid: "iPhone" });
   });
 });

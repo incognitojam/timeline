@@ -223,21 +223,6 @@ export function getAttachmentDescriptionHistory(db: Database): AttachmentDescrip
 }
 
 /**
- * Get the last successful sync for a source.
- */
-export function getLastSuccessfulSync(
-  db: Database,
-  source: string
-): SyncLogEntry | null {
-  return db.prepare(`
-    SELECT * FROM sync_log
-    WHERE source = ? AND success = 1
-    ORDER BY started_at DESC
-    LIMIT 1
-  `).get(source) as SyncLogEntry | null;
-}
-
-/**
  * Format a sync result for console output.
  */
 export function formatSyncResult(result: SyncResult): string {

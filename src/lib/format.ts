@@ -234,7 +234,6 @@ export interface ReactionSummary {
   reactionEntries: number;
   summarizedEntries: number;
   skippedEntries: number;
-  abortsCurrentConsumer: boolean;
 }
 
 function emptyReactionSummary(): ReactionSummary {
@@ -243,7 +242,6 @@ function emptyReactionSummary(): ReactionSummary {
     reactionEntries: 0,
     summarizedEntries: 0,
     skippedEntries: 0,
-    abortsCurrentConsumer: false,
   };
 }
 
@@ -307,7 +305,6 @@ export function getReactionSummary(event: { source: string; raw_data?: string | 
     reactionEntries,
     summarizedEntries,
     skippedEntries: Math.max(reactionEntries - summarizedEntries, 0),
-    abortsCurrentConsumer: false,
   };
 }
 

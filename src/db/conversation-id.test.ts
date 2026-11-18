@@ -2,12 +2,6 @@ import { describe, test, expect } from "bun:test";
 import { extractConversationId } from "./conversation-id";
 
 describe("extractConversationId", () => {
-  test("discord returns _channel.id", () => {
-    expect(extractConversationId("discord", { _channel: { id: "9100000000000000000", name: "x" } })).toBe(
-      "9100000000000000000",
-    );
-  });
-
   test("skype returns _conversation.id", () => {
     expect(extractConversationId("skype", { _conversation: { id: "19:abc@thread.skype" } })).toBe(
       "19:abc@thread.skype",
@@ -57,21 +51,6 @@ describe("extractConversationId", () => {
     expect(extractConversationId("skype", { dialog_partner: null, chatname: "", convo_id: 240 })).toBeNull();
     expect(extractConversationId("skype", { convo_id: 240 })).toBeNull();
   });
-
-  test("claude returns conversation_uuid", () => {
-    expect(extractConversationId("claude", { conversation_uuid: "uuid-1" })).toBe("uuid-1");
-  });
-
-  test("chatgpt returns conversation_id", () => {
-    expect(extractConversationId("chatgpt", { conversation_id: "conv-1" })).toBe("conv-1");
-  });
-
-  test.each([["conductor"], ["claude-code"], ["opencode"]])(
-    "%s returns session_id",
-    (source) => {
-      expect(extractConversationId(source, { session_id: "sess-1" })).toBe("sess-1");
-    },
-  );
 
   test("amp returns thread_id", () => {
     expect(extractConversationId("amp", { thread_id: "T-abc123" })).toBe("T-abc123");
@@ -255,20 +234,18 @@ describe("extractConversationId", () => {
   });
 
   test("returns null when rawData is missing the expected key", () => {
-    expect(extractConversationId("discord", { other: "field" })).toBeNull();
-    expect(extractConversationId("claude", {})).toBeNull();
+    expect(extractConversationId("amp", { other: "field" })).toBeNull();
   });
 
   test("returns null when rawData is not an object", () => {
-    expect(extractConversationId("discord", null)).toBeNull();
-    expect(extractConversationId("discord", undefined)).toBeNull();
-    expect(extractConversationId("discord", "string")).toBeNull();
-    expect(extractConversationId("discord", 123)).toBeNull();
+    expect(extractConversationId("amp", null)).toBeNull();
+    expect(extractConversationId("amp", undefined)).toBeNull();
+    expect(extractConversationId("amp", "string")).toBeNull();
+    expect(extractConversationId("amp", 123)).toBeNull();
   });
 
   test("returns null when value is the wrong type", () => {
-    expect(extractConversationId("discord", { _channel: { id: 123 } })).toBeNull();
-    expect(extractConversationId("claude", { conversation_uuid: null })).toBeNull();
+    expect(extractConversationId("amp", { thread_id: null })).toBeNull();
     expect(extractConversationId("amp", { thread_id: 42 })).toBeNull();
   });
 
