@@ -11,6 +11,7 @@ process.env.NODE_ENV = "test";
 import { describe, test, expect, beforeAll } from "bun:test";
 import { app } from "./index";
 import { saveJournalSession, getAppStateDb } from "../db/app-state";
+import type { Database } from "bun:sqlite";
 import { getDb } from "../db/schema";
 import { getDefaultModel } from "../llm";
 
@@ -18,6 +19,27 @@ describe("Manual Events API Tests", () => {
   describe("Manual Events", () => {
     let createdEventId: number;
     let testContactId: number;
+
+    /**
+     * Runs `check` against an event inserted as an importer would, so it is not
+     * editable through the API, and removes the event afterwards.
+     */
+    async function withImportedEvent(check: (db: Database, id: number) => Promise<void>): Promise<void> {
+      const db = getDb();
+      const { id } = db
+        .prepare(`
+          INSERT INTO events (source, source_id, source_account, type, timestamp, title, raw_data)
+          VALUES ('spotify', ?, 'default', 'listen:track', '2024-06-15T09:00:00.000Z', 'Imported track', '{}')
+          RETURNING id
+        `)
+        .get(`manual-events-guard-${crypto.randomUUID()}`) as { id: number };
+      try {
+        await check(db, id);
+      } finally {
+        db.prepare("DELETE FROM events WHERE id = ?").run(id);
+        db.close();
+      }
+    }
 
     beforeAll(async () => {
       // Create a test contact for notes with people
@@ -122,13 +144,8 @@ describe("Manual Events API Tests", () => {
     });
 
     test("PATCH /api/events/:id rejects updates to non-manual events", async () => {
-      // Get a non-manual event
-      const searchRes = await app.request("/api/search?limit=1");
-      const searchJson = await searchRes.json();
-      const nonManualEvent = searchJson.events.find((e: { source: string }) => e.source !== "manual");
-
-      if (nonManualEvent) {
-        const res = await app.request(`/api/events/${nonManualEvent.id}`, {
+      await withImportedEvent(async (db, id) => {
+        const res = await app.request(`/api/events/${id}`, {
           method: "PATCH",
           body: JSON.stringify({ title: "Hacked" }),
           headers: { "Content-Type": "application/json" },
@@ -136,7 +153,8 @@ describe("Manual Events API Tests", () => {
         expect(res.status).toBe(403);
         const json = await res.json();
         expect(json.error).toContain("non-manual");
-      }
+        expect(db.prepare("SELECT title FROM events WHERE id = ?").get(id)).toEqual({ title: "Imported track" });
+      });
     });
 
     test("DELETE /api/events/:id deletes a manual event", async () => {
@@ -164,19 +182,15 @@ describe("Manual Events API Tests", () => {
     });
 
     test("DELETE /api/events/:id rejects deletion of non-manual events", async () => {
-      // Get a non-manual event
-      const searchRes = await app.request("/api/search?limit=1");
-      const searchJson = await searchRes.json();
-      const nonManualEvent = searchJson.events.find((e: { source: string }) => e.source !== "manual");
-
-      if (nonManualEvent) {
-        const res = await app.request(`/api/events/${nonManualEvent.id}`, {
+      await withImportedEvent(async (db, id) => {
+        const res = await app.request(`/api/events/${id}`, {
           method: "DELETE",
         });
         expect(res.status).toBe(403);
         const json = await res.json();
         expect(json.error).toContain("non-manual");
-      }
+        expect(db.prepare("SELECT id FROM events WHERE id = ?").get(id)).toEqual({ id });
+      });
     });
 
     test("PATCH /api/events/:id can clear content and people", async () => {

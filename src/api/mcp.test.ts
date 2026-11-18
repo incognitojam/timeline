@@ -226,6 +226,42 @@ describe("MCP HTTP Transport", () => {
     expect(json.error.message).toContain("Unauthorized");
   });
 
+  test("an existing session rejects a request with an invalid or missing token", async () => {
+    const init = await app.request(MCP_URL, {
+      method: "POST",
+      headers: BEARER_HEADERS,
+      body: jsonrpc(301, "initialize", {
+        protocolVersion: "2025-03-26",
+        capabilities: {},
+        clientInfo: { name: "test", version: "0.1.0" },
+      }),
+    });
+    const sessionId = init.headers.get("mcp-session-id");
+    expect(sessionId).toBeTruthy();
+
+    try {
+      const call = (headers: Record<string, string>) =>
+        app.request(MCP_URL, {
+          method: "POST",
+          headers: { ...headers, "mcp-session-id": sessionId! },
+          body: jsonrpc(302, "tools/call", { name: "get_summary", arguments: {} }),
+        });
+
+      for (const headers of [{ ...HEADERS, Authorization: "Bearer wrong-token" }, HEADERS]) {
+        const res = await call(headers);
+        expect(res.status).toBe(401);
+        expect((await res.json()).error.message).toContain("Unauthorized");
+      }
+
+      // The session itself is untouched: the valid token still reaches it.
+      const accepted = await call(BEARER_HEADERS);
+      expect(accepted.status).toBe(200);
+      expect(await accepted.text()).toContain("Total events:");
+    } finally {
+      getAppStateDb().prepare("DELETE FROM mcp_sessions WHERE id = ?").run(sessionId);
+    }
+  });
+
   test("missing bearer token returns 401", async () => {
     const res = await app.request(MCP_URL, {
       method: "POST",

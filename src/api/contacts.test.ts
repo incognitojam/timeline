@@ -653,16 +653,20 @@ describe("Contact API Tests", () => {
 
       // Should find matches for the two synthetic fixture identities.
       expect(json.count).toBeGreaterThanOrEqual(2);
-
-      // Check structure of suggestion
-      if (json.suggestions.length > 0) {
-        const s = json.suggestions[0];
-        expect(s).toHaveProperty("alias_a");
-        expect(s).toHaveProperty("source_a");
-        expect(s).toHaveProperty("alias_b");
-        expect(s).toHaveProperty("source_b");
-        expect(s).toHaveProperty("normalized");
-      }
+      expect(json.suggestions).toContainEqual({
+        alias_a: "alice_suggestion_example",
+        source_a: "discord",
+        alias_b: "Alice Suggestion Example",
+        source_b: "facebook",
+        normalized: "alice suggestion example",
+      });
+      expect(json.suggestions).toContainEqual({
+        alias_a: "Bob Suggestion Example",
+        source_a: "facebook",
+        alias_b: "bob.suggestion.example",
+        source_b: "skype",
+        normalized: "bob suggestion example",
+      });
     });
 
     test("GET /api/contacts/suggestions respects limit", async () => {
@@ -788,7 +792,7 @@ describe("Contact API Tests", () => {
       expect(match.source).toBe("discord");
     });
 
-    test("GET /api/identities/unlinked and /api/identities/unlinked/count return consistent counts", async () => {
+    test("GET /api/identities/unlinked lists only unlinked, unskipped identities with a consistent count", async () => {
       const res = await app.request("/api/identities/unlinked");
       expect(res.status).toBe(200);
       const json = await res.json();
@@ -802,9 +806,14 @@ describe("Contact API Tests", () => {
       expect(countJson).toHaveProperty("count");
       expect(typeof countJson.count).toBe("number");
       expect(countJson.count).toBeGreaterThanOrEqual(json.identities.length);
+
+      const identifiers = json.identities.map((identity: { identifier: string }) => identity.identifier);
+      expect(identifiers).toContain("discord:alice_suggestion_example");
+      expect(identifiers).not.toContain("discord:skip_me");
+      expect(identifiers).not.toContain("discord:linked_user");
     });
 
-    test("GET /api/identities/skipped and /api/identities/skipped/count return expected shape", async () => {
+    test("GET /api/identities/skipped lists skipped identities with a consistent count", async () => {
       const res = await app.request("/api/identities/skipped");
       expect(res.status).toBe(200);
       const json = await res.json();
@@ -813,13 +822,8 @@ describe("Contact API Tests", () => {
       expect(Array.isArray(json.identities)).toBe(true);
       expect(json.count).toBe(json.identities.length);
 
-      if (json.identities.length > 0) {
-        const identity = json.identities[0];
-        expect(identity).toHaveProperty("identifier");
-        expect(identity).toHaveProperty("platform");
-        expect(identity).toHaveProperty("skippedAt");
-        expect(identity).toHaveProperty("eventCount");
-      }
+      const skipped = json.identities.find((identity: { identifier: string }) => identity.identifier === "discord:skip_me");
+      expect(skipped).toMatchObject({ platform: "discord", eventCount: 1, skippedAt: expect.any(String) });
 
       const countRes = await app.request("/api/identities/skipped/count");
       expect(countRes.status).toBe(200);
