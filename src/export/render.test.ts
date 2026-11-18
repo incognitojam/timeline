@@ -837,8 +837,10 @@ describe("renderEvents", () => {
     expect(text).not.toContain("votes");
   });
 
-  test("conversation transcript keeps vote status when poll voters were not captured", () => {
-    const event = makeEvent({
+  test.each([
+    {
+      name: "conversation transcript keeps vote status when poll voters were not captured",
+      event: makeEvent({
       source: "discord",
       type: "message:guild:poll",
       timestamp: "2026-01-01T19:10:00Z",
@@ -858,15 +860,12 @@ describe("renderEvents", () => {
           },
         },
       }),
-    });
-
-    expect(renderEvent(event)).toBe(
-      "2026-01-01 19:10 <Alice> [poll: Which activity? — Board games (2 votes, you voted) — finalized]",
-    );
-  });
-
-  test("conversation transcript renders partial captured poll voters", () => {
-    const event = makeEvent({
+      }),
+      expected: "2026-01-01 19:10 <Alice> [poll: Which activity? — Board games (2 votes, you voted) — finalized]",
+    },
+    {
+      name: "conversation transcript renders partial captured poll voters",
+      event: makeEvent({
       source: "discord",
       type: "message:guild:poll",
       timestamp: "2026-01-01T19:10:00Z",
@@ -901,15 +900,12 @@ describe("renderEvents", () => {
           },
         },
       }),
-    });
-
-    expect(renderEvent(event)).toBe(
-      "2026-01-01 19:10 <Alice> [poll: Which activity? — Board games (2 votes: Alice, Bob) — Puzzles (1 vote, you voted) — finalized]",
-    );
-  });
-
-  test("conversation transcript ignores malformed poll voter entries", () => {
-    const event = makeEvent({
+      }),
+      expected: "2026-01-01 19:10 <Alice> [poll: Which activity? — Board games (2 votes: Alice, Bob) — Puzzles (1 vote, you voted) — finalized]",
+    },
+    {
+      name: "conversation transcript ignores malformed poll voter entries",
+      event: makeEvent({
       source: "discord",
       type: "message:guild:poll",
       timestamp: "2026-01-01T19:10:00Z",
@@ -933,12 +929,14 @@ describe("renderEvents", () => {
           },
         },
       }),
-    });
-
-    expect(renderEvent(event)).toBe(
-      "2026-01-01 19:10 <Alice> [poll: Which activity? — Board games (2 votes, you voted) — finalized]",
-    );
+      }),
+      expected: "2026-01-01 19:10 <Alice> [poll: Which activity? — Board games (2 votes, you voted) — finalized]",
+    },
+  ])("$name", ({ event, expected }) => {
+    expect(renderEvent(event)).toBe(expected);
   });
+
+
 
   test("conversation transcript renders polls with results but no answer counts", () => {
     const event = makeEvent({
