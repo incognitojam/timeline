@@ -154,15 +154,13 @@ run_go_sidecar_checks() {
 
 run_static_suite() {
   # actionlint checks `run:` scripts with shellcheck only when it is on PATH.
-  require_tools actionlint shellcheck
+  require_tools actionlint shellcheck go
   run_step "Checking public release safety" bun run src/scripts/check-public-release-safety.ts
   run_step "Checking product version" bun run version:check
   run_step "Linting" bun run lint
   run_step "Linting workflows" actionlint
   # The google-messages sync source depends on this binary's JSONL contract.
-  if command -v go >/dev/null 2>&1; then
-    run_step "Checking Go sidecar" run_go_sidecar_checks
-  fi
+  run_step "Checking Go sidecar" run_go_sidecar_checks
 }
 
 start_backend_checks() {

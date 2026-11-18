@@ -16,6 +16,11 @@ the pinned version. To change a version, edit `packageManager` or `mise.toml`.
 `./test.sh static` runs `actionlint` on `.github/workflows/`, as CI does; run
 `actionlint` directly to check workflows alone.
 
+ZIP tests require `zip` and `unzip` (included with macOS; on Debian/Ubuntu use
+`sudo apt-get install zip unzip`). macOS app smoke tests also require `cwebp`
+(`brew install webp`). Setup checks these prerequisites before preparing the
+local database and reports missing tools without prompting for privileges.
+
 ## Running locally
 
 ```bash

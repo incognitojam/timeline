@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if ! command -v cwebp >/dev/null 2>&1; then
+  echo "Missing required tool: cwebp. Install it with brew install webp (or run bun run setup)." >&2
+  exit 1
+fi
+
 portable=1
 if [ "${1:-}" = --native-only ]; then
   portable=0
@@ -25,11 +30,7 @@ test -f "$RESOURCES/Sparkle-LICENSE"
 otool -L "$APP/Contents/MacOS/Timeline" | grep -q '@rpath/Sparkle.framework'
 
 swiftc -target "$(uname -m)-apple-macos14.0" -parse-as-library RecallTests.swift RecallCapture.swift RecallPipeline.swift RecallMigration.swift RecallLog.swift RecallAgeMenu.swift Subprocess.swift -o "$TMP/recall-tests"
-if command -v cwebp >/dev/null 2>&1; then
-  "$TMP/recall-tests" "$TMP" "$(command -v cwebp)"
-else
-  "$TMP/recall-tests" "$TMP"
-fi
+"$TMP/recall-tests" "$TMP" "$(command -v cwebp)"
 
 plutil -lint "$INFO_PLIST" >/dev/null
 

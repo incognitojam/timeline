@@ -204,7 +204,11 @@ describe("recoverFacebookAttachments", () => {
   });
 });
 
-const haveZipTools = Boolean(Bun.which("zip") && Bun.which("unzip"));
+for (const tool of ["zip", "unzip"]) {
+  if (!Bun.which(tool)) {
+    throw new Error(`Missing required tool: ${tool}. Run bun run setup (Linux: sudo apt-get install zip unzip; macOS: brew install zip unzip).`);
+  }
+}
 
 describe("buildFacebookSource", () => {
   test("resolves extracted-tree files by exact original_uri", async () => {
@@ -238,7 +242,7 @@ describe("buildFacebookSource", () => {
     expect((await source.read(uri)).candidates[0]?.toString()).toBe("old");
   });
 
-  test.skipIf(!haveZipTools)("resolves older-format paths inside export ZIPs", async () => {
+  test("resolves older-format paths inside export ZIPs", async () => {
     const dir = await mkdtemp(join(tmpdir(), "fb-zip-"));
     // Stage outside the export dir and remove it after zipping, so the only copy
     // of the file is inside the ZIP — exercising the ZIP path in isolation.
@@ -255,7 +259,7 @@ describe("buildFacebookSource", () => {
     expect((await source.read("messages/inbox/conv/photos/2.jpg")).candidates[0]?.toString()).toBe("zipped");
   });
 
-  test.skipIf(!haveZipTools)("indexes a renamed ZIP entry by recorded hash", async () => {
+  test("indexes a renamed ZIP entry by recorded hash", async () => {
     const dir = await mkdtemp(join(tmpdir(), "fb-hash-"));
     const stage = await mkdtemp(join(tmpdir(), "fb-hash-stage-"));
     const bytes = Buffer.from("same attachment, renamed by a newer export");
@@ -286,7 +290,7 @@ describe("buildFacebookSource", () => {
     expect(hit.candidates[0]).toEqual(bytes);
   });
 
-  test.skipIf(!haveZipTools)("does not index same-size bytes with the wrong hash", async () => {
+  test("does not index same-size bytes with the wrong hash", async () => {
     const dir = await mkdtemp(join(tmpdir(), "fb-hash-wrong-"));
     const stage = await mkdtemp(join(tmpdir(), "fb-hash-wrong-stage-"));
     const expected = Buffer.from("right");
@@ -307,7 +311,7 @@ describe("buildFacebookSource", () => {
     expect(source.locateHash(candidate.expectedHash ?? "")).toBe(false);
   });
 
-  test.skipIf(!haveZipTools)("fails fast on a corrupt export ZIP rather than under-indexing", async () => {
+  test("fails fast on a corrupt export ZIP rather than under-indexing", async () => {
     const dir = await mkdtemp(join(tmpdir(), "fb-bad-"));
     await writeFile(join(dir, "corrupt.zip"), Buffer.from("PK\x03\x04 not actually a zip"));
     await expect(buildFacebookSource(dir)).rejects.toThrow(/ZIP/i);
