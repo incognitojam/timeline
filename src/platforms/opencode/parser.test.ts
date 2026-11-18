@@ -50,7 +50,6 @@ describe("normalizePartsToBlocks", () => {
     ]);
   });
 
-
   it("routes error-status output into the error field", () => {
     const blocks = normalizePartsToBlocks([
       part({
@@ -90,9 +89,6 @@ describe("normalizePartsToBlocks", () => {
       content: "from metadata",
     });
   });
-
-
-
 
   it("drops tool parts with no tool name", () => {
     const blocks = normalizePartsToBlocks([
@@ -259,7 +255,6 @@ describe("normalizeV2Content", () => {
       { type: "text", text: "done" },
     ]);
   });
-
 
   it("emits only tool_use while a tool is running or streaming", () => {
     const blocks = normalizeV2Content([

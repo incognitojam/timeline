@@ -8,7 +8,7 @@ import { initDb } from "../../db/schema";
 import { type AmpContentBlock, importAmp, normalizeAmpBlocks } from "./parser";
 
 describe("normalizeAmpBlocks", () => {
-  it.each([
+  const blockCases: { name: string; input: AmpContentBlock[]; expected: ReturnType<typeof normalizeAmpBlocks> }[] = [
     {
       name: "passes thinking blocks through with only type + thinking",
       input: [{ type: "thinking", thinking: "pondering" }],
@@ -54,8 +54,9 @@ describe("normalizeAmpBlocks", () => {
       input: [{ type: "summary", summary: { type: "thread", thread: "T-thread-id" } }],
       expected: [{ type: "summary", summary_type: "thread", thread_id: "T-thread-id" }],
     },
-  ])("$name", ({ input, expected }) => {
-    expect(normalizeAmpBlocks(input as AmpContentBlock[])).toEqual(expected);
+  ];
+  it.each(blockCases)("$name", ({ input, expected }) => {
+    expect(normalizeAmpBlocks(input)).toEqual(expected);
   });
 });
 
@@ -329,7 +330,6 @@ describe("importAmp", () => {
     expect(row!.timestamp).toBe(new Date(threadCreated).toISOString());
     expect(getPeople(row!)).toEqual(["amp:claude-sonnet-4", "amp:tester"]);
   });
-
 
   it("updates normalized columns and raw_data when updateExisting is enabled", async () => {
     await writeThreadMessages(
@@ -609,7 +609,7 @@ describe("importAmp", () => {
     expect(raw.source_content).toEqual([{ type: "text", text: "hello" }]);
   });
 
-  it.each([
+  const projectCases: { name: string; thread: string; options: AmpFixtureThreadOptions; check: (row: EventRow) => void }[] = [
     {
       name: "prefers workspaceRoots over env when deriving project tags",
       thread: "thread-workspace-roots",
@@ -628,7 +628,7 @@ describe("importAmp", () => {
       },
       check: (row: EventRow) => {
         const raw = JSON.parse(row.raw_data);
-        expect(getTags(row!)).toContain("project:from-workspace-roots");
+        expect(getTags(row)).toContain("project:from-workspace-roots");
 
         expect(raw.workspace.project_name).toBe("from-workspace-roots");
         expect(raw.workspace.project_source).toBe("workspace_roots");
@@ -655,7 +655,7 @@ describe("importAmp", () => {
       },
       check: (row: EventRow) => {
         const raw = JSON.parse(row.raw_data);
-        expect(getTags(row!)).toContain("project:timeline");
+        expect(getTags(row)).toContain("project:timeline");
 
         expect(raw.workspace_roots).toBeUndefined();
         expect(raw.workspace.project_name).toBe("timeline");
@@ -677,7 +677,7 @@ describe("importAmp", () => {
       },
       check: (row: EventRow) => {
         const raw = JSON.parse(row.raw_data);
-        expect(getTags(row!)).toContain("project:timeline");
+        expect(getTags(row)).toContain("project:timeline");
 
         expect(raw.workspace.project_name).toBe("timeline");
         expect(raw.workspace.project_source).toBe("env.initial.trees[0].fsPath");
@@ -697,7 +697,7 @@ describe("importAmp", () => {
       },
       check: (row: EventRow) => {
         const raw = JSON.parse(row.raw_data);
-        expect(getTags(row!)).toContain("project:timeline");
+        expect(getTags(row)).toContain("project:timeline");
 
         expect(raw.workspace.project_name).toBe("timeline");
         expect(raw.workspace.project_source).toBe("env.initial.trees[0].uri");
@@ -718,7 +718,7 @@ describe("importAmp", () => {
       },
       check: (row: EventRow) => {
         const raw = JSON.parse(row.raw_data);
-        expect(getTags(row!)).toContain("project:timeline");
+        expect(getTags(row)).toContain("project:timeline");
 
         expect(raw.workspace.project_name).toBe("timeline");
         expect(raw.workspace.project_source).toBe("env.systemPromptData.workingDirectory");
@@ -726,7 +726,8 @@ describe("importAmp", () => {
         expect(raw.workspace.working_directory).toBe("/Users/alice/Developer/timeline");
       },
     },
-  ])("$name", async ({ thread, options, check }) => {
+  ];
+  it.each(projectCases)("$name", async ({ thread, options, check }) => {
     await writeThreadMessages(
       thread,
       [{ role: "user", messageId: 1, content: [{ type: "text", text: "hello" }] }],
@@ -735,6 +736,7 @@ describe("importAmp", () => {
     await importAmp(db, ampDir, "tester");
     const row = getRow(`${thread}:1`);
     expect(row).toBeDefined();
+    expect(row?.conversation_id).toBe(thread);
     check(row!);
   });
 
@@ -767,7 +769,7 @@ describe("importAmp", () => {
     const sentAt = Date.UTC(2026, 5, 1, 12, 0, 0);
     const usageTs = "2026-06-02T08:30:00.000Z";
 
-    it.each([
+    const timestampCases: { name: string; thread: string; message: AmpFixtureMessage; expected: string }[] = [
       {
         name: "prefers meta.sentAt over assistant usage.timestamp",
         thread: "thread-ts-sentat",
@@ -847,8 +849,9 @@ describe("importAmp", () => {
         },
         expected: new Date(threadCreated + 6000).toISOString(),
       },
-    ])("$name", async ({ thread, message, expected }) => {
-      await writeThreadMessages(thread, [message as AmpFixtureMessage]);
+    ];
+    it.each(timestampCases)("$name", async ({ thread, message, expected }) => {
+      await writeThreadMessages(thread, [message]);
       await importAmp(db, ampDir, "tester");
       expect(getRow(`${thread}:${message.messageId}`)?.timestamp).toBe(expected);
     });
