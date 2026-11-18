@@ -1,6 +1,12 @@
 {
   "$schema": "https://styal.build/schema/styal.json",
-  "worktreeCleanup": ["**/node_modules", "web/dist", ".seed-build-*"],
+  "regenerableFiles": [
+    "**/node_modules",
+    "web/dist",
+    ".seed-build-*",
+    ".seed-old-media/",
+    "media/"
+  ],
   "actions": [
     {
       "id": "setup",
