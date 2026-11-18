@@ -3,8 +3,10 @@ export const PENDING_POLL_VOTERS_INDEX = "idx_events_discord_poll_voters_pending
 // Time-dependent eligibility belongs in the query, so open polls age into the index's work set.
 export const PENDING_POLL_VOTERS_WHERE = `
   source = 'discord'
-  AND json_extract(raw_data, '$.poll') IS NOT NULL
-  AND json_extract(raw_data, '$.poll.voters') IS NULL
+  AND CASE WHEN json_valid(raw_data) THEN
+    json_extract(raw_data, '$.poll') IS NOT NULL
+    AND json_extract(raw_data, '$.poll.voters') IS NULL
+  ELSE 0 END
 `;
 
 const CANDIDATE_WHERE = `${PENDING_POLL_VOTERS_WHERE}

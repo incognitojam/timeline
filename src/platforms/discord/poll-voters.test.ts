@@ -199,3 +199,13 @@ describe("captureExpiredPollVoters", () => {
  });
 
 });
+
+test("malformed archived payloads remain stored without breaking index initialization or sweeps", async () => {
+  db.exec(`DROP INDEX ${PENDING_POLL_VOTERS_INDEX}`);
+  db.exec("INSERT INTO events(source,source_id,source_account,type,raw_data) VALUES('discord','malformed','user-1','message:dm','not json')");
+  initDb(db);
+  db.exec("INSERT INTO events(source,source_id,source_account,type,raw_data) VALUES('discord','also-malformed','user-1','message:dm','{')");
+  const stats = await captureExpiredPollVoters({ fetchPollAnswerVoters: async () => { throw new Error("must not request malformed payloads"); } }, db, ACCOUNT);
+  expect(stats).toEqual({ captured: 0, failed: 0, remaining: 0 });
+  expect(db.query("SELECT raw_data FROM events WHERE source_id='malformed'").get()).toEqual({raw_data: "not json"});
+});
