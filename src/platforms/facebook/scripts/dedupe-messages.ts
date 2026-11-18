@@ -27,7 +27,7 @@
  *   bun run src/platforms/facebook/scripts/dedupe-messages.ts             # apply
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../../../db/sqlite";
 import { getDb, initDb } from "../../../db/schema";
 
 interface DupeRow {

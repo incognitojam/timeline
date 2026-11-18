@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "./sqlite";
 import { ensureDiscordAttachmentRetryIndex } from "../platforms/discord/attachment-retry-index";
 import { PLATFORM_METAS } from "../platforms/metas";
 import type { PlatformMeta } from "../platforms/types";

@@ -2,7 +2,7 @@
  * The T3 Code import holds the write lock only to write what changed, in short
  * transactions, so a failed run must leave a state the next run can finish.
  */
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { randomUUID } from "crypto";
 import { mkdir, rm, writeFile } from "fs/promises";

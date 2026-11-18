@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { Database } from "./sqlite";
 import {
   DATE_ACTIVITY_INDEX_SQL,
   DATE_ACTIVITY_SQL,

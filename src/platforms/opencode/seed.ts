@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { join } from "node:path";
 import { importOpenCode } from "./parser";
 import { LATEST_V2_MIGRATION, V1_SESSION_DDL, V2_DDL } from "./fixture";

@@ -8,7 +8,7 @@
  * Usage: bun run src/scripts/sample-database.ts <source-db> <output-db> [--percent=1] [--min-per-type=5] [--no-contacts] [--verbose]
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../db/sqlite";
 import { existsSync } from "fs";
 import type { TimelineEvent } from "../db/schema";
 

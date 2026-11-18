@@ -8,7 +8,7 @@
  * Exits 1 if anything is undeclared or unregistered.
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../db/sqlite";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { undeclaredEventPairs, unusedDeclarations } from "../platforms/event-types";

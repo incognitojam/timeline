@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { initDb } from "../../db/schema";
 import { wrapDatabase } from "../../db/pool";
 import { getWakaTimeStats, getWakaTimeProject } from "./stats";

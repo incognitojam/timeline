@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { randomUUID } from "crypto";
 import { mkdir, rm, writeFile } from "fs/promises";

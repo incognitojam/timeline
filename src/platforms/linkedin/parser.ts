@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { join } from "node:path";
 import { parseCSV } from "../../lib/csv";
 import { runParser } from "../../ingest/cli";

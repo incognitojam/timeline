@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../db/sqlite";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

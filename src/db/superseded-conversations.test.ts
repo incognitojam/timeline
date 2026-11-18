@@ -4,7 +4,7 @@
  * title-generation sessions leave conversation lists, without any of their
  * events being deleted.
  */
-import { Database } from "bun:sqlite";
+import { Database } from "./sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { randomUUID } from "crypto";
 import { mkdir, rm, writeFile } from "fs/promises";

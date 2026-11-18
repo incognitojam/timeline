@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../../../db/sqlite";
 import { join } from "node:path";
 import { getDb, initDb, type Platform } from "../../../db/schema";
 import {

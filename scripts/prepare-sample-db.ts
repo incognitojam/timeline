@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { $ } from "bun";
-import { Database } from "bun:sqlite";
+import { Database } from "../src/db/sqlite";
 import { parseArgs, type ParseArgsConfig } from "util";
 import {
   constants,

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { wrapDatabase } from "../../db/pool";
 import { initDb, type TimelineEvent } from "../../db/schema";
 import { batchLinkIdentitiesToContact } from "../../db/identities";

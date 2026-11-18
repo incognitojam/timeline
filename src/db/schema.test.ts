@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { Database } from "bun:sqlite";
+import { Database } from "./sqlite";
 import { conversationEventEligibilityClause, conversationTypeClause } from "./conversation-types";
 import { getDb, initDb } from "./schema";
 

@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../db/sqlite";
 import { getAppStateDb } from "../db/app-state";
 import type { AttachmentDescriptionHistoryPoint } from "../shared/attachments";
 import type { SyncLogEntry, SyncResult } from "./types";

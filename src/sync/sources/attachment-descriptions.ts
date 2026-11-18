@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { loadConfig } from "../../config";
 import { MAX_TIMEOUT_DELAY_MS, type LlmConfig } from "../../config/types";
 import { getDb, initDb } from "../../db/schema";

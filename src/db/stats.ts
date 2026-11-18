@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "./sqlite";
 import { randomUUID } from "crypto";
 import { wrapDatabase, type QueryExecutor } from "./pool";
 import { setCache } from "./cache";

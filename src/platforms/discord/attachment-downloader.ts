@@ -6,7 +6,7 @@
  * storage with deduplication.
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { extname, basename } from "path";
 import { markAttachmentFailed, storeAndInsertAttachment } from "../../media/attachments";
 import { getMimeType } from "../../media/storage";

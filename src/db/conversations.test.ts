@@ -8,7 +8,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { Database, type SQLQueryBindings } from "bun:sqlite";
+import { Database, type SQLQueryBindings } from "./sqlite";
 import { initDb } from "./schema";
 import { type QueryExecutor, wrapDatabase } from "./pool";
 import {

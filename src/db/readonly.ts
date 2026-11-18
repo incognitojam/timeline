@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "./sqlite";
 import { assertNoLocalDbMarker, getDbPathInfo, getTimelineDbPath } from "./paths";
 
 export function openReadonlyDbAtPath(dbPath: string): Database {

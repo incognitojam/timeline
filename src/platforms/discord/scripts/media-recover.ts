@@ -19,7 +19,7 @@
  * tombstoning if failures cluster (likely systemic) — see attachment-backfill.ts.
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../../../db/sqlite";
 import { parseArgs } from "util";
 import { loadConfig } from "../../../config/index";
 import { openWritableDbAtPath } from "../../../db/connection";

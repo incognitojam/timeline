@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { initDb } from "../../db/schema";
 import {
   backfillDiscordAttachments,

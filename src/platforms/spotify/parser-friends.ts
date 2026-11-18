@@ -7,7 +7,7 @@
  * The feed carries URIs only, so names and artwork are looked up separately.
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";

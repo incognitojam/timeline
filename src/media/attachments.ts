@@ -1,4 +1,4 @@
-import { Database, type SQLQueryBindings } from "bun:sqlite";
+import { Database, type SQLQueryBindings } from "../db/sqlite";
 import { storeFile, type StoreFileResult } from "./storage";
 
 type Statement = ReturnType<Database["prepare"]>;

@@ -24,7 +24,7 @@
  *   bun run src/platforms/t3code/parser.ts alice ~/.styal/userdata/statev2.sqlite --dry-run
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { parserCliArgs } from "../../ingest/cli";
 import { existsSync } from "fs";
 import { readFile } from "fs/promises";

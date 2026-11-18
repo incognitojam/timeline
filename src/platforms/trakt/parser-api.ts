@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { getDb, initDb } from "../../db/schema";
 import { httpRetry } from "../../lib/http-retry";
 import { createTokenManager, type OAuthTokens } from "../../lib/oauth-tokens";

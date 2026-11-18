@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { extractConversationId } from "../../db/conversation-id";
 import { getDb, initDb } from "../../db/schema";
 import {

@@ -16,7 +16,7 @@
  *   bun run src/platforms/amex/parser.ts <activity.csv> [account-name]
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { basename } from "node:path";
 import { parseCSV } from "../../lib/csv";
 import { runParser } from "../../ingest/cli";

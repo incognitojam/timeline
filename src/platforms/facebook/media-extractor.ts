@@ -5,7 +5,7 @@
  * with content-addressed deduplication.
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { readdir, stat } from "fs/promises";
 import { join, basename } from "path";
 import { getDb, initDb, type Attachment } from "../../db/schema";

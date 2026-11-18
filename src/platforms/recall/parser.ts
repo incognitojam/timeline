@@ -13,7 +13,7 @@
  *   3. Insert an attachment row pointing at the stored file.
  *   4. Delete the source pair (the by-hash copy persists in the media root).
  */
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { readdir, unlink } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";

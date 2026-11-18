@@ -8,7 +8,7 @@
  * Usage: bun run src/platforms/discord/scripts/generate-config.ts [discord-chat-db-path]
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../../../db/sqlite";
 import { existsSync } from "node:fs";
 
 const DEFAULT_DISCORD_CHAT_DB = `${process.env.HOME}/.local/share/discord-chat/personal.db`;

@@ -39,7 +39,7 @@
  *   bun run src/platforms/codex/parser.ts [sessions-dir] [account] [--dry-run] [--refresh-raw-data]
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { parserCliArgs } from "../../ingest/cli";
 import { existsSync } from "fs";
 import { readdir } from "fs/promises";

@@ -4,7 +4,7 @@
  * Scans inbox folders for new files and routes them to appropriate parsers.
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../db/sqlite";
 import type { InboxConfig, InboxSourceConfig } from "./config";
 import { resolveSourcePath, getEnabledSources, getArchivePath } from "./config";
 import {

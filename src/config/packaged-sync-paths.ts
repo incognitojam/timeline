@@ -67,7 +67,7 @@ export async function validateStoredPackagedSyncPaths(
     return;
   }
 
-  const { Database } = await import("bun:sqlite");
+  const { Database } = await import("../db/sqlite");
   const db = new Database(appStatePath, { readonly: true });
   try {
     const rows = readStoredRows(db);

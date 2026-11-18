@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../db/sqlite";
 import { getEmbeddingsDbPath as deriveEmbeddingsDbPath, getTimelineDbPath } from "../db/paths";
 import type { QueryExecutor } from "../db/pool";
 import { configureBunSqliteForSqliteVec, loadSqliteVec, serializeVector } from "./sqlite-vec";

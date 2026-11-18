@@ -2,7 +2,7 @@ import { describe, test, expect } from "bun:test";
 import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { initDb } from "../../db/schema";
 import { computeHash } from "../../media/storage";
 import {

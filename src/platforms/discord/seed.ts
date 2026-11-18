@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { join } from "node:path";
 import { storeAndInsertAttachment } from "../../media/attachments";
 import { storeFile } from "../../media/storage";

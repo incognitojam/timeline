@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "./sqlite";
 import type { QueryExecutor } from "./pool";
 import { normalizeIdentityInput } from "./contacts";
 import { upsertIdentity, skipIdentity, unskipIdentity } from "./identities";

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { deleteSyncState, getAppStateDb, getSyncState } from "../../db/app-state";
 import { getDb, initDb } from "../../db/schema";
 import { seed } from "../../testing/seed";

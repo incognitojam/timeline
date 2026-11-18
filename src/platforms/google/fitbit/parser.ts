@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../../../db/sqlite";
 import { readdir } from "node:fs/promises";
 import { join, basename } from "node:path";
 import { parseCSV as parseCSVShared } from "../../../lib/csv";

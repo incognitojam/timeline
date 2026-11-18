@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "./sqlite";
 import { getAppStateDbPath, getTimelineDbPath } from "./paths";
 
 let appStateDb: Database | null = null;

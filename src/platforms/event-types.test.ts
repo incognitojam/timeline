@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../db/sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { TRANSPORT_MODES } from "../db/manual-events";
 import { SEED_SOURCES } from "../seed/sources";

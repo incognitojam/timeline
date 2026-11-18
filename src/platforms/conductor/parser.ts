@@ -13,7 +13,7 @@
  *   bun run src/platforms/conductor/parser.ts ~/path/to/conductor.db
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { parserCliArgs } from "../../ingest/cli";
 import { existsSync } from "fs";
 import { getDb, initDb } from "../../db/schema";

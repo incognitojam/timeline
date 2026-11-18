@@ -5,7 +5,7 @@
  */
 
 import { afterAll, mock } from "bun:test";
-import { Database } from "bun:sqlite";
+import { Database } from "../src/db/sqlite";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { createRequire } from "module";
 import * as os from "os";

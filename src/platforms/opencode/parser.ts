@@ -30,7 +30,7 @@
  *   (dataDir may also be a bare storage/ tree or an opencode.db file)
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { parserCliArgs } from "../../ingest/cli";
 import { existsSync, statSync } from "fs";
 import { readdir } from "fs/promises";

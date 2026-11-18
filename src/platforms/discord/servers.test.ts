@@ -1,4 +1,4 @@
-import { Database, type SQLQueryBindings } from "bun:sqlite";
+import { Database, type SQLQueryBindings } from "../../db/sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { getDiscordServer, listDiscordServers } from "./servers";
 import { type QueryExecutor, wrapDatabase } from "../../db/pool";
