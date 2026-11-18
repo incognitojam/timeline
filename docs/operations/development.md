@@ -189,3 +189,9 @@ The checker opens supplied files read-only and creates its own consistent workin
 Expect only `version`, `sourceId` and `compileOptions` to differ. Other differences need investigation before any switch, especially query plans when `sqlite_stat4` exists. Repeat this procedure for future Bun/SQLite updates, comparing the current library against the new build. On Linux, `--library builtin` checks Bun's embedded SQLite; selecting a dylib there is rejected instead of silently ignored.
 
 When implementing import-time SQLite selection, preserve the diagnostic’s explicit library selection before schema or sqlite-vec modules load. Otherwise the new initialization would reject the old library during the “before” comparison.
+
+## Native CI checks
+
+See [the agent testing guidance](../../AGENTS.md#test-guidelines) for automatic native coverage and how to request it. The PR check remains required under its existing name; [GitHub accepts a job skipped by a job-level condition](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-jobs-with-conditions), so no branch-rule change is needed. Removing a label does not cancel an existing run. Release packaging and the signing check retain their full signed smoke; Trusted CI is reserved for main pushes.
+
+Cancelled or superseded workflows are not validation: a native job cancelled while waiting for detection can appear skipped. Before merging, use the latest completed CI run; rerun it if cancellation left coverage uncertain.

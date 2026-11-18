@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled, edited]
 
 permissions:
   contents: read
@@ -11,6 +12,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  native-changes:
+    name: native change detection
+    runs-on: ubuntu-latest
+    outputs:
+      required: ${{ steps.detect.outputs.required }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Test native change detection
+        run: |
+          git check-ignore -q .scratch || printf '\n.scratch/\n' >> "$(git rev-parse --git-path info/exclude)"
+          python3 -B -m unittest discover -s scripts/ci -p 'test_*.py' -v
+      - name: Detect native changes
+        id: detect
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/ci/native_check.py "$BASE_SHA" "$HEAD_SHA"
+
   changeset:
     name: changeset
     if: ${{ !startsWith(github.head_ref, 'changeset-release/') && !startsWith(github.head_ref, 'renovate/') }}
@@ -81,9 +103,16 @@ jobs:
 
   macos-app:
     name: macOS app bundle
+    needs: native-changes
+    # Only an explicit, successful "false" decision permits a skip. A failed
+    # checkout/test/detector or missing output still requests native coverage.
+    if: ${{ !cancelled() && (contains(github.event.pull_request.labels.*.name, 'native-check') || needs.native-changes.result != 'success' || needs.native-changes.outputs.required != 'false') }}
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: jdx/mise-action@v5
         with:
           install_args: bun go
