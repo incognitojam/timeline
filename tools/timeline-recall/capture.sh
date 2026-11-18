@@ -48,7 +48,8 @@ trap 'rm -rf "$WORK"' EXIT
 
 # Convert each PNG -> WebP and publish complete pairs atomically. The JSON is
 # renamed into place before its WebP, so the parser (which keys off .webp) never
-# sees a WebP without its sidecar.
+# sees a WebP without its sidecar. Metadata-only sidecars ("image": false) have
+# no PNG and are not published by this diagnostic path.
 shopt -s nullglob
 for png in "$WORK/$STAMP"-*.png; do
     stem="$(basename "${png%.png}")"

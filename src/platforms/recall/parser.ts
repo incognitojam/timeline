@@ -12,6 +12,10 @@
  *   2. Insert an event with OCR text in `content` (FTS5-indexed).
  *   3. Insert an attachment row pointing at the stored file.
  *   4. Delete the source pair (the by-hash copy persists in the media root).
+ *
+ * A sidecar with `"image": false` is a complete window record on its own and
+ * becomes an event without an attachment. Any other sidecar waits for its
+ * WebP, which the capture app publishes after the sidecar.
  */
 import { Database } from "../../db/sqlite";
 import { readdir, unlink } from "fs/promises";
@@ -47,6 +51,10 @@ interface RecallSidecar {
   window_layer?: number;     // z-order
   display_id?: number;
   display_frame?: { x: number; y: number; w: number; h: number };
+  // Since schema 2. false: a window record without image or OCR, with the
+  // reason in image_omitted (e.g. "fullscreen_video").
+  image?: boolean;
+  image_omitted?: string;
 }
 
 export interface ImportRecallStats {
@@ -133,22 +141,34 @@ export async function importRecall(
       continue;
     }
 
-    const webpFiles = files.filter((f) => f.endsWith(".webp"));
+    const webpStems = new Set(files.filter((f) => f.endsWith(".webp")).map((f) => f.slice(0, -".webp".length)));
+    const stems = [
+      ...new Set([...webpStems, ...files.filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -".json".length))]),
+    ].sort();
 
-    for (const webpFile of webpFiles) {
+    for (const stamp of stems) {
       if (stats.scanned >= maxCaptures) break;
 
       stats.scanned++;
-      const stamp = webpFile.slice(0, -".webp".length);
+      const webpFile = `${stamp}.webp`;
       const webpPath = join(captureDir.path, webpFile);
       const jsonPath = join(captureDir.path, `${stamp}.json`);
 
       let sidecar: RecallSidecar;
       try {
-        sidecar = JSON.parse(await Bun.file(jsonPath).text());
+        const parsed: unknown = JSON.parse(await Bun.file(jsonPath).text());
+        if (typeof parsed !== "object" || parsed === null) throw new Error("sidecar is not an object");
+        sidecar = parsed as RecallSidecar;
       } catch {
         // Sidecar missing or invalid — skip; capture.sh writes atomically,
         // so a missing sidecar means an interrupted upload. Try again next run.
+        stats.skipped++;
+        continue;
+      }
+
+      const hasImage = webpStems.has(stamp);
+      if (!hasImage && sidecar.image !== false) {
+        // The WebP is published after its sidecar; pick the pair up next run.
         stats.skipped++;
         continue;
       }
@@ -161,19 +181,18 @@ export async function importRecall(
       const sourceId = `${host}:${captureDir.date}:${stamp}`;
 
       try {
-        const content = await Bun.file(webpPath).bytes();
-        const stored = await storeFile({
-          source: "recall",
-          relativePath: join(host, captureDir.date, webpFile),
-          content,
-        });
-        if (stored.deduplicated) stats.deduplicated++;
+        const stored = hasImage
+          ? await storeFile({
+              source: "recall",
+              relativePath: join(host, captureDir.date, webpFile),
+              content: await Bun.file(webpPath).bytes(),
+            })
+          : null;
+        if (stored?.deduplicated) stats.deduplicated++;
 
-        const rawData = JSON.stringify({
-          ...sidecar,
-          content_hash: stored.hash,
-          deduplicated: stored.deduplicated,
-        });
+        const rawData = JSON.stringify(
+          stored ? { ...sidecar, content_hash: stored.hash, deduplicated: stored.deduplicated } : sidecar
+        );
 
         // Title is the window's app name (per-window since v1); fall back to
         // frontmost_app for legacy whole-screen captures still draining.
@@ -201,19 +220,21 @@ export async function importRecall(
           continue;
         }
 
-        insertStoredAttachment(
-          db,
-          {
-            eventId: eventRow.id,
-            source: "recall",
-            sourceId,
-            filename: webpFile,
-            mimeType: "image/webp",
-            width: sidecar.width ?? null,
-            height: sidecar.height ?? null,
-          },
-          stored
-        );
+        if (stored) {
+          insertStoredAttachment(
+            db,
+            {
+              eventId: eventRow.id,
+              source: "recall",
+              sourceId,
+              filename: webpFile,
+              mimeType: "image/webp",
+              width: sidecar.width ?? null,
+              height: sidecar.height ?? null,
+            },
+            stored
+          );
+        }
 
         if (result.changes > 0) {
           stats.imported++;
@@ -221,7 +242,7 @@ export async function importRecall(
           stats.skipped++;
         }
       } catch (e) {
-        console.error(`recall: failed ${webpPath}:`, e);
+        console.error(`recall: failed ${hasImage ? webpPath : jsonPath}:`, e);
         stats.failed++;
         continue;
       }
@@ -234,12 +255,16 @@ export async function importRecall(
       // re-encounters the file — UNIQUE constraint makes the re-import a
       // no-op and we get another chance to clean up.
       try {
-        await unlink(webpPath);
-        await unlink(jsonPath).catch(() => {
-          // sidecar already missing — fine
-        });
+        if (hasImage) {
+          await unlink(webpPath);
+          await unlink(jsonPath).catch(() => {
+            // sidecar already missing — fine
+          });
+        } else {
+          await unlink(jsonPath);
+        }
       } catch (e) {
-        console.error(`recall: cleanup failed for ${webpPath}:`, e);
+        console.error(`recall: cleanup failed for ${hasImage ? webpPath : jsonPath}:`, e);
       }
     }
   }

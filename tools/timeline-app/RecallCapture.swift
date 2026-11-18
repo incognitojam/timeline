@@ -6,7 +6,7 @@ import ImageIO
 import UniformTypeIdentifiers
 import ScreenCaptureKit
 import CoreGraphics
-
+import IOKit.pwr_mgt
 
 struct RecallError: LocalizedError {
     let message: String
@@ -54,7 +54,8 @@ enum RecallCapture {
         }
         let content = try await getContent()
         if primeWindowServer { await primeCGS(content.displays.first) }
-        let wins = content.windows.filter { !isSystemWindow($0) && !isExcluded($0, excluded: excluded) && $0.frame.width >= 40 && $0.frame.height >= 40 }
+        let visible = content.windows.filter { !isSystemWindow($0) && $0.frame.width >= 40 && $0.frame.height >= 40 }
+        let wins = visible.filter { !isExcluded($0, excluded: excluded) }
 
         // Shared per-tick metadata.
         let iso = ISO8601DateFormatter()
@@ -64,48 +65,58 @@ enum RecallCapture {
         // Frontmost app by stable bundle id (not display name, which varies by case /
         // localisation). nil if nothing is frontmost (e.g. all apps hidden).
         let frontmostBundleId = frontmost?.bundleIdentifier
+        let insets = await MainActor.run { menuBarInsets() }
+        let blockers = try displaySleepBlockers()
+        let placements = visible.map(placement)
 
         var written = 0
         for (index, w) in wins.enumerated() {
             try Task.checkCancellation()
             guard !screenLocked else { throw CancellationError() }
-            guard let capture = await captureWindow(w) else {
-                warn("capture failed for window \(index) (\(w.owningApplication?.applicationName ?? "?"))")
-                continue
-            }
-            try Task.checkCancellation()
-            let image = capture.image
-            let (text, lineCount) = try ocr(image)
-            try Task.checkCancellation()
             let stem = String(format: "%@-%02d", stamp, index)
-
-            guard writePNG(image, to: "\(outputDir)/\(stem).png") else {
-                throw RecallError("PNG encode failed for \(stem)")
-            }
-
             let app = w.owningApplication?.applicationName ?? ""
             let bundleId = w.owningApplication?.bundleIdentifier
             var payload: [String: Any] = [
-                "schema_version": 1,
+                "schema_version": 2,
                 "captured_at": capturedAt,
                 "hostname": hostname,
                 "app": app,
                 "bundle_id": bundleId ?? "",
                 "window_title": w.title ?? "",
                 "is_frontmost": bundleId != nil && bundleId == frontmostBundleId,
-                "ocr_text": text,
-                "ocr_line_count": lineCount,
-                "width": image.width,
-                "height": image.height,
-                "point_pixel_scale": capture.pixelScale,
                 "window_id": Int(w.windowID),
                 "window_index": index,
                 "frame": rectDict(w.frame),
                 "window_layer": w.windowLayer,
             ]
-            if let display = displayFor(w, in: content.displays) {
+            let display = displayFor(w, in: content.displays)
+            if let display {
                 payload["display_id"] = Int(display.displayID)
                 payload["display_frame"] = rectDict(display.frame)
+            }
+
+            if let reason = try imageOmission(for: w, on: display, insets: insets,
+                                              among: placements, displaySleepBlockers: blockers) {
+                payload["image"] = false
+                payload["image_omitted"] = reason
+            } else {
+                guard let capture = await captureWindow(w) else {
+                    warn("capture failed for window \(index) (\(app.isEmpty ? "?" : app))")
+                    continue
+                }
+                try Task.checkCancellation()
+                let image = capture.image
+                let (text, lineCount) = try ocr(image)
+                try Task.checkCancellation()
+                guard writePNG(image, to: "\(outputDir)/\(stem).png") else {
+                    throw RecallError("PNG encode failed for \(stem)")
+                }
+                payload["image"] = true
+                payload["ocr_text"] = text
+                payload["ocr_line_count"] = lineCount
+                payload["width"] = image.width
+                payload["height"] = image.height
+                payload["point_pixel_scale"] = capture.pixelScale
             }
             guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
                   let json = String(data: data, encoding: .utf8) else {
@@ -246,6 +257,90 @@ enum RecallCapture {
         let center = CGPoint(x: w.frame.midX, y: w.frame.midY)
         if let containing = displays.first(where: { $0.frame.contains(center) }) { return containing }
         return displays.max(by: { overlapArea(w.frame, $0.frame) < overlapArea(w.frame, $1.frame) })
+    }
+
+    struct WindowPlacement {
+        let windowID: CGWindowID
+        let pid: pid_t?
+        let frame: CGRect
+        let layer: Int
+    }
+
+    struct DisplayArea {
+        let frame: CGRect
+        // Points at the top of the display a fullscreen window may leave
+        // uncovered: apps that avoid the camera housing stop below the menu bar.
+        let topInset: CGFloat
+    }
+
+    static func placement(_ w: SCWindow) -> WindowPlacement {
+        WindowPlacement(windowID: w.windowID, pid: w.owningApplication?.processID, frame: w.frame, layer: w.windowLayer)
+    }
+
+    // Why a window is recorded without an image, or nil to capture it.
+    static func imageOmission(for w: SCWindow, on display: SCDisplay?, insets: [CGDirectDisplayID: CGFloat],
+                              among windows: [WindowPlacement], displaySleepBlockers: Set<pid_t>) throws -> String? {
+        guard let display else { return nil }
+        guard let inset = insets[display.displayID] else {
+            throw RecallError("No screen matches display \(display.displayID).")
+        }
+        let area = DisplayArea(frame: display.frame, topInset: inset)
+        return isFullscreenVideo(placement(w), on: area, among: windows, displaySleepBlockers: displaySleepBlockers)
+            ? "fullscreen_video" : nil
+    }
+
+    // Video players and browsers keep the display awake only while playing,
+    // windowed or fullscreen, so coverage tells fullscreen playback apart.
+    // A window over the menu bar row is fullscreen (VLC's default fullscreen
+    // stays in the current Space). A window that stops below it (native
+    // fullscreen on a display with a camera housing) has a maximised window's
+    // frame; only a fullscreen Space hides every other window, apart from a
+    // toolbar strip along the fullscreen window's top edge.
+    static func isFullscreenVideo(_ window: WindowPlacement, on display: DisplayArea,
+                                  among windows: [WindowPlacement], displaySleepBlockers: Set<pid_t>) -> Bool {
+        guard let pid = window.pid, displaySleepBlockers.contains(pid) else { return false }
+        let d = display.frame
+        let slack: CGFloat = 1
+        let f = window.frame
+        guard f.minX <= d.minX + slack, f.maxX >= d.maxX - slack, f.maxY >= d.maxY - slack else { return false }
+        if f.minY <= d.minY + slack { return true }
+        guard f.minY <= d.minY + display.topInset + slack else { return false }
+        return !windows.contains { other in
+            guard other.windowID != window.windowID, other.layer == 0, overlapArea(other.frame, d) > 0 else { return false }
+            let toolbar = other.pid == pid && other.frame.minY == f.minY && other.frame.minX == f.minX
+                && other.frame.width == f.width && other.frame.height < f.height
+            return !toolbar
+        }
+    }
+
+    // Processes holding an assertion that keeps the display awake.
+    static func displaySleepBlockers() throws -> Set<pid_t> {
+        var out: Unmanaged<CFDictionary>?
+        guard IOPMCopyAssertionsByProcess(&out) == kIOReturnSuccess,
+              let byProcess = out?.takeRetainedValue() as? [NSNumber: [[String: Any]]] else {
+            throw RecallError("Could not read power assertions.")
+        }
+        let displayTypes: Set<String> = [kIOPMAssertionTypePreventUserIdleDisplaySleep, kIOPMAssertionTypeNoDisplaySleep]
+        var pids = Set<pid_t>()
+        for (pid, assertions) in byProcess {
+            for assertion in assertions {
+                guard let type = assertion[kIOPMAssertionTypeKey] as? String, displayTypes.contains(type) else { continue }
+                pids.insert(pid.int32Value)
+            }
+        }
+        return pids
+    }
+
+    // Menu bar height per display (the gap above NSScreen.visibleFrame), or the
+    // camera housing's safe-area inset if that is larger.
+    @MainActor
+    static func menuBarInsets() -> [CGDirectDisplayID: CGFloat] {
+        var insets: [CGDirectDisplayID: CGFloat] = [:]
+        for screen in NSScreen.screens {
+            guard let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { continue }
+            insets[id.uint32Value] = max(screen.frame.maxY - screen.visibleFrame.maxY, screen.safeAreaInsets.top)
+        }
+        return insets
     }
 
     static func rectDict(_ r: CGRect) -> [String: Double] {

@@ -8,6 +8,7 @@ struct RecallTests {
         guard CommandLine.arguments.count >= 2 else { throw RecallError("Pass a scratch directory.") }
         ageTests()
         menuTests()
+        fullscreenVideoTests()
         let fm = FileManager.default
         let root = URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("recall-tests-\(UUID().uuidString)")
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
@@ -93,6 +94,31 @@ struct RecallTests {
         let unchanged = try Data(contentsOf: directory.appendingPathComponent("120000-00.webp"))
         precondition(unchanged == publishedImage)
 
+        // A metadata-only record publishes its sidecar alone; a sidecar that
+        // declares an image never publishes without one.
+        let metadataWork = root.appendingPathComponent("metadata-work")
+        let metadataOutput = root.appendingPathComponent("metadata-output")
+        try fm.createDirectory(at: metadataWork, withIntermediateDirectories: true)
+        let metadataOnly = Data("{\"app\":\"Example Player\",\"image\":false,\"image_omitted\":\"fullscreen_video\"}".utf8)
+        try metadataOnly.write(to: metadataWork.appendingPathComponent("120000-01.json"))
+        let metadataWritten = try pipeline.publish(work: metadataWork, to: metadataOutput, encoder: "/usr/bin/false")
+        precondition(metadataWritten == 1)
+        let publishedMetadata = try Data(contentsOf: metadataOutput.appendingPathComponent("120000-01.json"))
+        precondition(publishedMetadata == metadataOnly)
+        precondition(!fm.fileExists(atPath: metadataOutput.appendingPathComponent("120000-01.webp").path))
+        try Data("{\"app\":\"Example App\",\"image\":true}".utf8).write(to: metadataWork.appendingPathComponent("120000-02.json"))
+        do {
+            _ = try pipeline.publish(work: metadataWork, to: metadataOutput, encoder: encoder.path)
+            preconditionFailure("A sidecar that declares an image must not publish without one")
+        } catch {}
+        precondition(!fm.fileExists(atPath: metadataOutput.appendingPathComponent("120000-02.json").path))
+        try fm.removeItem(at: metadataWork.appendingPathComponent("120000-02.json"))
+        precondition(RecallCapture.writePNG(image, to: metadataWork.appendingPathComponent("120000-03.png").path))
+        do {
+            _ = try pipeline.publish(work: metadataWork, to: metadataOutput, encoder: encoder.path)
+            preconditionFailure("An image without a sidecar must fail the tick")
+        } catch {}
+
         if CommandLine.arguments.count > 2 {
             let realOutput = root.appendingPathComponent("real-encoder-output")
             let written = try pipeline.publish(work: work, to: realOutput, encoder: CommandLine.arguments[2])
@@ -147,6 +173,52 @@ struct RecallTests {
 
         try migrationTests(home: home)
         print("OK: Recall OCR timeout, failure streak, publication, cancellation, retention, and migration.")
+    }
+
+    static func fullscreenVideoTests() {
+        typealias W = RecallCapture.WindowPlacement
+        let built = RecallCapture.DisplayArea(frame: CGRect(x: 0, y: 0, width: 1800, height: 1169), topInset: 39)
+        let external = RecallCapture.DisplayArea(frame: CGRect(x: 1800, y: 0, width: 2560, height: 1440), topInset: 25)
+        let player: pid_t = 100, other: pid_t = 200
+        var lastID: CGWindowID = 0
+        func next() -> CGWindowID { lastID += 1; return lastID }
+        func check(_ w: W, on d: RecallCapture.DisplayArea = built, among extra: [W] = [], blockers: Set<pid_t> = [player]) -> Bool {
+            RecallCapture.isFullscreenVideo(w, on: d, among: [w] + extra, displaySleepBlockers: blockers)
+        }
+        // Fullscreen over the whole display, or stopping below the camera housing.
+        let whole = W(windowID: next(), pid: player, frame: built.frame, layer: 0)
+        let belowNotch = W(windowID: next(), pid: player, frame: CGRect(x: 0, y: 39, width: 1800, height: 1130), layer: 0)
+        precondition(check(whole))
+        precondition(check(belowNotch))
+        // The player's own controls and another display's windows don't count.
+        let controls = W(windowID: next(), pid: player, frame: CGRect(x: 658, y: 936, width: 483, height: 84), layer: 8)
+        let elsewhere = W(windowID: next(), pid: other, frame: CGRect(x: 1900, y: 100, width: 800, height: 600), layer: 0)
+        precondition(check(belowNotch, among: [controls, elsewhere]))
+        // A floating window from another app sits above a fullscreen Space.
+        precondition(check(belowNotch, among: [W(windowID: next(), pid: other, frame: CGRect(x: 1400, y: 900, width: 320, height: 180), layer: 3)]))
+        // Fullscreen over the menu bar row in the current Space, other apps' windows behind it.
+        let behind = W(windowID: next(), pid: other, frame: CGRect(x: 131, y: 47, width: 1631, height: 1050), layer: 0)
+        precondition(check(whole, among: [behind]))
+        // Paused: no display-sleep assertion.
+        precondition(!check(whole, blockers: []))
+        precondition(!check(whole, blockers: [other]))
+        // Windowed playback.
+        precondition(!check(W(windowID: next(), pid: player, frame: CGRect(x: 131, y: 47, width: 1631, height: 1050), layer: 0)))
+        // Maximised in a normal Space: other apps' windows are listed behind it.
+        precondition(!check(belowNotch, among: [W(windowID: next(), pid: other, frame: CGRect(x: 0, y: 39, width: 1443, height: 1068), layer: 0)]))
+        // Maximised with only the same browser's other windows behind it.
+        precondition(!check(belowNotch, among: [W(windowID: next(), pid: player, frame: CGRect(x: 131, y: 47, width: 1631, height: 1050), layer: 0)]))
+        precondition(!check(belowNotch, among: [W(windowID: next(), pid: player, frame: belowNotch.frame, layer: 0)]))
+        // A browser's fullscreen Space keeps its toolbar strip on screen.
+        precondition(check(belowNotch, among: [W(windowID: next(), pid: player, frame: CGRect(x: 0, y: 39, width: 1800, height: 68), layer: 0)]))
+        // Too far below the top edge to be fullscreen.
+        precondition(!check(W(windowID: next(), pid: player, frame: CGRect(x: 0, y: 98, width: 1800, height: 1071), layer: 0)))
+        // Coverage is checked against the window's own display.
+        let externalWhole = W(windowID: next(), pid: player, frame: external.frame, layer: 0)
+        precondition(check(externalWhole, on: external, among: [W(windowID: next(), pid: other, frame: CGRect(x: 0, y: 39, width: 1443, height: 1068), layer: 0)]))
+        precondition(!check(externalWhole, on: built))
+        precondition(!check(W(windowID: next(), pid: nil, frame: built.frame, layer: 0), blockers: []))
+        print("OK: Fullscreen video needs a display-sleep assertion and display coverage, or a fullscreen Space below the menu bar.")
     }
 
     static func ageTests() {
