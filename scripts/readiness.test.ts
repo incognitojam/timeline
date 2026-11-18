@@ -6,14 +6,17 @@ import { waitForServer } from "./readiness";
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 describe("waitForServer", () => {
-  it("resolves true once the server answers", async () => {
+  it.each(["connection error", "error status"])("resolves true after %s", async (failure) => {
     let attempts = 0;
     const ready = await waitForServer({
       url: "http://127.0.0.1:1/api/health",
       sleep: tick,
       fetch: async () => {
         attempts += 1;
-        if (attempts < 3) throw new Error("ECONNREFUSED");
+        if (attempts < 3) {
+          if (failure === "connection error") throw new Error("ECONNREFUSED");
+          return { ok: false };
+        }
         return { ok: true };
       },
     });
@@ -22,20 +25,6 @@ describe("waitForServer", () => {
     expect(attempts).toBe(3);
   });
 
-  it("keeps polling while the server answers with an error status", async () => {
-    let attempts = 0;
-    const ready = await waitForServer({
-      url: "http://127.0.0.1:1/api/health",
-      sleep: tick,
-      fetch: async () => {
-        attempts += 1;
-        return { ok: attempts >= 2 };
-      },
-    });
-
-    expect(ready).toBe(true);
-    expect(attempts).toBe(2);
-  });
 
   it("resolves false when the process exits first", async () => {
     let attempts = 0;
