@@ -23,6 +23,8 @@ jobs:
       - uses: jdx/mise-action@v5
         with:
           install_args: bun go
+      - name: Trust the checkout for container Git commands
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: bun install --frozen-lockfile
       - run: bun install --frozen-lockfile
         working-directory: web
