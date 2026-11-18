@@ -31,12 +31,8 @@ function requirePinnedBun(packageJson: object, activeVersion: string) {
 }
 
 describe("require_pinned_bun", () => {
-  test("accepts the Bun version pinned by packageManager", () => {
-    expect(requirePinnedBun({ packageManager: "bun@1.3.14" }, "1.3.14").exitCode).toBe(0);
-  });
-
-  test("accepts a pin carrying a Corepack checksum", () => {
-    expect(requirePinnedBun({ packageManager: "bun@1.3.14+sha224.abc" }, "1.3.14").exitCode).toBe(0);
+  test.each(["bun@1.3.14", "bun@1.3.14+sha224.abc"])("accepts pin %s", (packageManager) => {
+    expect(requirePinnedBun({ packageManager }, "1.3.14").exitCode).toBe(0);
   });
 
   test("rejects a different active Bun with both versions and a remedy", () => {

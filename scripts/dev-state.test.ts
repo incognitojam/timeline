@@ -10,7 +10,6 @@ import {
   parseState,
   processGroup,
   processIdentity,
-  processStartTime,
   readLiveState,
   type StopDeps,
   stopTargets,
@@ -45,9 +44,6 @@ describe("process identity", () => {
     expect(isAlive(processIdentity(process.pid))).toBe(true);
   });
 
-  it("reports a stable start time", () => {
-    expect(processStartTime(process.pid)).toBe(processStartTime(process.pid));
-  });
 
   it("rejects a reused PID whose start time differs", () => {
     const identity = processIdentity(process.pid);

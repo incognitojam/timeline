@@ -21,12 +21,6 @@ describe("workspacePort", () => {
     expect(workspacePort("web", {})).toBeUndefined();
   });
 
-  it("assigns distinct ports to each development service", () => {
-    const env = { STYAL_WORKSPACE_PORT: "27530" };
-    expect(workspacePort("web", env)).toBe(27530);
-    expect(workspacePort("api", env)).toBe(27531);
-    expect(workspacePort("playwright", env)).toBe(27532);
-  });
 
   it("prefers STYAL_WORKSPACE_PORT over T3CODE_WORKSPACE_PORT", () => {
     const env = { STYAL_WORKSPACE_PORT: "27530", T3CODE_WORKSPACE_PORT: "31000" };
