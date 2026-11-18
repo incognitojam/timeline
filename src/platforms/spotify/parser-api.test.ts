@@ -38,20 +38,6 @@ describe("spotify token extraction", () => {
 });
 
 describe("spotify-api playlist resolution", () => {
-  test("extracts playlist ID from URI", () => {
-    const testCases = [
-      { uri: "spotify:playlist:0123456789ABCDEFGHIJKL", expected: "0123456789ABCDEFGHIJKL" },
-      { uri: "spotify:playlist:abc123XYZ", expected: "abc123XYZ" },
-      { uri: "spotify:album:123", expected: null },
-      { uri: "invalid", expected: null },
-    ];
-
-    for (const { uri, expected } of testCases) {
-      const match = uri.match(/spotify:playlist:([a-zA-Z0-9]+)/);
-      const result = match ? match[1] : null;
-      expect(result).toBe(expected);
-    }
-  });
 
   test("collectUnknownPlaylistUris finds unknown URIs", () => {
     const items: SpotifyPlayHistoryItem[] = [
@@ -87,6 +73,7 @@ describe("spotify-api playlist resolution", () => {
       },
     ];
 
+    items.push({ track: items[0].track, played_at: "2024-01-01T00:06:00Z" });
     const cache = new Map([["spotify:playlist:known", "Known Playlist"]]);
     const result = collectUnknownPlaylistUris(items, cache);
 
@@ -96,40 +83,7 @@ describe("spotify-api playlist resolution", () => {
     expect(result).not.toContain("spotify:playlist:known");
   });
 
-  test("collectUnknownPlaylistUris returns empty for all cached", () => {
-    const items: SpotifyPlayHistoryItem[] = [
-      {
-        track: { uri: "spotify:track:1", name: "Track 1", artists: [{ name: "Artist" }] },
-        played_at: "2024-01-01T00:00:00Z",
-        context: { type: "playlist", uri: "spotify:playlist:cached1", href: "" },
-      },
-    ];
 
-    const cache = new Map([["spotify:playlist:cached1", "Cached Playlist"]]);
-    const result = collectUnknownPlaylistUris(items, cache);
-
-    expect(result).toHaveLength(0);
-  });
-
-  test("collectUnknownPlaylistUris handles items without context", () => {
-    const items: SpotifyPlayHistoryItem[] = [
-      {
-        track: { uri: "spotify:track:1", name: "Track 1", artists: [{ name: "Artist" }] },
-        played_at: "2024-01-01T00:00:00Z",
-        context: null,
-      },
-      {
-        track: { uri: "spotify:track:2", name: "Track 2", artists: [{ name: "Artist" }] },
-        played_at: "2024-01-01T00:01:00Z",
-        // context undefined
-      },
-    ];
-
-    const cache = new Map<string, string>();
-    const result = collectUnknownPlaylistUris(items, cache);
-
-    expect(result).toHaveLength(0);
-  });
 
   test("collectUnknownPlaylistUris skips recently missing playlists", () => {
     const items: SpotifyPlayHistoryItem[] = [

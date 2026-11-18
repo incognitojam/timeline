@@ -8,7 +8,6 @@ import {
   fetchDailyRollups,
   mainSleepIds,
   parseHeightSamples,
-  resolveProbeDailySummaryDataType,
   toLocalIso,
   weightEvent,
 } from "./parser";
@@ -198,21 +197,8 @@ describe("daily rollup requests", () => {
 });
 
 describe("daily summary request helpers", () => {
-  test("defaults the probe to daily heart rate variability", () => {
-    expect(resolveProbeDailySummaryDataType()).toBe("daily-heart-rate-variability");
-  });
 
-  test("accepts health metrics daily data types for the probe", () => {
-    expect(resolveProbeDailySummaryDataType("daily-resting-heart-rate")).toBe(
-      "daily-resting-heart-rate",
-    );
-  });
 
-  test("rejects daily list data types outside the health metrics scope", () => {
-    expect(() => resolveProbeDailySummaryDataType("daily-vo2-max")).toThrow(
-      "This probe only requests",
-    );
-  });
 
   test("builds the daily summary list filter with live API restriction fields", () => {
     expect(
