@@ -65,7 +65,7 @@ jobs:
           release="$RUNNER_TEMP/release.json"
           gh api "repos/$GH_REPO/releases/tags/$FEED_TAG" > "$release"
           feed=()
-          if jq -e '.assets | any(.name == "appcast.xml")' "$release" > /dev/null; then
+          if jq -e '.assets | any(.name == "appcast.xml" and .state == "uploaded")' "$release" > /dev/null; then
             gh release download "$FEED_TAG" --pattern appcast.xml --dir "$RUNNER_TEMP/feed"
             feed=(--feed "$RUNNER_TEMP/feed/appcast.xml")
           fi
@@ -169,7 +169,7 @@ jobs:
           release="$RUNNER_TEMP/release.json"
           gh api "repos/$GH_REPO/releases/tags/$FEED_TAG" > "$release"
           feed=()
-          if jq -e '.assets | any(.name == "appcast.xml")' "$release" > /dev/null; then
+          if jq -e '.assets | any(.name == "appcast.xml" and .state == "uploaded")' "$release" > /dev/null; then
             gh release download "$FEED_TAG" --pattern appcast.xml --dir "$RUNNER_TEMP/current"
             feed=(--feed "$RUNNER_TEMP/current/appcast.xml")
           fi
