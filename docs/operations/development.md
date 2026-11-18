@@ -143,3 +143,43 @@ standalone packaged boundary from a temporary working directory with:
 ```bash
 ./scripts/smoke-service-artifact.sh
 ```
+
+## Changing SQLite
+
+The Linux runtime is SQLite compiled into Bun. `bun run sqlite:pin bun-v<Bun.version>` runs on Linux with that Bun installed and regenerates `src/db/sqlite-pin.ts` from Bun's source and build recipe. Review the manifest when upgrading Bun; the runtime tests reject a changed SQLite version, source id or compile options. The macOS runtime tests explicitly wait for the separate bundled-runtime rollout.
+
+`bun run sqlite:build` checks Linux's runtime or builds a native macOS dylib using Xcode Command Line Tools. It prints the library path on macOS, verifies downloaded source against the manifest's SHA-256, and validates the compiled library before publishing it to the repository-local cache. This command does not select the library for Timeline or change the installed app.
+
+Before switching a host's SQLite, compare disposable snapshots in a checkout containing these commands. Leave the host environment file unchanged during comparison, including its existing setting written as `TIMELINE_SQLITE_LIBRARY_PATH=…` or `export TIMELINE_SQLITE_LIBRARY_PATH=…`. The diagnostic uses only its explicit `--library` argument.
+
+The following Apple Silicon macOS commands use the default data location; substitute your configured database and embeddings locations if different. `prepare-full` refreshes a development snapshot without its live WAL, so it can lag recent writes (see [Local development database](#local-development-database)). Do not use these results as a backup or proof of the live database's exact current contents.
+
+```bash
+bun run prepare-full -- --refresh --no-copy
+# Scratch output stays private and untracked.
+git check-ignore -q .scratch || printf '\n.scratch/\n' >> "$(git rev-parse --git-path info/exclude)"
+mkdir -p .scratch
+comparison_dir="$(mktemp -d .scratch/sqlite-comparison.XXXXXX)"
+cp -c "$HOME/.local/share/timeline/full.db" "$comparison_dir/timeline.db"
+brew_sqlite="$(/opt/homebrew/bin/brew --prefix sqlite)"
+pinned_library="$(bun run sqlite:build)"
+
+bun run sqlite:check-compat -- --library "$brew_sqlite/lib/libsqlite3.dylib" --db "$comparison_dir/timeline.db" > "$comparison_dir/before.json"
+bun run sqlite:check-compat -- --library "$pinned_library" --db "$comparison_dir/timeline.db" > "$comparison_dir/after.json"
+diff -u "$comparison_dir/before.json" "$comparison_dir/after.json"
+```
+
+If embeddings are configured, snapshot them with SQLite's backup API (including committed WAL frames), then repeat the comparison with that snapshot:
+
+```bash
+"$brew_sqlite/bin/sqlite3" -readonly "$HOME/.local/share/timeline/embeddings.db" ".backup '$comparison_dir/embeddings.db'"
+bun run sqlite:check-compat -- --library "$brew_sqlite/lib/libsqlite3.dylib" --db "$comparison_dir/timeline.db" --embeddings "$comparison_dir/embeddings.db" > "$comparison_dir/before.json"
+bun run sqlite:check-compat -- --library "$pinned_library" --db "$comparison_dir/timeline.db" --embeddings "$comparison_dir/embeddings.db" > "$comparison_dir/after.json"
+diff -u "$comparison_dir/before.json" "$comparison_dir/after.json"
+```
+
+The checker opens supplied files read-only and creates its own consistent working copies under `.scratch/`. It checks the original database pages before rebuilding working copies with VACUUM, hashes the schema and fixed FTS/JSON queries, counts every table, reports `sqlite_stat*` tables and query plans, applies schema initialization, and exercises REPLACE triggers. With `--embeddings` it also checks sqlite-vec and nearest-neighbour results. Without that argument the output explicitly says vector checks were not performed. Read-only SQLite can create `-wal` and `-shm` sidecars beside a supplied snapshot; the main database bytes remain unchanged. Working copies are removed after the command; reports remain in `comparison_dir` and contain no event text.
+
+Expect only `version`, `sourceId` and `compileOptions` to differ. Other differences need investigation before any switch, especially query plans when `sqlite_stat4` exists. Repeat this procedure for future Bun/SQLite updates, comparing the current library against the new build. On Linux, `--library builtin` checks Bun's embedded SQLite; selecting a dylib there is rejected instead of silently ignored.
+
+When implementing import-time SQLite selection, preserve the diagnostic’s explicit library selection before schema or sqlite-vec modules load. Otherwise the new initialization would reject the old library during the “before” comparison.
