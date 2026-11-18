@@ -30,14 +30,14 @@ export interface SleepDetails {
   efficiency: number | null;
 }
 
+export const SLEEP_TYPES: ReadonlySet<string> = new Set(["sleep", "sleep:nap"]);
+
 /**
  * google-health is the canonical sleep source; fitbit's own sleep events are
  * either superseded by it or predate it, and keep the generic event card.
  */
 export function isSleepEvent(event: { source: string; type: string }): boolean {
-  return (
-    event.source === "google-health" && (event.type === "sleep" || event.type === "sleep:nap")
-  );
+  return event.source === "google-health" && SLEEP_TYPES.has(event.type);
 }
 
 const STAGES: Record<string, SleepStage> = {

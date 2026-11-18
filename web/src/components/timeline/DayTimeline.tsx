@@ -3,7 +3,7 @@ import { callRecordingsMeta } from "@platforms/call-recordings/meta";
 import { useNavigate } from "@solidjs/router";
 import { createEffect, createResource, createSignal, For, on, onCleanup, Show, Suspense } from "solid-js";
 import { fetchTrackImages } from "../../lib/api";
-import { dayHasGoogleHealthSleep, isDailyHealthMetric, isFitbitSleep } from "../../platforms/google/health-events";
+import { withoutDuplicateHealthEvents } from "../../platforms/google/health-events";
 import { hiddenSources } from "../../lib/hiddenSourcesStore";
 import { navigateToIdentity } from "../../lib/identities";
 import { useDayEvents } from "../../lib/queries";
@@ -210,17 +210,12 @@ export default function DayTimeline(props: Props) {
     const d = data();
     if (!d) return [];
     const hidden = hiddenSources();
-    // google-health is the canonical health source; on days it provides sleep,
-    // suppress the duplicate fitbit sleep so the same night isn't shown twice.
-    const ghSleep = dayHasGoogleHealthSleep(d.events);
     // A call event a shown recording recorded is shown inside that recording's card.
     const recordedCalls = new Set(
       hidden.has(callRecordingsMeta.id) ? [] : Object.values(d.callLinks ?? {}).flat().map((call) => call.id),
     );
-    return d.events.filter(e => {
+    return withoutDuplicateHealthEvents(d.events).filter(e => {
       if (recordedCalls.has(e.id)) return false;
-      if (isDailyHealthMetric(e)) return false;
-      if (ghSleep && isFitbitSleep(e)) return false;
       if (hidden.has(e.source)) return false;
       return true;
     });
