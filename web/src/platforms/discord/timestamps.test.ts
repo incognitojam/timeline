@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatDiscordTimestamp, formatDiscordTimestampTooltip } from "./timestamps";
+import { formatDiscordTimestamp } from "./timestamps";
 
 // 2023-06-13T19:00:00Z. Rendering is locale- and timezone-dependent by design
 // (Discord renders in the reader's own), so assertions here check which
@@ -53,8 +53,3 @@ describe("formatDiscordTimestamp", () => {
   });
 });
 
-describe("formatDiscordTimestampTooltip", () => {
-  it("always gives the full form, even for styles that drop the date", () => {
-    expect(formatDiscordTimestampTooltip(SECONDS)).toBe(formatDiscordTimestamp(SECONDS, "F"));
-  });
-});

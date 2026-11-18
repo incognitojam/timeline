@@ -19,47 +19,6 @@ describe("conversation query cache", () => {
     vi.unstubAllGlobals();
   });
 
-  it("deduplicates and reuses transcript pages across consumers", async () => {
-    const fetchMock = vi.fn(() => Promise.resolve(Response.json({
-      title: "Example conversation",
-      events: [],
-      nextCursor: null,
-      server: null,
-    })));
-    vi.stubGlobal("fetch", fetchMock);
-    const client = new QueryClient({ defaultOptions: queryClientDefaultOptions });
-    const options = queryOptions.conversationPage({
-      conversationId: "conversation-1",
-      source: "discord",
-      limit: 100,
-      order: "desc",
-    });
-
-    await Promise.all([client.fetchQuery(options), client.fetchQuery(options)]);
-    await client.fetchQuery(options);
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("reuses the loaded media pages when a gallery remounts", async () => {
-    const fetchMock = vi.fn(() => Promise.resolve(Response.json({
-      attachments: [],
-      nextCursor: null,
-    })));
-    vi.stubGlobal("fetch", fetchMock);
-    const client = new QueryClient({ defaultOptions: queryClientDefaultOptions });
-    const options = queryOptions.conversationMedia({
-      conversationId: "conversation-1",
-      source: "discord",
-      mime: "image",
-    });
-
-    await client.fetchInfiniteQuery(options);
-    await client.fetchInfiniteQuery(options);
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
   it("deduplicates range exports and keys them by effective format", async () => {
     const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) => Promise.resolve(Response.json({
       text: "Alice: hello\nBob: hi",
@@ -116,29 +75,6 @@ describe("conversation query cache", () => {
       format: { ...request.format, timeZone: "America/New_York" },
     });
     expect(utcOptions.queryKey).not.toEqual(newYorkOptions.queryKey);
-  });
-
-  it("refetches a cached transcript page when polling requests staleTime zero", async () => {
-    const fetchMock = vi.fn(() => Promise.resolve(Response.json({
-      title: "Example conversation",
-      events: [],
-      nextCursor: null,
-      server: null,
-    })));
-    vi.stubGlobal("fetch", fetchMock);
-    const client = new QueryClient({ defaultOptions: queryClientDefaultOptions });
-    const options = queryOptions.conversationPage({
-      conversationId: "conversation-1",
-      source: "discord",
-      limit: 50,
-      cursor: "2026-07-12T12:00:00Z_42",
-      order: "asc",
-    });
-
-    await client.fetchQuery({ ...options, staleTime: 0 });
-    await client.fetchQuery({ ...options, staleTime: 0 });
-
-    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
 

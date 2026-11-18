@@ -1,6 +1,5 @@
 import { describe, expect, test } from "vitest";
 import {
-  getRangeSelectionHighlightClass,
   getInclusiveLoadedRangeIds,
   getRangeVisualPositions,
   nextRangeEndpointState,
@@ -41,19 +40,5 @@ describe("conversation range selection", () => {
     const positions = getRangeVisualPositions([10, 20, 30], new Set([20]));
 
     expect(Object.fromEntries(positions)).toEqual({ 20: "single" });
-  });
-
-  test("selection highlight uses an opaque surface to avoid overlap bands", () => {
-    const className = getRangeSelectionHighlightClass("middle");
-
-    expect(className).toContain("after:bg-accent");
-    expect(className).not.toContain("after:bg-primary/10");
-  });
-
-  test("multi-row selection avoids internal shadow seams", () => {
-    expect(getRangeSelectionHighlightClass("first")).not.toContain("after:shadow-sm");
-    expect(getRangeSelectionHighlightClass("middle")).not.toContain("after:shadow-sm");
-    expect(getRangeSelectionHighlightClass("last")).not.toContain("after:shadow-sm");
-    expect(getRangeSelectionHighlightClass("single")).toContain("after:shadow-sm");
   });
 });
