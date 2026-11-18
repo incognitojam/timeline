@@ -21,6 +21,7 @@ import {
 import { MAX_BATCH_BYTES } from "./indexer";
 import { configureBunSqliteForSqliteVec, loadSqliteVec } from "./sqlite-vec";
 import { seed } from "../testing/seed";
+import { skipWithoutSqliteVec } from "../testing/sqlite-vec";
 
 function event(overrides = {}) {
   return {
@@ -138,20 +139,7 @@ describe("embedding corpus policy", () => {
   });
 });
 
-function sqliteVecAvailable(): boolean {
-  configureBunSqliteForSqliteVec();
-  const probe = new Database(":memory:");
-  try {
-    initEmbeddingsDb(probe);
-    return true;
-  } catch {
-    return false;
-  } finally {
-    probe.close();
-  }
-}
-
-const sqliteVecIt = sqliteVecAvailable() ? it : it.skip;
+const sqliteVecIt = it.skipIf(skipWithoutSqliteVec);
 
 /** Write a config.toml pointing [embeddings] at a test server; returns its path. */
 function writeEmbeddingsConfig(dir: string, baseUrl: string, extra = ""): string {
@@ -705,23 +693,19 @@ describe("embeddings sqlite-vec foundation", () => {
 
 describe("sqlite-vec availability", () => {
   it("fails explicitly when sqlite-vec cannot be loaded", () => {
-    configureBunSqliteForSqliteVec();
     const probe = new Database(":memory:");
+    // What a SQLite built without extension loading, such as macOS's, does.
+    probe.loadExtension = () => {
+      throw new Error("not authorized");
+    };
     try {
-      if (sqliteVecAvailable()) {
-        expect(() => initEmbeddingsDb(probe)).not.toThrow();
-      } else {
-        expect(() => initEmbeddingsDb(probe)).toThrow(/sqlite-vec is unavailable/);
-      }
+      expect(() => initEmbeddingsDb(probe)).toThrow("sqlite-vec is unavailable: not authorized");
     } finally {
       probe.close();
     }
   });
 
-  it("opens embeddings databases with configured custom SQLite before loading sqlite-vec", () => {
-    const path = process.env.TIMELINE_SQLITE_LIBRARY_PATH;
-    if (!path) return;
-
+  sqliteVecIt("opens embeddings databases with configured custom SQLite before loading sqlite-vec", () => {
     const db = getEmbeddingsDb(":memory:");
     try {
       initEmbeddingsDb(db);
@@ -731,8 +715,7 @@ describe("sqlite-vec availability", () => {
     }
   });
 
-  it("loads sqlite-vec in a worker thread after the main thread chose the SQLite library", async () => {
-    if (!process.env.TIMELINE_SQLITE_LIBRARY_PATH) return;
+  sqliteVecIt("loads sqlite-vec in a worker thread after the main thread chose the SQLite library", async () => {
     const dir = mkdtempSync(join(tmpdir(), "emb-worker-"));
     try {
       const dbModule = join(process.cwd(), "src/embeddings/db.ts");
@@ -763,8 +746,7 @@ worker.onerror = event => { console.error(event.message); process.exit(1); };`
     }
   });
 
-  it("runs vector queries on a DbPool worker opened for vector search", async () => {
-    if (!process.env.TIMELINE_SQLITE_LIBRARY_PATH) return;
+  sqliteVecIt("runs vector queries on a DbPool worker opened for vector search", async () => {
     const dir = mkdtempSync(join(tmpdir(), "emb-pool-"));
     try {
       const dbModule = join(process.cwd(), "src/embeddings/db.ts");
@@ -1081,7 +1063,7 @@ describe("OpenAI-compatible embedding client", () => {
 });
 
 describe("embeddings index CLI exit contract", () => {
-  const cliIt = sqliteVecAvailable() ? it.concurrent : it.skip;
+  const cliIt = skipWithoutSqliteVec ? it.skip : it.concurrent;
 
   function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
     return new Promise((resolve, reject) => {

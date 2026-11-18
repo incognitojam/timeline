@@ -132,6 +132,8 @@ in_web() {
 run_backend_tests() {
   if [ -n "${TIMELINE_SQLITE_LIBRARY_PATH:-}" ]; then
     echo "Using sqlite-vec-capable SQLite: $TIMELINE_SQLITE_LIBRARY_PATH"
+  elif [ "$(uname -s)" = Darwin ]; then
+    echo "Skipping sqlite-vec tests: macOS's SQLite cannot load extensions. Install Homebrew's sqlite to run them." >&2
   fi
   bun test --timeout 30000 --max-concurrency 4 || return "$?"
   # bunfig.toml pins discovery to src/, so scripts/ needs an explicit path.
