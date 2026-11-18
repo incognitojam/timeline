@@ -5,6 +5,7 @@
 #   - link the shared imports directory
 #   - activate the tracked Git hooks
 #   - install the pinned toolchain with mise and require the pinned Bun
+#   - check archive and macOS image test prerequisites
 #   - install dependencies (root + web/)
 #   - generate the synthetic ./timeline.db (bun run seed) unless one exists
 #
@@ -73,6 +74,22 @@ fi
 source scripts/toolchain.sh
 require_pinned_bun
 echo "    bun $(bun --version)"
+
+step "Checking test prerequisites"
+missing_tools=()
+for tool in zip unzip; do
+  if ! command -v "$tool" >/dev/null 2>&1; then missing_tools+=("$tool"); fi
+done
+if [ "$(uname -s)" = Darwin ] && ! command -v cwebp >/dev/null 2>&1; then
+  missing_tools+=(cwebp)
+fi
+if [ ${#missing_tools[@]} -ne 0 ]; then
+  printf 'Missing required test tools: %s\n' "${missing_tools[*]}" >&2
+  echo "Install zip/unzip with your system package manager (Debian/Ubuntu: sudo apt-get install zip unzip; macOS includes both)." >&2
+  echo "On macOS install cwebp with brew install webp." >&2
+  exit 1
+fi
+require_tools go
 
 # Guards writes until seed (or prepare-sample/full) has produced ./timeline.db, which removes it.
 if [ -f timeline.db ]; then

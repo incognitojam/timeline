@@ -96,8 +96,8 @@ temporary directory, and boots the copied packaged service with a minimal
 `PATH` and no checkout-relative working directory.
 
 The smoke checks exercise Recall publication, cancellation, retention, and legacy
-agent retirement with synthetic data, without requesting screen access. When
-`cwebp` is installed they also exercise real WebP encoding.
+agent retirement with synthetic data, without requesting screen access. Real WebP
+encoding requires `cwebp`; install it with `brew install webp` before running them.
 
 The recall health logic lives in `RecallLog.swift`, and the service config
 parser lives in `TimelineServiceConfig.swift`. Both are kept free of

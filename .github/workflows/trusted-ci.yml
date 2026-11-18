@@ -17,6 +17,8 @@ jobs:
       - uses: jdx/mise-action@v5
       - name: Require pinned Go for sidecar tests
         run: ./tools/timeline-gmessages/build-bundled.sh --check
+      - name: Install archive test tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zip unzip
       - run: ./test.sh static && ./test.sh unit
 
   browser:
@@ -42,6 +44,7 @@ jobs:
         env:
           TIMELINE_CODESIGN_IDENTITY: "-"
         run: (cd tools/timeline-app && ./build.sh)
+      - run: brew install webp
       - name: Smoke-test the Timeline app bundle
         run: (cd tools/timeline-app && ./smoke.sh --native-only)
 

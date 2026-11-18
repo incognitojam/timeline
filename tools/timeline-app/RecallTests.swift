@@ -49,8 +49,8 @@ struct RecallTests {
         let sidecar = Data("{\"app\":\"Example App\",\"ocr_text\":\"Synthetic text\"}".utf8)
         try sidecar.write(to: work.appendingPathComponent("120000-00.json"))
 
-        // The fixture encoder isolates publication from an optional Homebrew
-        // dependency. Pass cwebp as argv[2] to exercise real encoding as well.
+        // The fixture encoder isolates publication checks from encoding.
+        // The required cwebp argv[2] exercises real encoding separately.
         let encoder = root.appendingPathComponent("encoder.sh")
         try "#!/bin/sh\nfor output do :; done\nprintf 'synthetic webp' > \"$output\"\n".write(to: encoder, atomically: true, encoding: .utf8)
         try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: encoder.path)
@@ -119,7 +119,8 @@ struct RecallTests {
             preconditionFailure("An image without a sidecar must fail the tick")
         } catch {}
 
-        if CommandLine.arguments.count > 2 {
+        precondition(CommandLine.arguments.count > 2, "Missing required tool: cwebp. Install with brew install webp and pass its path.")
+        do {
             let realOutput = root.appendingPathComponent("real-encoder-output")
             let written = try pipeline.publish(work: work, to: realOutput, encoder: CommandLine.arguments[2])
             precondition(written == 1)

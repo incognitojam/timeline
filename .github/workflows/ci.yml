@@ -91,7 +91,7 @@ jobs:
         if: matrix.suite == 'backend'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends bubblewrap rsync
+          sudo apt-get install -y --no-install-recommends bubblewrap rsync zip unzip
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Run ${{ matrix.suite }} test suite
         run: ./test.sh "${{ matrix.suite }}"
@@ -119,6 +119,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun install --frozen-lockfile
         working-directory: web
+      - run: brew install webp
       - name: Build and smoke-test app
         working-directory: tools/timeline-app
         env:
