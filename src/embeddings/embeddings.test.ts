@@ -18,12 +18,10 @@ import {
   searchVectors,
   upsertDocument,
 } from "./db";
-import type { EmbeddingsConfig } from "../config/types";
 import { resolveEmbeddingProfile } from "./config";
 import {
   type CliIndexCounts,
   DEFAULT_INDEX_CONCURRENCY,
-  DEFAULT_INDEX_LIMIT,
   parseFilterTerms,
   parseSince,
   runIndex as runIndexInProcess,
@@ -152,9 +150,9 @@ describe("embedding corpus policy", () => {
 const sqliteVecIt = it.skipIf(skipWithoutSqliteVec);
 
 /** Write a config.toml pointing [embeddings] at a test server; returns its path. */
-function writeEmbeddingsConfig(dir: string, baseUrl: string): string {
+function writeEmbeddingsConfig(dir: string, baseUrl: string, extra = ""): string {
   const path = join(dir, "config.toml");
-  writeFileSync(path, `[embeddings]\nbase_url = "${baseUrl}"\nmodel = "fake"\ndimensions = 3\n`);
+  writeFileSync(path, `[embeddings]\nbase_url = "${baseUrl}"\nmodel = "fake"\ndimensions = 3\n${extra}\n`);
   return path;
 }
 
@@ -1245,6 +1243,8 @@ describe("embeddings index command", () => {
       batchSize?: number;
       since?: string;
       extraArgs?: string[];
+      /** Extra keys appended to the [embeddings] section. */
+      configExtra?: string;
       respond: (requestIndex: number, request: Request) => Response | Promise<Response>;
     }
   ): Promise<{ exitCode: number; stdout: string; stderr: string; requests: number }> {
@@ -1261,7 +1261,7 @@ describe("embeddings index command", () => {
           ...process.env,
           TIMELINE_DB_PATH: timelineDbPath,
           TIMELINE_EMBEDDINGS_DB_PATH: embeddingsDbPath,
-          TIMELINE_CONFIG: writeEmbeddingsConfig(dirname(embeddingsDbPath), `${server.url}v1`),
+          TIMELINE_CONFIG: writeEmbeddingsConfig(dirname(embeddingsDbPath), `${server.url}v1`, options.configExtra),
           TIMELINE_EMBEDDING_BATCH_SIZE: String(options.batchSize ?? 16),
         },
         stdout: "pipe",
@@ -1279,7 +1279,7 @@ describe("embeddings index command", () => {
   }
 
   // Runs the index command's selection and indexing on this thread, against the
-  // same fake provider. The CLI's own exit code, flag parsing and SIGINT
+  // same fake provider. The CLI's exit code, flags, config forwarding and SIGINT
   // handling stay covered by the tests that spawn it (runIndex and runCli).
   async function indexInProcess(
     timelineDbPath: string,
@@ -1290,8 +1290,6 @@ describe("embeddings index command", () => {
       concurrency?: number;
       since?: string;
       include?: string;
-      /** Extra keys for the [embeddings] config section. */
-      config?: Partial<EmbeddingsConfig>;
       respond: (requestIndex: number, request: Request) => Response | Promise<Response>;
     }
   ): Promise<{ counts: CliIndexCounts; requests: number }> {
@@ -1304,7 +1302,6 @@ describe("embeddings index command", () => {
         base_url: `${server.url}v1`,
         model: "fake",
         dimensions: 3,
-        ...options.config,
       });
       await Effect.runPromise(
         runIndexInProcess(
@@ -1472,11 +1469,11 @@ describe("embeddings index command", () => {
     // which only bounds that failure: a passing run never waits for it.
     const threeOpen = Promise.withResolvers<void>();
     try {
-      const { counts, requests } = await indexInProcess(timelineDbPath, embeddingsDbPath, {
+      const { exitCode, stdout, requests } = await runIndex(timelineDbPath, embeddingsDbPath, {
         limit: 6,
         batchSize: 1,
-        concurrency: 3,
-        config: { timeout_seconds: 20 },
+        extraArgs: ["--concurrency", "3"],
+        configExtra: "timeout_seconds = 20",
         respond: async (_requestIndex, request) => {
           inFlight++;
           maxInFlight = Math.max(maxInFlight, inFlight);
@@ -1490,10 +1487,10 @@ describe("embeddings index command", () => {
           return Response.json({ data: [{ index: 0, embedding: [id, 0, 1] }] });
         },
       });
-      expect(counts.errors).toBe(0);
+      expect(exitCode).toBe(0);
       expect(requests).toBe(6);
       expect(maxInFlight).toBe(3);
-      expect(counts.embedded).toBe(6);
+      expect(stdout).toContain('"embedded":6');
 
       const db = new Database(embeddingsDbPath, { readonly: true });
       try {
@@ -1519,14 +1516,14 @@ describe("embeddings index command", () => {
     try {
       // Embed event 1 in a separate run, so the timed-out run's outcome cannot
       // depend on how quickly a loaded machine answers the other requests.
-      const first = await indexInProcess(timelineDbPath, embeddingsDbPath, { limit: 1, respond: ok([1, 2, 3]) });
-      expect(first.counts.errors).toBe(0);
+      const first = await runIndex(timelineDbPath, embeddingsDbPath, { limit: 1, respond: ok([1, 2, 3]) });
+      expect(first.exitCode).toBe(0);
       expect(vectorEventIds(embeddingsDbPath)).toEqual([1]);
 
-      const timedOut = await indexInProcess(timelineDbPath, embeddingsDbPath, {
+      const timedOut = await runIndex(timelineDbPath, embeddingsDbPath, {
         limit: 3,
         batchSize: 1,
-        config: { timeout_seconds: 1 },
+        configExtra: "timeout_seconds = 1",
         respond: async (_requestIndex, request) => {
           const [input] = await readEmbeddingInputs(request);
           // The provider never answers event 2.
@@ -1534,15 +1531,16 @@ describe("embeddings index command", () => {
           return Response.json({ data: [{ index: 0, embedding: [1, 2, 3] }] });
         },
       });
-      expect(timedOut.counts.skipped).toBe(1);
-      expect(timedOut.counts.errors).toBe(1);
+      expect(timedOut.exitCode).not.toBe(0);
+      expect(timedOut.stdout).toContain('"skipped":1');
+      expect(timedOut.stdout).toContain('"errors":1');
       // Event 3 is not written even if answered, since writes stay in event order.
       expect(vectorEventIds(embeddingsDbPath)).toEqual([1]);
 
-      const resumed = await indexInProcess(timelineDbPath, embeddingsDbPath, { limit: 3, respond: ok([1, 2, 3]) });
-      expect(resumed.counts.errors).toBe(0);
-      expect(resumed.counts.embedded).toBe(2);
-      expect(resumed.counts.skipped).toBe(1);
+      const resumed = await runIndex(timelineDbPath, embeddingsDbPath, { limit: 3, respond: ok([1, 2, 3]) });
+      expect(resumed.exitCode).toBe(0);
+      expect(resumed.stdout).toContain('"embedded":2');
+      expect(resumed.stdout).toContain('"skipped":1');
       expect(vectorEventIds(embeddingsDbPath)).toEqual([1, 2, 3]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -1617,15 +1615,15 @@ describe("embeddings index command", () => {
     const { dir, timelineDbPath, embeddingsDbPath } = seedTimeline();
     const inputs: string[] = [];
     try {
-      const { counts } = await indexInProcess(timelineDbPath, embeddingsDbPath, {
-        config: { document_prefix: "title: none | text: " },
+      const { exitCode } = await runIndex(timelineDbPath, embeddingsDbPath, {
+        configExtra: 'document_prefix = "title: none | text: "',
         respond: async (_requestIndex, request) => {
           const batch = await readEmbeddingInputs(request);
           inputs.push(...batch);
           return Response.json({ data: batch.map((_input, index) => ({ index, embedding: [1, 2, 3] })) });
         },
       });
-      expect(counts.errors).toBe(0);
+      expect(exitCode).toBe(0);
       expect(inputs.length).toBe(1);
       expect(inputs[0]?.startsWith("title: none | text: ")).toBe(true);
 
@@ -1702,11 +1700,11 @@ describe("embeddings index command", () => {
         respond: ok([1, 2, 3]),
       });
       expect(exitCode).toBe(0);
-      expect(stdout).toContain(`"limit":${DEFAULT_INDEX_LIMIT}`);
-      expect(stdout).toContain(`"selected":${DEFAULT_INDEX_LIMIT}`);
-      expect(stdout).toContain(`"embedded":${DEFAULT_INDEX_LIMIT}`);
+      expect(stdout).toContain('"limit":25');
+      expect(stdout).toContain('"selected":25');
+      expect(stdout).toContain('"embedded":25');
       expect(requests).toBe(2);
-      expect(vectorCount(embeddingsDbPath)).toBe(DEFAULT_INDEX_LIMIT);
+      expect(vectorCount(embeddingsDbPath)).toBe(25);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
