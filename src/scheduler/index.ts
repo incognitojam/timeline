@@ -13,7 +13,6 @@ import type { LocalWorkGate } from "../jobs/local-work";
 import { getDb } from "../db/schema";
 import { enqueueJob } from "../jobs/store";
 import type { JobTrigger } from "../jobs/types";
-import { getVisionAvailability, type VisionAvailability } from "../llm";
 import {
   isSyncSourceEnabled,
   listSyncSourceRows,
@@ -30,8 +29,8 @@ import { detectPowerStatus, evaluatePowerGuard, parsePowerGuardConfig } from "..
 import { SYNC_SOURCES } from "../sync/sources";
 import {
   attachmentDescriptionModelRefs,
+  selectAttachmentDescriptionModel,
   unavailableAttachmentDescriptionModelsReason,
-  type UnavailableAttachmentDescriptionModel,
 } from "../sync/sources/attachment-descriptions";
 import { runSyncSource } from "../sync/run";
 import type { SyncResult, SyncSource } from "../sync/types";
@@ -113,40 +112,20 @@ async function powerGuard(sourceConfig: Record<string, unknown> | undefined): Pr
   return { guard: "power", reason: decision.reason, detail: { power: status } };
 }
 
-export function visionGuardDecision(
+export async function visionGuard(
   source: string,
   sourceConfig: Record<string, unknown> | undefined,
-  availabilities: VisionAvailability[],
-): GuardSkip | null {
-  const models = attachmentDescriptionModelRefs(sourceConfig);
-  if (source !== "attachment-descriptions" || !models || availabilities.length !== models.length) return null;
-  const unavailable: UnavailableAttachmentDescriptionModel[] = [];
-  for (const [index, availability] of availabilities.entries()) {
-    if (availability !== "unavailable" && availability !== "not-listed") return null;
-    unavailable.push({ model: models[index], availability });
-  }
+  getAvailability?: Parameters<typeof selectAttachmentDescriptionModel>[2],
+): Promise<GuardSkip | null> {
+  const models = source === "attachment-descriptions" ? attachmentDescriptionModelRefs(sourceConfig) : null;
+  if (!models) return null;
+  const selection = await selectAttachmentDescriptionModel((await loadConfig()).llm, models, getAvailability);
+  if (selection.status !== "unavailable") return null;
   return {
     guard: "vision",
-    reason: `No vision model is available: ${unavailableAttachmentDescriptionModelsReason(unavailable)}`,
+    reason: `No vision model is available: ${unavailableAttachmentDescriptionModelsReason(selection.unavailable)}`,
     detail: { vision: { availability: "unavailable" } },
   };
-}
-
-async function visionGuard(source: string, sourceConfig: Record<string, unknown> | undefined): Promise<GuardSkip | null> {
-  const models = attachmentDescriptionModelRefs(sourceConfig);
-  if (source !== "attachment-descriptions" || !models) return null;
-  const config = await loadConfig();
-  const availabilities: VisionAvailability[] = [];
-  for (const model of models) {
-    const availability = await getVisionAvailability(config.llm, model);
-    availabilities.push(availability);
-    if (availability !== "unavailable" && availability !== "not-listed") break;
-  }
-  return visionGuardDecision(
-    source,
-    sourceConfig,
-    availabilities,
-  );
 }
 
 function toSkipResult(source: string, skip: GuardSkip, durationMs: number): SyncResult {
