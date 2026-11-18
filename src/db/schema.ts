@@ -711,6 +711,14 @@ function createSchema(db: Database) {
     )
   `);
 
+  ensureTrigger(
+    db,
+    "attachments_event_ad",
+    `CREATE TRIGGER attachments_event_ad AFTER DELETE ON events BEGIN
+      DELETE FROM attachments WHERE event_id = OLD.id;
+    END`,
+  );
+
   // Migration: add thumbhash column if missing (older DBs don't have it)
   try {
     db.exec(`ALTER TABLE attachments ADD COLUMN thumbhash TEXT`);
@@ -825,6 +833,14 @@ function createSchema(db: Database) {
     )
   `);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_discord_reaction_obs_tier ON discord_reaction_observations(tier, observed_at)`);
+
+  ensureTrigger(
+    db,
+    "discord_reaction_observations_event_ad",
+    `CREATE TRIGGER discord_reaction_observations_event_ad AFTER DELETE ON events BEGIN
+      DELETE FROM discord_reaction_observations WHERE event_id = OLD.id;
+    END`,
+  );
 
   // Spotify playlist follower observations - time series of a playlist's public
   // follower count (the "saves"/likes number shown in the Spotify UI). Polled by

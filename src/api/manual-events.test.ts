@@ -13,6 +13,8 @@ import { app } from "./index";
 import { saveJournalSession, getAppStateDb } from "../db/app-state";
 import type { Database } from "bun:sqlite";
 import { getDb } from "../db/schema";
+import { existsSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { getDefaultModel } from "../llm";
 
 describe("Manual Events API Tests", () => {
@@ -169,9 +171,15 @@ describe("Manual Events API Tests", () => {
       });
       const { event } = await createRes.json();
 
+      using db = getDb();
+      const mediaPath = join(process.env.TIMELINE_MEDIA_PATH!, "delete-retention.txt");
+      writeFileSync(mediaPath, "synthetic media");
+      db.query("INSERT INTO attachments(event_id, source, content_hash, storage_path, status) VALUES (?, 'manual', 'shared-delete-test', 'delete-retention.txt', 'stored')").run(event.id);
       const res = await app.request(`/api/events/${event.id}`, {
         method: "DELETE",
       });
+      expect(db.query("SELECT id FROM attachments WHERE event_id=?").all(event.id)).toEqual([]);
+      expect(existsSync(mediaPath)).toBe(true);
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.success).toBe(true);
