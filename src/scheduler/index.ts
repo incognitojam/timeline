@@ -13,7 +13,6 @@ import type { LocalWorkGate } from "../jobs/local-work";
 import { getDb } from "../db/schema";
 import { enqueueJob } from "../jobs/store";
 import type { JobTrigger } from "../jobs/types";
-import { getVisionAvailability, type VisionAvailability } from "../llm";
 import {
   isSyncSourceEnabled,
   listSyncSourceRows,
@@ -30,8 +29,8 @@ import { detectPowerStatus, evaluatePowerGuard, parsePowerGuardConfig } from "..
 import { SYNC_SOURCES } from "../sync/sources";
 import {
   attachmentDescriptionModelRefs,
+  selectAttachmentDescriptionModel,
   unavailableAttachmentDescriptionModelsReason,
-  type UnavailableAttachmentDescriptionModel,
 } from "../sync/sources/attachment-descriptions";
 import { runSyncSource } from "../sync/run";
 import type { SyncResult, SyncSource } from "../sync/types";
@@ -113,40 +112,20 @@ async function powerGuard(sourceConfig: Record<string, unknown> | undefined): Pr
   return { guard: "power", reason: decision.reason, detail: { power: status } };
 }
 
-export function visionGuardDecision(
+export async function visionGuard(
   source: string,
   sourceConfig: Record<string, unknown> | undefined,
-  availabilities: VisionAvailability[],
-): GuardSkip | null {
-  const models = attachmentDescriptionModelRefs(sourceConfig);
-  if (source !== "attachment-descriptions" || !models || availabilities.length !== models.length) return null;
-  const unavailable: UnavailableAttachmentDescriptionModel[] = [];
-  for (const [index, availability] of availabilities.entries()) {
-    if (availability !== "unavailable" && availability !== "not-listed") return null;
-    unavailable.push({ model: models[index], availability });
-  }
+  getAvailability?: Parameters<typeof selectAttachmentDescriptionModel>[2],
+): Promise<GuardSkip | null> {
+  const models = source === "attachment-descriptions" ? attachmentDescriptionModelRefs(sourceConfig) : null;
+  if (!models) return null;
+  const selection = await selectAttachmentDescriptionModel((await loadConfig()).llm, models, getAvailability);
+  if (selection.status !== "unavailable") return null;
   return {
     guard: "vision",
-    reason: `No vision model is available: ${unavailableAttachmentDescriptionModelsReason(unavailable)}`,
+    reason: `No vision model is available: ${unavailableAttachmentDescriptionModelsReason(selection.unavailable)}`,
     detail: { vision: { availability: "unavailable" } },
   };
-}
-
-async function visionGuard(source: string, sourceConfig: Record<string, unknown> | undefined): Promise<GuardSkip | null> {
-  const models = attachmentDescriptionModelRefs(sourceConfig);
-  if (source !== "attachment-descriptions" || !models) return null;
-  const config = await loadConfig();
-  const availabilities: VisionAvailability[] = [];
-  for (const model of models) {
-    const availability = await getVisionAvailability(config.llm, model);
-    availabilities.push(availability);
-    if (availability !== "unavailable" && availability !== "not-listed") break;
-  }
-  return visionGuardDecision(
-    source,
-    sourceConfig,
-    availabilities,
-  );
 }
 
 function toSkipResult(source: string, skip: GuardSkip, durationMs: number): SyncResult {
@@ -465,6 +444,38 @@ export class Scheduler {
     return true;
   }
 
+  /**
+   * A scheduled tick: enqueue a sync job unless the source is disabled or
+   * already running. The job runner executes the job.
+   */
+  onTick(sourceName: string): void {
+    try {
+      if (!isSyncSourceEnabled(sourceName, this.db)) {
+        if (this.verbose) {
+          console.log(`Scheduler: skipped ${sourceName}; source is disabled`);
+        }
+      } else if (this.runningTasks.has(sourceName)) {
+        if (this.verbose) {
+          console.log(`Scheduler: skipped ${sourceName}; sync is already running`);
+        }
+      } else {
+        const outcome = enqueueJob({
+          kind: "sync",
+          source: sourceName,
+          dedupeKey: `sync:${sourceName}`,
+          trigger: "scheduler",
+        });
+        if (this.verbose) {
+          console.log(
+            `Scheduler: enqueued ${sourceName} (job #${outcome.jobId}${outcome.deduped ? ", deduped" : ""})`
+          );
+        }
+      }
+    } catch (error) {
+      console.error(`Scheduler: failed to enqueue ${sourceName}:`, error);
+    }
+  }
+
   // Private methods
 
   private scheduleSource(
@@ -525,31 +536,7 @@ export class Scheduler {
 
     // Schedule the enqueue
     const timer = setTimeout(() => {
-      try {
-        if (!isSyncSourceEnabled(sourceName, this.db)) {
-          if (this.verbose) {
-            console.log(`Scheduler: skipped ${sourceName}; source is disabled`);
-          }
-        } else if (this.runningTasks.has(sourceName)) {
-          if (this.verbose) {
-            console.log(`Scheduler: skipped ${sourceName}; sync is already running`);
-          }
-        } else {
-          const outcome = enqueueJob({
-            kind: "sync",
-            source: sourceName,
-            dedupeKey: `sync:${sourceName}`,
-            trigger: "scheduler",
-          });
-          if (this.verbose) {
-            console.log(
-              `Scheduler: enqueued ${sourceName} (job #${outcome.jobId}${outcome.deduped ? ", deduped" : ""})`
-            );
-          }
-        }
-      } catch (error) {
-        console.error(`Scheduler: failed to enqueue ${sourceName}:`, error);
-      }
+      this.onTick(sourceName);
 
       // Always reschedule the next tick — the runner is responsible for executing
       // the queued job; the scheduler just decides when to enqueue.

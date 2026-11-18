@@ -457,27 +457,11 @@ describe("scheduler", () => {
     }
   });
 
-  test("a scheduled tick does not enqueue a follow-up while the source is running", async () => {
+  test("a tick enqueues only once the source's running sync finishes", async () => {
     const source = `scheduler-test-${crypto.randomUUID()}`;
     insertSyncSource(source);
-    const intervalMs = 60 * 60 * 1000;
-    const originallyDueAt = new Date(Date.now() + 25);
-
-    const db = getAppStateDb();
-    db.prepare(
-      `INSERT INTO scheduler_state (source, interval_ms, enabled, next_run_at)
-       VALUES (?, ?, 1, ?)`
-    ).run(source, intervalMs, sqliteTimestamp(originallyDueAt));
-
-    let markStarted: (() => void) | undefined;
-    const syncStarted = new Promise<void>((resolve) => {
-      markStarted = resolve;
-    });
-    let finishSync: (() => void) | undefined;
-    const syncCanFinish = new Promise<void>((resolve) => {
-      finishSync = resolve;
-    });
-
+    const syncStarted = Promise.withResolvers<void>();
+    const syncCanFinish = Promise.withResolvers<void>();
     const syncSource: SyncSource = {
       name: source,
       description: "Test sync source",
@@ -486,86 +470,46 @@ describe("scheduler", () => {
         return null;
       },
       async sync() {
-        if (!markStarted) {
-          throw new Error("sync start resolver was not initialized");
-        }
-        markStarted();
-        await syncCanFinish;
-        return {
-          source,
-          success: true,
-          eventsAdded: 0,
-          eventsUpdated: 0,
-          durationMs: 1,
-        };
-      },
-    };
-
-    const tick = nextTickDecision(source);
-    const scheduler = new Scheduler(testConfig(source), { syncSources: [syncSource], verbose: true });
-    await scheduler.start();
-    const run = scheduler.runNow(source, null);
-
-    try {
-      await syncStarted;
-      expect(await tick.decision).toBe(`Scheduler: skipped ${source}; sync is already running`);
-
-      const queuedJobs = listJobs({ kind: "sync", source, limit: 10 }, db);
-      expect(queuedJobs).toHaveLength(0);
-
-      if (!finishSync) {
-        throw new Error("sync finish resolver was not initialized");
-      }
-      finishSync();
-      await run;
-    } finally {
-      if (finishSync) {
-        finishSync();
-      }
-      await run.catch(() => undefined);
-      scheduler.stop();
-      tick.restore();
-    }
-  });
-
-  test("a scheduled tick does not enqueue after the source is disabled", async () => {
-    const source = `scheduler-test-${crypto.randomUUID()}`;
-    insertSyncSource(source);
-    const intervalMs = 60 * 60 * 1000;
-    const originallyDueAt = new Date(Date.now() + 25);
-
-    const db = getAppStateDb();
-    db.prepare(
-      `INSERT INTO scheduler_state (source, interval_ms, enabled, next_run_at)
-       VALUES (?, ?, 1, ?)`
-    ).run(source, intervalMs, sqliteTimestamp(originallyDueAt));
-
-    const syncSource: SyncSource = {
-      name: source,
-      description: "Test sync source",
-      enabled: true,
-      async canSync() {
-        return null;
-      },
-      async sync() {
+        syncStarted.resolve();
+        await syncCanFinish.promise;
         return { source, success: true, eventsAdded: 0, eventsUpdated: 0, durationMs: 1 };
       },
     };
-
-    const tick = nextTickDecision(source);
-    const scheduler = new Scheduler(testConfig(source), { syncSources: [syncSource], verbose: true });
-    await scheduler.start();
+    const scheduler = new Scheduler(testConfig(source), { syncSources: [syncSource] });
+    const run = scheduler.runNow(source, null);
 
     try {
-      db.prepare("UPDATE sync_sources SET enabled = 0 WHERE source = ?").run(source);
-      expect(await tick.decision).toBe(`Scheduler: skipped ${source}; source is disabled`);
-
-      const queuedJobs = listJobs({ kind: "sync", source, limit: 10 }, db);
-      expect(queuedJobs).toHaveLength(0);
+      await syncStarted.promise;
+      scheduler.onTick(source);
+      expect(listJobs({ kind: "sync", source, limit: 10 }, getAppStateDb())).toHaveLength(0);
     } finally {
-      scheduler.stop();
-      tick.restore();
+      syncCanFinish.resolve();
+      await run;
     }
+
+    scheduler.onTick(source);
+    const jobs = listJobs({ kind: "sync", source, limit: 10 }, getAppStateDb());
+    expect(jobs.map(({ status, trigger }) => ({ status, trigger }))).toEqual([{ status: "queued", trigger: "scheduler" }]);
+  });
+
+  test("a tick does not enqueue for a disabled source", () => {
+    const source = `scheduler-test-${crypto.randomUUID()}`;
+    insertSyncSource(source, false);
+    const syncSource: SyncSource = {
+      name: source,
+      description: "Test sync source",
+      enabled: true,
+      async canSync() {
+        return null;
+      },
+      async sync() {
+        throw new Error("the scheduler only enqueues; the job runner runs the sync");
+      },
+    };
+
+    new Scheduler(testConfig(source), { syncSources: [syncSource] }).onTick(source);
+
+    expect(listJobs({ kind: "sync", source, limit: 10 }, getAppStateDb())).toHaveLength(0);
   });
 
   test("reloadSyncConfig unschedules a disabled source", async () => {
