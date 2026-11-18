@@ -65,7 +65,6 @@ afterAll(() => {
 });
 
 describe("DbPool", () => {
-
   test("query() returns rows", async () => {
     const rows = await pool.query<{ source: string; title: string }>(
       "SELECT source, title FROM events WHERE source = ? LIMIT 3",

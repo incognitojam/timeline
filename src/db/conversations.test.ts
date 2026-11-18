@@ -552,7 +552,8 @@ describe("conversation linking by conversation_id", () => {
     });
     db.prepare(`
       INSERT INTO events (source, source_id, source_account, type, timestamp, title, raw_data, conversation_id)
-      VALUES ('facebook', 'fb1', 'alice', 'message:dm', '2026-01-15T00:00:00Z', 'Bob', '{}', NULL)
+      VALUES ('facebook', 'fb1', 'alice', 'message:dm', '2026-01-15T00:00:00Z', 'Bob', '{}', NULL),
+             ('facebook', 'fb2', 'alice', 'message:dm', '2026-01-16T00:00:00Z', 'Bob', '{}', NULL)
     `).run();
 
     const { conversations, total } = await listConversations(wrapDatabase(db), { scope: "messages" });

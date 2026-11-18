@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { getDbPathInfo, assertNoLocalDbMarker, getAppStateDbPath, getEmbeddingsDbPath } from "./paths";
 
 describe("paths helpers", () => {
-
   test("assertNoLocalDbMarker does not throw when marker missing", () => {
     const tempDir = join(tmpdir(), `paths-test-${Date.now()}`);
     mkdirSync(tempDir, { recursive: true });
