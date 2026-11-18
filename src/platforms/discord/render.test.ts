@@ -25,49 +25,61 @@ const legacyPollResultRawData = {
 };
 
 describe("renderDiscordEvent", () => {
-  test("renders a guild channel with its guild name from sync raw_data", () => {
-    expect(renderDiscordEvent({
-      content: "Hello",
-      edited_timestamp: null,
-      _channel: {
-        id: "channel-1",
-        name: "general",
-        type: "GuildTextChat",
-        guild_id: "guild-1",
-        guild_name: "Example Server",
-        category: null,
-        recipients: [],
+  test.each([
+    {
+      name: "renders a guild channel with its guild name from sync raw_data",
+      raw: {
+        content: "Hello",
+        edited_timestamp: null,
+        _channel: {
+          id: "channel-1",
+          name: "general",
+          type: "GuildTextChat",
+          guild_id: "guild-1",
+          guild_name: "Example Server",
+          category: null,
+          recipients: [],
+        },
       },
-    })).toEqual({ title: "Example Server #general", content: "Hello" });
-  });
-
-  test("renders a guild channel without a guild name from legacy parser raw_data", () => {
-    expect(renderDiscordEvent({
-      ...legacyRawData,
-      content: "Hello",
-      _channel: {
-        id: "channel-1",
-        name: "general",
-        type: "GuildTextChat",
-        guild_id: "guild-1",
-        guild_name: null,
-        category: null,
-        recipients: [],
+      expected: { title: "Example Server #general", content: "Hello" },
+    },
+    {
+      name: "renders a guild channel without a guild name from legacy parser raw_data",
+      raw: {
+        ...legacyRawData,
+        content: "Hello",
+        _channel: {
+          id: "channel-1",
+          name: "general",
+          type: "GuildTextChat",
+          guild_id: "guild-1",
+          guild_name: null,
+          category: null,
+          recipients: [],
+        },
       },
-    })).toEqual({ title: "general", content: "Hello" });
-  });
-
-  test("renders DM and group channel titles", () => {
-    expect(renderDiscordEvent({
-      content: "Hi Alice",
-      edited_timestamp: null,
-      _channel: { id: "dm-1", name: "Alice", type: "DirectMessage" },
-    })).toEqual({ title: "Alice", content: "Hi Alice" });
-    expect(renderDiscordEvent({
-      content: "Hi everyone",
-      edited_timestamp: null,
-      _channel: { id: "group-1", name: "Alice, Bob", type: "GroupDirectMessage" },
-    })).toEqual({ title: "Alice, Bob", content: "Hi everyone" });
+      expected: { title: "general", content: "Hello" },
+    },
+    {
+      name: "renders a DM channel title",
+      raw: {
+        content: "Hi Alice",
+        edited_timestamp: null,
+        _channel: { id: "dm-1", name: "Alice", type: "DirectMessage" },
+      },
+      expected: { title: "Alice", content: "Hi Alice" },
+    },
+    {
+      name: "renders a group channel title",
+      raw: {
+        content: "Hi everyone",
+        edited_timestamp: null,
+        _channel: { id: "group-1", name: "Alice, Bob", type: "GroupDirectMessage" },
+      },
+      expected: { title: "Alice, Bob", content: "Hi everyone" },
+    },
+  ])("$name", ({ raw, expected }) => {
+    expect(renderDiscordEvent(raw)).toEqual(expected);
   });
 
   test("uses a poll question when message content is empty", () => {

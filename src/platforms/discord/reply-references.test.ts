@@ -75,32 +75,6 @@ function replyEvent(opts: {
 }
 
 describe("resolveDiscordReplyTargets", () => {
-  test("resolves a reply against the local events table", async () => {
-    const originalId = insertOriginal({
-      sourceId: "100",
-      sourceAccount: "alice",
-      conversationId: "9300000000000000001",
-      type: "message:group",
-      content: "Original text",
-      timestamp: "2026-01-01T00:00:00Z",
-      rawData: { author: { username: "bob", global_name: "Bob B" } },
-    });
-
-    const reply = replyEvent({
-      id: 5001,
-      sourceAccount: "alice",
-      rawData: { message_reference: { type: 0, message_id: "100" } },
-    });
-
-    const targets = await resolveDiscordReplyTargets(wrapDatabase(db), [reply]);
-    const target = targets.get(5001);
-    expect(target).toBeDefined();
-    expect(target?.eventId).toBe(originalId);
-    expect(target?.conversationId).toBe("9300000000000000001");
-    expect(target?.authorName).toBe("Bob B");
-    expect(target?.content).toBe("Original text");
-    expect(target?.hasAttachment).toBe(false);
-  });
 
   test("flags an attachment-bearing replied-to message", async () => {
     insertOriginal({

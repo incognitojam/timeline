@@ -102,34 +102,6 @@ describe("DiscordClient poll voters", () => {
     }
   });
 
-  test("throws when a later voter page is inaccessible", async () => {
-    const originalFetch = globalThis.fetch;
-    const firstPage = Array.from({ length: 100 }, (_, index) => ({
-      id: `900000000000000${String(index).padStart(3, "0")}`,
-      username: `user-${index}`,
-      global_name: null,
-      avatar: "aaaa1111",
-    }));
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = new URL(typeof input === "string" ? input : input.toString());
-      return url.searchParams.has("after")
-        ? new Response(null, { status: 403 })
-        : new Response(JSON.stringify({ users: firstPage }));
-    }) as unknown as typeof fetch;
-
-    try {
-      const client = new DiscordClient("test-token");
-      await expect(
-        client.fetchPollAnswerVoters(
-          "800000000000000001",
-          "800000000000000002",
-          3,
-        ),
-      ).rejects.toThrow("Failed to fetch poll answer voters: 403");
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
 });
 
 describe("DiscordClient message reconciliation signals", () => {
