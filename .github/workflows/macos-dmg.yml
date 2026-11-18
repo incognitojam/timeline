@@ -9,6 +9,10 @@ on:
       commit:
         required: true
         type: string
+      nightly:
+        description: Build a nightly prerelease, stamping its version from the tag
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       tag:
@@ -46,6 +50,22 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.15"
+      # Nightlies are built from main as it stands, so they carry their version only in the tag.
+      - name: Stamp the nightly version
+        if: inputs.nightly
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          # Uses no repository script: the tagged checkout may predate it. The caller
+          # validated the exact tag; this keeps publishing on the prerelease path.
+          if [[ "$RELEASE_TAG" != v*-nightly.* ]]; then
+            echo "Not a nightly tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          jq --arg version "${RELEASE_TAG#v}" '.version = $version' package.json > "$RUNNER_TEMP/package.json"
+          mv "$RUNNER_TEMP/package.json" package.json
+          # Keep the runner-only stamp out of version.json's dirty flag.
+          git update-index --skip-worktree package.json
       - name: Verify release source
         env:
           RELEASE_TAG: ${{ inputs.tag }}

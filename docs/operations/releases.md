@@ -26,6 +26,24 @@ After the draft is created, the macOS DMG workflow builds the tagged source on a
 
 The Git tag exists throughout packaging, independently of the draft. Saving a draft does not create a missing tag; the workflow explicitly creates the remote tag first and uses `--verify-tag`. Git consumers and Changesets therefore see the new tag immediately, even though release consumers still see the previous published release.
 
+## Nightly builds
+
+Every night at 03:00 UTC the Nightly workflow builds the newest `main` commit whose Trusted CI run passed, unless a nightly or the latest stable release already contains it. It tags that commit `v<next patch>-nightly.<YYYYMMDD>` (for example `v0.20.1-nightly.20261118`), signs and notarizes it through the same macOS DMG workflow as stable releases, and publishes it as a prerelease, which never becomes GitHub's latest release. The version exists only in the tag and the build; nightlies consume no changesets and never change `package.json`. Its update feed replaces the `appcast.xml` on the rolling `nightly` prerelease, which holds nothing else; never delete that release. Nightly prereleases and their tags are deleted after 14 days, keeping at least the newest 3, so never rely on a nightly tag.
+
+Scheduled runs happen only while the repository variable `NIGHTLY_ENABLED` is `true`. To stop them, set it to anything else (`gh variable set NIGHTLY_ENABLED --body false`) or disable the workflow (`gh workflow disable nightly.yml`).
+
+A manual run is a dry run unless you turn that off: `gh workflow run nightly.yml --ref main` prints the commit, tag, build number and pruning plan in the run summary without tagging, signing, publishing or deleting anything. `gh workflow run nightly.yml --ref main -f dry_run=false` publishes a nightly now.
+
+A run that fails can leave its tag, alone or with a draft prerelease, and later runs that day skip because the tag exists. On the same day, re-run the failed jobs of that run: each step resumes from what the earlier attempt left. On a later day, delete the leftover instead and let the next run build afresh: `gh release delete <tag> --cleanup-tag --yes`, or `gh api -X DELETE repos/incognitojam/timeline/git/refs/tags/<tag>` for a tag without a release. Pruning never removes drafts. If a run publishes the nightly and then fails while updating the feed, nothing later fails: the feed keeps offering the previous nightly, and with no new commits no run replaces it. Re-run that run's failed jobs, on any day while its nightly is still the newest. A release list the pruning step refuses, such as more than 30 overdue nightlies or a nightly-named release that is not a prerelease, also stops new nightlies until it is cleaned up. Replacing the feed's `appcast.xml` is not atomic; a Mac that checks at that moment gets a failed check and tries again at its next one.
+
+To follow nightlies on a Mac, point Sparkle at the nightly feed, then quit and reopen Timeline:
+
+```sh
+defaults write com.incognitojam.timeline SUFeedURL https://github.com/incognitojam/timeline/releases/download/nightly/appcast.xml
+```
+
+Sparkle reads `SUFeedURL` from user defaults before `Info.plist`, and logs a warning that it can ignore. To go back, run `defaults delete com.incognitojam.timeline SUFeedURL` and reopen Timeline. Sparkle never downgrades, so the Mac keeps its nightly until a stable release with a higher build number appears.
+
 ## Release information in Settings
 
 Settings displays the latest stable GitHub release and its notes. Packaged installations compare their product version with that release; source builds show release information without claiming to be current. Drafts and prereleases are excluded: during packaging or after a failure, Settings keeps showing the previous stable release and its download link. The new stable release and DMG appear together after publication and the next uncached check. Before the first stable publication, the check reports the release as unavailable. Checking in the browser does not install an update on the host.
