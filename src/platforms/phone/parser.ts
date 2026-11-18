@@ -10,7 +10,7 @@
  *   bun run src/platforms/phone/parser.ts --calls <calls.xml> [account-name]
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { getDb, initDb } from "../../db/schema";
 import { extractConversationId } from "../../db/conversation-id";
 import {

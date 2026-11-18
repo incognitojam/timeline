@@ -6,7 +6,7 @@
  * until a worker is idle.
  */
 
-import { Database, type SQLQueryBindings } from "bun:sqlite";
+import { Database, type SQLQueryBindings } from "./sqlite";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { cpus } from "os";
 import { getDbPoolWorkerPath } from "../runtime-paths";

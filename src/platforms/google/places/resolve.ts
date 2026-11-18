@@ -10,7 +10,7 @@
  * Requires GOOGLE_PLACES_API_KEY env var.
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../../../db/sqlite";
 import { getDb, initDb } from "../../../db/schema";
 
 export interface ResolveResult {

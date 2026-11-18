@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { Database } from "./sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,7 +27,7 @@ test("opening waits for another process's lock instead of failing", async () => 
     [
       process.execPath,
       "-e",
-      `const { Database } = require("bun:sqlite");
+      `const { Database } = require("./src/db/sqlite.ts");
        const db = new Database(${JSON.stringify(dbPath)});
        db.exec("PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE; INSERT INTO t VALUES (1)");
        console.log("held");

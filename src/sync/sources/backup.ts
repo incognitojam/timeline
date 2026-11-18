@@ -7,7 +7,7 @@
 
 import { existsSync, mkdirSync, readdirSync, unlinkSync, statSync, readSync, openSync, closeSync } from "node:fs";
 import { join } from "node:path";
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import type { SyncSource, SyncOptions, SyncResult } from "../types";
 import type { SyncSourceConfig } from "../config";
 import { getTimelineDbPath } from "../../db/paths";

@@ -6,7 +6,7 @@
  */
 
 import { describe, test, expect, beforeEach, spyOn } from "bun:test";
-import { Database } from "bun:sqlite";
+import { Database } from "../db/sqlite";
 import { initAppStateDb } from "../db/app-state";
 import {
   cancelJob,

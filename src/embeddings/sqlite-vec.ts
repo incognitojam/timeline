@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../db/sqlite";
 import { existsSync } from "node:fs";
 import { isMainThread } from "node:worker_threads";
 import * as sqliteVec from "sqlite-vec";

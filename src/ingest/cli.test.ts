@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { Database } from "../db/sqlite";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";

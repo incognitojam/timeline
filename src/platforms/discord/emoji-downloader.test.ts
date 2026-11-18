@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, existsSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { initDb } from "../../db/schema";
 import {
   upsertEmojiRefs,

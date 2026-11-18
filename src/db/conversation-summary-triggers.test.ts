@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { Database } from "bun:sqlite";
+import { Database } from "./sqlite";
 import { CONVERSATION_SUMMARY_EVENT_COLUMNS, conversationSummaryBoundTimestampSql, initDb, rebuildConversationSummaries } from "./schema";
 
 type Snapshot = { summaries: unknown[]; titles: unknown[] };

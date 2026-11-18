@@ -6,7 +6,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { Database } from "./sqlite";
 import { getCodingProjectConversations } from "./coding-projects";
 import {
   listCodingAgentConversationProjects,

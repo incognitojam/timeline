@@ -15,7 +15,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { getDb, initDb } from "../../db/schema";
 import { getAppStateDb, getSyncState, setSyncState, initAppStateDb } from "../../db/app-state";
 import { upsertIdentity } from "../../db/identities";

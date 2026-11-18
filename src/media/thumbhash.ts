@@ -7,7 +7,7 @@
  * decoded to blurred data URLs on the frontend.
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../db/sqlite";
 import sharp from "sharp";
 import { rgbaToThumbHash } from "thumbhash";
 import { getMediaStore } from "./storage";

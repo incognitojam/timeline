@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { MockLanguageModelV3 } from "ai/test";
 import sharp from "sharp";

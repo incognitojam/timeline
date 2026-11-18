@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../db/sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { initDb } from "../db/schema";
 import type { SourceFreshness } from "../shared/source-freshness";

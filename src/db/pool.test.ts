@@ -7,7 +7,7 @@
  * worker threads races and can fail with "no such table".
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "./sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { unlinkSync } from "fs";
 import { tmpdir } from "os";

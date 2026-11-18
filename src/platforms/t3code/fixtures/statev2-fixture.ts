@@ -17,7 +17,7 @@
  * - PENDING: a migrated thread whose transcript has not landed yet
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../../../db/sqlite";
 import { readFileSync } from "fs";
 import { join } from "path";
 

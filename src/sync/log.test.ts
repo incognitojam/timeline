@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../db/sqlite";
 import { describe, expect, test } from "bun:test";
 import { initAppStateDb } from "../db/app-state";
 import { formatSyncResult, getAttachmentDescriptionHistory } from "./log";

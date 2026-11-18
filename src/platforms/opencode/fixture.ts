@@ -19,7 +19,7 @@
  *     (v2 only), including non-chat message types.
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 import { seed } from "../../testing/seed";

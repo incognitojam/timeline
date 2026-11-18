@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../db/sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { initDb } from "../db/schema";
 import { processAttachmentThumbhashes, THUMBHASH_QUEUE_SQL } from "./thumbhash";

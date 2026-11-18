@@ -5,7 +5,7 @@
  * Uses file hash for deduplication. Data stored in app-state.db.
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../db/sqlite";
 import { createHash } from "crypto";
 import { stat } from "fs/promises";
 import { getAppStateDb } from "../db/app-state";

@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "./sqlite";
 import type { QueryExecutor } from "./pool";
 import type { ContactMemory } from "./schema";
 

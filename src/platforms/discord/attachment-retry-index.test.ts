@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { initDb } from "../../db/schema";
 import { DISCORD_ATTACHMENT_RETRY_WHERE, ensureDiscordAttachmentRetryIndex, FIND_ATTACHMENT_RETRY_CANDIDATES } from "./attachment-retry-index";

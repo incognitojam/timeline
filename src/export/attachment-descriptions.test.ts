@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { Database, type SQLQueryBindings } from "bun:sqlite";
+import { Database, type SQLQueryBindings } from "../db/sqlite";
 import { type QueryExecutor, wrapDatabase } from "../db/pool";
 import { initDb, type TimelineEvent } from "../db/schema";
 import {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { Database } from "./db/sqlite";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { initAppStateDb } from "./db/app-state";
 import { QUERY_TIMEOUT_MS, QueryTimeoutError, type QueryExecutor, wrapDatabase } from "./db/pool";
@@ -619,7 +619,7 @@ describe("MCP tool handlers — identity-aware contact lookup workflow", () => {
   // database, so isolate the sqlite-vec success case in a fresh process.
   test("semantic_search returns formatted events from a seeded embeddings index", async () => {
     const script = String.raw`
-      import { Database } from "bun:sqlite";
+      import { Database } from "./src/db/sqlite.ts";
       import { mkdtempSync, rmSync } from "node:fs";
       import { tmpdir } from "node:os";
       import { join } from "node:path";

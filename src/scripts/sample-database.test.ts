@@ -10,7 +10,7 @@
  * explicit column lists the sampler relies on.
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../db/sqlite";
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { Database } from "../db/sqlite";
 import { initDb, type TimelineEvent } from "../db/schema";
 import { wrapDatabase } from "../db/pool";
 import { upsertIdentity } from "../db/identities";

@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { join } from "node:path";
 import { detectAccountFromRepos, importConductor } from "./parser";
 import type { SeedSource } from "../../seed/context";

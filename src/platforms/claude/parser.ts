@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { parserCliArgs } from "../../ingest/cli";
 import { getDb, initDb } from "../../db/schema";
 import {

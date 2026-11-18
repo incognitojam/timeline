@@ -8,7 +8,7 @@
  *   bun run src/scripts/verify-message-reactions.ts --sample-limit=10 --no-fail
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../db/sqlite";
 import { parseArgs, type ParseArgsConfig } from "node:util";
 import { getTimelineDbPath } from "../db/paths";
 import { openReadonlyDbAtPath } from "../db/readonly";

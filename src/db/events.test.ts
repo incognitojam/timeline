@@ -4,7 +4,7 @@
  * duplicates, and accounting for IDs whose rows no longer exist.
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "./sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "crypto";
 import { hydrateEventsById, searchTimeline } from "./events";

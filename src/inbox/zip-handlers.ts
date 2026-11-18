@@ -4,7 +4,7 @@
  * Processes different types of ZIP exports (Google Takeout, Spotify, etc.)
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../db/sqlite";
 import { basename, dirname } from "path";
 import {
   extractZip,

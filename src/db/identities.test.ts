@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { Database } from "bun:sqlite";
+import { Database } from "./sqlite";
 import { initDb } from "./schema";
 import { resolveIdentities, upsertIdentity, getIdentitiesForContact } from "./queries";
 import { wrapDatabase } from "./pool";

@@ -5,7 +5,7 @@
  * and populates the attachments table.
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../../../db/sqlite";
 import { getDb, initDb, type TimelineEvent } from "../../../db/schema";
 import { insertPendingAttachment } from "../../../media/attachments";
 

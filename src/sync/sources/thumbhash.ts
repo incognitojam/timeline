@@ -5,7 +5,7 @@
  * Runs on a short interval to process newly stored images automatically.
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { getDb, initDb } from "../../db/schema";
 import { processAttachmentThumbhashes } from "../../media/thumbhash";
 import type { SyncOptions, SyncResult, SyncSource } from "../types";

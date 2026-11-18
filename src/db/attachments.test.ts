@@ -1,4 +1,4 @@
-import { Database, type SQLQueryBindings } from "bun:sqlite";
+import { Database, type SQLQueryBindings } from "./sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { getAttachmentDetail } from "./attachments";
 import { type QueryExecutor } from "./pool";

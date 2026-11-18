@@ -2,7 +2,7 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { mkdirSync, rmSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import {
   backupDatabase,
   backupSyncSource,

@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database } from "./sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { getDayHealthStats, getHealthStats } from "./health";
 import { wrapDatabase } from "./pool";

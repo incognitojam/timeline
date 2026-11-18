@@ -5,7 +5,7 @@
  *   bun run src/platforms/foo/parser.ts <import-path> [account-name]
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../db/sqlite";
 import { getDb, initDb } from "../db/schema";
 
 /**

@@ -11,7 +11,7 @@
  * 4. Run: bun run src/platforms/spotify/parser-api.ts auth
  */
 
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
