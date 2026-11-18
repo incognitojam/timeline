@@ -9,7 +9,7 @@ permissions:
 jobs:
   artifact:
     name: Linux service artifact
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     container: swift:6.4.2-noble@sha256:23d9b28ad97fb1cf1999edc3a0cb265ee915ed42299a9344e7173d5a6d2b05f4
     env:
       VITE_MAPTILER_API_KEY: ci-test
