@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -61,11 +61,10 @@ watch_enabled = false
 });
 
 /** Boots the service with an inbox source the worker cannot watch, so worker init fails. */
-async function runServiceWithFailingWorker(prefix: string) {
-  workDir = mkdtempSync(join(tmpdir(), prefix));
-  const configPath = join(workDir, "config.toml");
-  const dbPath = join(workDir, "timeline.db");
-  const blocker = join(workDir, "not-a-dir");
+async function runServiceWithFailingWorker(dir: string) {
+  const configPath = join(dir, "config.toml");
+  const dbPath = join(dir, "timeline.db");
+  const blocker = join(dir, "not-a-dir");
   writeFileSync(blocker, "x");
 
   writeFileSync(
@@ -84,7 +83,7 @@ stagger = false
 
 [inbox]
 watch_enabled = true
-base_path = ${JSON.stringify(workDir)}
+base_path = ${JSON.stringify(dir)}
 
 [inbox.sources.bad]
 type = "local"
@@ -92,7 +91,7 @@ local = ${JSON.stringify(join(blocker, "google"))}
 parser = "noop"
 
 [media]
-path = ${JSON.stringify(join(workDir, "media"))}
+path = ${JSON.stringify(join(dir, "media"))}
 `
   );
 
@@ -102,7 +101,7 @@ path = ${JSON.stringify(join(workDir, "media"))}
       ...process.env,
       TIMELINE_CONFIG: configPath,
       TIMELINE_DB_PATH: dbPath,
-      TIMELINE_ENV_FILE: join(workDir, "missing.env"),
+      TIMELINE_ENV_FILE: join(dir, "missing.env"),
       NODE_ENV: "development",
     },
     stdout: "pipe",
@@ -118,16 +117,28 @@ path = ${JSON.stringify(join(workDir, "media"))}
     new Response(proc.stderr).text(),
   ]);
   runningService = null;
-
-  expect(exitCode).not.toBe(0);
-  expect(stderr).toContain("Failed to start scheduler worker");
-  expect(stderr).toContain("Worker initialization failed");
-
-  return { dbPath, stdout };
+  return { dbPath, exitCode, stdout, stderr };
 }
 
+// The next two tests check the same failed boot, so the service starts once.
+let failedBootDir: string | null = null;
+let failedBoot: ReturnType<typeof runServiceWithFailingWorker> | null = null;
+
+async function bootWithFailingWorker() {
+  failedBootDir ??= mkdtempSync(join(tmpdir(), "timeline-service-worker-init-"));
+  const result = await (failedBoot ??= runServiceWithFailingWorker(failedBootDir));
+  expect(result.exitCode).not.toBe(0);
+  expect(result.stderr).toContain("Failed to start scheduler worker");
+  expect(result.stderr).toContain("Worker initialization failed");
+  return result;
+}
+
+afterAll(() => {
+  if (failedBootDir) rmSync(failedBootDir, { recursive: true, force: true });
+});
+
 test("service exits before serving when worker init fails", async () => {
-  const { stdout } = await runServiceWithFailingWorker("timeline-service-worker-init-");
+  const { stdout } = await bootWithFailingWorker();
   expect(stdout).not.toContain("Timeline service is running");
 });
 
@@ -136,7 +147,7 @@ test("database is initialised even when the scheduler worker fails to start", as
   // API. initDb() must therefore already have run: nothing else creates the
   // schema. The derived-table rebuilds inside it read every event in one
   // transaction, which a sync committing mid-rebuild would abort.
-  const { dbPath, stdout } = await runServiceWithFailingWorker("timeline-service-db-first-");
+  const { dbPath, stdout } = await bootWithFailingWorker();
   expect(stdout).not.toContain("Starting Timeline API");
   expect(stdout).toContain("Database ready");
 
