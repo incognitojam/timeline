@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 
 // Identity + behaviour flags for an SMAppService-owned LaunchAgent. The same
 // own/reconcile machinery (ServiceAgentController) drives multiple agents; the

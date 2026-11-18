@@ -44,7 +44,7 @@ jobs:
           TIMELINE_CODESIGN_IDENTITY: "-"
         run: (cd tools/timeline-app && ./build.sh)
       - name: Smoke-test the Timeline app bundle
-        run: (cd tools/timeline-app && ./smoke.sh)
+        run: (cd tools/timeline-app && ./smoke.sh --native-only)
 
   source-service:
     name: source service boot

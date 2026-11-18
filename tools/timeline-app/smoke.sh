@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+portable=1
+if [ "${1:-}" = --native-only ]; then
+  portable=0
+  shift
+fi
 APP="${1:-Timeline.app}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SERVICE_PLIST="$APP/Contents/Library/LaunchAgents/dev.incognitojam.timeline-service.plist"
-RECALL_PLIST="$APP/Contents/Library/LaunchAgents/dev.incognitojam.timeline-recall.plist"
-TAILSCALE_PLIST="$APP/Contents/Library/LaunchAgents/dev.incognitojam.timeline-tailscale.plist"
 INFO_PLIST="$APP/Contents/Info.plist"
 RESOURCES="$APP/Contents/Resources"
 TMP="$(mktemp -d)"
@@ -15,22 +17,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
-swiftc LaunchAgentIdentity.swift LaunchAgentIdentityTests.swift -o "$TMP/launch-agent-identity-tests"
-"$TMP/launch-agent-identity-tests"
-
-swiftc UpdateInstallation.swift UpdateInstallationTests.swift -o "$TMP/update-installation-tests"
-"$TMP/update-installation-tests"
-
-swiftc LaunchAgentConfig.swift UpdateMaintenance.swift UpdateMaintenanceTests.swift -o "$TMP/update-maintenance-tests"
-"$TMP/update-maintenance-tests" "$TMP"
+if [ "$portable" -eq 1 ]; then
+  "$ROOT/tools/timeline-app/test-portable.sh" "$RESOURCES/timeline-service"
+fi
 test -f "$APP/Contents/Frameworks/Sparkle.framework/Sparkle"
 test -f "$RESOURCES/Sparkle-LICENSE"
 otool -L "$APP/Contents/MacOS/Timeline" | grep -q '@rpath/Sparkle.framework'
-
-swiftc TimelineServiceConfig.swift Subprocess.swift ServiceConfigurationCheckTests.swift -o "$TMP/service-configuration-check-tests"
-mkdir "$TMP/config-check-home"
-env -u TIMELINE_CONFIG -u TIMELINE_DB_PATH -u AUTH_PASSWORD HOME="$TMP/config-check-home" \
-  "$TMP/service-configuration-check-tests" "$RESOURCES/timeline-service/bin/timeline-service" "$TMP"
 
 swiftc -target "$(uname -m)-apple-macos14.0" -parse-as-library RecallTests.swift RecallCapture.swift RecallPipeline.swift RecallMigration.swift RecallLog.swift RecallAgeMenu.swift Subprocess.swift -o "$TMP/recall-tests"
 if command -v cwebp >/dev/null 2>&1; then
@@ -39,9 +31,7 @@ else
   "$TMP/recall-tests" "$TMP"
 fi
 
-for plist in "$SERVICE_PLIST" "$RECALL_PLIST" "$TAILSCALE_PLIST" "$INFO_PLIST"; do
-  plutil -lint "$plist" >/dev/null
-done
+plutil -lint "$INFO_PLIST" >/dev/null
 
 SIDECAR="$RESOURCES/timeline-service/bin/timeline-gmessages"
 codesign --verify --strict "$SIDECAR"
@@ -55,26 +45,9 @@ grep -q 'timeline-gmessages/vendor/modules.txt' "$TMP/sidecar-source-files"
 test ! -e "$RESOURCES/capture.sh"
 test -x "$RESOURCES/run-tailscale.sh"
 
-for name in service recall tailscale; do
-  plist="$APP/Contents/Library/LaunchAgents/dev.incognitojam.timeline-$name.plist"
-  test "$(/usr/libexec/PlistBuddy -c 'Print :BundleProgram' "$plist")" = "Contents/MacOS/TimelineAgent"
-  test "$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:1' "$plist")" = "$name"
-  test "$(/usr/libexec/PlistBuddy -c 'Print :Label' "$plist")" = "dev.incognitojam.timeline-$name"
-  test "$(/usr/libexec/PlistBuddy -c 'Print :AssociatedBundleIdentifiers:0' "$plist")" = "com.incognitojam.timeline"
-  for key in Program StandardOutPath StandardErrorPath EnvironmentVariables WorkingDirectory; do
-    ! /usr/libexec/PlistBuddy -c "Print :$key" "$plist" >/dev/null 2>&1
-  done
-  ! grep -qF "$HOME" "$plist"
-done
+python3 "$ROOT/tools/timeline-app/check-plists.py" "$APP"
 test -x "$APP/Contents/MacOS/TimelineAgent"
-! /usr/libexec/PlistBuddy -c 'Print :StartInterval' "$RECALL_PLIST" >/dev/null 2>&1
-! /usr/libexec/PlistBuddy -c 'Print :RunAtLoad' "$RECALL_PLIST" >/dev/null 2>&1
 "$APP/Contents/MacOS/TimelineAgent" recall
-! /usr/libexec/PlistBuddy -c 'Print :KeepAlive' "$RECALL_PLIST" >/dev/null 2>&1
-! /usr/libexec/PlistBuddy -c 'Print :ProcessType' "$RECALL_PLIST" >/dev/null 2>&1
-# The service serves the API at normal priority; its sync worker lowers its own thread.
-! /usr/libexec/PlistBuddy -c 'Print :ProcessType' "$SERVICE_PLIST" >/dev/null 2>&1
-test "$(/usr/libexec/PlistBuddy -c 'Print :ProcessType' "$TAILSCALE_PLIST")" = "Background"
 
 app_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO_PLIST")"
 app_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFO_PLIST")"

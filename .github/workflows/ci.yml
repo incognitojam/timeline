@@ -95,7 +95,7 @@ jobs:
         env:
           TIMELINE_CODESIGN_IDENTITY: '-'
           VITE_MAPTILER_API_KEY: 'ci-test'
-        run: ./build.sh && ./smoke.sh
+        run: ./build.sh && ./smoke.sh --native-only
 
   source-service:
     name: source service boot
