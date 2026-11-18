@@ -100,7 +100,7 @@ describe("planEviction", () => {
     const { local, db, a, b, c } = await fixture();
     const plan = await planEviction(db, local, new FakeRemote([a.hash, b.hash, c.hash]), 350);
     db.close();
-    expect(plan.toEvictBlobs).toBe(2); // A(100, oldest) + B(200) reclaims 300 ≥ 250
+    expect(plan.toEvictBlobs).toBe(2); // A(100, oldest) + B(200) reclaims 300 ≥ 285
     expect(plan.toEvictBytes).toBe(300);
     expect(plan.resultingBytes).toBe(300);
     expect(plan.shortfallBytes).toBe(0);
@@ -119,12 +119,12 @@ describe("planEviction", () => {
 
   test("excludes non-durable blobs and flags an unreachable bound", async () => {
     const { local, db, a } = await fixture();
-    const plan = await planEviction(db, local, new FakeRemote([a.hash]), 100); // only A durable; need 500
+    const plan = await planEviction(db, local, new FakeRemote([a.hash]), 100); // only A durable; need 510
     db.close();
     expect(plan.evictableBlobs).toBe(1);
     expect(plan.toEvictBlobs).toBe(1); // evicts A (100)
     expect(plan.toEvictBytes).toBe(100);
-    expect(plan.shortfallBytes).toBe(400); // 500 needed − 100 evictable
+    expect(plan.shortfallBytes).toBe(410); // 510 needed − 100 evictable
   });
 
   test("plans no eviction without a remote durability source", async () => {
@@ -138,7 +138,7 @@ describe("planEviction", () => {
     expect(plan.evictableBytes).toBe(0);
     expect(plan.toEvictBlobs).toBe(0);
     expect(plan.resultingBytes).toBe(600);
-    expect(plan.shortfallBytes).toBe(500);
+    expect(plan.shortfallBytes).toBe(510);
   });
 
   test("keeps multiple local extension variants in one eviction target", async () => {

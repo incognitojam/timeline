@@ -74,7 +74,7 @@ export interface MediaConfig {
   r2?: R2Config;
   /**
    * Soft cap on the local media cache in GiB. When set, eviction may drop the
-   * oldest (by cache mtime) R2-durable blobs to keep local usage under it.
+   * oldest (by cache mtime) R2-durable blobs once over it, down to 90% of the cap.
    * Unset = unbounded (the planner reports usage only).
    */
   cache_limit_gib?: number;
