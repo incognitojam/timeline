@@ -1,31 +1,24 @@
-import { Database } from "../db/sqlite";
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { Cause, Effect, Exit, Fiber, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import { getTimelineDbPath } from "../db/paths";
 import { PRODUCT_VERSION } from "../product-version";
 import { loadConfig } from "../config";
-import { EVENT_FOR_EMBEDDING_COLUMNS, EVENT_LEAN_PROFILE, type EventForEmbedding } from "./content";
 import { errorMessage } from "./client";
 import { createEmbeddingClient, type EmbeddingProfileConfig, resolveEmbeddingProfile } from "./config";
-import { buildCorpusWhere, type CorpusFilterTerm } from "./corpus";
-import { ensureContentProfile, ensureModelProfile, getEmbeddingsDb, initEmbeddingsDb, searchVectors } from "./db";
-import { type IndexCounts, indexEvents, readEmbeddingBatchSize } from "./indexer";
-
-// A whole source (no `type`) or a single source/type pair. SOURCE:TYPE values
-// split on the first colon so event types containing colons (e.g.
-// "spotify:listen:track") are matched intact.
-type FilterTerm = CorpusFilterTerm;
-
-interface IndexFilters {
-  include: FilterTerm[];
-  exclude: FilterTerm[];
-}
-
-interface CliIndexCounts extends IndexCounts {
-  limit: number;
-  selected: number;
-}
+import type { CorpusFilterTerm } from "./corpus";
+import { ensureModelProfile, getEmbeddingsDb, getEmbeddingsDbPath, initEmbeddingsDb, searchVectors } from "./db";
+import { readEmbeddingBatchSize } from "./indexer";
+import {
+  type CliIndexCounts,
+  DEFAULT_INDEX_CONCURRENCY,
+  DEFAULT_INDEX_LIMIT,
+  type IndexFilters,
+  parseFilterTerms,
+  parseSince,
+  runIndex,
+  type SinceFilter,
+} from "./index-run";
 
 function reportIndexCounts(counts: CliIndexCounts): Effect.Effect<void> {
   return Effect.sync(() => {
@@ -37,10 +30,6 @@ function reportIndexCounts(counts: CliIndexCounts): Effect.Effect<void> {
   });
 }
 
-type SinceFilter =
-  | { kind: "date"; value: string }
-  | { kind: "timestamp"; value: string };
-
 function positiveInteger(flag: string): (value: number) => number {
   return value => {
     if (!Number.isInteger(value) || value <= 0) throw new Error(`${flag} must be a positive integer`);
@@ -48,48 +37,14 @@ function positiveInteger(flag: string): (value: number) => number {
   };
 }
 
-function parseSince(value: string): SinceFilter {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value) && isValidDateOnly(value)) return { kind: "date", value };
-  if (
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) &&
-    isValidDateOnly(value.slice(0, 10)) &&
-    !Number.isNaN(Date.parse(value))
-  ) {
-    return { kind: "timestamp", value: new Date(value).toISOString() };
-  }
-  throw new Error("--since must be a YYYY-MM-DD date or ISO timestamp with timezone");
-}
-
-function isValidDateOnly(value: string): boolean {
-  const date = new Date(`${value}T00:00:00Z`);
-  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
-}
-
-function parseFilterTerms(value: string | undefined, flag: string): FilterTerm[] {
-  if (!value) throw new Error(`${flag} requires a value`);
-  const parts = value
-    .split(",")
-    .map(part => part.trim())
-    .filter(Boolean);
-  if (parts.length === 0) throw new Error(`${flag} requires at least one value`);
-  return parts.map(part => {
-    const separator = part.indexOf(":");
-    if (separator === -1) return { source: part };
-    if (separator === 0 || separator === part.length - 1) {
-      throw new Error(`${flag} values must be SOURCE or SOURCE:TYPE, got "${part}"`);
-    }
-    return { source: part.slice(0, separator), type: part.slice(separator + 1) };
-  });
-}
-
 const limitFlag = Flag.Int("limit").pipe(
-  Flag.withDefault(25),
+  Flag.withDefault(DEFAULT_INDEX_LIMIT),
   Flag.mapTryCatch(positiveInteger("--limit"), errorMessage),
   Flag.withDescription("Maximum number of events or results")
 );
 
 const concurrencyFlag = Flag.Int("concurrency").pipe(
-  Flag.withDefault(8),
+  Flag.withDefault(DEFAULT_INDEX_CONCURRENCY),
   Flag.mapTryCatch(positiveInteger("--concurrency"), errorMessage),
   Flag.withDescription("Embedding requests to keep in flight at once")
 );
@@ -100,30 +55,13 @@ const sinceFlag = Flag.String("since").pipe(
   Flag.withDescription("Only index events on or after YYYY-MM-DD or an ISO timestamp with timezone")
 );
 
-function filterTermsFlag(name: "include" | "exclude"): Flag.Flag<FilterTerm[]> {
+function filterTermsFlag(name: "include" | "exclude"): Flag.Flag<CorpusFilterTerm[]> {
   const flag = `--${name}`;
   return Flag.String(name).pipe(
     Flag.atLeast(0),
     Flag.mapTryCatch(values => values.flatMap(value => parseFilterTerms(value, flag)), errorMessage),
     Flag.withDescription("SOURCE or SOURCE:TYPE, repeatable and comma-separated")
   );
-}
-
-function buildIndexWhere(filters: IndexFilters, since?: SinceFilter): { clause: string; params: string[] } {
-  const corpus = buildCorpusWhere(filters);
-  const conditions = [corpus.clause];
-  const params = [...corpus.params];
-
-  if (since?.kind === "date") {
-    conditions.push("timestamp >= ?");
-    params.push(since.value);
-  }
-  if (since?.kind === "timestamp") {
-    conditions.push("julianday(timestamp) >= julianday(?)");
-    params.push(since.value);
-  }
-
-  return { clause: conditions.join(" AND "), params };
 }
 
 /** Open the embeddings DB (and load sqlite-vec) as a scoped, auto-closed resource. */
@@ -149,43 +87,21 @@ function index(
 ): Effect.Effect<void> {
   const batchSize = readEmbeddingBatchSize();
   const counts: CliIndexCounts = { limit, selected: 0, created: 0, reused: 0, embedded: 0, skipped: 0, errors: 0 };
-
-  const program = Effect.gen(function* () {
-    const embeddingsDb = yield* acquireEmbeddingsDb;
-    const timelineDb = yield* Effect.acquireRelease(
-      Effect.sync(() => new Database(getTimelineDbPath(), { readonly: true })),
-      db => Effect.sync(() => db.close())
-    );
-    const contentProfile = ensureContentProfile(embeddingsDb, EVENT_LEAN_PROFILE);
-    const modelProfile = ensureModelProfile(embeddingsDb, modelConfig);
-    const client = createEmbeddingClient(modelConfig);
-
-    const where = buildIndexWhere(filters, since);
-    const events = timelineDb
-      .prepare(
-        `SELECT ${EVENT_FOR_EMBEDDING_COLUMNS}
-         FROM events
-         WHERE ${where.clause}
-         ORDER BY COALESCE(timestamp, ''), id
-         LIMIT ?`
-      )
-      .all(...where.params, limit) as EventForEmbedding[];
-    counts.selected = events.length;
-
-    yield* indexEvents({ embeddingsDb, client, contentProfile, modelProfile }, events, { batchSize, concurrency }, counts);
-  }).pipe(Effect.scoped);
-
-  return program.pipe(
-    // A fatal error (bad config / dead provider) aborts after the first failure
-    // instead of hammering the provider once per event.
-    Effect.catchTag("FatalEmbeddingError", error =>
-      Effect.sync(() => {
-        counts.errors++;
-        console.error(error.message);
-      })
-    ),
-    Effect.ensuring(reportIndexCounts(counts))
-  );
+  return Effect.suspend(() =>
+    runIndex(
+      {
+        timelineDbPath: getTimelineDbPath(),
+        embeddingsDbPath: getEmbeddingsDbPath(),
+        modelConfig,
+        limit,
+        concurrency,
+        batchSize,
+        filters,
+        since,
+      },
+      counts
+    )
+  ).pipe(Effect.ensuring(reportIndexCounts(counts)));
 }
 
 function search(modelConfig: EmbeddingProfileConfig, query: string | undefined, limit: number): Effect.Effect<void> {

@@ -18,6 +18,16 @@ import {
   searchVectors,
   upsertDocument,
 } from "./db";
+import type { EmbeddingsConfig } from "../config/types";
+import { resolveEmbeddingProfile } from "./config";
+import {
+  type CliIndexCounts,
+  DEFAULT_INDEX_CONCURRENCY,
+  DEFAULT_INDEX_LIMIT,
+  parseFilterTerms,
+  parseSince,
+  runIndex as runIndexInProcess,
+} from "./index-run";
 import { MAX_BATCH_BYTES } from "./indexer";
 import { configureBunSqliteForSqliteVec, loadSqliteVec } from "./sqlite-vec";
 import { seed } from "../testing/seed";
@@ -142,9 +152,9 @@ describe("embedding corpus policy", () => {
 const sqliteVecIt = it.skipIf(skipWithoutSqliteVec);
 
 /** Write a config.toml pointing [embeddings] at a test server; returns its path. */
-function writeEmbeddingsConfig(dir: string, baseUrl: string, extra = ""): string {
+function writeEmbeddingsConfig(dir: string, baseUrl: string): string {
   const path = join(dir, "config.toml");
-  writeFileSync(path, `[embeddings]\nbase_url = "${baseUrl}"\nmodel = "fake"\ndimensions = 3\n${extra}\n`);
+  writeFileSync(path, `[embeddings]\nbase_url = "${baseUrl}"\nmodel = "fake"\ndimensions = 3\n`);
   return path;
 }
 
@@ -1062,7 +1072,7 @@ describe("OpenAI-compatible embedding client", () => {
   });
 });
 
-describe("embeddings index CLI exit contract", () => {
+describe("embeddings index command", () => {
   const cliIt = skipWithoutSqliteVec ? it.skip : it.concurrent;
 
   function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
@@ -1235,8 +1245,6 @@ describe("embeddings index CLI exit contract", () => {
       batchSize?: number;
       since?: string;
       extraArgs?: string[];
-      /** Extra keys appended to the [embeddings] section. */
-      configExtra?: string;
       respond: (requestIndex: number, request: Request) => Response | Promise<Response>;
     }
   ): Promise<{ exitCode: number; stdout: string; stderr: string; requests: number }> {
@@ -1253,7 +1261,7 @@ describe("embeddings index CLI exit contract", () => {
           ...process.env,
           TIMELINE_DB_PATH: timelineDbPath,
           TIMELINE_EMBEDDINGS_DB_PATH: embeddingsDbPath,
-          TIMELINE_CONFIG: writeEmbeddingsConfig(dirname(embeddingsDbPath), `${server.url}v1`, options.configExtra),
+          TIMELINE_CONFIG: writeEmbeddingsConfig(dirname(embeddingsDbPath), `${server.url}v1`),
           TIMELINE_EMBEDDING_BATCH_SIZE: String(options.batchSize ?? 16),
         },
         stdout: "pipe",
@@ -1265,6 +1273,55 @@ describe("embeddings index CLI exit contract", () => {
         new Response(proc.stderr).text(),
       ]);
       return { exitCode, stdout, stderr, requests };
+    } finally {
+      server.stop(true);
+    }
+  }
+
+  // Runs the index command's selection and indexing on this thread, against the
+  // same fake provider. The CLI's own exit code, flag parsing and SIGINT
+  // handling stay covered by the tests that spawn it (runIndex and runCli).
+  async function indexInProcess(
+    timelineDbPath: string,
+    embeddingsDbPath: string,
+    options: {
+      limit?: number;
+      batchSize?: number;
+      concurrency?: number;
+      since?: string;
+      include?: string;
+      /** Extra keys for the [embeddings] config section. */
+      config?: Partial<EmbeddingsConfig>;
+      respond: (requestIndex: number, request: Request) => Response | Promise<Response>;
+    }
+  ): Promise<{ counts: CliIndexCounts; requests: number }> {
+    let requests = 0;
+    const server = Bun.serve({ port: 0, fetch: request => options.respond(requests++, request) });
+    const limit = options.limit ?? 1;
+    const counts: CliIndexCounts = { limit, selected: 0, created: 0, reused: 0, embedded: 0, skipped: 0, errors: 0 };
+    try {
+      const modelConfig = resolveEmbeddingProfile({
+        base_url: `${server.url}v1`,
+        model: "fake",
+        dimensions: 3,
+        ...options.config,
+      });
+      await Effect.runPromise(
+        runIndexInProcess(
+          {
+            timelineDbPath,
+            embeddingsDbPath,
+            modelConfig,
+            limit,
+            concurrency: options.concurrency ?? DEFAULT_INDEX_CONCURRENCY,
+            batchSize: options.batchSize ?? 16,
+            filters: { include: options.include ? parseFilterTerms(options.include, "--include") : [], exclude: [] },
+            since: options.since ? parseSince(options.since) : undefined,
+          },
+          counts
+        )
+      );
+      return { counts, requests };
     } finally {
       server.stop(true);
     }
@@ -1299,13 +1356,12 @@ describe("embeddings index CLI exit contract", () => {
     const { dir, timelineDbPath, embeddingsDbPath } = seedTimeline(2);
     try {
       // 2 dims from the provider, but configured for 3 -> a fatal config mismatch.
-      const { exitCode, stdout, requests } = await runIndex(timelineDbPath, embeddingsDbPath, {
+      const { counts, requests } = await indexInProcess(timelineDbPath, embeddingsDbPath, {
         limit: 2,
         respond: ok([1, 2]),
       });
-      expect(exitCode).not.toBe(0);
-      expect(stdout).toContain('"embedded":0');
-      expect(stdout).toContain('"errors":1');
+      expect(counts.embedded).toBe(0);
+      expect(counts.errors).toBe(1);
       expect(requests).toBe(1); // stopped after the first failed embed, did not call again
       expect(vectorCount(embeddingsDbPath)).toBe(0);
     } finally {
@@ -1317,14 +1373,13 @@ describe("embeddings index CLI exit contract", () => {
     const { dir, timelineDbPath, embeddingsDbPath } = seedTimeline(2);
     try {
       failFirstDocumentInsert(embeddingsDbPath);
-      const { exitCode, stdout, stderr, requests } = await runIndex(timelineDbPath, embeddingsDbPath, {
+      const { counts, requests } = await indexInProcess(timelineDbPath, embeddingsDbPath, {
         limit: 2,
         respond: ok([1, 2, 3]),
       });
-      expect(requests, `CLI exited ${exitCode}: ${stderr}`).toBe(1);
-      expect(stdout).toContain('"embedded":1');
-      expect(stdout).toContain('"errors":1');
-      expect(exitCode).not.toBe(0);
+      expect(requests).toBe(1);
+      expect(counts.embedded).toBe(1);
+      expect(counts.errors).toBe(1);
       expect(vectorCount(embeddingsDbPath)).toBe(1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -1355,7 +1410,7 @@ describe("embeddings index CLI exit contract", () => {
     const { dir, timelineDbPath, embeddingsDbPath } = seedTimeline(3);
     const batchLengths: number[] = [];
     try {
-      const { exitCode, stdout, requests } = await runIndex(timelineDbPath, embeddingsDbPath, {
+      const { counts, requests } = await indexInProcess(timelineDbPath, embeddingsDbPath, {
         limit: 3,
         batchSize: 2,
         respond: async (requestIndex, request) => {
@@ -1366,11 +1421,10 @@ describe("embeddings index CLI exit contract", () => {
           });
         },
       });
-      expect(exitCode).toBe(0);
       expect(requests).toBe(2);
       expect([...batchLengths].sort()).toEqual([1, 2]);
-      expect(stdout).toContain('"embedded":3');
-      expect(stdout).toContain('"errors":0');
+      expect(counts.embedded).toBe(3);
+      expect(counts.errors).toBe(0);
       expect(vectorCount(embeddingsDbPath)).toBe(3);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -1391,19 +1445,19 @@ describe("embeddings index CLI exit contract", () => {
     const { dir, timelineDbPath, embeddingsDbPath } = seedTimeline(events);
     const batchLengths: number[] = [];
     try {
-      const { exitCode, stdout } = await runIndex(timelineDbPath, embeddingsDbPath, {
+      const { counts } = await indexInProcess(timelineDbPath, embeddingsDbPath, {
         limit: events.length,
         batchSize: 64,
-        extraArgs: ["--concurrency", "1"],
+        concurrency: 1,
         respond: async (_requestIndex, request) => {
           const inputs = await readEmbeddingInputs(request);
           batchLengths.push(inputs.length);
           return Response.json({ data: inputs.map((_input, index) => ({ index, embedding: [1, index, 1] })) });
         },
       });
-      expect(exitCode).toBe(0);
+      expect(counts.errors).toBe(0);
       expect(batchLengths).toEqual([perBatch, 1]);
-      expect(stdout).toContain(`"embedded":${events.length}`);
+      expect(counts.embedded).toBe(events.length);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -1418,11 +1472,11 @@ describe("embeddings index CLI exit contract", () => {
     // which only bounds that failure: a passing run never waits for it.
     const threeOpen = Promise.withResolvers<void>();
     try {
-      const { exitCode, stdout, requests } = await runIndex(timelineDbPath, embeddingsDbPath, {
+      const { counts, requests } = await indexInProcess(timelineDbPath, embeddingsDbPath, {
         limit: 6,
         batchSize: 1,
-        extraArgs: ["--concurrency", "3"],
-        configExtra: "timeout_seconds = 20",
+        concurrency: 3,
+        config: { timeout_seconds: 20 },
         respond: async (_requestIndex, request) => {
           inFlight++;
           maxInFlight = Math.max(maxInFlight, inFlight);
@@ -1436,10 +1490,10 @@ describe("embeddings index CLI exit contract", () => {
           return Response.json({ data: [{ index: 0, embedding: [id, 0, 1] }] });
         },
       });
-      expect(exitCode).toBe(0);
+      expect(counts.errors).toBe(0);
       expect(requests).toBe(6);
       expect(maxInFlight).toBe(3);
-      expect(stdout).toContain('"embedded":6');
+      expect(counts.embedded).toBe(6);
 
       const db = new Database(embeddingsDbPath, { readonly: true });
       try {
@@ -1465,14 +1519,14 @@ describe("embeddings index CLI exit contract", () => {
     try {
       // Embed event 1 in a separate run, so the timed-out run's outcome cannot
       // depend on how quickly a loaded machine answers the other requests.
-      const first = await runIndex(timelineDbPath, embeddingsDbPath, { limit: 1, respond: ok([1, 2, 3]) });
-      expect(first.exitCode).toBe(0);
+      const first = await indexInProcess(timelineDbPath, embeddingsDbPath, { limit: 1, respond: ok([1, 2, 3]) });
+      expect(first.counts.errors).toBe(0);
       expect(vectorEventIds(embeddingsDbPath)).toEqual([1]);
 
-      const timedOut = await runIndex(timelineDbPath, embeddingsDbPath, {
+      const timedOut = await indexInProcess(timelineDbPath, embeddingsDbPath, {
         limit: 3,
         batchSize: 1,
-        configExtra: "timeout_seconds = 1",
+        config: { timeout_seconds: 1 },
         respond: async (_requestIndex, request) => {
           const [input] = await readEmbeddingInputs(request);
           // The provider never answers event 2.
@@ -1480,16 +1534,15 @@ describe("embeddings index CLI exit contract", () => {
           return Response.json({ data: [{ index: 0, embedding: [1, 2, 3] }] });
         },
       });
-      expect(timedOut.exitCode).not.toBe(0);
-      expect(timedOut.stdout).toContain('"skipped":1');
-      expect(timedOut.stdout).toContain('"errors":1');
+      expect(timedOut.counts.skipped).toBe(1);
+      expect(timedOut.counts.errors).toBe(1);
       // Event 3 is not written even if answered, since writes stay in event order.
       expect(vectorEventIds(embeddingsDbPath)).toEqual([1]);
 
-      const resumed = await runIndex(timelineDbPath, embeddingsDbPath, { limit: 3, respond: ok([1, 2, 3]) });
-      expect(resumed.exitCode).toBe(0);
-      expect(resumed.stdout).toContain('"embedded":2');
-      expect(resumed.stdout).toContain('"skipped":1');
+      const resumed = await indexInProcess(timelineDbPath, embeddingsDbPath, { limit: 3, respond: ok([1, 2, 3]) });
+      expect(resumed.counts.errors).toBe(0);
+      expect(resumed.counts.embedded).toBe(2);
+      expect(resumed.counts.skipped).toBe(1);
       expect(vectorEventIds(embeddingsDbPath)).toEqual([1, 2, 3]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -1501,7 +1554,7 @@ describe("embeddings index CLI exit contract", () => {
     const batchLengths: number[] = [];
     try {
       makeTimelineEventsRenderIdentically(timelineDbPath);
-      const { exitCode, stdout, requests } = await runIndex(timelineDbPath, embeddingsDbPath, {
+      const { counts, requests } = await indexInProcess(timelineDbPath, embeddingsDbPath, {
         limit: 2,
         batchSize: 2,
         respond: async (_requestIndex, request) => {
@@ -1510,12 +1563,11 @@ describe("embeddings index CLI exit contract", () => {
           return Response.json({ data: inputs.map((_input, index) => ({ index, embedding: [1, 2, 3] })) });
         },
       });
-      expect(exitCode).toBe(0);
       expect(requests).toBe(1);
       expect(batchLengths).toEqual([1]);
-      expect(stdout).toContain('"embedded":1');
-      expect(stdout).toContain('"skipped":1');
-      expect(stdout).toContain('"errors":0');
+      expect(counts.embedded).toBe(1);
+      expect(counts.skipped).toBe(1);
+      expect(counts.errors).toBe(0);
       expect(vectorCount(embeddingsDbPath)).toBe(1);
       expect(linkedEventCount(embeddingsDbPath)).toBe(2);
     } finally {
@@ -1526,7 +1578,7 @@ describe("embeddings index CLI exit contract", () => {
   cliIt("bisects a failed embedding batch and skips only the bad input", async () => {
     const { dir, timelineDbPath, embeddingsDbPath } = seedTimeline(3);
     try {
-      const { exitCode, stdout, requests } = await runIndex(timelineDbPath, embeddingsDbPath, {
+      const { counts, requests } = await indexInProcess(timelineDbPath, embeddingsDbPath, {
         limit: 3,
         batchSize: 3,
         respond: async (_requestIndex, request) => {
@@ -1538,9 +1590,8 @@ describe("embeddings index CLI exit contract", () => {
         },
       });
       expect(requests).toBe(5);
-      expect(stdout).toContain('"embedded":2');
-      expect(stdout).toContain('"errors":1');
-      expect(exitCode).not.toBe(0);
+      expect(counts.embedded).toBe(2);
+      expect(counts.errors).toBe(1);
       expect(vectorCount(embeddingsDbPath)).toBe(2);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -1566,15 +1617,15 @@ describe("embeddings index CLI exit contract", () => {
     const { dir, timelineDbPath, embeddingsDbPath } = seedTimeline();
     const inputs: string[] = [];
     try {
-      const { exitCode } = await runIndex(timelineDbPath, embeddingsDbPath, {
-        configExtra: 'document_prefix = "title: none | text: "',
+      const { counts } = await indexInProcess(timelineDbPath, embeddingsDbPath, {
+        config: { document_prefix: "title: none | text: " },
         respond: async (_requestIndex, request) => {
           const batch = await readEmbeddingInputs(request);
           inputs.push(...batch);
           return Response.json({ data: batch.map((_input, index) => ({ index, embedding: [1, 2, 3] })) });
         },
       });
-      expect(exitCode).toBe(0);
+      expect(counts.errors).toBe(0);
       expect(inputs.length).toBe(1);
       expect(inputs[0]?.startsWith("title: none | text: ")).toBe(true);
 
@@ -1651,11 +1702,11 @@ describe("embeddings index CLI exit contract", () => {
         respond: ok([1, 2, 3]),
       });
       expect(exitCode).toBe(0);
-      expect(stdout).toContain('"limit":25');
-      expect(stdout).toContain('"selected":25');
-      expect(stdout).toContain('"embedded":25');
+      expect(stdout).toContain(`"limit":${DEFAULT_INDEX_LIMIT}`);
+      expect(stdout).toContain(`"selected":${DEFAULT_INDEX_LIMIT}`);
+      expect(stdout).toContain(`"embedded":${DEFAULT_INDEX_LIMIT}`);
       expect(requests).toBe(2);
-      expect(vectorCount(embeddingsDbPath)).toBe(25);
+      expect(vectorCount(embeddingsDbPath)).toBe(DEFAULT_INDEX_LIMIT);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -1667,13 +1718,13 @@ describe("embeddings index CLI exit contract", () => {
       "2026-01-01T00:00:00Z",
     ]);
     try {
-      const { exitCode, stdout, requests } = await runIndex(timelineDbPath, embeddingsDbPath, {
+      const { counts, requests } = await indexInProcess(timelineDbPath, embeddingsDbPath, {
         since: "2026-01-01",
         respond: ok([1, 2, 3]),
       });
-      expect(exitCode).toBe(0);
+      expect(counts.errors).toBe(0);
       expect(requests).toBe(1);
-      expect(stdout).toContain('"embedded":1');
+      expect(counts.embedded).toBe(1);
       expect(documentSourceKeys(embeddingsDbPath)).toEqual(["2"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -1705,13 +1756,13 @@ describe("embeddings index CLI exit contract", () => {
       "2026-01-01T00:00:00.600Z",
     ]);
     try {
-      const { exitCode, stdout, requests } = await runIndex(timelineDbPath, embeddingsDbPath, {
+      const { counts, requests } = await indexInProcess(timelineDbPath, embeddingsDbPath, {
         since: "2026-01-01T00:00:00.500Z",
         respond: ok([1, 2, 3]),
       });
-      expect(exitCode).toBe(0);
+      expect(counts.errors).toBe(0);
       expect(requests).toBe(1);
-      expect(stdout).toContain('"embedded":1');
+      expect(counts.embedded).toBe(1);
       expect(documentSourceKeys(embeddingsDbPath)).toEqual(["2"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -1746,12 +1797,12 @@ describe("embeddings index CLI exit contract", () => {
       },
     ]);
     try {
-      const { exitCode, stdout, requests } = await runIndex(timelineDbPath, embeddingsDbPath, {
+      const { counts, requests } = await indexInProcess(timelineDbPath, embeddingsDbPath, {
         limit: 10,
         respond: ok([1, 2, 3]),
       });
-      expect(exitCode).toBe(0);
-      expect(stdout).toContain('"embedded":1');
+      expect(counts.errors).toBe(0);
+      expect(counts.embedded).toBe(1);
       expect(requests).toBe(1);
       expect(vectorEventIds(embeddingsDbPath)).toEqual([3]);
     } finally {
@@ -1787,13 +1838,13 @@ describe("embeddings index CLI exit contract", () => {
       },
     ]);
     try {
-      const { exitCode, stdout, requests } = await runIndex(timelineDbPath, embeddingsDbPath, {
+      const { counts, requests } = await indexInProcess(timelineDbPath, embeddingsDbPath, {
         limit: 10,
-        extraArgs: ["--include", "reddit"],
+        include: "reddit",
         respond: ok([1, 2, 3]),
       });
-      expect(exitCode).toBe(0);
-      expect(stdout).toContain('"embedded":1');
+      expect(counts.errors).toBe(0);
+      expect(counts.embedded).toBe(1);
       expect(requests).toBe(1);
       expect(vectorEventIds(embeddingsDbPath)).toEqual([3]);
     } finally {
