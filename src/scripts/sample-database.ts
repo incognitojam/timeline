@@ -140,7 +140,7 @@ async function main() {
   // Create output DB with schema
   // Dynamic import avoids schema.ts module-level side effects (TIMELINE_DB_PATH check)
   process.env.TIMELINE_DB_PATH = sourcePath;
-  const { initDb, rebuildFullTextIndexes } = await import("../db/schema");
+  const { eventPeopleRowFilter, initDb, rebuildFullTextIndexes } = await import("../db/schema");
   const outputDb = new Database(outputPath);
   outputDb.exec("PRAGMA journal_mode = WAL");
   initDb(outputDb);
@@ -214,7 +214,7 @@ async function main() {
       SELECT events.id, json_each.value, events.source, events.timestamp,
              CASE WHEN json_each.key = 0 THEN 1 ELSE 0 END
       FROM events, json_each(events.people)
-      WHERE events.people IS NOT NULL AND events.people != '[]'
+      WHERE events.people IS NOT NULL AND ${eventPeopleRowFilter("events", "json_each")}
     `);
   });
 
