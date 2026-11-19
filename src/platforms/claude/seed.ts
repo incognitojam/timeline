@@ -98,18 +98,22 @@ export const claudeSeed: SeedSource = {
 
     const dir = ctx.stage("claude");
     const conversationsPath = ctx.writeStaged("claude", "export/conversations.json", JSON.stringify(exported));
-    const memoriesPath = ctx.writeStaged("claude", "export/memories.json", JSON.stringify(memories));
-    const usersPath = ctx.writeStaged(
+    ctx.writeStaged("claude", "export/memories.json", JSON.stringify(memories));
+    ctx.writeStaged(
       "claude",
       "export/users.json",
       JSON.stringify([{ uuid: accountUuid, full_name: SELF.name, email_address: SELF.email, verified_phone_number: null }]),
     );
     const zipPath = join(dir, "conversations-000.zip");
     await zipFlat(zipPath, [conversationsPath]);
-    const legacyPath = join(dir, "legacy-memories.zip");
-    await zipFlat(legacyPath, [memoriesPath, usersPath]);
-    await importClaudeExport(ctx.db, legacyPath, ACCOUNT);
-
+    ctx.writeStaged("claude", `new-memories/memories/${accountUuid}.json`, JSON.stringify({
+      account_uuid: accountUuid, conversations_memory: memories[0].conversations_memory,
+      project_memories: {}, memory_files: [{ path: "/notes/preferences.md", content: "Prefer concise examples.", updated_at: anchor }],
+    }));
+    const memoryZip = join(dir, "memories-000.zip");
+    const proc = Bun.spawn(["zip", "-q", memoryZip, `memories/${accountUuid}.json`], { cwd: join(dir, "new-memories") });
+    if (await proc.exited !== 0) throw new Error("Could not create synthetic Claude memory ZIP");
+    await importClaudeExport(ctx.db, memoryZip, ACCOUNT);
     await importClaudeExport(ctx.db, zipPath, ACCOUNT);
     ctx.identify("alex", `claude:${ACCOUNT}`);
   },

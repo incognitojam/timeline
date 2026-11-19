@@ -1,3 +1,4 @@
+import { importMemories } from "./memories";
 import { parseConversation, extractedExports, detectClaudeCategory, categoryPattern } from "./export";
 import { createBoundedWriter } from "../../db/bounded-writes";
 import { isDeepStrictEqual } from "node:util";
@@ -48,7 +49,7 @@ const CLAUDE_ASSISTANT_DISPLAY_NAME = "Claude";
 
 export function getClaudeSkipReason(path: string): string | undefined {
   const category = categoryPattern.exec(basename(path))?.[1];
-  if (!category || ["conversations"].includes(category)) return undefined;
+  if (!category || ["conversations", "memories"].includes(category)) return undefined;
   if (["memories", "projects"].includes(category)) throw new Error(`Claude ${category} import is not supported by this version; leave this ZIP unprocessed for a later version`);
   return `skipped: not imported (${category})`;
 }
@@ -56,8 +57,8 @@ export function getClaudeSkipReason(path: string): string | undefined {
 export async function importClaudeExport(db: Database, zipPath: string, sourceAccount: string, options: ImportClaudeOptions = {}): Promise<number> {
   const preview = await runClaudeImport(db, zipPath, sourceAccount, { ...options, dryRun: true }, !options.dryRun);
   if (options.dryRun) return preview.added;
-  if (!options.allowNewAccount && (preview.otherAccountMessages || preview.accountHasNoHistory)) {
-    throw new Error(`Export messages already exist under another account or the supplied account has no history; confirm a separate account with --allow-new-account\nMessages already present under other accounts: ${preview.otherAccountMessages}\nSupplied account has no history: ${preview.accountHasNoHistory}`);
+  if (!options.allowNewAccount && (preview.otherAccountMessages || preview.otherAccountMemories || preview.accountHasNoHistory)) {
+    throw new Error(`Export records already exist under another account or the supplied account has no history; confirm a separate account with --allow-new-account\nMessages already present under other accounts: ${preview.otherAccountMessages}\nMemories already present under other accounts: ${preview.otherAccountMemories}\nSupplied account has no history: ${preview.accountHasNoHistory}`);
   }
   return (await runClaudeImport(db, zipPath, sourceAccount, options)).added;
 }
@@ -68,7 +69,7 @@ async function runClaudeImport(
   sourceAccount: string,
   options: ImportClaudeOptions = {},
   preflight = false
-): Promise<{ added: number; otherAccountMessages: number; accountHasNoHistory: boolean }> {
+): Promise<{ added: number; otherAccountMessages: number; otherAccountMemories: number; accountHasNoHistory: boolean }> {
   if (!sourceAccount.trim()) throw new Error("Claude import requires an explicit account name");
   const accounts = db.prepare("SELECT DISTINCT source_account FROM events WHERE source = 'claude'").all() as { source_account: string }[];
   const accountHasNoHistory = accounts.length > 0 && !accounts.some((row) => row.source_account === sourceAccount);
@@ -77,6 +78,9 @@ async function runClaudeImport(
   const existing = db.prepare("SELECT id, title, raw_data FROM events WHERE source = 'claude' AND source_id = ? AND source_account = ?");
   const otherAccount = db.prepare("SELECT 1 FROM events WHERE source = 'claude' AND source_id = ? AND source_account != ? LIMIT 1");
   let otherAccountMessages = 0;
+  let otherAccountMemories = 0;
+  let changedMemories = 0;
+  let skippedMemories = 0;
   let emptyConversations = 0;
   let renamedConversations = 0;
   let existingMemories = 0;
@@ -131,6 +135,16 @@ async function runClaudeImport(
 
   for await (const { tempDir, category, files, zipPath: archive } of extractedExports(zipPath)) {
     if (category && !(await detectClaudeCategory(archive, tempDir, files))) throw new Error("Invalid Claude category contents");
+    if (category === "memories") {
+      await writer.flush();
+      const memoryResult = await importMemories(db, tempDir, files, sourceAccount, options.dryRun ?? false);
+      stats.memories += memoryResult.added;
+      existingMemories += memoryResult.present;
+      changedMemories += memoryResult.changed;
+      skippedMemories += memoryResult.skipped;
+      otherAccountMemories += memoryResult.otherAccountMemories;
+      continue;
+    }
     if (category && category !== "conversations") {
       skippedCategories.add(category);
       continue;
@@ -274,6 +288,7 @@ async function runClaudeImport(
           continue;
         }
 
+        if (otherAccount.get(`memory:${i}`, sourceAccount)) otherAccountMemories++;
         if (existing.get(`memory:${i}`, sourceAccount)) { existingMemories++; continue; }
         if (options.dryRun) { stats.memories++; continue; }
         await writer.flush();
@@ -314,7 +329,8 @@ async function runClaudeImport(
   console.log(`  Messages already present under other accounts: ${otherAccountMessages}`);
   console.log(`  Messages new: ${stats.messages}; already present: ${existingMessages}`);
   console.log("  Projects: 0 (not imported)");
-  console.log(`  Memories new: ${stats.memories}; already present: ${existingMemories}`);
+  console.log(`  Memories new: ${stats.memories}; changed: ${changedMemories}; already present: ${existingMemories}; skipped empty: ${skippedMemories}`);
+  console.log(`  Memories already present under other accounts: ${otherAccountMemories}`);
   if (refreshRawData) {
     console.log(`  Refreshed: ${stats.refreshed.toLocaleString()}`);
   }
@@ -327,7 +343,7 @@ async function runClaudeImport(
 
   if (!options.dryRun) onImportComplete(db);
 
-  return { added: stats.messages + stats.memories, otherAccountMessages, accountHasNoHistory };
+  return { added: stats.messages + stats.memories, otherAccountMessages, otherAccountMemories, accountHasNoHistory };
 }
 
 // CLI
