@@ -391,7 +391,7 @@ Generated from each platform's `meta.ts` by `bun run docs:sources`; a test fails
 | amp | `amp` | `amp:message:user`, `amp:message:assistant` |
 | call-recordings | `call-recordings` | `recording:incoming`, `recording:outgoing`, `recording:unknown` |
 | chatgpt | `chatgpt` | `chatgpt:message:user`, `chatgpt:message:assistant` |
-| claude | `claude` | `claude:message:user`, `claude:message:assistant`, `claude:memory` |
+| claude | `claude` | `claude:message:user`, `claude:message:assistant`, `claude:memory`, `claude:project` |
 | claude-code | `claude-code` | `claude-code:message:user`, `claude-code:message:assistant` |
 | codex | `codex` | `codex:message:user`, `codex:message:assistant` |
 | conductor | `conductor` | `conductor:message:user`, `conductor:message:assistant` |
