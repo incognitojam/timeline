@@ -149,6 +149,7 @@ async function buildArtifact(outputPath: string): Promise<void> {
         // Artifact probes use the same SQLite entry point as the service.
         join(repoRoot, "src", "db", "sqlite.ts"),
         join(repoRoot, "src", "platforms", "monzo", "parser.ts"),
+        join(repoRoot, "src", "platforms", "claude", "parser.ts"),
       ],
       root: join(repoRoot, "src"),
       outdir: runtimeDir,

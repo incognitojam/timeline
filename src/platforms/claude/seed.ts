@@ -5,7 +5,7 @@ import { SELF } from "../../seed/persona";
 import { planChatConversations, zipFlat } from "../../seed/sources/assistant-chat-data";
 import { iso } from "../../seed/sources/coding-data";
 
-/** Claude.ai exports are imported under the account's email. */
+/** A stable operator-supplied account name, independent of the export UUID. */
 const ACCOUNT = SELF.email;
 
 export const claudeSeed: SeedSource = {
@@ -104,10 +104,13 @@ export const claudeSeed: SeedSource = {
       "export/users.json",
       JSON.stringify([{ uuid: accountUuid, full_name: SELF.name, email_address: SELF.email, verified_phone_number: null }]),
     );
-    const zipPath = join(dir, "data-export.zip");
-    await zipFlat(zipPath, [conversationsPath, memoriesPath, usersPath]);
+    const zipPath = join(dir, "conversations-000.zip");
+    await zipFlat(zipPath, [conversationsPath]);
+    const legacyPath = join(dir, "legacy-memories.zip");
+    await zipFlat(legacyPath, [memoriesPath, usersPath]);
+    await importClaudeExport(ctx.db, legacyPath, ACCOUNT);
 
-    await ctx.inTransaction(() => importClaudeExport(ctx.db, zipPath, ACCOUNT));
+    await importClaudeExport(ctx.db, zipPath, ACCOUNT);
     ctx.identify("alex", `claude:${ACCOUNT}`);
   },
 };

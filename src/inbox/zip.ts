@@ -19,8 +19,8 @@ export interface ExtractResult {
 /**
  * Extract a ZIP file to a temporary directory
  */
-export async function extractZip(zipPath: string): Promise<ExtractResult> {
-  const tempDir = await mkdtemp(join(tmpdir(), "timeline-inbox-"));
+export async function extractZip(zipPath: string, prefix = "timeline-inbox-"): Promise<ExtractResult> {
+  const tempDir = await mkdtemp(join(tmpdir(), prefix));
 
   return new Promise((resolve, reject) => {
     const [command, ...args] = backgroundCommand(["unzip", "-q", zipPath, "-d", tempDir]);

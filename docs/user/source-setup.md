@@ -431,3 +431,39 @@ Who a call was with comes from Timeline, never from `calls`. A recording with a 
 ## MacBook screen recall
 
 Periodic Apple Vision OCR'd screen captures imported as `screen:capture` events. See [recall-setup.md](recall-setup.md).
+
+## Claude category exports
+
+Supply the same account name used for previous imports; the export's account UUID
+is retained as metadata, not used as the database account key. Inbox sources pass
+`account` from their source configuration to the parser.
+
+```sh
+TIMELINE_DB_PATH=/path/to/timeline.db bun run src/platforms/claude/parser.ts /path/to/export-folder account-name --dry-run
+TIMELINE_DB_PATH=/path/to/timeline.db bun run src/platforms/claude/parser.ts /path/to/export-folder account-name
+```
+
+The input may also be a single ZIP. Category parts are processed in filename order;
+a manifest is optional, but listed files must be present when one is supplied.
+Download links are never fetched. Browser download suffixes are accepted; unknown
+ZIPs, duplicate parts and gaps are rejected. Unsupported memory and project ZIPs stay unprocessed in the inbox until a
+version supporting them is installed. Other unsupported categories are explicitly
+skipped. Legacy combined exports
+remain supported. A complete validation pass precedes any writes. Dry runs open
+the database read-only. The CLI uses `TIMELINE_DB_PATH` when supplied, otherwise
+resolves the service database from its environment file and configuration. It
+refuses to create a missing database, prints the absolute path and event count,
+and loads the same SQLite library configured for the service. If Claude history exists
+under another account, and the export overlaps that account or the supplied
+account has no history, real imports require `--allow-new-account` to confirm
+that this is a separate account.
+
+Messages retain the identity `conversation UUID:message UUID` within the supplied
+account. New branch messages are added alongside their parents. Conversation
+non-empty renames update display titles while retaining the original raw export; existing
+message content and raw data change only with `--refresh-raw-data`, which archives
+the previous raw data in `event_versions` before replacing it. Raw blocks are
+stored twice only when normalization changes their representation; redundant text
+is omitted when it equals the normalized event content. Empty messages are
+skipped and empty conversations counted separately. Previews report renames and
+messages already stored under other accounts.
