@@ -124,6 +124,17 @@ describe("Auth - Enabled Mode", () => {
       { path: "/status.md", accept: "text/markdown", contentType: "text/markdown" },
     ];
 
+    test("/status as HTML runs scripts only from this origin", async () => {
+      // marked keeps raw HTML and javascript: links from sync error messages.
+      const res = await app.request("/status", {
+        headers: { Accept: "text/html", Authorization: `Basic ${Buffer.from(`:${TEST_PASSWORD}`).toString("base64")}` },
+      });
+      expect(res.status).toBe(200);
+      const policy = res.headers.get("Content-Security-Policy") ?? "";
+      expect(policy).toContain("script-src 'self' 'wasm-unsafe-eval'");
+      expect(policy).toContain("object-src 'none'");
+    });
+
     for (const { path, accept, contentType } of variants) {
       test(`${path} (${accept}) rejects missing and invalid credentials`, async () => {
         for (const cookie of ["", "timeline_session=invalid"]) {

@@ -2670,6 +2670,17 @@ app.get("/api/coding/conversations/filters", async (c) => {
 // Markdown-first status page with content negotiation
 // Serves HTML by default for browsers, markdown for agents
 // Must be defined before SPA fallback to take precedence
+// Defence in depth for the web app and /status: scripts only from this origin, so markup
+// that slips into a page (inline handlers, javascript: URLs, injected <script>)
+// cannot run. 'wasm-unsafe-eval' allows compiling WebAssembly, not JavaScript eval.
+const CONTENT_SECURITY_POLICY = [
+  "script-src 'self' 'wasm-unsafe-eval'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join("; ");
+
 app.get("/status", async (c) => {
   const markdown = await generateStatusMarkdown({ authenticated: true });
   const accept = c.req.header("Accept") || "";
@@ -2681,7 +2692,7 @@ app.get("/status", async (c) => {
 
   // Default: HTML for browsers
   const html = renderMarkdownToHtml(markdown);
-  return c.html(html);
+  return c.html(html, 200, { "Content-Security-Policy": CONTENT_SECURITY_POLICY });
 });
 
 // Explicit markdown endpoint for agents/curl
@@ -2690,15 +2701,15 @@ app.get("/status.md", async (c) => {
   return c.text(markdown, 200, { "Content-Type": "text/markdown; charset=utf-8" });
 });
 
+
 // Add static file serving if web/dist exists
 if (webDistPath) {
   const indexHtmlPath = join(webDistPath, "index.html");
+  // Read fresh each time to pick up deploys without restart.
+  const serveIndexHtml = (c: Context) =>
+    c.html(readFileSync(indexHtmlPath, "utf-8"), 200, { "Content-Security-Policy": CONTENT_SECURITY_POLICY });
 
-  // Serve index.html for root (read fresh each time to pick up deploys without restart)
-  app.get("/", (c) => {
-    const indexHtml = readFileSync(indexHtmlPath, "utf-8");
-    return c.html(indexHtml);
-  });
+  app.get("/", serveIndexHtml);
 
   // Serve static assets from /assets/*
   app.get("/assets/*", async (c) => {
@@ -2723,8 +2734,7 @@ if (webDistPath) {
     if (path.startsWith("/api/") || path.includes(".")) {
       return c.json({ error: "Not found" }, 404);
     }
-    const indexHtml = readFileSync(indexHtmlPath, "utf-8");
-    return c.html(indexHtml);
+    return serveIndexHtml(c);
   });
 }
 
