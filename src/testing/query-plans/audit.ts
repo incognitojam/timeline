@@ -3,7 +3,7 @@ import type { RecordedDatabase } from "./recorder";
 
 // Intentionally far below the full backend inventory; detects a broken recorder.
 export const MIN_FULL_SUITE_STATEMENTS = 100;
-export const MAX_UNDER_REVIEW = 117;
+export const MAX_UNDER_REVIEW = 113;
 interface AllowanceStatement {
   database: RecordedDatabase;
   sql: string;

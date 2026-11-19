@@ -558,13 +558,13 @@ const NON_PERSON_SOURCES = ["youtube"];
  *
  * listContacts needs alias counts solely for direct contact references (manual
  * events keyed "contact:N:<source>"); platform identities already carry a
- * denormalized identities.event_count. A range scan over the (person, source)
- * index returns this small subset efficiently; a full GROUP BY over
- * event_people can exceed the query-pool timeout on large databases.
+ * denormalized identities.event_count. A range scan over an event_people
+ * index led by person returns this small subset efficiently; a full GROUP BY
+ * over event_people can exceed the query-pool timeout on large databases.
  *
  * Uses range bounds (person >= 'contact:' AND person < 'contact;') rather than
- * LIKE 'contact:%': SQLite's default case-insensitive LIKE can't use the
- * (person, source) index for a prefix match, but the binary range bounds can.
+ * LIKE 'contact:%': SQLite's default case-insensitive LIKE can't use a
+ * person index for a prefix match, but the binary range bounds can.
  * ';' (0x3B) is the byte after ':' (0x3A), so the
  * half-open range covers exactly the "contact:" prefix.
  */

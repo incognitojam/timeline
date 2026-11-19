@@ -1,5 +1,5 @@
 import { Database } from "./sqlite";
-import { createEventPeopleTriggers, dropEventPeopleTriggers } from "./schema";
+import { createEventPeopleTriggers, dropEventPeopleTriggers, eventPeopleRowFilter } from "./schema";
 
 /**
  * Populate the event_people index table from existing events.
@@ -39,16 +39,13 @@ export function populateEventPeople(db: Database): number {
       INSERT OR IGNORE INTO event_people_new (event_id, person, source, timestamp, is_sender)
       SELECT e.id, p.value, e.source, e.timestamp, CASE WHEN p.key = 0 THEN 1 ELSE 0 END
       FROM events e, json_each(e.people) p
-      WHERE e.people IS NOT NULL
-        AND p.value IS NOT NULL
-        AND p.value != ''
+      WHERE e.people IS NOT NULL AND ${eventPeopleRowFilter("e", "p")}
     `);
 
     // Atomic swap: drop old table, build indexes on new table with final names, then rename.
     // Index names are freed by dropping the old table.
     // Triggers on events table reference event_people by name - they'll work with renamed table.
     db.exec("DROP TABLE IF EXISTS event_people");
-    db.exec(`CREATE INDEX idx_event_people_person ON event_people_new(person, source)`);
     db.exec(`CREATE INDEX idx_event_people_person_ts ON event_people_new(person, source, timestamp DESC)`);
     db.exec(`CREATE INDEX idx_event_people_person_only_ts ON event_people_new(person, timestamp DESC)`);
     db.exec(`CREATE INDEX idx_event_people_sender_ts ON event_people_new(person, is_sender, timestamp DESC)`);

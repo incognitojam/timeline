@@ -32,9 +32,41 @@
     },
     {
       "database": "timeline",
-      "sql": "INSERT OR IGNORE INTO event_people_new ( event_id , person , source , timestamp , is_sender ) SELECT e . id , p . value , e . source , e . timestamp , CASE WHEN p . key = 0 THEN 1 ELSE 0 END FROM events e , json_each ( e . people ) p WHERE e . people IS NOT NULL AND p . value IS NOT NULL AND p . value != ''",
+      "sql": "INSERT OR IGNORE INTO event_people_new ( event_id , person , source , timestamp , is_sender ) SELECT e . id , p . value , e . source , e . timestamp , CASE WHEN p . key = 0 THEN 1 ELSE 0 END FROM events e , json_each ( e . people ) p WHERE e . people IS NOT NULL AND p . value IS NOT NULL AND p . value != '' AND CASE WHEN p . key = 0 OR e . conversation_id IS NULL OR json_array_length ( e . people ) <= 2 THEN 1 WHEN ( SELECT COUNT ( * ) FROM ( SELECT DISTINCT q . value FROM json_each ( e . people ) q WHERE q . value IS NOT NULL AND q . value != '' LIMIT 3 ) ) <= 2 THEN 1 WHEN NOT json_valid ( e . raw_data ) THEN 0 WHEN json_type ( e . raw_data , '$.conversation.participants' ) = 'array' THEN json_array_length ( e . raw_data , '$.conversation.participants' ) BETWEEN 1 AND 2 ELSE 0 END",
       "reason": "One-off event_people rebuild writes a temporary replacement table, absent from the steady-state schema.",
       "error": "SQLiteError: no such table: event_people_new"
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) AS count FROM events e , json_each ( e . people ) p WHERE e . people IS NOT NULL AND p . value IS NOT NULL AND p . value != '' AND CASE WHEN p . key = 0 OR e . conversation_id IS NULL OR json_array_length ( e . people ) <= 2 THEN 1 WHEN ( SELECT COUNT ( * ) FROM ( SELECT DISTINCT q . value FROM json_each ( e . people ) q WHERE q . value IS NOT NULL AND q . value != '' LIMIT 3 ) ) <= 2 THEN 1 WHEN NOT json_valid ( e . raw_data ) THEN 0 WHEN json_type ( e . raw_data , '$.conversation.participants' ) = 'array' THEN json_array_length ( e . raw_data , '$.conversation.participants' ) BETWEEN 1 AND 2 ELSE 0 END AND NOT EXISTS ( SELECT 1 FROM event_people ep WHERE ep . event_id = e . id AND ep . person = p . value )",
+      "reason": "verify-event-people is a maintenance diagnostic that checks every row by design: an operator runs it to compare event_people with events.people.",
+      "findings": [
+        "events:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) AS count FROM event_people ep JOIN events e ON e . id = ep . event_id WHERE EXISTS ( SELECT 1 FROM json_each ( COALESCE ( e . people , '[]' ) ) p WHERE p . value = ep . person AND p . value IS NOT NULL AND p . value != '' ) AND NOT EXISTS ( SELECT 1 FROM json_each ( COALESCE ( e . people , '[]' ) ) p WHERE p . value = ep . person AND p . value IS NOT NULL AND p . value != '' AND CASE WHEN p . key = 0 OR e . conversation_id IS NULL OR json_array_length ( e . people ) <= 2 THEN 1 WHEN ( SELECT COUNT ( * ) FROM ( SELECT DISTINCT q . value FROM json_each ( e . people ) q WHERE q . value IS NOT NULL AND q . value != '' LIMIT 3 ) ) <= 2 THEN 1 WHEN NOT json_valid ( e . raw_data ) THEN 0 WHEN json_type ( e . raw_data , '$.conversation.participants' ) = 'array' THEN json_array_length ( e . raw_data , '$.conversation.participants' ) BETWEEN 1 AND 2 ELSE 0 END )",
+      "reason": "verify-event-people is a maintenance diagnostic that checks every row by design: an operator runs it to compare event_people with events.people.",
+      "findings": [
+        "event_people:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT e . id AS eventId , p . value AS person , e . source , 'missing (not in event_people)' AS issue FROM events e , json_each ( e . people ) p WHERE e . people IS NOT NULL AND p . value IS NOT NULL AND p . value != '' AND CASE WHEN p . key = 0 OR e . conversation_id IS NULL OR json_array_length ( e . people ) <= 2 THEN 1 WHEN ( SELECT COUNT ( * ) FROM ( SELECT DISTINCT q . value FROM json_each ( e . people ) q WHERE q . value IS NOT NULL AND q . value != '' LIMIT 3 ) ) <= 2 THEN 1 WHEN NOT json_valid ( e . raw_data ) THEN 0 WHEN json_type ( e . raw_data , '$.conversation.participants' ) = 'array' THEN json_array_length ( e . raw_data , '$.conversation.participants' ) BETWEEN 1 AND 2 ELSE 0 END AND NOT EXISTS ( SELECT 1 FROM event_people ep WHERE ep . event_id = e . id AND ep . person = p . value ) LIMIT ?",
+      "reason": "verify-event-people is a maintenance diagnostic that checks every row by design: an operator runs it to compare event_people with events.people.",
+      "findings": [
+        "events:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) AS count FROM event_people ep JOIN events e ON e . id = ep . event_id WHERE NOT EXISTS ( SELECT 1 FROM json_each ( COALESCE ( e . people , '[]' ) ) p WHERE p . value = ep . person AND p . value IS NOT NULL AND p . value != '' )",
+      "reason": "verify-event-people is a maintenance diagnostic that checks every row by design: an operator runs it to compare event_people with events.people.",
+      "findings": [
+        "event_people:index-scan"
+      ]
     },
     {
       "database": "timeline",
@@ -924,22 +956,6 @@
     },
     {
       "database": "timeline",
-      "sql": "SELECT COUNT ( * ) AS count FROM event_people ep JOIN events e ON e . id = ep . event_id WHERE NOT EXISTS ( SELECT 1 FROM json_each ( COALESCE ( e . people , '[]' ) ) p WHERE p . value = ep . person AND p . value IS NOT NULL AND p . value != '' )",
-      "reason": "found by the first run; under review",
-      "findings": [
-        "event_people:index-scan"
-      ]
-    },
-    {
-      "database": "timeline",
-      "sql": "SELECT COUNT ( * ) AS count FROM events e , json_each ( e . people ) p WHERE e . people IS NOT NULL AND p . value IS NOT NULL AND p . value != '' AND NOT EXISTS ( SELECT 1 FROM event_people ep WHERE ep . event_id = e . id AND ep . person = p . value )",
-      "reason": "found by the first run; under review",
-      "findings": [
-        "events:table-scan"
-      ]
-    },
-    {
-      "database": "timeline",
       "sql": "SELECT COUNT ( * ) AS count FROM event_people ep JOIN events e ON e . id = ep . event_id WHERE ep . source != e . source OR ( ep . timestamp IS NULL AND e . timestamp IS NOT NULL ) OR ( ep . timestamp IS NOT NULL AND e . timestamp IS NULL ) OR ep . timestamp != e . timestamp",
       "reason": "found by the first run; under review",
       "findings": [
@@ -960,14 +976,6 @@
       "reason": "found by the first run; under review",
       "findings": [
         "event_people:table-scan"
-      ]
-    },
-    {
-      "database": "timeline",
-      "sql": "SELECT e . id AS eventId , p . value AS person , e . source , 'missing (not in event_people)' AS issue FROM events e , json_each ( e . people ) p WHERE e . people IS NOT NULL AND p . value IS NOT NULL AND p . value != '' AND NOT EXISTS ( SELECT 1 FROM event_people ep WHERE ep . event_id = e . id AND ep . person = p . value ) LIMIT ?",
-      "reason": "found by the first run; under review",
-      "findings": [
-        "events:table-scan"
       ]
     },
     {

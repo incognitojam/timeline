@@ -2,9 +2,9 @@
 /**
  * Verification and rebuild script for event_people table synchronization
  *
- * The event_people table is a denormalized index of events.people JSON arrays,
- * maintained by triggers. This script verifies synchronization and can rebuild
- * the table atomically if discrepancies are found.
+ * The event_people table indexes the entries of events.people JSON arrays that
+ * eventPeopleRowFilter selects, maintained by triggers. This script verifies
+ * synchronization and can rebuild the table atomically if discrepancies are found.
  *
  * Usage:
  *   bun run src/scripts/verify-event-people.ts              # Verify only
@@ -18,7 +18,7 @@
  */
 
 import { Database } from "../db/sqlite";
-import { getDb, initDb } from "../db/schema";
+import { eventPeopleRowFilter, getDb, initDb } from "../db/schema";
 import { populateEventPeople } from "../db/queries";
 
 interface Check {
@@ -30,6 +30,10 @@ interface Check {
 }
 
 const EVENT_PEOPLE_WITH_EVENT = "event_people ep JOIN events e ON e.id = ep.event_id";
+const LISTED = `EXISTS (
+      SELECT 1 FROM json_each(COALESCE(e.people, '[]')) p
+      WHERE p.value = ep.person AND p.value IS NOT NULL AND p.value != ''
+    )`;
 
 const CHECKS = {
   // A row whose event no longer exists
@@ -43,10 +47,7 @@ const CHECKS = {
   staleRows: {
     label: "Stale rows (person removed)",
     from: EVENT_PEOPLE_WITH_EVENT,
-    where: `NOT EXISTS (
-      SELECT 1 FROM json_each(COALESCE(e.people, '[]')) p
-      WHERE p.value = ep.person AND p.value IS NOT NULL AND p.value != ''
-    )`,
+    where: `NOT ${LISTED}`,
     sample: "ep.event_id AS eventId, ep.person, ep.source, 'stale (person removed from event)' AS issue",
   },
   // A person added to events.people whose row the trigger failed to insert
@@ -54,8 +55,7 @@ const CHECKS = {
     label: "Missing rows (not indexed)",
     from: "events e, json_each(e.people) p",
     where: `e.people IS NOT NULL
-      AND p.value IS NOT NULL
-      AND p.value != ''
+      AND ${eventPeopleRowFilter("e", "p")}
       AND NOT EXISTS (
         SELECT 1 FROM event_people ep
         WHERE ep.event_id = e.id AND ep.person = p.value
@@ -74,7 +74,15 @@ const CHECKS = {
   },
 } as const satisfies Record<string, Check>;
 
-export type VerificationResult = Record<keyof typeof CHECKS, number>;
+// A row for a person the event still lists but the rule no longer indexes: a
+// group member, indexed before only the sender of a group message was. Not
+// drift; a rebuild drops it.
+const BEFORE_SENDER_RULE = `${LISTED} AND NOT EXISTS (
+      SELECT 1 FROM json_each(COALESCE(e.people, '[]')) p
+      WHERE p.value = ep.person AND ${eventPeopleRowFilter("e", "p")}
+    )`;
+
+export type VerificationResult = Record<keyof typeof CHECKS, number> & { rowsBeforeSenderRule: number };
 
 export interface SampleMismatch {
   eventId: number;
@@ -83,14 +91,19 @@ export interface SampleMismatch {
   issue: string;
 }
 
-/** Counts the rows that fail each check; all zeros means event_people matches events.people. */
+/**
+ * Counts the rows that fail each check, plus the rows from before the sender
+ * rule; zero issues means event_people matches events.people.
+ */
 export function verifyEventPeople(db: Database): VerificationResult {
-  return Object.fromEntries(
-    Object.entries(CHECKS).map(([name, check]) => {
-      const row = db.prepare(`SELECT COUNT(*) AS count FROM ${check.from} WHERE ${check.where}`).get() as { count: number };
-      return [name, row.count];
-    }),
-  ) as VerificationResult;
+  const count = (from: string, where: string) =>
+    (db.prepare(`SELECT COUNT(*) AS count FROM ${from} WHERE ${where}`).get() as { count: number }).count;
+  return {
+    ...(Object.fromEntries(
+      Object.entries(CHECKS).map(([name, check]) => [name, count(check.from, check.where)]),
+    ) as Record<keyof typeof CHECKS, number>),
+    rowsBeforeSenderRule: count(EVENT_PEOPLE_WITH_EVENT, BEFORE_SENDER_RULE),
+  };
 }
 
 /** Up to `limit` failing rows per check, in check order. */
@@ -100,8 +113,9 @@ export function sampleMismatches(db: Database, limit: number): SampleMismatch[] 
   );
 }
 
-function issueCount(result: VerificationResult): number {
-  return Object.values(result).reduce((sum, count) => sum + count, 0);
+/** Drift that --rebuild repairs. Rows from before the sender rule are not drift. */
+export function issueCount(result: VerificationResult): number {
+  return (Object.keys(CHECKS) as Array<keyof typeof CHECKS>).reduce((sum, name) => sum + result[name], 0);
 }
 
 /**
@@ -193,6 +207,10 @@ async function main() {
       const count = result[name];
       const status = count === 0 ? "PASS" : "FAIL";
       console.log(`  ${check.label.padEnd(35)} ${formatCount(count).padStart(12)}  ${status}`);
+    }
+
+    if (result.rowsBeforeSenderRule > 0) {
+      console.log(`  ${"Member rows from before the rule".padEnd(35)} ${formatCount(result.rowsBeforeSenderRule).padStart(12)}  REBUILD NEEDED`);
     }
 
     console.log(`\n  Verification completed in ${duration}ms`);
@@ -290,6 +308,11 @@ async function main() {
   } else {
     console.log("\nVERIFICATION PASSED");
     console.log("event_people table is synchronized with events.people.");
+  }
+  if (result.rowsBeforeSenderRule > 0 && !rebuildRan) {
+    console.log("\nThe table predates the rule that indexes only the sender of a group message:");
+    console.log(`${formatCount(result.rowsBeforeSenderRule)} rows still index group members. They are not drift, but the`);
+    console.log("table needs a rebuild to drop them. --rebuild does not rebuild for them; use --force-rebuild.");
   }
   console.log("=".repeat(70));
 
