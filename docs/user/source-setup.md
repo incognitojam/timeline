@@ -467,3 +467,12 @@ stored twice only when normalization changes their representation; redundant tex
 is omitted when it equals the normalized event content. Empty messages are
 skipped and empty conversations counted separately. Previews report renames and
 messages already stored under other accounts.
+
+Memory category ZIPs import each file by its account-relative path and each project
+memory by project UUID. The legacy conversation memory keeps `memory:0`, matching
+the previous importer. Memory edits update the existing event and archive its prior
+raw data in `event_versions`; unchanged imports add no versions. File timestamps
+come from `updated_at`. Undated project and conversation memories have a null
+timestamp on first import; the existing legacy memory keeps its original date.
+Empty memory content is skipped and counted, never used to blank an existing record.
+
