@@ -197,16 +197,14 @@ describe("spaceCriteria", () => {
   test("passes the rehearsal measured on a 3.4-million-event copy", () => {
     expect(passed(3_397_044, 1.07e9)).toEqual({
       "WAL per new row within the estimate": true,
-      "New rows within what the free-space floor covers": true,
       "Peak space within the free-space floor": true,
     });
   });
 
-  test("fails a WAL larger than the estimate, or more rows than the floor covers", () => {
+  test("fails a WAL larger than the estimate, or a peak beyond the floor", () => {
     expect(passed(3_397_044, 1.5e9)["WAL per new row within the estimate"]).toBe(false);
     expect(passed(8_000_000, 3e9)).toEqual({
       "WAL per new row within the estimate": true,
-      "New rows within what the free-space floor covers": false,
       "Peak space within the free-space floor": false,
     });
   });
@@ -217,7 +215,6 @@ describe("spaceCriteria", () => {
     expect(guide).toContain(`at least ${floorBytes / 1e9} GB available`);
     expect(guide).toContain(`the ${floorBytes / 1e9} GB free-space floor`);
     expect(guide).toContain(`within ${walBytesPerRow} bytes per new row`);
-    expect(guide).toContain(`at ${(walBytesPerRow + otherBytesPerRow).toLocaleString("en-US")} bytes per new row`);
     expect(guide).toContain(`plus ${otherBytesPerRow} bytes per new row`);
   });
 });

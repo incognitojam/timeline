@@ -158,14 +158,23 @@ export type RebuildOutcome =
   /** The rebuild committed, but verifying it threw. */
   | { kind: "committed-unverified"; rows: number; error: unknown };
 
-/** Rebuild, then verify the committed result, keeping the two failures apart. */
-export function rebuildAndVerify(db: Database, verify: (db: Database) => VerificationResult = verifyEventPeople): RebuildOutcome {
+/**
+ * Rebuild, then verify the committed result, keeping the two failures apart.
+ * `committed` runs between the two, so a caller can say the rebuild committed
+ * before verification starts.
+ */
+export function rebuildAndVerify(
+  db: Database,
+  verify: (db: Database) => VerificationResult = verifyEventPeople,
+  committed: (rows: number) => void = () => {},
+): RebuildOutcome {
   let rows: number;
   try {
     rows = populateEventPeople(db);
   } catch (error) {
     return { kind: "rolled-back", error };
   }
+  committed(rows);
   try {
     return { kind: "committed", rows, after: verify(db) };
   } catch (error) {
@@ -304,7 +313,9 @@ async function main() {
     printSection("Rebuilding event_people Table");
     console.log("\nRebuilding in one transaction...");
     const rebuildStart = Date.now();
-    const outcome = rebuildAndVerify(db);
+    const outcome = rebuildAndVerify(db, verifyEventPeople, (rows) => {
+      console.log(`\nRebuild committed: ${formatCount(rows)} rows. Verifying...`);
+    });
     db.close();
     printSection("Summary");
     if (outcome.kind === "rolled-back") {

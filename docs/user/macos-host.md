@@ -262,17 +262,26 @@ as the service does, and refuse a SQLite older than they need. They print the
 database path, its event count, and the SQLite version with the library it
 came from. Check those lines before going further: the `SQLite:` line names
 the library `grep TIMELINE_SQLITE_LIBRARY_PATH ~/.config/timeline/env` shows,
-or Bun's default library if the env file sets none.
+or Bun's default library if the env file sets none. Compare the `Events:` line
+with the event count on the status page.
 
-**Space.** Measured on a database of 3.4 million events, the rebuild's WAL,
-which holds every page it writes, peaked at 1.07 GB (316 bytes per new row),
-and free space dipped by about 4 GB while it ran: the WAL plus the index
-sorts' temporary files, in `TMPDIR` on the same volume. The database file
-stayed the same size, because the rebuild reuses the old table's space inside
-it. APFS local snapshots can pin overwritten blocks and take more; list them
-with `tmutil listlocalsnapshots /`. The scripts report the WAL's peak but not
-the temporary files, so to see the true lowest free space, watch it from a
-second terminal while a step runs:
+**Measured.** A rehearsal on a copy of a database with 3,433,720 events, whose
+table went from 45,909,346 rows to 3,397,044, gave the figures the steps below
+refer to:
+
+- the check before the rebuild took 888 seconds (about 15 minutes);
+- the rebuild and the check after it took 867 seconds (about 14.5 minutes);
+- the WAL peaked at 1.07 GB, 316 bytes per new row;
+- free space dipped by about 4 GB;
+- the database file stayed the same size.
+
+**Space.** The WAL holds every page the rebuild writes, and the index sorts
+write temporary files in `TMPDIR` on the same volume; together they made the
+measured dip. The file does not grow, because the rebuild reuses the old
+table's space inside it. APFS local snapshots can pin overwritten blocks and
+take more; list them with `tmutil listlocalsnapshots /`. The scripts report
+the WAL's peak but not the temporary files, so to see the true lowest free
+space, watch it from a second terminal while a step runs:
 
 ```bash
 while sleep 5; do df -k "${DB:?}" | tail -n 1; done
@@ -321,13 +330,11 @@ fails. The rehearsal passes when every line of the summary says `PASS`:
 - no drift before the rebuild, and every check clean after it, with no member
   rows from before the rule left;
 - the WAL's peak within 400 bytes per new row;
-- the new row count within what the 10 GB free-space floor below covers, at
-  1,300 bytes per new row;
 - the WAL's peak plus 900 bytes per new row for writes outside the WAL (the
-  index sorts' temporary files and the copy's copy-on-write) within that floor.
+  index sorts' temporary files and the copy's copy-on-write) within the 10 GB
+  free-space floor below.
 
-Those figures come from the rehearsal on a copy with 3.4 million new rows,
-where free space dipped by about 4 GB, 1.07 GB of it WAL.
+Both per-row figures sit a little above the measured ones.
 
 The `DECIDE` line points at the figures the decision rests on, in the `after`
 step: `eventsNoLongerHiddenBySource`, the events per source that hiding a
@@ -377,36 +384,39 @@ changed and nothing is held.
    drift, and otherwise rebuilds it and checks the result:
 
    ```bash
-   TIMELINE_DB_PATH="${DB:?}" bun run src/scripts/verify-event-people.ts --force-rebuild
+   TIMELINE_DB_PATH="${DB:?}" bun run src/scripts/verify-event-people.ts --force-rebuild --verbose
    echo "exit $?"
    ```
 
-   It prints the `Database:`, `Events:` and `SQLite:` lines first. Check them,
-   and stop it with Ctrl-C if one is wrong: the table hasn't changed yet, and a
-   stop during the rebuild rolls back. Then it checks the table inside one read
-   transaction, which is why the service is held, and shows four `PASS` lines
-   and a `REBUILD NEEDED` line counting the old rows. If the check finds drift,
-   it prints `NOT REBUILDING` and exits 1 before changing the table. Otherwise
-   it rebuilds in one transaction, printing nothing until it commits: most of
-   that time is SQLite reading every page of the old table to free it, so a
-   long quiet stretch is expected. Then it checks the new, much smaller table.
+   It prints the `Database:`, `Events:` and `SQLite:` lines first; check them,
+   and stop it with Ctrl-C if one is wrong. Then it checks the table inside one
+   read transaction, which is why the service is held, and shows four `PASS`
+   lines and a `REBUILD NEEDED` line counting the old rows. If the check finds
+   drift, it prints samples of it (`--verbose` costs nothing otherwise) and
+   `NOT REBUILDING`, and exits 1 before changing the table. Otherwise it prints
+   `Rebuilding in one transaction...` and rebuilds, printing nothing more until
+   `Rebuild committed: … Verifying...`: most of that stretch is SQLite reading
+   every page of the old table to free it, so a long silence is expected. Then
+   it checks the new, much smaller table.
 
-   Measured on a database of 3.4 million events, the check took 888 seconds
-   (about 15 minutes) and the rebuild 867 seconds (about 14.5 minutes); the
-   check afterwards takes about a minute. With the WAL truncation and the
-   restart below, the service is held for about 31 minutes.
+   The check and the rebuild take the measured times above, so the service is
+   held for about 30 minutes in all.
 
    - **Exit 0, `REBUILD COMMITTED AND VERIFIED`:** continue.
-   - **Exit 1:** it stopped before the rebuild began, so the table has not
-     changed. `NOT REBUILDING` means the check found drift the rule change
-     does not explain: release the hold and investigate it (`--verbose` shows
-     samples) before any rebuild. Otherwise the database is missing or has no
-     events, its SQLite is too old, or an error came first: release the hold,
-     check `DB`, and report any error. This build's schema may already be
-     installed, which the service does at start anyway.
-   - **Exit 2, `REBUILD FAILED AND ROLLED BACK`:** the old table is intact.
-     An interruption, power loss or full disk leaves it the same way. Truncate
-     the WAL (step 5), release the hold (step 6), and report the error.
+   - **Exit 1, `NOT REBUILDING`:** the check found drift the rule change does
+     not explain, and the table has not changed. Release the hold, read the
+     samples printed above it (which check failed, and for which events), and
+     find the cause before anything else. Repairing real drift is
+     `--rebuild`'s job once it is understood: it checks again and rebuilds the
+     whole table, under the hold, as in this step.
+   - **Exit 1 otherwise:** it stopped before the rebuild began, so the table
+     has not changed: the database is missing or has no events, its SQLite is
+     too old, or an error came first. Release the hold, check `DB`, and report
+     any error. This build's schema may already be installed, which the
+     service does at start anyway.
+   - **Exit 2, `REBUILD FAILED AND ROLLED BACK`:** the old table is intact; a
+     full disk ends here too. Truncate the WAL (step 5), release the hold
+     (step 6), and report the error.
    - **Exit 3, `REBUILD COMMITTED, BUT VERIFYING IT …`:** the new table is in
      place but not shown clean. Keep the hold, so nothing writes to it, and
      check it again:
@@ -418,6 +428,14 @@ changed and nothing is held.
      If it passes with no `REBUILD NEEDED` line, continue. If not, either
      rebuild again (`--rebuild` rather than `--force-rebuild` if it reports
      drift) or restore the backup (below), then release the hold.
+   - **Stopped (Ctrl-C, a power loss, exit 130, or no exit line):** go by the
+     last line it printed. Before `Rebuilding in one transaction...`, nothing
+     has changed: release the hold. After it but before `Rebuild committed`,
+     the rebuild never committed and the old table is intact: as exit 2. After
+     `Rebuild committed`, the new table is in place, unverified: as exit 3. If
+     you can't tell, keep the hold and run the check above without flags: a
+     `REBUILD NEEDED` line means the old table is intact (as exit 2), and none
+     means the new table is in place (as exit 3).
 
 5. **Truncate the WAL**, after any rebuild that started, whether it committed
    or rolled back; otherwise the WAL keeps its peak size:
@@ -447,8 +465,9 @@ and the unlinked-people list loses group members who never wrote.
 
 The rebuild changes only derived rows. A failed rebuild has already rolled
 back, and a committed one that looks wrong can be derived again by a corrected
-build's `--force-rebuild`, or `--rebuild` if its check finds drift. Rebuilding under the old rule in place needs WAL
-space as large as the old table, so it may not fit. To return to the state
+build's `--force-rebuild`, or `--rebuild` if its check finds drift. Rebuilding
+under the old rule in place needs WAL space as large as the old table, so it
+may not fit. To return to the state
 before the rebuild, or if `PRAGMA quick_check` ever fails, restore the copy
 kept in step 2. Events synced after the backup was taken and before the hold
 are lost, and later syncs may not fetch them again, because the sync state in
@@ -460,18 +479,33 @@ First confirm the kept copy is there, with `BACKUP` set as in step 2:
 ls -l "${BACKUP:?}"
 ```
 
-Go on only if it lists the file. Then hold the service, move the current
-database aside (to `~/timeline-before-restore`, or to the NAS if the volume
-lacks room for both), copy the backup in and release the hold:
+Go on only if it lists the file. Then hold the service:
 
 ```bash
 touch ~/.local/share/timeline/service.hold
 launchctl bootout gui/$(id -u)/dev.incognitojam.timeline-service
-mkdir ~/timeline-before-restore
-for f in "${DB:?}" "${DB:?}-wal" "${DB:?}-shm"; do test -e "$f" && mv "$f" ~/timeline-before-restore/; done
-cp "${BACKUP:?}" "${DB:?}"
-rm ~/.local/share/timeline/service.hold
-sleep 30
+```
+
+Move the current database aside (to `~/timeline-before-restore`, or to the
+NAS if the volume lacks room for both), copy the backup in and release the
+hold. Each command runs only if the one before it succeeded, so a failure
+leaves the service held and the moved files where they are; `mkdir` fails if
+`~/timeline-before-restore` is left over from an earlier restore.
+
+```bash
+mkdir ~/timeline-before-restore &&
+  mv "${DB:?}" ~/timeline-before-restore/ &&
+  { if test -e "${DB:?}-wal"; then mv "${DB:?}-wal" ~/timeline-before-restore/; fi; } &&
+  { if test -e "${DB:?}-shm"; then mv "${DB:?}-shm" ~/timeline-before-restore/; fi; } &&
+  cp "${BACKUP:?}" "${DB:?}" &&
+  rm ~/.local/share/timeline/service.hold &&
+  echo "restored and released"
+```
+
+If it printed `restored and released`, the service answers within about 30
+seconds:
+
+```bash
 curl -s http://127.0.0.1:3001/api/health
 ```
 

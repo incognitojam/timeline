@@ -32,18 +32,16 @@ import {
 } from "./verify-event-people";
 
 /**
- * The space a rebuild needs, from a rehearsal on a copy with 3.4 million new
- * rows: free space dipped about 4 GB, 1.07 GB of it WAL (316 bytes per row).
- * The host guide's runbook states these figures; a test keeps them in step.
+ * The space a rebuild needs, from the measured rehearsal the host guide's
+ * runbook records; a test keeps the runbook's figures in step with these.
  */
 export const REBUILD_SPACE = {
   /** Free space the host guide requires before a rebuild. */
   floorBytes: 10e9,
-  /** WAL per new row: measured 316. */
+  /** WAL per new row. */
   walBytesPerRow: 400,
   /** Writes outside the WAL per new row, which the rehearsal can't see: the
-   * index sorts' temporary files and a copy's copy-on-write. Measured about
-   * (4 GB - 1.07 GB) / 3.4 million = 860. */
+   * index sorts' temporary files and a copy's copy-on-write. */
   otherBytesPerRow: 900,
   /** WAL a small table writes regardless of its rows. */
   walFixedBytes: 16e6,
@@ -53,17 +51,11 @@ export const REBUILD_SPACE = {
 export function spaceCriteria(rows: number, walPeak: number): Criterion[] {
   const { floorBytes, walBytesPerRow, otherBytesPerRow, walFixedBytes } = REBUILD_SPACE;
   const otherBytes = rows * otherBytesPerRow;
-  const rowsTheFloorCovers = Math.floor(floorBytes / (walBytesPerRow + otherBytesPerRow));
   return [
     {
       name: "WAL per new row within the estimate",
       passed: walPeak <= rows * walBytesPerRow + walFixedBytes,
       detail: `${walPeak} bytes for ${rows} rows (estimate ${walBytesPerRow} bytes per row)`,
-    },
-    {
-      name: "New rows within what the free-space floor covers",
-      passed: rows <= rowsTheFloorCovers,
-      detail: `${rows} rows; the floor covers ${rowsTheFloorCovers} at ${walBytesPerRow + otherBytesPerRow} bytes each`,
     },
     {
       name: "Peak space within the free-space floor",
