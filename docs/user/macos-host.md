@@ -264,13 +264,14 @@ came from. Check those lines before going further: the `SQLite:` line names
 the library `grep TIMELINE_SQLITE_LIBRARY_PATH ~/.config/timeline/env` shows,
 or Bun's default library if the env file sets none.
 
-**Space.** At its peak the rebuild needs about 1.8 GB beyond the database: about
-1.1 GB of WAL, which holds every page it writes (about 300 bytes per new row),
-and about 0.7 GB of temporary files for the index sorts, in `TMPDIR` on the
-same volume. It reuses the old table's space inside the file, so the file does
-not grow. APFS local snapshots can pin overwritten blocks and take more; list
-them with `tmutil listlocalsnapshots /`. The scripts report the WAL's peak but
-not the temporary files, so to see the true lowest free space, watch it from a
+**Space.** Measured on a database of 3.4 million events, the rebuild's WAL,
+which holds every page it writes, peaked at 1.07 GB (316 bytes per new row),
+and free space dipped by about 4 GB while it ran: the WAL plus the index
+sorts' temporary files, in `TMPDIR` on the same volume. The database file
+stayed the same size, because the rebuild reuses the old table's space inside
+it. APFS local snapshots can pin overwritten blocks and take more; list them
+with `tmutil listlocalsnapshots /`. The scripts report the WAL's peak but not
+the temporary files, so to see the true lowest free space, watch it from a
 second terminal while a step runs:
 
 ```bash
@@ -367,46 +368,53 @@ changed and nothing is held.
    From here, releasing the hold means `rm ~/.local/share/timeline/service.hold`;
    the service answers again within about 30 seconds.
 
-4. **Verify.** On a table of tens of millions of rows this takes 10–15 minutes
-   inside one read transaction, which is why the service is held first:
-
-   ```bash
-   TIMELINE_DB_PATH="${DB:?}" bun run src/scripts/verify-event-people.ts
-   ```
-
-   Check the `Database:`, `Events:` and `SQLite:` lines, then expect four
-   `PASS` lines, a `REBUILD NEEDED` line counting the old rows, and
-   `VERIFICATION PASSED`. If a header line is wrong, or there is any `FAIL`
-   line or error, stop and release the hold: nothing has changed, and drift
-   the rule change does not explain needs investigating before any rebuild.
-
-5. **Rebuild.** This verifies again, rebuilds in one transaction and verifies
-   the result:
+4. **Verify and rebuild.** One command checks the table, stops if it finds
+   drift, and otherwise rebuilds it and checks the result:
 
    ```bash
    TIMELINE_DB_PATH="${DB:?}" bun run src/scripts/verify-event-people.ts --force-rebuild
    echo "exit $?"
    ```
 
+   It prints the `Database:`, `Events:` and `SQLite:` lines first. Check them,
+   and stop it with Ctrl-C if one is wrong: the table hasn't changed yet, and a
+   stop during the rebuild rolls back. Then it checks the table inside one read
+   transaction, which is why the service is held, and shows four `PASS` lines
+   and a `REBUILD NEEDED` line counting the old rows. If the check finds drift,
+   it prints `NOT REBUILDING` and exits 1 before changing the table. Otherwise
+   it rebuilds in one transaction, printing nothing until it commits: most of
+   that time is SQLite reading every page of the old table to free it, so a
+   long quiet stretch is expected. Then it checks the new, much smaller table.
+
+   Measured on a database of 3.4 million events, the check took 888 seconds
+   (about 15 minutes) and the rebuild 867 seconds (about 14.5 minutes); the
+   check afterwards takes about a minute. With the WAL truncation and the
+   restart below, the service is held for about 31 minutes.
+
    - **Exit 0, `REBUILD COMMITTED AND VERIFIED`:** continue.
+   - **Exit 1:** it stopped before the rebuild began, so the table has not
+     changed. `NOT REBUILDING` means the check found drift the rule change
+     does not explain: release the hold and investigate it (`--verbose` shows
+     samples) before any rebuild. Otherwise the database is missing or has no
+     events, its SQLite is too old, or an error came first: release the hold,
+     check `DB`, and report any error. This build's schema may already be
+     installed, which the service does at start anyway.
    - **Exit 2, `REBUILD FAILED AND ROLLED BACK`:** the old table is intact.
      An interruption, power loss or full disk leaves it the same way. Truncate
-     the WAL (step 6), release the hold (step 7), and report the error.
+     the WAL (step 5), release the hold (step 6), and report the error.
    - **Exit 3, `REBUILD COMMITTED, BUT VERIFYING IT …`:** the new table is in
-     place but not shown clean. Keep the hold, so nothing writes to it, and run
-     the step-4 command. If it now passes with no `REBUILD NEEDED` line,
-     continue. If not, either run this step again or restore the backup
-     (below), then release the hold.
-   - **Exit 1:** it stopped before the rebuild began, so the table has not
-     changed: the database is missing or has no events, its SQLite is too old,
-     or an error came first. This build's schema may already be installed,
-     which the service does at start anyway. Release the hold, check `DB`, and
-     report any error.
+     place but not shown clean. Keep the hold, so nothing writes to it, and
+     check it again:
 
-   After exit 0, run the step-4 command once more: it should pass with no
-   `REBUILD NEEDED` line. If it doesn't, treat it as exit 3.
+     ```bash
+     TIMELINE_DB_PATH="${DB:?}" bun run src/scripts/verify-event-people.ts
+     ```
 
-6. **Truncate the WAL**, after any rebuild that started, whether it committed
+     If it passes with no `REBUILD NEEDED` line, continue. If not, either
+     rebuild again (`--rebuild` rather than `--force-rebuild` if it reports
+     drift) or restore the backup (below), then release the hold.
+
+5. **Truncate the WAL**, after any rebuild that started, whether it committed
    or rolled back; otherwise the WAL keeps its peak size:
 
    ```bash
@@ -417,7 +425,7 @@ changed and nothing is held.
    Expect `busy: 0`, and a WAL of 0 bytes or no such file: SQLite removes it
    when the last connection closes.
 
-7. **Release the hold.** The service takes up to about 30 seconds to answer:
+6. **Release the hold.** The service takes up to about 30 seconds to answer:
 
    ```bash
    rm ~/.local/share/timeline/service.hold
@@ -434,7 +442,7 @@ and the unlinked-people list loses group members who never wrote.
 
 The rebuild changes only derived rows. A failed rebuild has already rolled
 back, and a committed one that looks wrong can be derived again by a corrected
-build's `--force-rebuild`. Rebuilding under the old rule in place needs WAL
+build's `--force-rebuild`, or `--rebuild` if its check finds drift. Rebuilding under the old rule in place needs WAL
 space as large as the old table, so it may not fit. To return to the state
 before the rebuild, or if `PRAGMA quick_check` ever fails, restore the copy
 kept in step 2. Events synced after the backup was taken and before the hold

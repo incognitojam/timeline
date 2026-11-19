@@ -632,6 +632,17 @@ describe("on a database file", () => {
       expect(exitCode).toBe(3);
     });
 
+    test("stops a forced rebuild before changing the table when it finds drift", () => {
+      file.exec("DELETE FROM event_people WHERE is_sender = 1 AND event_id = (SELECT MIN(id) FROM events)");
+      const rows = () => (file.prepare("SELECT COUNT(*) AS count FROM event_people").get() as { count: number }).count;
+      const before = rows();
+
+      const { exitCode, output } = run(["--force-rebuild"]);
+      expect(output).toContain("NOT REBUILDING: found 1 discrepancies; the table has not changed.");
+      expect(exitCode).toBe(1);
+      expect(rows()).toBe(before);
+    });
+
     test("exits 0 when the rebuild commits and verifies clean", () => {
       const { exitCode, output } = run(["--force-rebuild"]);
       expect(exitCode).toBe(0);
