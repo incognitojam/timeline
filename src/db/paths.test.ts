@@ -1,8 +1,8 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { getDbPathInfo, assertNoLocalDbMarker, getAppStateDbPath, getEmbeddingsDbPath } from "./paths";
+import { homedir, tmpdir } from "node:os";
+import { getDbPathInfo, assertNoLocalDbMarker, getAppStateDbPath, getEmbeddingsDbPath, getServiceDbPath } from "./paths";
 
 describe("paths helpers", () => {
   test("assertNoLocalDbMarker does not throw when marker missing", () => {
@@ -198,5 +198,60 @@ describe("no-local-db marker integration", () => {
     await proc.exited;
 
     expect(proc.exitCode).toBe(0);
+  });
+});
+
+describe("getServiceDbPath", () => {
+  let dir: string;
+  const saved: Record<string, string | undefined> = {};
+  const keys = ["TIMELINE_ENV_FILE", "TIMELINE_CONFIG", "TIMELINE_DB_PATH"] as const;
+
+  beforeAll(() => {
+    for (const key of keys) saved[key] = process.env[key];
+  });
+
+  afterAll(() => {
+    for (const key of keys) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  });
+
+  const setup = (envFile: string | null) => {
+    dir = join(tmpdir(), `service-db-path-${Date.now()}-${Math.random()}`);
+    mkdirSync(dir, { recursive: true });
+    process.env.TIMELINE_ENV_FILE = join(dir, "env");
+    if (envFile !== null) writeFileSync(join(dir, "env"), envFile);
+    delete process.env.TIMELINE_CONFIG;
+    // A shell's own database path, which the service never sees.
+    process.env.TIMELINE_DB_PATH = join(dir, "copy.db");
+  };
+  const config = (dbPath: string) => {
+    const path = join(dir, "config.toml");
+    writeFileSync(path, `[database]\npath = "${dbPath}"\n`);
+    return path;
+  };
+
+  test("takes TIMELINE_DB_PATH from the env file as the service's launcher sources it", () => {
+    setup('TIMELINE_DB_PATH="$HOME/elsewhere/timeline.db"\n');
+    expect(getServiceDbPath()).toBe(join(homedir(), "elsewhere", "timeline.db"));
+  });
+
+  test("reads the config that TIMELINE_CONFIG names, from the env file or this process", () => {
+    setup(null);
+    const path = config("/data/from-config.db");
+    writeFileSync(join(dir, "env"), `TIMELINE_CONFIG=${path}\n`);
+    expect(getServiceDbPath()).toBe("/data/from-config.db");
+    rmSync(join(dir, "env"));
+    process.env.TIMELINE_CONFIG = path;
+    expect(getServiceDbPath()).toBe("/data/from-config.db");
+  });
+
+  test("refuses a TIMELINE_CONFIG that doesn't exist, or an env file that doesn't source", () => {
+    setup(null);
+    process.env.TIMELINE_CONFIG = join(dir, "missing.toml");
+    expect(() => getServiceDbPath()).toThrow("does not exist");
+    setup('TIMELINE_DB_PATH="unterminated\n');
+    expect(() => getServiceDbPath()).toThrow("Could not read");
   });
 });

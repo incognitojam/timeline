@@ -1,8 +1,20 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { applyConnectionPragmas } from "../db/connection";
 import { populateEventPeople } from "../db/queries";
 import { initDb } from "../db/schema";
 import { Database } from "../db/sqlite";
-import { type VerificationResult, issueCount, sampleMismatches, verifyEventPeople } from "./verify-event-people";
+import {
+  type VerificationResult,
+  assertSqliteVersion,
+  isClean,
+  issueCount,
+  rebuildAndVerify,
+  sampleMismatches,
+  verifyEventPeople,
+} from "./verify-event-people";
 
 let db: Database;
 
@@ -249,12 +261,48 @@ describe("populateEventPeople", () => {
     expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'idx_event_people_person'").all()).toEqual([]);
   });
 
-  test("drops a temp table left by an interrupted rebuild", () => {
-    db.exec("CREATE TABLE event_people_new (event_id INTEGER NOT NULL, person TEXT NOT NULL)");
-    insertEvent({ people: ["Alice"] });
+  describe("interrupted part-way", () => {
+    // Everything a rebuild replaces: the rows, the schema objects and the counts.
+    const snapshot = () => ({
+      rows: db.prepare("SELECT * FROM event_people ORDER BY event_id, person").all(),
+      schema: db.prepare("SELECT type, name, sql FROM sqlite_master WHERE tbl_name IN ('event_people', 'events', 'identities') ORDER BY name").all(),
+      counts: db.prepare("SELECT platform_id, event_count FROM identities ORDER BY platform_id").all(),
+    });
 
-    expect(populateEventPeople(db)).toBe(1);
-    expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'event_people_new'").all()).toEqual([]);
+    test("rolls back to the old table when a statement fails", () => {
+      db.prepare("INSERT INTO identities (platform, platform_id) VALUES ('discord', 'bob')").run();
+      const id = insertEvent({ people: ["discord:alice", "discord:bob", "discord:carol"], conversationId: "discord:group" });
+      db.prepare("INSERT INTO event_people (event_id, person, source, timestamp, is_sender) VALUES (?, 'discord:bob', 'discord', '2024-01-01T12:00:00Z', 0)").run(id);
+      // The identity refresh is the rebuild's last statement.
+      db.exec("CREATE TRIGGER fail_refresh BEFORE UPDATE OF event_count ON identities BEGIN SELECT RAISE(ABORT, 'interrupted'); END");
+      const before = snapshot();
+
+      expect(() => populateEventPeople(db)).toThrow("interrupted");
+
+      expect(snapshot()).toEqual(before);
+    });
+
+    test("reports the error when SQLite has already rolled back by itself", () => {
+      db.prepare("INSERT INTO identities (platform, platform_id) VALUES ('discord', 'x')").run();
+      db.exec("CREATE TRIGGER fail_refresh BEFORE UPDATE OF event_count ON identities BEGIN SELECT RAISE(ROLLBACK, 'rolled back by SQLite'); END");
+      const before = snapshot();
+
+      expect(() => populateEventPeople(db)).toThrow("rolled back by SQLite");
+
+      expect(snapshot()).toEqual(before);
+    });
+
+    test("rolls back to the old table when the database is full", () => {
+      db.exec("DROP TRIGGER events_people_ai");
+      for (let i = 0; i < 200; i++) insertEvent({ people: [`Person ${i}`, "Owner"] });
+      const pages = (db.prepare("PRAGMA page_count").get() as { page_count: number }).page_count;
+      db.exec(`PRAGMA max_page_count = ${pages}`);
+      const before = snapshot();
+
+      expect(() => populateEventPeople(db)).toThrow(/full/);
+
+      expect(snapshot()).toEqual(before);
+    });
   });
 });
 
@@ -262,6 +310,25 @@ describe("sender-only rule for group messages", () => {
   function rowsFor(eventId: number) {
     return db.prepare("SELECT person, is_sender FROM event_people WHERE event_id = ? ORDER BY person").all(eventId);
   }
+
+  // The verifier compares a stored person with its JSON value, so it can only
+  // confirm string values: a stored '5' is not equal to the JSON number 5.
+  test.each<{ people: string; indexed: Array<{ person: string; is_sender: number }>; verifiable: boolean }>([
+    { people: '"Alice"', indexed: [{ person: "Alice", is_sender: 0 }], verifiable: true },
+    { people: '{"friend":"Bob"}', indexed: [{ person: "Bob", is_sender: 0 }], verifiable: true },
+    { people: "5", indexed: [{ person: "5", is_sender: 0 }], verifiable: false },
+    { people: "true", indexed: [{ person: "1", is_sender: 0 }], verifiable: false },
+  ])("indexes a people value that isn't an array, $people, as a non-sender", ({ people, indexed, verifiable }) => {
+    const id = Number(db.prepare(`
+      INSERT INTO events (source, source_id, source_account, type, timestamp, people, raw_data, conversation_id)
+      VALUES ('discord', 'scalar', 'alex', 'message:group', '2024-01-01T12:00:00Z', ?, '{}', 'discord:group')
+    `).run(people).lastInsertRowid);
+
+    expect(rowsFor(id)).toEqual(indexed);
+    if (verifiable) expect(verifyEventPeople(db)).toEqual(IN_SYNC);
+    populateEventPeople(db);
+    expect(rowsFor(id)).toEqual(indexed);
+  });
 
   test.each<{ name: string; people: Array<string | null>; indexed: string[] }>([
     { name: "a group", people: ["Alice", "Bob", "Carol"], indexed: ["Alice"] },
@@ -417,5 +484,168 @@ describe("sender-only rule for group messages", () => {
       expect(identityCounts()).toEqual(countedRows());
       expect(verifyEventPeople(db)).toEqual(IN_SYNC);
     });
+  });
+});
+
+describe("rebuildAndVerify", () => {
+  beforeEach(() => {
+    insertEvent({ people: ["Alice", "Bob", "Carol"], conversationId: "discord:group" });
+    // A member row from before the sender rule.
+    db.exec("INSERT INTO event_people (event_id, person, source, timestamp, is_sender) SELECT id, 'Bob', source, timestamp, 0 FROM events");
+  });
+  const rows = () => db.prepare("SELECT person FROM event_people ORDER BY person").all();
+
+  test("verifies a committed rebuild", () => {
+    const outcome = rebuildAndVerify(db);
+
+    expect(outcome).toMatchObject({ kind: "committed", rows: 1 });
+    expect(outcome.kind === "committed" && isClean(outcome.after)).toBe(true);
+  });
+
+  test("reports a failed rebuild as rolled back, with the old table intact", () => {
+    db.prepare("INSERT INTO identities (platform, platform_id) VALUES ('discord', 'x')").run();
+    db.exec("CREATE TRIGGER fail_refresh BEFORE UPDATE OF event_count ON identities BEGIN SELECT RAISE(ABORT, 'interrupted'); END");
+
+    expect(rebuildAndVerify(db).kind).toBe("rolled-back");
+    expect(rows()).toEqual([{ person: "Alice" }, { person: "Bob" }]);
+  });
+
+  test("reports verification that fails after a commit apart from a rollback", () => {
+    const outcome = rebuildAndVerify(db, () => {
+      throw new Error("verification interrupted");
+    });
+
+    expect(outcome).toMatchObject({ kind: "committed-unverified", rows: 1 });
+    expect(rows()).toEqual([{ person: "Alice" }]);
+  });
+
+  test("reports issues found after a commit", () => {
+    const outcome = rebuildAndVerify(db, (db) => ({ ...verifyEventPeople(db), staleRows: 1 }));
+
+    expect(outcome.kind === "committed" && isClean(outcome.after)).toBe(false);
+  });
+});
+
+describe("on a database file", () => {
+  let dir: string;
+  let file: Database;
+  const path = () => join(dir, "timeline.db");
+  const size = (suffix = "") => statSync(`${path()}${suffix}`).size;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "event-people-"));
+    file = new Database(path());
+    applyConnectionPragmas(file);
+    initDb(file);
+    const members = Array.from({ length: 60 }, (_, i) => `discord:member-${i}`);
+    const insert = file.prepare(`
+      INSERT INTO events (source, source_id, source_account, type, timestamp, title, people, raw_data, conversation_id)
+      VALUES ('discord', ?, 'alex', 'message:group', '2024-01-01T12:00:00Z', 'Group', ?, '{}', 'discord:group')
+    `);
+    file.exec("BEGIN");
+    for (let i = 0; i < 300; i++) insert.run(`m${i}`, JSON.stringify(members));
+    // The members' rows, as the previous rule wrote them: far more than the rebuild keeps.
+    file.exec(`INSERT INTO event_people (event_id, person, source, timestamp, is_sender)
+      SELECT e.id, p.value, e.source, e.timestamp, 0 FROM events e, json_each(e.people) p WHERE p.key > 0`);
+    file.exec("COMMIT");
+    file.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  });
+
+  afterEach(() => {
+    file.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("rebuilds in the old table's pages without growing the file", () => {
+    const before = size();
+
+    expect(populateEventPeople(file)).toBe(300);
+    file.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+
+    expect(size()).toBeLessThanOrEqual(before);
+  });
+
+  test("drops the old table without writing it to the WAL, whatever secure_delete defaulted to", () => {
+    const oldTable = (file.prepare(`
+      SELECT SUM(pgsize) AS bytes FROM dbstat WHERE name IN (SELECT name FROM sqlite_master WHERE tbl_name = 'event_people')
+    `).get() as { bytes: number }).bytes;
+    file.exec("PRAGMA secure_delete = ON");
+
+    populateEventPeople(file);
+
+    expect(size("-wal")).toBeLessThan(oldTable / 4);
+  });
+
+  describe("the script", () => {
+    const script = resolve(import.meta.dir, "verify-event-people.ts");
+    const run = (args: string[], dbPath = path()) => {
+      const result = Bun.spawnSync([process.execPath, script, ...args], {
+        env: { ...process.env, TIMELINE_DB_PATH: dbPath },
+      });
+      return { exitCode: result.exitCode, output: `${result.stdout}${result.stderr}` };
+    };
+
+    test("names the database it opened and its event count", () => {
+      const { exitCode, output } = run([]);
+      expect(exitCode).toBe(0);
+      expect(output).toContain(`Database: ${path()}`);
+      expect(output).toContain("Events:   300");
+      expect(output).toContain("REBUILD NEEDED");
+    });
+
+    // The library choice (TIMELINE_SQLITE_LIBRARY_PATH) takes effect only on
+    // macOS, so these runs use Bun's default library and can't test loading one.
+
+    test("refuses a missing database without creating it", () => {
+      const missing = join(dir, "missing.db");
+      const { exitCode, output } = run(["--force-rebuild"], missing);
+      expect(exitCode).toBe(1);
+      expect(output).toContain(`No database at ${missing}`);
+      expect(existsSync(missing)).toBe(false);
+    });
+
+    test("refuses to rebuild a database with no events", () => {
+      file.exec("DELETE FROM events");
+      const { exitCode, output } = run(["--force-rebuild"]);
+      expect(exitCode).toBe(1);
+      expect(output).toContain("has no events");
+    });
+
+    test("exits 2 when the rebuild rolls back", () => {
+      file.prepare("INSERT INTO identities (platform, platform_id) VALUES ('discord', 'x')").run();
+      file.exec("CREATE TRIGGER fail_refresh BEFORE UPDATE OF event_count ON identities BEGIN SELECT RAISE(ABORT, 'interrupted'); END");
+
+      const { exitCode, output } = run(["--force-rebuild"]);
+      expect(exitCode).toBe(2);
+      expect(output).toContain("REBUILD FAILED AND ROLLED BACK");
+    });
+
+    test("exits 3 when the rebuild commits but verifying it finds issues", () => {
+      file.prepare("INSERT INTO identities (platform, platform_id) VALUES ('discord', 'x')").run();
+      // The rebuild's last statement leaves a row for an event that doesn't exist.
+      file.exec(`CREATE TRIGGER leave_orphan AFTER UPDATE OF event_count ON identities BEGIN
+        INSERT OR IGNORE INTO event_people (event_id, person, source, timestamp, is_sender) VALUES (999999, 'discord:x', 'discord', NULL, 0);
+      END`);
+
+      const { exitCode, output } = run(["--force-rebuild"]);
+      expect(output).toContain("REBUILD COMMITTED, BUT VERIFYING IT FOUND ISSUES");
+      expect(exitCode).toBe(3);
+    });
+
+    test("exits 0 when the rebuild commits and verifies clean", () => {
+      const { exitCode, output } = run(["--force-rebuild"]);
+      expect(exitCode).toBe(0);
+      expect(output).toContain("REBUILD COMMITTED AND VERIFIED");
+    });
+  });
+});
+
+describe("assertSqliteVersion", () => {
+  test.each(["3.38.0", "3.38.5", "3.54.0", "4.0.0"])("accepts %s", (version) => {
+    expect(() => assertSqliteVersion(version)).not.toThrow();
+  });
+
+  test.each(["3.37.2", "3.9.9", "2.99.0"])("refuses %s", (version) => {
+    expect(() => assertSqliteVersion(version)).toThrow("older than 3.38.0");
   });
 });

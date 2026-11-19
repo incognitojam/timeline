@@ -32,29 +32,7 @@
     },
     {
       "database": "timeline",
-      "sql": "INSERT OR IGNORE INTO event_people_new ( event_id , person , source , timestamp , is_sender ) SELECT e . id , p . value , e . source , e . timestamp , CASE WHEN p . key = 0 THEN 1 ELSE 0 END FROM events e , json_each ( e . people ) p WHERE e . people IS NOT NULL AND p . value IS NOT NULL AND p . value != '' AND CASE WHEN p . key = 0 OR e . conversation_id IS NULL OR json_array_length ( e . people ) <= 2 THEN 1 WHEN ( SELECT COUNT ( * ) FROM ( SELECT DISTINCT q . value FROM json_each ( e . people ) q WHERE q . value IS NOT NULL AND q . value != '' LIMIT 3 ) ) <= 2 THEN 1 WHEN NOT json_valid ( e . raw_data ) THEN 0 WHEN json_type ( e . raw_data , '$.conversation.participants' ) = 'array' THEN json_array_length ( e . raw_data , '$.conversation.participants' ) BETWEEN 1 AND 2 ELSE 0 END",
-      "reason": "One-off event_people rebuild writes a temporary replacement table, absent from the steady-state schema.",
-      "error": "SQLiteError: no such table: event_people_new"
-    },
-    {
-      "database": "timeline",
-      "sql": "SELECT COUNT ( * ) AS count FROM events e , json_each ( e . people ) p WHERE e . people IS NOT NULL AND p . value IS NOT NULL AND p . value != '' AND CASE WHEN p . key = 0 OR e . conversation_id IS NULL OR json_array_length ( e . people ) <= 2 THEN 1 WHEN ( SELECT COUNT ( * ) FROM ( SELECT DISTINCT q . value FROM json_each ( e . people ) q WHERE q . value IS NOT NULL AND q . value != '' LIMIT 3 ) ) <= 2 THEN 1 WHEN NOT json_valid ( e . raw_data ) THEN 0 WHEN json_type ( e . raw_data , '$.conversation.participants' ) = 'array' THEN json_array_length ( e . raw_data , '$.conversation.participants' ) BETWEEN 1 AND 2 ELSE 0 END AND NOT EXISTS ( SELECT 1 FROM event_people ep WHERE ep . event_id = e . id AND ep . person = p . value )",
-      "reason": "verify-event-people is a maintenance diagnostic that checks every row by design: an operator runs it to compare event_people with events.people.",
-      "findings": [
-        "events:table-scan"
-      ]
-    },
-    {
-      "database": "timeline",
-      "sql": "SELECT COUNT ( * ) AS count FROM event_people ep JOIN events e ON e . id = ep . event_id WHERE EXISTS ( SELECT 1 FROM json_each ( COALESCE ( e . people , '[]' ) ) p WHERE p . value = ep . person AND p . value IS NOT NULL AND p . value != '' ) AND NOT EXISTS ( SELECT 1 FROM json_each ( COALESCE ( e . people , '[]' ) ) p WHERE p . value = ep . person AND p . value IS NOT NULL AND p . value != '' AND CASE WHEN p . key = 0 OR e . conversation_id IS NULL OR json_array_length ( e . people ) <= 2 THEN 1 WHEN ( SELECT COUNT ( * ) FROM ( SELECT DISTINCT q . value FROM json_each ( e . people ) q WHERE q . value IS NOT NULL AND q . value != '' LIMIT 3 ) ) <= 2 THEN 1 WHEN NOT json_valid ( e . raw_data ) THEN 0 WHEN json_type ( e . raw_data , '$.conversation.participants' ) = 'array' THEN json_array_length ( e . raw_data , '$.conversation.participants' ) BETWEEN 1 AND 2 ELSE 0 END )",
-      "reason": "verify-event-people is a maintenance diagnostic that checks every row by design: an operator runs it to compare event_people with events.people.",
-      "findings": [
-        "event_people:index-scan"
-      ]
-    },
-    {
-      "database": "timeline",
-      "sql": "SELECT e . id AS eventId , p . value AS person , e . source , 'missing (not in event_people)' AS issue FROM events e , json_each ( e . people ) p WHERE e . people IS NOT NULL AND p . value IS NOT NULL AND p . value != '' AND CASE WHEN p . key = 0 OR e . conversation_id IS NULL OR json_array_length ( e . people ) <= 2 THEN 1 WHEN ( SELECT COUNT ( * ) FROM ( SELECT DISTINCT q . value FROM json_each ( e . people ) q WHERE q . value IS NOT NULL AND q . value != '' LIMIT 3 ) ) <= 2 THEN 1 WHEN NOT json_valid ( e . raw_data ) THEN 0 WHEN json_type ( e . raw_data , '$.conversation.participants' ) = 'array' THEN json_array_length ( e . raw_data , '$.conversation.participants' ) BETWEEN 1 AND 2 ELSE 0 END AND NOT EXISTS ( SELECT 1 FROM event_people ep WHERE ep . event_id = e . id AND ep . person = p . value ) LIMIT ?",
+      "sql": "SELECT COALESCE ( SUM ( ( SELECT COUNT ( DISTINCT p . value ) FROM json_each ( e . people ) p WHERE p . key > 0 AND p . value IS NOT NULL AND p . value != '' AND p . value IS NOT e . people ->> 0 AND EXISTS ( SELECT 1 FROM event_people ep WHERE ep . event_id = e . id AND ep . person = p . value ) ) ) , 0 ) AS count FROM events e WHERE e . people IS NOT NULL AND NOT ( CASE WHEN e . conversation_id IS NULL OR json_array_length ( e . people ) <= 2 THEN 1 WHEN ( SELECT COUNT ( * ) FROM ( SELECT DISTINCT q . value FROM json_each ( e . people ) q WHERE q . value IS NOT NULL AND q . value != '' LIMIT 3 ) ) <= 2 THEN 1 WHEN NOT json_valid ( e . raw_data ) THEN 0 WHEN json_type ( e . raw_data , '$.conversation.participants' ) = 'array' THEN json_array_length ( e . raw_data , '$.conversation.participants' ) BETWEEN 1 AND 2 ELSE 0 END )",
       "reason": "verify-event-people is a maintenance diagnostic that checks every row by design: an operator runs it to compare event_people with events.people.",
       "findings": [
         "events:table-scan"
@@ -91,6 +69,78 @@
       "sql": "SELECT settings FROM sync_sources WHERE source = 'attachment-descriptions'",
       "reason": "A test adds only sync_sources alongside the timeline schema, rather than a complete app-state database; this partial mixed fixture cannot replay against its classified steady-state schema.",
       "error": "SQLiteError: no such table: sync_sources"
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) AS count FROM events",
+      "reason": "rehearse-event-people-rebuild and verify-event-people count every event to show which database they opened, and refuse to rebuild one with none; both are operator diagnostics.",
+      "findings": [
+        "events:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) AS count FROM events WHERE people IS NOT NULL AND CASE WHEN json_valid ( people ) THEN json_type ( people ) != 'array' ELSE 1 END",
+      "reason": "rehearse-event-people-rebuild is an operator diagnostic run on a copy of the database; it counts across whole tables by design.",
+      "findings": [
+        "events:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) AS count FROM ( SELECT e . id AS event_id , p . value AS person , e . source AS source , e . timestamp AS timestamp , 1 AS is_sender FROM events e , json_each ( e . people ) p WHERE e . people IS NOT NULL AND p . key = 0 AND p . value IS NOT NULL AND p . value != '' UNION ALL SELECT e . id AS event_id , p . value AS person , e . source AS source , e . timestamp AS timestamp , 0 AS is_sender FROM events e , json_each ( e . people ) p WHERE e . people IS NOT NULL AND CASE WHEN e . conversation_id IS NULL OR json_array_length ( e . people ) <= 2 THEN 1 WHEN ( SELECT COUNT ( * ) FROM ( SELECT DISTINCT q . value FROM json_each ( e . people ) q WHERE q . value IS NOT NULL AND q . value != '' LIMIT 3 ) ) <= 2 THEN 1 WHEN NOT json_valid ( e . raw_data ) THEN 0 WHEN json_type ( e . raw_data , '$.conversation.participants' ) = 'array' THEN json_array_length ( e . raw_data , '$.conversation.participants' ) BETWEEN 1 AND 2 ELSE 0 END AND p . key IS NOT 0 AND p . value IS NOT NULL AND p . value != '' ) x WHERE NOT EXISTS ( SELECT 1 FROM event_people ep WHERE ep . event_id = x . event_id AND ep . person = x . person )",
+      "reason": "verify-event-people is a maintenance diagnostic that checks every row by design: an operator runs it to compare event_people with events.people.",
+      "findings": [
+        "events:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) AS count FROM event_people",
+      "reason": "rehearse-event-people-rebuild is an operator diagnostic run on a copy of the database; it counts across whole tables by design.",
+      "findings": [
+        "event_people:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT source , COUNT ( * ) AS rows FROM event_people GROUP BY source ORDER BY rows DESC",
+      "reason": "rehearse-event-people-rebuild is an operator diagnostic run on a copy of the database; it counts across whole tables by design.",
+      "findings": [
+        "event_people:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT e . source , COUNT ( * ) AS events FROM events e WHERE e . id IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) GROUP BY e . source ORDER BY events DESC",
+      "reason": "rehearse-event-people-rebuild is an operator diagnostic run on a copy of the database; it counts across whole tables by design.",
+      "findings": [
+        "identities:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT id FROM identities WHERE event_count > 0",
+      "reason": "rehearse-event-people-rebuild is an operator diagnostic run on a copy of the database; it counts across whole tables by design.",
+      "findings": [
+        "identities:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "INSERT OR IGNORE INTO event_people ( event_id , person , source , timestamp , is_sender ) SELECT e . id AS event_id , p . value AS person , e . source AS source , e . timestamp AS timestamp , 1 AS is_sender FROM events e , json_each ( e . people ) p WHERE e . people IS NOT NULL AND p . key = 0 AND p . value IS NOT NULL AND p . value != '' UNION ALL SELECT e . id AS event_id , p . value AS person , e . source AS source , e . timestamp AS timestamp , 0 AS is_sender FROM events e , json_each ( e . people ) p WHERE e . people IS NOT NULL AND CASE WHEN e . conversation_id IS NULL OR json_array_length ( e . people ) <= 2 THEN 1 WHEN ( SELECT COUNT ( * ) FROM ( SELECT DISTINCT q . value FROM json_each ( e . people ) q WHERE q . value IS NOT NULL AND q . value != '' LIMIT 3 ) ) <= 2 THEN 1 WHEN NOT json_valid ( e . raw_data ) THEN 0 WHEN json_type ( e . raw_data , '$.conversation.participants' ) = 'array' THEN json_array_length ( e . raw_data , '$.conversation.participants' ) BETWEEN 1 AND 2 ELSE 0 END AND p . key IS NOT 0 AND p . value IS NOT NULL AND p . value != ''",
+      "reason": "populateEventPeople rebuilds event_people from every event's people array by design; an operator runs it with the service stopped.",
+      "findings": [
+        "events:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT x . event_id AS eventId , x . person , x . source , 'missing (not in event_people)' AS issue FROM ( SELECT e . id AS event_id , p . value AS person , e . source AS source , e . timestamp AS timestamp , 1 AS is_sender FROM events e , json_each ( e . people ) p WHERE e . people IS NOT NULL AND p . key = 0 AND p . value IS NOT NULL AND p . value != '' UNION ALL SELECT e . id AS event_id , p . value AS person , e . source AS source , e . timestamp AS timestamp , 0 AS is_sender FROM events e , json_each ( e . people ) p WHERE e . people IS NOT NULL AND CASE WHEN e . conversation_id IS NULL OR json_array_length ( e . people ) <= 2 THEN 1 WHEN ( SELECT COUNT ( * ) FROM ( SELECT DISTINCT q . value FROM json_each ( e . people ) q WHERE q . value IS NOT NULL AND q . value != '' LIMIT 3 ) ) <= 2 THEN 1 WHEN NOT json_valid ( e . raw_data ) THEN 0 WHEN json_type ( e . raw_data , '$.conversation.participants' ) = 'array' THEN json_array_length ( e . raw_data , '$.conversation.participants' ) BETWEEN 1 AND 2 ELSE 0 END AND p . key IS NOT 0 AND p . value IS NOT NULL AND p . value != '' ) x WHERE NOT EXISTS ( SELECT 1 FROM event_people ep WHERE ep . event_id = x . event_id AND ep . person = x . person ) LIMIT ?",
+      "reason": "verify-event-people is a maintenance diagnostic that checks every row by design: an operator runs it to compare event_people with events.people.",
+      "findings": [
+        "events:table-scan"
+      ]
     }
   ],
   "underReview": [

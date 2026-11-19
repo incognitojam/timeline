@@ -1455,32 +1455,53 @@ export function dropEventPeopleTriggers(db: Database): void {
   db.exec(`DROP TRIGGER IF EXISTS identities_au_normalized_name`);
 }
 
+const listedPerson = (entry: string) => `${entry}.value IS NOT NULL AND ${entry}.value != ''`;
+
 /**
- * Which entries of an event's people array get an event_people row, as SQL over
- * the event row and its json_each(people) row. A group message indexes only its
- * sender, people[0]; who belongs to the group is a property of the conversation,
- * not of each message. Every other event indexes everyone it lists.
+ * SQL over an event row: whether it indexes everyone its people array lists. A
+ * group message indexes only its sender, people[0]; who belongs to the group is
+ * a property of the conversation, not of each message.
  *
  * A group message is in a conversation, lists more than two distinct, non-empty
  * people, and its raw_data doesn't record the export's participant list as one
  * or two people. Facebook and Instagram prepend each sender to that list, so a
  * one-to-one chat with a renamed or deactivated account lists three names.
  *
- * The CASE runs cheapest first: most rows are decided before the distinct count
- * (which stops at three) or the parse of raw_data.
+ * The CASE runs cheapest first: most events are decided before the distinct
+ * count (which stops at three) or the parse of raw_data.
  */
-export function eventPeopleRowFilter(event: string, person: string): string {
-  const listed = (entry: string) => `${entry}.value IS NOT NULL AND ${entry}.value != ''`;
+export function eventIndexesEveryone(event: string): string {
   const participants = `${event}.raw_data, '$.conversation.participants'`;
-  return `${listed(person)}
-    AND CASE
-      WHEN ${person}.key = 0 OR ${event}.conversation_id IS NULL OR json_array_length(${event}.people) <= 2 THEN 1
-      WHEN (SELECT COUNT(*) FROM (SELECT DISTINCT q.value FROM json_each(${event}.people) q WHERE ${listed("q")} LIMIT 3)) <= 2 THEN 1
+  return `CASE
+      WHEN ${event}.conversation_id IS NULL OR json_array_length(${event}.people) <= 2 THEN 1
+      WHEN (SELECT COUNT(*) FROM (SELECT DISTINCT q.value FROM json_each(${event}.people) q WHERE ${listedPerson("q")} LIMIT 3)) <= 2 THEN 1
       WHEN NOT json_valid(${event}.raw_data) THEN 0
       WHEN json_type(${participants}) = 'array' THEN json_array_length(${participants}) BETWEEN 1 AND 2
       ELSE 0
     END`;
 }
+
+/**
+ * The event_people rows for the events in `events`, a FROM item aliased e with
+ * id, source, timestamp, people, conversation_id and raw_data: the sender of
+ * every event, then everyone else for events that index everyone. Two branches
+ * keep the event-level decision once per event rather than once per person.
+ * Insert with OR IGNORE: a sender listed again later keeps its sender row. A
+ * scalar people value has a NULL key, so it lands in the second branch.
+ */
+export function eventPeopleRowsSql(events: string): string {
+  const row = (isSender: number) => `SELECT e.id AS event_id, p.value AS person, e.source AS source, e.timestamp AS timestamp, ${isSender} AS is_sender
+    FROM ${events}, json_each(e.people) p`;
+  return `${row(1)}
+    WHERE e.people IS NOT NULL AND p.key = 0 AND ${listedPerson("p")}
+    UNION ALL
+    ${row(0)}
+    WHERE e.people IS NOT NULL AND ${eventIndexesEveryone("e")} AND p.key IS NOT 0 AND ${listedPerson("p")}`;
+}
+
+// The trigger's NEW row as a FROM item for eventPeopleRowsSql.
+const NEW_EVENT = `(SELECT NEW.id AS id, NEW.source AS source, NEW.timestamp AS timestamp, NEW.people AS people,
+      NEW.conversation_id AS conversation_id, NEW.raw_data AS raw_data) e`;
 
 // Trigger SQL definitions for event_people (used by ensureEventPeopleTriggers)
 const EVENT_PEOPLE_TRIGGERS = {
@@ -1488,9 +1509,7 @@ const EVENT_PEOPLE_TRIGGERS = {
     WHEN NEW.people IS NOT NULL
     BEGIN
       INSERT OR IGNORE INTO event_people (event_id, person, source, timestamp, is_sender)
-      SELECT NEW.id, p.value, NEW.source, NEW.timestamp, CASE WHEN p.key = 0 THEN 1 ELSE 0 END
-      FROM json_each(NEW.people) p
-      WHERE ${eventPeopleRowFilter("NEW", "p")};
+      ${eventPeopleRowsSql(NEW_EVENT)};
     END`,
   events_people_au_delete: `CREATE TRIGGER events_people_au_delete BEFORE UPDATE ON events
     BEGIN
@@ -1500,9 +1519,7 @@ const EVENT_PEOPLE_TRIGGERS = {
     WHEN NEW.people IS NOT NULL
     BEGIN
       INSERT OR IGNORE INTO event_people (event_id, person, source, timestamp, is_sender)
-      SELECT DISTINCT NEW.id, p.value, NEW.source, NEW.timestamp, CASE WHEN p.key = 0 THEN 1 ELSE 0 END
-      FROM json_each(NEW.people) p
-      WHERE ${eventPeopleRowFilter("NEW", "p")};
+      ${eventPeopleRowsSql(NEW_EVENT)};
     END`,
   events_people_ad: `CREATE TRIGGER events_people_ad AFTER DELETE ON events
     BEGIN

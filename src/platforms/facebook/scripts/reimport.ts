@@ -14,7 +14,7 @@
  *   as the crash marker initDb() heals);
  * - event_people + identity event counts (cost scales with the people array,
  *   and large group threads rewrite many rows per message) rebuilt by
- *   populateEventPeople's atomic swap;
+ *   populateEventPeople in one transaction;
  * - the events_au FTS sync trigger, with both full-text indexes rebuilt by
  *   FTS5's 'rebuild' command (they are content=events). If a run is
  *   interrupted the triggers come back via initDb() but FTS keeps pre-run

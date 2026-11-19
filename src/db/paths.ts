@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve, join } from "node:path";
 import { parse as parseTOML } from "@iarna/toml";
-import { expandPath, loadEnvFile } from "../config";
+import { expandPath, loadEnvFile, resolveEnvFilePath } from "../config";
 import { APP_STATE_DB_FILE, EMBEDDINGS_DB_FILE } from "./sibling-files";
 
 const DEFAULT_DB_PATH = "./timeline.db";
@@ -18,16 +18,45 @@ export const DEFAULT_HOST_DB_PATH = join(homedir(), ".local", "share", "timeline
  */
 export function getHostDbPath(): string {
   if (!existsSync(HOST_CONFIG_PATH)) return DEFAULT_HOST_DB_PATH;
+  return configuredDbPath(HOST_CONFIG_PATH);
+}
+
+function configuredDbPath(configPath: string): string {
   let parsed: { database?: { path?: unknown } };
   try {
-    parsed = parseTOML(readFileSync(HOST_CONFIG_PATH, "utf8")) as typeof parsed;
+    parsed = parseTOML(readFileSync(configPath, "utf8")) as typeof parsed;
   } catch (err) {
-    throw new Error(`Could not read ${HOST_CONFIG_PATH}: ${(err as Error).message}`);
+    throw new Error(`Could not read ${configPath}: ${(err as Error).message}`);
   }
   const path = parsed.database?.path;
   if (path === undefined) return DEFAULT_HOST_DB_PATH;
-  if (typeof path !== "string") throw new Error(`[database].path in ${HOST_CONFIG_PATH} must be a string`);
+  if (typeof path !== "string") throw new Error(`[database].path in ${configPath} must be a string`);
   return expandPath(path);
+}
+
+/**
+ * The database the packaged service opens. Its launcher sources the env file
+ * with bash, so this does the same in an otherwise empty environment, where
+ * this process's own TIMELINE_DB_PATH can't stand in for the service's. Then,
+ * as loadConfig does: TIMELINE_DB_PATH, else [database].path in the config
+ * TIMELINE_CONFIG names (from the env file, or this process), else the default
+ * config's, else the default path. Throws rather than guessing when the env
+ * file or a named config can't be read.
+ */
+export function getServiceDbPath(): string {
+  const envFile = resolveEnvFilePath();
+  const sourced = Bun.spawnSync(
+    ["/bin/bash", "-c", 'set -a; if [ -f "$1" ]; then . "$1" || exit 1; fi; printf "%s\\n%s\\n" "${TIMELINE_DB_PATH-}" "${TIMELINE_CONFIG-}"', "bash", envFile],
+    { env: { HOME: homedir(), PATH: "/usr/bin:/bin" } },
+  );
+  if (sourced.exitCode !== 0) throw new Error(`Could not read ${envFile}: ${sourced.stderr.toString().trim()}`);
+  const [dbPath, configFromEnvFile] = sourced.stdout.toString().split("\n");
+  if (dbPath) return expandPath(dbPath);
+  const config = configFromEnvFile || process.env.TIMELINE_CONFIG;
+  if (!config) return getHostDbPath();
+  const configPath = expandPath(config);
+  if (!existsSync(configPath)) throw new Error(`TIMELINE_CONFIG names ${configPath}, which does not exist`);
+  return configuredDbPath(configPath);
 }
 
 export function getTimelineDbPath(): string {

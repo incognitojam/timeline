@@ -25,6 +25,11 @@ export function configureBunSqliteForSqliteVec(): void {
   configuredSqliteLibraryPath = libraryPath;
 }
 
+/** The custom SQLite library this process loaded, or null for Bun's default. */
+export function loadedSqliteLibraryPath(): string | null {
+  return configuredSqliteLibraryPath;
+}
+
 export function loadSqliteVec(db: Database): void {
   try {
     sqliteVec.load(db);

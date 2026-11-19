@@ -222,6 +222,249 @@ Do not manually `launchctl bootstrap` the bundled plist from the app bundle:
 SMAppService-managed plists with `AssociatedBundleIdentifiers` must be submitted
 through SMAppService, and manual bootstrap fails with EIO.
 
+## Rebuilding the people index
+
+`event_people` lists, for each event, the people it is filed under. A build
+that changes which people that is, such as the one that files a group message
+under its sender only, applies the change to new events at once and leaves
+rows written under the old rule in place until the table is rebuilt.
+`verify-event-people` reports those rows as `REBUILD NEEDED`. The rebuild
+derives the table again from `events.people`; it changes no event.
+
+The command blocks below are meant to be pasted whole into a terminal. They
+contain no comments, because interactive zsh does not treat `#` as one.
+
+### Before you start
+
+The scripts run from a checkout at the commit of the installed build, shown in
+the web app's **Settings → Version & build**. The packaged service does not
+carry them, and they write the same trigger definitions as the service: a
+checkout at an older commit would put the old triggers back. After installing
+a build, never point an older build or checkout at the database.
+
+First set two variables by hand: `DB` to the database's path (`[database].path`
+in `~/.config/timeline/config.toml`, by default the path below) and `COMMIT`
+to the commit Settings shows, for example `COMMIT=abc1234`. Then, in any
+checkout:
+
+```bash
+DB="$HOME/.local/share/timeline/timeline.db"
+cd ~/src/timeline
+git fetch origin
+git checkout --detach "${COMMIT:?}"
+bun install --frozen-lockfile
+```
+
+Every command below uses `"${DB:?}"`, so it stops if `DB` is unset instead of
+falling back to a `timeline.db` in the checkout. The scripts load the SQLite
+library named by `TIMELINE_SQLITE_LIBRARY_PATH` in `~/.config/timeline/env`,
+as the service does, and refuse a SQLite older than they need. They print the
+database path, its event count, and the SQLite version with the library it
+came from. Check those lines before going further: the `SQLite:` line names
+the library `grep TIMELINE_SQLITE_LIBRARY_PATH ~/.config/timeline/env` shows,
+or Bun's default library if the env file sets none.
+
+**Space.** At its peak the rebuild needs about 1.8 GB beyond the database: about
+1.1 GB of WAL, which holds every page it writes (about 300 bytes per new row),
+and about 0.7 GB of temporary files for the index sorts, in `TMPDIR` on the
+same volume. It reuses the old table's space inside the file, so the file does
+not grow. APFS local snapshots can pin overwritten blocks and take more; list
+them with `tmutil listlocalsnapshots /`. The scripts report the WAL's peak but
+not the temporary files, so to see the true lowest free space, watch it from a
+second terminal while a step runs:
+
+```bash
+while sleep 5; do df -k "${DB:?}" | tail -n 1; done
+```
+
+`timeline.db` stays the same size on disk. The space the old rows used is free
+inside the file and reused by later writes; it is not returned to the volume.
+
+### Rehearse on a copy
+
+Rehearse on a copy-on-write clone in the same volume, with the service still
+running. The clone shares blocks with the database until it is written, and
+the rehearsal writes 2–3 GB into it. The script is run with `TIMELINE_DB_PATH`
+set to the copy: that only keeps a checkout's `.no-local-db` marker (left by
+`bun run setup` when no local database was prepared) from stopping it with an
+unrelated error, since the script opens nothing but the copy.
+
+```bash
+df -h "${DB:?}"
+mkdir ~/timeline-rehearsal
+cp -c "${DB:?}" ~/timeline-rehearsal/timeline.db
+TIMELINE_DB_PATH="$HOME/timeline-rehearsal/timeline.db" bun run src/scripts/rehearse-event-people-rebuild.ts "$HOME/timeline-rehearsal/timeline.db" | tee ~/rehearsal-report.txt
+rm -r ~/timeline-rehearsal
+```
+
+The clone omits the live WAL, so it can lack the last few MB of writes, and a
+clone taken while the service checkpoints can be torn. If the rehearsal stops
+on drift, make a fresh copy and rehearse once more before investigating.
+
+The script finds the live database the way the service does, from the env
+file and the config it names. It refuses a copy in that database's directory,
+a copy whose database, `-wal` or `-shm` is the same file as one of the live
+database's (by device and inode, through symlinks), and a copy with a
+symlinked `-wal` or `-shm`. It cannot recognise the same file reached through
+another mount, such as a network share of the data volume, so make the copy
+with `cp -c` as shown.
+
+It stops without changing the copy if the copy has no events or has drift.
+Otherwise it installs this build's triggers, rebuilds, verifies and truncates
+the WAL, printing one JSON line per step with counts, sizes and timings only,
+never names or content. It ends with a summary and exits non-zero if anything
+fails. The rehearsal passes when every line of the summary says `PASS`:
+
+- the copy has events, and member rows from before the rule for the rebuild to
+  drop;
+- no drift before the rebuild, and every check clean after it, with no member
+  rows from before the rule left;
+- the WAL's peak within about 400 bytes per new row;
+- the new row count within what the 5 GB free-space floor below covers;
+- the WAL's peak plus a 1 GB allowance for temporary files within that floor.
+
+The `DECIDE` line points at the figures the decision rests on, in the `after`
+step: `eventsNoLongerHiddenBySource`, the events per source that hiding a
+contact will no longer hide, and `identitiesNowWithoutEvents`.
+
+### Rebuild
+
+The first two steps run with the service up; if either stops you, nothing has
+changed and nothing is held.
+
+1. **Free space.** `df -h "${DB:?}"` must show at least 5 GB available. Stop
+   if less is free.
+
+2. **Backup.** On the web app's Sync page, open the `backup` source and run it.
+   It writes `timeline-<date>T<time>.db` to the directory set as its
+   destination in that source's settings, normally on the NAS, and keeps only
+   the most recent copies, so this one will be pruned by later runs. Set
+   `BACKUP_DIR` to that destination and `KEEP_DIR` to a directory outside it
+   with room for a copy as large as `timeline.db`, for example a folder beside
+   it on the NAS. When the run has succeeded, keep the newest copy and check
+   it opens and counts the events the status page shows (this reads the whole
+   file, so it takes a while on a NAS):
+
+   ```bash
+   BACKUP="${BACKUP_DIR:?}/$(ls -t "${BACKUP_DIR:?}" | grep -E '^timeline-.+[.]db$' | head -n 1)"
+   cp "${BACKUP:?}" "${KEEP_DIR:?}/"
+   BACKUP="${KEEP_DIR:?}/$(basename "${BACKUP:?}")"
+   BACKUP="${BACKUP:?}" bun -e 'import { Database } from "bun:sqlite"; const db = new Database(process.env.BACKUP, { readonly: true }); console.log(db.query("PRAGMA quick_check").get(), db.query("SELECT COUNT(*) AS events FROM events").get())'
+   ```
+
+   Stop unless it prints `quick_check: "ok"` and the expected event count.
+   Keep `BACKUP` set for the restore below.
+
+3. **Hold the service** as in [Stopping the service for
+   maintenance](#stopping-the-service-for-maintenance), and confirm it is down:
+
+   ```bash
+   touch ~/.local/share/timeline/service.hold
+   launchctl bootout gui/$(id -u)/dev.incognitojam.timeline-service
+   curl -s http://127.0.0.1:3001/api/health || echo "stopped"
+   ```
+
+   From here, releasing the hold means `rm ~/.local/share/timeline/service.hold`;
+   the service answers again within about 30 seconds.
+
+4. **Verify.** On a table of tens of millions of rows this takes 10–15 minutes
+   inside one read transaction, which is why the service is held first:
+
+   ```bash
+   TIMELINE_DB_PATH="${DB:?}" bun run src/scripts/verify-event-people.ts
+   ```
+
+   Check the `Database:`, `Events:` and `SQLite:` lines, then expect four
+   `PASS` lines, a `REBUILD NEEDED` line counting the old rows, and
+   `VERIFICATION PASSED`. If a header line is wrong, or there is any `FAIL`
+   line or error, stop and release the hold: nothing has changed, and drift
+   the rule change does not explain needs investigating before any rebuild.
+
+5. **Rebuild.** This verifies again, rebuilds in one transaction and verifies
+   the result:
+
+   ```bash
+   TIMELINE_DB_PATH="${DB:?}" bun run src/scripts/verify-event-people.ts --force-rebuild
+   echo "exit $?"
+   ```
+
+   - **Exit 0, `REBUILD COMMITTED AND VERIFIED`:** continue.
+   - **Exit 2, `REBUILD FAILED AND ROLLED BACK`:** the old table is intact.
+     An interruption, power loss or full disk leaves it the same way. Truncate
+     the WAL (step 6), release the hold (step 7), and report the error.
+   - **Exit 3, `REBUILD COMMITTED, BUT VERIFYING IT …`:** the new table is in
+     place but not shown clean. Keep the hold, so nothing writes to it, and run
+     the step-4 command. If it now passes with no `REBUILD NEEDED` line,
+     continue. If not, either run this step again or restore the backup
+     (below), then release the hold.
+   - **Exit 1:** it stopped before the rebuild began, so the table has not
+     changed: the database is missing or has no events, its SQLite is too old,
+     or an error came first. This build's schema may already be installed,
+     which the service does at start anyway. Release the hold, check `DB`, and
+     report any error.
+
+   After exit 0, run the step-4 command once more: it should pass with no
+   `REBUILD NEEDED` line. If it doesn't, treat it as exit 3.
+
+6. **Truncate the WAL**, after any rebuild that started, whether it committed
+   or rolled back; otherwise the WAL keeps its peak size:
+
+   ```bash
+   DB="${DB:?}" bun -e 'import { Database } from "bun:sqlite"; const db = new Database(process.env.DB); console.log(db.query("PRAGMA wal_checkpoint(TRUNCATE)").get())'
+   ls -l "${DB:?}-wal"
+   ```
+
+   Expect `busy: 0`, and a WAL of 0 bytes or no such file: SQLite removes it
+   when the last connection closes.
+
+7. **Release the hold.** The service takes up to about 30 seconds to answer:
+
+   ```bash
+   rm ~/.local/share/timeline/service.hold
+   sleep 30
+   curl -s http://127.0.0.1:3001/api/health
+   ```
+
+Afterwards, check `/status` is healthy and `service.error.log` is quiet, and
+open a contact who belongs to large group chats: their counts drop to the
+messages they sent, their Conversations list shows the groups they wrote in,
+and the unlinked-people list loses group members who never wrote.
+
+### The way back
+
+The rebuild changes only derived rows. A failed rebuild has already rolled
+back, and a committed one that looks wrong can be derived again by a corrected
+build's `--force-rebuild`. Rebuilding under the old rule in place needs WAL
+space as large as the old table, so it may not fit. To return to the state
+before the rebuild, or if `PRAGMA quick_check` ever fails, restore the copy
+kept in step 2. Events synced after the backup was taken and before the hold
+are lost, and later syncs may not fetch them again, because the sync state in
+`app-state.db` has already moved past them.
+
+First confirm the kept copy is there, with `BACKUP` set as in step 2:
+
+```bash
+ls -l "${BACKUP:?}"
+```
+
+Go on only if it lists the file. Then hold the service, move the current
+database aside (to `~/timeline-before-restore`, or to the NAS if the volume
+lacks room for both), copy the backup in and release the hold:
+
+```bash
+touch ~/.local/share/timeline/service.hold
+launchctl bootout gui/$(id -u)/dev.incognitojam.timeline-service
+mkdir ~/timeline-before-restore
+for f in "${DB:?}" "${DB:?}-wal" "${DB:?}-shm"; do test -e "$f" && mv "$f" ~/timeline-before-restore/; done
+cp "${BACKUP:?}" "${DB:?}"
+rm ~/.local/share/timeline/service.hold
+sleep 30
+curl -s http://127.0.0.1:3001/api/health
+```
+
+Keep `~/timeline-before-restore` until the restored service checks out, then
+remove it.
+
 ## Updating
 
 Every installed build checks for updates automatically and offers **Check for Updates…** in the menu. Installation asks for confirmation unless you opt into automatic downloads. **Install Update and Relaunch…** resumes a staged update. Any normal quit while an update is staged first holds and stops the service. Quitting from the menu while the ready-to-install window is open, or after choosing **Install on Quit** when offered, leaves the service stopped until Timeline is opened again; opening the app recovers its update hold. A manual maintenance hold refuses the update and stays in place.
