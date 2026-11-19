@@ -476,3 +476,15 @@ come from `updated_at`. Undated project and conversation memories have a null
 timestamp on first import; the existing legacy memory keeps its original date.
 Empty memory content is skipped and counted, never used to blank an existing record.
 
+Project ZIPs import project descriptions, instructions and full documents as
+`claude:project` events, identified by project UUID within the account. Edits archive
+prior raw data before updating the record. Project and memory records share
+`project:<UUID>` tags. Conversation links use those tags only when the confirmed
+structured memory-path segments match exactly one known exported project; the
+`project-link:inferred-memory-path` tag distinguishes these from declared links.
+No project field is declared by the conversation export. Plain text mentions are
+ignored. Import order does not matter: project imports reconcile links from
+stored messages and memories, without changing their raw data or unrelated tags.
+Previews count links and tag changes for already-stored conversations and memories;
+they exclude records the import has yet to create. Ambiguous and absent matches
+remain unlinked.

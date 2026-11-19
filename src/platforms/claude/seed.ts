@@ -10,7 +10,7 @@ const ACCOUNT = SELF.email;
 
 export const claudeSeed: SeedSource = {
   name: "claude",
-  produces: { claude: ["claude:message:user", "claude:message:assistant", "claude:memory"] },
+  produces: { claude: ["claude:message:user", "claude:message:assistant", "claude:memory", "claude:project"] },
   async seed(ctx) {
     const rng = ctx.rng("claude");
     const conversations = planChatConversations(ctx, ctx.rng("claude:plan"), {
@@ -20,8 +20,9 @@ export const claudeSeed: SeedSource = {
       extraTurns: [1, 3],
     });
     const accountUuid = rng.uuid();
+    const projectUuid = rng.uuid();
 
-    const exported = conversations.map((conv) => {
+    const exported = conversations.map((conv, index) => {
       const messages: Record<string, unknown>[] = [];
       for (const turn of conv.turns) {
         messages.push({
@@ -70,6 +71,11 @@ export const claudeSeed: SeedSource = {
           files: [],
         });
       }
+      if (index % 12 === 0) {
+        const assistant = messages[1];
+        if (!assistant || !Array.isArray(assistant.content)) throw new Error("Missing synthetic assistant response");
+        assistant.content.push({ type: "tool_result", name: "memory", structured_content: { documents: [{ path_segments: ["projects", projectUuid, "notes.md"] }] } });
+      }
       const first = conv.turns[0];
       const last = conv.turns.at(-1);
       if (!first || !last) throw new Error("empty Claude conversation");
@@ -106,13 +112,21 @@ export const claudeSeed: SeedSource = {
     );
     const zipPath = join(dir, "conversations-000.zip");
     await zipFlat(zipPath, [conversationsPath]);
+    const legacyZip = join(dir, "legacy.zip");
+    await zipFlat(legacyZip, [conversationsPath, join(dir, "export/memories.json"), join(dir, "export/users.json")]);
+    await importClaudeExport(ctx.db, legacyZip, ACCOUNT);
     ctx.writeStaged("claude", `new-memories/memories/${accountUuid}.json`, JSON.stringify({
       account_uuid: accountUuid, conversations_memory: memories[0].conversations_memory,
-      project_memories: {}, memory_files: [{ path: "/notes/preferences.md", content: "Prefer concise examples.", updated_at: anchor }],
+      project_memories: { [projectUuid]: "A synthetic planning project." }, memory_files: [{ path: `/notes/${projectUuid}/preferences.md`, content: "Prefer concise examples.", updated_at: anchor }],
     }));
     const memoryZip = join(dir, "memories-000.zip");
     const proc = Bun.spawn(["zip", "-q", memoryZip, `memories/${accountUuid}.json`], { cwd: join(dir, "new-memories") });
     if (await proc.exited !== 0) throw new Error("Could not create synthetic Claude memory ZIP");
+    ctx.writeStaged("claude", `new-projects/projects/${projectUuid}.json`, JSON.stringify({ uuid: projectUuid, name: "Synthetic planner", description: "Plan fictional walks", prompt_template: "Use concise examples", is_private: true, is_starter_project: false, created_at: anchor, updated_at: anchor, creator: { uuid: accountUuid, full_name: "Alice" }, docs: [{ uuid: rng.uuid(), filename: "notes.md", content: "Fictional project notes", created_at: anchor }] }));
+    const projectZip = join(dir, "projects-000.zip");
+    const projectProc = Bun.spawn(["zip", "-q", projectZip, `projects/${projectUuid}.json`], { cwd: join(dir, "new-projects") });
+    if (await projectProc.exited !== 0) throw new Error("Could not create synthetic project ZIP");
+    await importClaudeExport(ctx.db, projectZip, ACCOUNT);
     await importClaudeExport(ctx.db, memoryZip, ACCOUNT);
     await importClaudeExport(ctx.db, zipPath, ACCOUNT);
     ctx.identify("alex", `claude:${ACCOUNT}`);

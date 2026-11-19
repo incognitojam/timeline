@@ -1,3 +1,4 @@
+import { loadProjects, importProjects, reconcileProjectLinks } from "./projects";
 import { importMemories } from "./memories";
 import { parseConversation, extractedExports, detectClaudeCategory, categoryPattern } from "./export";
 import { createBoundedWriter } from "../../db/bounded-writes";
@@ -49,16 +50,15 @@ const CLAUDE_ASSISTANT_DISPLAY_NAME = "Claude";
 
 export function getClaudeSkipReason(path: string): string | undefined {
   const category = categoryPattern.exec(basename(path))?.[1];
-  if (!category || ["conversations", "memories"].includes(category)) return undefined;
-  if (["memories", "projects"].includes(category)) throw new Error(`Claude ${category} import is not supported by this version; leave this ZIP unprocessed for a later version`);
+  if (!category || ["conversations", "memories", "projects"].includes(category)) return undefined;
   return `skipped: not imported (${category})`;
 }
 
 export async function importClaudeExport(db: Database, zipPath: string, sourceAccount: string, options: ImportClaudeOptions = {}): Promise<number> {
   const preview = await runClaudeImport(db, zipPath, sourceAccount, { ...options, dryRun: true }, !options.dryRun);
   if (options.dryRun) return preview.added;
-  if (!options.allowNewAccount && (preview.otherAccountMessages || preview.otherAccountMemories || preview.accountHasNoHistory)) {
-    throw new Error(`Export records already exist under another account or the supplied account has no history; confirm a separate account with --allow-new-account\nMessages already present under other accounts: ${preview.otherAccountMessages}\nMemories already present under other accounts: ${preview.otherAccountMemories}\nSupplied account has no history: ${preview.accountHasNoHistory}`);
+  if (!options.allowNewAccount && (preview.otherAccountMessages || preview.otherAccountMemories || preview.otherAccountProjects || preview.accountHasNoHistory)) {
+    throw new Error(`Export records already exist under another account or the supplied account has no history; confirm a separate account with --allow-new-account\nMessages already present under other accounts: ${preview.otherAccountMessages}\nMemories already present under other accounts: ${preview.otherAccountMemories}\nProjects already present under other accounts: ${preview.otherAccountProjects}\nSupplied account has no history: ${preview.accountHasNoHistory}`);
   }
   return (await runClaudeImport(db, zipPath, sourceAccount, options)).added;
 }
@@ -69,11 +69,15 @@ async function runClaudeImport(
   sourceAccount: string,
   options: ImportClaudeOptions = {},
   preflight = false
-): Promise<{ added: number; otherAccountMessages: number; otherAccountMemories: number; accountHasNoHistory: boolean }> {
+): Promise<{ added: number; otherAccountMessages: number; otherAccountMemories: number; otherAccountProjects: number; accountHasNoHistory: boolean }> {
   if (!sourceAccount.trim()) throw new Error("Claude import requires an explicit account name");
   const accounts = db.prepare("SELECT DISTINCT source_account FROM events WHERE source = 'claude'").all() as { source_account: string }[];
   const accountHasNoHistory = accounts.length > 0 && !accounts.some((row) => row.source_account === sourceAccount);
   const skippedCategories = new Set<string>();
+  const projects = await loadProjects(zipPath);
+  const projectIds = new Set(projects.map((project) => project.uuid));
+  for (const row of db.prepare("SELECT source_id FROM events WHERE source = 'claude' AND source_account = ? AND type = 'claude:project'").all(sourceAccount) as { source_id: string }[]) projectIds.add(row.source_id.slice("project:".length));
+  const projectResult = await importProjects(db, projects, sourceAccount, options.dryRun ?? false);
   const writer = createBoundedWriter(db);
   const existing = db.prepare("SELECT id, title, raw_data FROM events WHERE source = 'claude' AND source_id = ? AND source_account = ?");
   const otherAccount = db.prepare("SELECT 1 FROM events WHERE source = 'claude' AND source_id = ? AND source_account != ? LIMIT 1");
@@ -145,6 +149,7 @@ async function runClaudeImport(
       otherAccountMemories += memoryResult.otherAccountMemories;
       continue;
     }
+    if (category === "projects") continue;
     if (category && category !== "conversations") {
       skippedCategories.add(category);
       continue;
@@ -315,6 +320,8 @@ async function runClaudeImport(
   }
   await writer.flush();
 
+  const links = preflight ? null : await reconcileProjectLinks(db, sourceAccount, projectIds, options.dryRun ?? false);
+
   // Upsert all collected identities
   if (!options.dryRun && identities.size > 0) {
     upsertIdentities(db, [...identities.values()]);
@@ -328,7 +335,9 @@ async function runClaudeImport(
   console.log(`  Empty conversations: ${emptyConversations}; renamed conversations: ${renamedConversations}`);
   console.log(`  Messages already present under other accounts: ${otherAccountMessages}`);
   console.log(`  Messages new: ${stats.messages}; already present: ${existingMessages}`);
-  console.log("  Projects: 0 (not imported)");
+  console.log(`  Projects new: ${projectResult.added}; changed: ${projectResult.changed}; already present: ${projectResult.present}`);
+  console.log(`  Projects already present under other accounts: ${projectResult.otherAccountProjects}`);
+  if (links) console.log(`  Stored conversations linked: ${links.linked}; event project-tag changes: ${links.tagChanges}`);
   console.log(`  Memories new: ${stats.memories}; changed: ${changedMemories}; already present: ${existingMemories}; skipped empty: ${skippedMemories}`);
   console.log(`  Memories already present under other accounts: ${otherAccountMemories}`);
   if (refreshRawData) {
@@ -343,7 +352,7 @@ async function runClaudeImport(
 
   if (!options.dryRun) onImportComplete(db);
 
-  return { added: stats.messages + stats.memories, otherAccountMessages, otherAccountMemories, accountHasNoHistory };
+  return { added: stats.messages + stats.memories + projectResult.added, otherAccountMessages, otherAccountMemories, otherAccountProjects: projectResult.otherAccountProjects, accountHasNoHistory };
 }
 
 // CLI

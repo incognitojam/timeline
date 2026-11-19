@@ -74,7 +74,6 @@ export async function processAutoDetectZip(
         break;
 
       case "claude":
-        (await import("../platforms/claude/parser")).getClaudeSkipReason(zipPath);
         eventsAdded = await processClaudeZip(db, zipPath, sourceAccount);
         break;
 
