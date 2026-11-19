@@ -519,6 +519,25 @@ describe("rebuildAndVerify", () => {
     expect(rows()).toEqual([{ person: "Alice" }]);
   });
 
+  test("says the rebuild committed before it verifies", () => {
+    const order: string[] = [];
+    let visible: unknown;
+    rebuildAndVerify(
+      db,
+      (db) => {
+        order.push("verify");
+        return verifyEventPeople(db);
+      },
+      (rows) => {
+        order.push(`committed ${rows}`);
+        visible = db.inTransaction;
+      },
+    );
+
+    expect(order).toEqual(["committed 1", "verify"]);
+    expect(visible).toBe(false);
+  });
+
   test("reports issues found after a commit", () => {
     const outcome = rebuildAndVerify(db, (db) => ({ ...verifyEventPeople(db), staleRows: 1 }));
 
@@ -630,6 +649,38 @@ describe("on a database file", () => {
       const { exitCode, output } = run(["--force-rebuild"]);
       expect(output).toContain("REBUILD COMMITTED, BUT VERIFYING IT FOUND ISSUES");
       expect(exitCode).toBe(3);
+    });
+
+    test("stops a forced rebuild before changing the table when it finds drift", () => {
+      file.exec("DELETE FROM event_people WHERE is_sender = 1 AND event_id = (SELECT MIN(id) FROM events)");
+      const rows = () => (file.prepare("SELECT COUNT(*) AS count FROM event_people").get() as { count: number }).count;
+      const before = rows();
+
+      const { exitCode, output } = run(["--force-rebuild"]);
+      expect(output).toContain("NOT REBUILDING: found 1 discrepancies; the table has not changed.");
+      expect(exitCode).toBe(1);
+      expect(rows()).toBe(before);
+    });
+
+    test("prints that the rebuild committed before verifying, so an interruption after it leaves the new table", async () => {
+      const child = Bun.spawn([process.execPath, script, "--force-rebuild"], {
+        env: { ...process.env, TIMELINE_DB_PATH: path() },
+        stdout: "pipe",
+      });
+      let output = "";
+      const decoder = new TextDecoder();
+      for await (const chunk of child.stdout) {
+        output += decoder.decode(chunk);
+        if (output.includes("Rebuild committed:")) {
+          child.kill("SIGINT");
+          break;
+        }
+      }
+      await child.exited;
+
+      expect(output).toContain("Rebuild committed: 300 rows. Verifying...");
+      // Whether the signal landed during verification or after it, the table is the new one.
+      expect((file.prepare("SELECT COUNT(*) AS count FROM event_people").get() as { count: number }).count).toBe(300);
     });
 
     test("exits 0 when the rebuild commits and verifies clean", () => {

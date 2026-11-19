@@ -10,7 +10,7 @@
  *   bun run src/scripts/verify-event-people.ts              # Verify only
  *   bun run src/scripts/verify-event-people.ts --verbose    # Show sample mismatches
  *   bun run src/scripts/verify-event-people.ts --rebuild    # Rebuild if discrepancies found
- *   bun run src/scripts/verify-event-people.ts --force-rebuild  # Always rebuild
+ *   bun run src/scripts/verify-event-people.ts --force-rebuild  # Rebuild unless drift is found
  *
  * Exit codes:
  *   0 - All checks pass (or the rebuild committed and verified clean)
@@ -158,14 +158,23 @@ export type RebuildOutcome =
   /** The rebuild committed, but verifying it threw. */
   | { kind: "committed-unverified"; rows: number; error: unknown };
 
-/** Rebuild, then verify the committed result, keeping the two failures apart. */
-export function rebuildAndVerify(db: Database, verify: (db: Database) => VerificationResult = verifyEventPeople): RebuildOutcome {
+/**
+ * Rebuild, then verify the committed result, keeping the two failures apart.
+ * `committed` runs between the two, so a caller can say the rebuild committed
+ * before verification starts.
+ */
+export function rebuildAndVerify(
+  db: Database,
+  verify: (db: Database) => VerificationResult = verifyEventPeople,
+  committed: (rows: number) => void = () => {},
+): RebuildOutcome {
   let rows: number;
   try {
     rows = populateEventPeople(db);
   } catch (error) {
     return { kind: "rolled-back", error };
   }
+  committed(rows);
   try {
     return { kind: "committed", rows, after: verify(db) };
   } catch (error) {
@@ -290,11 +299,23 @@ async function main() {
 
   const totalIssues = issueCount(result);
 
+  // --force-rebuild rebuilds a table without drift, such as one holding rows from
+  // before the sender rule; drift needs investigating first, then --rebuild.
+  if (forceRebuild && totalIssues > 0) {
+    printSection("Summary");
+    console.error(`\nNOT REBUILDING: found ${formatCount(totalIssues)} discrepancies; the table has not changed.`);
+    console.error("Investigate them (--verbose shows samples); --rebuild rebuilds to repair them.");
+    db.close();
+    process.exit(1);
+  }
+
   if (forceRebuild || (rebuild && totalIssues > 0)) {
     printSection("Rebuilding event_people Table");
     console.log("\nRebuilding in one transaction...");
     const rebuildStart = Date.now();
-    const outcome = rebuildAndVerify(db);
+    const outcome = rebuildAndVerify(db, verifyEventPeople, (rows) => {
+      console.log(`\nRebuild committed: ${formatCount(rows)} rows. Verifying...`);
+    });
     db.close();
     printSection("Summary");
     if (outcome.kind === "rolled-back") {
