@@ -249,7 +249,7 @@ export default function SummaryPane(props: Props) {
 
         <Show when={hasContent()}>
           <div class="prose prose-sm dark:prose-invert max-w-none">
-            <Markdown markdown={text()} />
+            <Markdown markdown={text()} streaming={summaryLoading()} />
           </div>
 
           {/* Generation metadata */}

@@ -122,6 +122,11 @@ body,
   }
 }
 
+/* @pierre/words puts a header with the language before each code block. */
+[data-markdown="code-header"] {
+  display: none;
+}
+
 /* Remove extra margins from markdown code blocks in tool calls */
 .tool-code-block pre {
   margin: 0 !important;

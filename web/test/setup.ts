@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { afterEach } from "vitest";
 
 class MemoryStorage implements Storage {
@@ -33,6 +34,11 @@ class NoopResizeObserver implements ResizeObserver {
   observe() {}
   unobserve() {}
   disconnect() {}
+}
+
+// jsdom omits ReadableStream, which tests of streamed responses need.
+if (typeof globalThis.ReadableStream === "undefined") {
+  globalThis.ReadableStream = NodeReadableStream as typeof ReadableStream;
 }
 
 if (typeof globalThis.ResizeObserver === "undefined") {

@@ -591,7 +591,7 @@ export default function JournalPane(props: Props) {
             >
               <h3 class="text-sm font-medium text-foreground">Reflection</h3>
               <div class="prose prose-sm dark:prose-invert max-w-none">
-                <Markdown markdown={reflectionText()} />
+                <Markdown markdown={reflectionText()} streaming={reflectionLoading()} />
               </div>
               <Show when={!reflectionLoading()}>
                 <button

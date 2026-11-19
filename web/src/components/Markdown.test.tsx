@@ -108,11 +108,10 @@ describe("Markdown", () => {
     expect(link).toHaveAttribute("href", "https://example.com");
   });
 
-  it("sanitizes javascript: links", async () => {
-    render(() => <Markdown markdown='[click](javascript:alert(1))' />);
-    const el = await screen.findByText("click");
-    expect(el.tagName).toBe("A");
-    expect(el).toHaveAttribute("href", "");
+  it("keeps the text of a javascript: link as plain text", async () => {
+    const { container } = render(() => <Markdown markdown='[click](javascript:alert(1))' />);
+    await screen.findByText("click");
+    expect(container.querySelector("a")).toBeNull();
   });
 
   it("renders GFM tables", async () => {
@@ -212,22 +211,43 @@ describe("Markdown", () => {
     expect(screen.getByRole("link", { name: "https://example.com" })).toHaveAttribute("href", "https://example.com");
     expect(screen.getByRole("link", { name: "alice@example.com" })).toHaveAttribute("href", "mailto:alice@example.com");
     const reference = screen.getByRole("link", { name: "1" });
-    const heading = screen.getByRole("heading", { name: "Footnotes" });
     expect(reference).toHaveAttribute("data-footnote-ref");
-    expect(reference).toHaveAttribute("aria-describedby", heading.id);
-    expect(heading).toHaveClass("sr-only");
+    expect(reference).not.toHaveAttribute("target");
     expect(container.querySelector(reference.getAttribute("href")!)).toHaveTextContent("A footnote.");
     const backReference = screen.getByRole("link", { name: "Back to reference 1" });
-    expect(backReference).toHaveClass("data-footnote-backref");
     expect(backReference).toHaveAttribute("href", `#${reference.id}`);
+    expect(screen.getByRole("heading", { name: "Footnotes" })).toHaveClass("sr-only");
+  });
+
+  it("numbers the back-links of a footnote referenced more than once", () => {
+    render(() => <Markdown markdown={"One[^n] and two[^n].\n\n[^n]: Shared."} />);
+    const [first, second] = screen.getAllByRole("link", { name: "1" });
+    expect(screen.getByRole("link", { name: "Back to reference 1" })).toHaveAttribute("href", `#${first.id}`);
+    const secondBack = screen.getByRole("link", { name: "Back to reference 1-2" });
+    expect(secondBack).toHaveAttribute("href", `#${second.id}`);
+    expect(secondBack.querySelector("sup")).toHaveTextContent("2");
+  });
+
+  it("keeps footnote ids unique across instances", () => {
+    const markdown = "Claim.[^1]\n\n[^1]: Source.";
+    const { container } = render(() => (
+      <>
+        <Markdown markdown={markdown} />
+        <Markdown markdown={markdown} />
+      </>
+    ));
+    const [first, second] = screen.getAllByRole("link", { name: "1" });
+    expect(first.id).not.toBe(second.id);
+    expect(container.querySelector(first.getAttribute("href")!)?.closest("[data-markdown=root]")).toBe(
+      container.firstElementChild,
+    );
   });
 
   it("renders and updates disabled GFM task checkboxes", () => {
     const [markdown, setMarkdown] = createSignal("- [x] Finished\n- [ ] Pending");
     const { container } = render(() => <Markdown markdown={markdown()} />);
     const checkboxes = screen.getAllByRole("checkbox");
-    expect(container.querySelector("ul")).toHaveClass("contains-task-list");
-    expect(container.querySelectorAll("li.task-list-item")).toHaveLength(2);
+    expect(container.querySelectorAll("li")).toHaveLength(2);
     expect(checkboxes[0]).toBeChecked();
     expect(checkboxes[1]).not.toBeChecked();
     for (const checkbox of checkboxes) expect(checkbox).toBeDisabled();
@@ -258,9 +278,8 @@ describe("Markdown", () => {
     expect(image).not.toHaveAttribute("title");
 
     setMarkdown("[Example](javascript:alert(1))\n\n![Second image](/second.png)");
-    expect(link).toHaveAttribute("href", "");
-    expect(link).toHaveAttribute("target", "_blank");
-    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.getByText("Example").tagName).toBe("P");
   });
 
   it("updates GFM table alignment and removes it when no longer present", () => {
@@ -340,5 +359,148 @@ describe("Markdown", () => {
     expect(screen.getByText("Second")).toBe(second);
     setClassName(undefined);
     expect(wrapper).not.toHaveAttribute("class");
+  });
+});
+
+// Every caller renders untrusted text from other people and from LLMs through this component.
+const HOSTILE: Record<string, string> = {
+  "inline script": "Hello <script>alert(1)</script> world",
+  "block script": "<script>\nalert(1)\n</script>\n\nafter",
+  "inline img onerror": "x <img src=x onerror=alert(1)> y",
+  "block img onerror": '<img src="x" onerror="alert(1)">',
+  iframe: '<iframe src="https://evil.example"></iframe>',
+  "block with handler": '<div onclick="alert(1)">click</div>',
+  "inline handler": 'a <span onmouseover="alert(1)">b</span> c',
+  "style block": "<style>body{display:none}</style>\n\ntext",
+  "style attribute": 'a <span style="position:fixed;inset:0">x</span>',
+  svg: "<svg onload=alert(1)><script>alert(1)</script></svg>",
+  "html comment": "<!-- <img src=x onerror=alert(1)> -->",
+  "javascript link": "[x](javascript:alert(1))",
+  "mixed-case javascript link": "[x](JaVaScRiPt:alert(1))",
+  "entity-encoded javascript link": "[x](javascript&#58;alert(1))",
+  "javascript reference link": "[x][r]\n\n[r]: javascript:alert(1)",
+  "javascript autolink": "<javascript:alert(1)>",
+  "data link": "[x](data:text/html,<script>alert(1)</script>)",
+  "vbscript link": "[x](vbscript:msgbox)",
+  "protocol-relative link": "[x](//evil.example)",
+  "javascript image": "![x](javascript:alert(1))",
+  "data image": "![x](data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)",
+  "protocol-relative image": "![x](//evil.example/a.png)",
+  "quote break in href": '[x](https://a.example/"onmouseover="alert(1))',
+  "quote break in title": '[x](https://a.example "t\\" onmouseover=alert(1) x")',
+  "html in fenced code": "```html\n<script>alert(1)</script>\n<img src=x onerror=alert(1)>\n```",
+  "html in inline code": "`<img src=x onerror=alert(1)>`",
+};
+
+const UNSAFE_URL = /^\s*(javascript|data|vbscript):|^\s*\/\//i;
+
+describe("Markdown with untrusted input", () => {
+  it.each(Object.entries(HOSTILE))("%s renders inert", (_name, markdown) => {
+    for (const streaming of [false, true]) {
+      const { container, unmount } = render(() => <Markdown markdown={markdown} streaming={streaming} />);
+      expect(container.querySelector("script, iframe, style, svg, object, embed, form")).toBeNull();
+      for (const element of container.querySelectorAll("*")) {
+        for (const attribute of element.attributes) {
+          expect(attribute.name, element.outerHTML).not.toMatch(/^on/i);
+          if (attribute.name === "style") expect(element.matches("td, th"), element.outerHTML).toBe(true);
+        }
+      }
+      for (const element of container.querySelectorAll("[href], [src]")) {
+        expect(element.getAttribute("href") ?? element.getAttribute("src"), element.outerHTML).not.toMatch(UNSAFE_URL);
+      }
+      unmount();
+    }
+  });
+
+  it("keeps HTML in code as text", () => {
+    const { container } = render(() => <Markdown markdown={`${HOSTILE["html in fenced code"]}\n\n${HOSTILE["html in inline code"]}`} />);
+    expect(container.querySelector("pre code")?.textContent).toBe(
+      "<script>alert(1)</script>\n<img src=x onerror=alert(1)>\n",
+    );
+    expect(container.querySelector("p code")?.textContent).toBe("<img src=x onerror=alert(1)>");
+  });
+
+  // Words accepts these addresses on its own; only sanitizeLinkUri rejects them.
+  it.each([
+    ["ftp autolink", "<ftp://example.com/file>", "ftp://example.com/file"],
+    ["bare ftp link", "ftp://example.com/file", "ftp://example.com/file"],
+    ["xmpp autolink", "<xmpp:alice@example.com>", "xmpp:alice@example.com"],
+    ["relative link", "[the page](./page)", "the page"],
+    ["query-only link", "[search](?q=1)", "search"],
+  ])("renders a %s as plain text", (_name, markdown, text) => {
+    const { container } = render(() => <Markdown markdown={markdown} />);
+    expect(container.querySelector("a")).toBeNull();
+    expect(container).toHaveTextContent(text);
+  });
+
+  it.each([
+    ["relative image", "![diagram](docs/d.png)"],
+    ["ftp image", "![diagram](ftp://example.com/d.png)"],
+    ["javascript image", "![diagram](javascript:alert(1))"],
+  ])("shows the alt text of a rejected %s", (_name, markdown) => {
+    const { container } = render(() => <Markdown markdown={`Before ${markdown} after`} />);
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector("p")?.textContent).toBe("Before diagram after");
+  });
+
+  it("keeps a link nested in a rejected link, and only that link", () => {
+    const { container } = render(() => <Markdown markdown={"[see <https://example.com/x> here](./relative)"} />);
+    const links = container.querySelectorAll("a");
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveAttribute("href", "https://example.com/x");
+    expect(container.querySelector("p")?.textContent).toBe("see https://example.com/x here");
+  });
+
+  it("leaves no empty anchor when a rejected link contains a rejected autolink", () => {
+    const { container } = render(() => <Markdown markdown={"[see <ftp://example.com/x>](./relative)"} />);
+    expect(container.querySelector("a")).toBeNull();
+    expect(container.querySelector("p")?.textContent).toBe("see ftp://example.com/x");
+  });
+
+  it("keeps a footnote reference inside a rejected link to itself", () => {
+    const { container } = render(() => <Markdown markdown={"[a [^1] b](ftp://example.com)\n\n[^1]: Note."} />);
+    const references = container.querySelectorAll("a[data-footnote-ref]");
+    expect(references).toHaveLength(1);
+    expect(references[0]).toHaveTextContent("1");
+    const ids = [...container.querySelectorAll("[id]")].map((element) => element.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(container.querySelector("p")?.textContent).toBe("a 1 b");
+  });
+
+  it("keeps a link around a rejected image readable", () => {
+    render(() => <Markdown markdown={"[![preview <b>](relative.png)](https://example.com/page)"} />);
+    const link = screen.getByRole("link", { name: "preview <b>" });
+    expect(link).toHaveAttribute("href", "https://example.com/page");
+    expect(link.querySelector("img, b")).toBeNull();
+  });
+
+  it("holds image addresses to the link rules", () => {
+    render(() => <Markdown markdown={"![remote](https://example.com/a.png) ![local](/a.png) ![relative](a.png)"} />);
+    expect(screen.getByRole("img", { name: "remote" })).toHaveAttribute("src", "https://example.com/a.png");
+    expect(screen.getByRole("img", { name: "local" })).toHaveAttribute("src", "/a.png");
+    expect(screen.queryByRole("img", { name: "relative" })).toBeNull();
+    expect(screen.getByText(/relative/)).toBeInTheDocument();
+  });
+});
+
+describe("Markdown while streaming", () => {
+  it("keeps a text selection while content grows", () => {
+    const [markdown, setMarkdown] = createSignal("# Summary\n\nThe answer");
+    render(() => <Markdown markdown={markdown()} streaming />);
+    const selection = document.getSelection();
+    selection?.selectAllChildren(screen.getByRole("heading", { name: "Summary" }));
+    for (const suffix of [" is", " is here.", " is here.\n\n- Done"]) {
+      setMarkdown(`# Summary\n\nThe answer${suffix}`);
+      expect(selection?.toString()).toBe("Summary");
+    }
+  });
+
+  it("completes unfinished syntax only while streaming", () => {
+    const [streaming, setStreaming] = createSignal(true);
+    const { container } = render(() => <Markdown markdown="Partly **bold" streaming={streaming()} />);
+    expect(container.querySelector("strong")).toHaveTextContent("bold");
+    setStreaming(false);
+    expect(container.querySelector("strong")).toBeNull();
+    expect(container).toHaveTextContent("Partly **bold");
   });
 });

@@ -295,11 +295,13 @@ summaryTest("streaming Markdown preserves link focus and code scrolling", async 
 
   for (const [chunk, text] of [
     [" is", "The answer is"],
-    [" **arriving", "The answer is **arriving"],
+    // Unfinished emphasis renders as emphasis while the summary streams.
+    [" **arriving", "The answer is arriving"],
     [" now**.\n\n- Done", "The answer is arriving now."],
   ]) {
     summaryResponse.write(chunk);
     await expect(markdown.getByText(text, { exact: true })).toBeVisible();
+    await expect(markdown.getByText("**")).toHaveCount(0);
     await expect(regenerate).toBeDisabled();
     await expect(link).toBeFocused();
     expect(await link.evaluate((element, original) => element === original, originalLink)).toBe(true);
