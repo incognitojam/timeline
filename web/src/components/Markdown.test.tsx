@@ -1,7 +1,11 @@
-import { describe, it, expect } from "vitest";
-import { render, screen } from "@solidjs/testing-library";
+import { describe, it, expect, vi } from "vitest";
+import { render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { Markdown, sanitizeLinkUri } from "./Markdown";
+
+// Loading the highlighter compiles WebAssembly, which can take seconds on a busy
+// machine; the test timeout, not waitFor's one-second default, bounds a hang.
+const HIGHLIGHTED = { timeout: 20_000 };
 
 describe("sanitizeLinkUri", () => {
   it("allows http links", () => {
@@ -412,8 +416,10 @@ describe("Markdown with untrusted input", () => {
     }
   });
 
-  it("keeps HTML in code as text", () => {
+  it("keeps HTML in code as text once highlighted", async () => {
     const { container } = render(() => <Markdown markdown={`${HOSTILE["html in fenced code"]}\n\n${HOSTILE["html in inline code"]}`} />);
+    await waitFor(() => expect(container.querySelector("pre code span[style]")).not.toBeNull(), HIGHLIGHTED);
+    expect(container.querySelector("script, img, [onerror]")).toBeNull();
     expect(container.querySelector("pre code")?.textContent).toBe(
       "<script>alert(1)</script>\n<img src=x onerror=alert(1)>\n",
     );
@@ -502,5 +508,47 @@ describe("Markdown while streaming", () => {
     setStreaming(false);
     expect(container.querySelector("strong")).toBeNull();
     expect(container).toHaveTextContent("Partly **bold");
+  });
+});
+
+describe("Markdown code highlighting", () => {
+  it("highlights fenced code with colours for both schemes, keeping the code text", async () => {
+    const { container } = render(() => <Markdown markdown={"```ts\nconst x = 1;\n```"} />);
+    const code = container.querySelector("pre code");
+    await waitFor(() => expect(code?.querySelector("span[style*='light-dark(']")).not.toBeNull(), HIGHLIGHTED);
+    expect(container.querySelector("pre code")).toBe(code);
+    expect(code?.textContent).toBe("const x = 1;\n");
+    expect(container.querySelector("pre")?.textContent).toBe("const x = 1;\n");
+    expect(container.querySelector("[data-markdown=code-block]")).toHaveAttribute("data-language", "ts");
+  });
+
+  // A fresh module each time, so detection rather than an already loaded highlighter is tested.
+  it.each([
+    ["in a blockquote", "> Quoted:\n>\n> ```ts\n> const x = 1;\n> ```"],
+    ["under a list item", "- Step\n\n  ```ts\n  const x = 1;\n  ```"],
+    ["under a two-digit list item", "10. Step\n\n    ```ts\n    const x = 1;\n    ```"],
+    ["indented with a tab", "- Step\n\n\t```ts\n\tconst x = 1;\n\t```"],
+  ])("highlights a fence %s when nothing else on the page has code", async (_name, markdown) => {
+    vi.resetModules();
+    const { Markdown: Fresh } = await import("./Markdown");
+    const { container } = render(() => <Fresh markdown={markdown} />);
+    await waitFor(() => expect(container.querySelector("pre code span[style]")).not.toBeNull(), HIGHLIGHTED);
+    expect(container.querySelector("pre code")?.textContent).toBe("const x = 1;\n");
+  });
+
+  it("renders code once with a highlighter that has already loaded", async () => {
+    render(() => <Markdown markdown={"```ts\nconst warm = 1;\n```"} />);
+    await waitFor(() => expect(document.querySelector("pre code span[style]")).not.toBeNull(), HIGHLIGHTED);
+    const { container } = render(() => <Markdown markdown={"```ts\nconst x = 1;\n```"} />);
+    expect(container.querySelector("pre code span[style]")).not.toBeNull();
+  });
+
+  it("highlights a fence that arrives after the first render", async () => {
+    const [markdown, setMarkdown] = createSignal("Plain text");
+    const { container } = render(() => <Markdown markdown={markdown()} streaming />);
+    setMarkdown("Plain text\n\n```sh\nbun run dev");
+    await waitFor(() => expect(container.querySelector("pre code span[style]")).not.toBeNull(), HIGHLIGHTED);
+    setMarkdown("Plain text\n\n```sh\nbun run dev\nbun test\n```");
+    expect(container.querySelector("pre code")?.textContent).toBe("bun run dev\nbun test\n");
   });
 });

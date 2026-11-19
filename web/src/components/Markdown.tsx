@@ -1,5 +1,10 @@
-import { createDomRenderer, createHtmlRenderer, type HtmlOptions } from "@pierre/words/html";
-import { createRenderEffect, type JSX, onCleanup } from "solid-js";
+import {
+  type CodeHighlighterPlugin,
+  createDomRenderer,
+  createHtmlRenderer,
+  type HtmlOptions,
+} from "@pierre/words/html";
+import { createRenderEffect, type JSX, onCleanup, untrack } from "solid-js";
 
 interface MarkdownProps {
   markdown: string;
@@ -83,17 +88,58 @@ function finishingFormatter(options: HtmlOptions) {
   };
 }
 
+// The highlighter and its WebAssembly load the first time a rendered message
+// has a code block with a language. Once loaded, new instances get it at creation.
+const CODE_WITH_LANGUAGE = '[data-markdown="code-block"]:not([data-language="text"])';
+let highlighter: CodeHighlighterPlugin | undefined;
+let loading: Promise<CodeHighlighterPlugin> | undefined;
+function loadHighlighter(): Promise<CodeHighlighterPlugin> {
+  loading ??= import("./markdown-highlighter").then(
+    (module) => {
+      highlighter = module.highlighter;
+      return highlighter;
+    },
+    (error: unknown) => {
+      // Code stays plain. A later message tries again, which helps after a
+      // transient network error; a chunk removed by a deploy stays missing.
+      loading = undefined;
+      throw error;
+    },
+  );
+  return loading;
+}
+
 let instances = 0;
 
 export function Markdown(props: MarkdownProps): JSX.Element {
   const root = (<div class={props.class} />) as HTMLDivElement;
   // Footnote ids must not collide between messages on the same page.
-  const instanceOptions = { ...baseOptions, idPrefix: `md${++instances}-` };
-  const renderer = createDomRenderer(root, instanceOptions, finishingFormatter(instanceOptions));
-  createRenderEffect(() => {
+  const plain = { ...baseOptions, idPrefix: `md${++instances}-` };
+  const highlighted = (code: CodeHighlighterPlugin) => ({ ...plain, plugins: { code } });
+  const options = highlighter ? highlighted(highlighter) : plain;
+  const renderer = createDomRenderer(root, options, finishingFormatter(options));
+  const render = () => {
     const streaming = props.streaming === true;
     renderer.update(props.markdown, streaming, streaming);
+  };
+  let disposed = false;
+  let requested = highlighter !== undefined;
+  createRenderEffect(() => {
+    render();
+    if (requested || !root.querySelector(CODE_WITH_LANGUAGE)) return;
+    requested = true;
+    loadHighlighter().then(
+      (code) => {
+        if (disposed) return;
+        renderer.configure(highlighted(code));
+        untrack(render);
+      },
+      (error: unknown) => console.warn("Code highlighting is unavailable; showing code without it.", error),
+    );
   });
-  onCleanup(() => renderer.disconnect());
+  onCleanup(() => {
+    disposed = true;
+    renderer.disconnect();
+  });
   return root;
 }

@@ -122,9 +122,37 @@ body,
   }
 }
 
-/* @pierre/words puts a header with the language before each code block. */
+/* Fenced code from Markdown, in every caller. These rules are unlayered, so
+   they take precedence over typography's pre styles. Highlight colours use
+   light-dark(), so the frame takes theme tokens instead of typography's
+   always-dark pre. The label is generated content so that copying the code
+   leaves it out, unlike Words' header element, which stays hidden. */
+[data-markdown="code-block"] {
+  margin-block: 0.25rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-card);
+  overflow: hidden;
+}
+[data-markdown="code-block"]:not([data-language="text"])::before {
+  content: attr(data-language);
+  display: block;
+  padding: 0.125rem 1rem;
+  border-bottom: 1px solid var(--color-border);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--color-muted-foreground);
+}
 [data-markdown="code-header"] {
   display: none;
+}
+[data-markdown="code-block"] pre {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-foreground);
 }
 
 /* Remove extra margins from markdown code blocks in tool calls */

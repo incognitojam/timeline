@@ -14,7 +14,7 @@ import { DiscordEmoji } from "./DiscordEmoji";
 import { externalLinkProps, hexColor, pickImageSrc } from "./discord-media";
 
 const TEXT_CLASS =
-  "prose prose-sm dark:prose-invert max-w-none break-words prose-headings:mt-0 prose-headings:mb-1 prose-p:my-0 prose-ul:my-1 prose-ol:my-1 prose-pre:my-1";
+  "prose prose-sm dark:prose-invert max-w-none break-words prose-headings:mt-0 prose-headings:mb-1 prose-p:my-0 prose-ul:my-1 prose-ol:my-1";
 const SUBTEXT_CLASS = "text-xs text-muted-foreground break-words [&_a]:underline";
 const BUTTON_LINK_STYLE = 5;
 const BUTTON_STYLE_CLASS: Record<number, string> = {

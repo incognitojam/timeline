@@ -36,7 +36,7 @@ function Summary(props: { aggregated: AggregatedAIMeta }): JSX.Element {
   return (
     <Show when={props.aggregated.conversationSummary}>
       {(summary) => (
-        <div class="prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-pre:my-1 prose-pre:text-xs prose-code:text-xs text-sm text-muted-foreground">
+        <div class="prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-pre:text-xs prose-code:text-xs text-sm text-muted-foreground">
           <Markdown markdown={summary()} />
         </div>
       )}
