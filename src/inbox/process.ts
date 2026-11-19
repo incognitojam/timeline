@@ -53,6 +53,7 @@ export interface ParserResult {
   eventsAdded: number;
   eventsUpdated?: number;
   detectedType?: string;
+  skipReason?: string;
 }
 
 /**
@@ -90,12 +91,13 @@ const PARSERS: Record<string, () => Promise<ParserFunction>> = {
     };
   },
   "claude": async () => {
-    const { importClaudeExport } = await import("../platforms/claude/parser");
-    return (db, filePath, sourceAccount) => {
+    const { importClaudeExport, getClaudeSkipReason } = await import("../platforms/claude/parser");
+    return async (db, filePath, sourceAccount) => {
       if (!sourceAccount) {
         throw new Error("claude parser requires a source account");
       }
-      return importClaudeExport(db, filePath, sourceAccount);
+      const skipReason = getClaudeSkipReason(filePath);
+      return { eventsAdded: await importClaudeExport(db, filePath, sourceAccount), skipReason };
     };
   },
   "amex": async () => {
@@ -263,9 +265,12 @@ export async function processSource(
         eventsAdded
       );
 
+      const skipReason = typeof parserResult === "number" ? undefined : parserResult.skipReason;
       completeSyncLog(appStateDb, logId, {
         source: detectedType,
         success: true,
+        skipped: !!skipReason,
+        metadata: skipReason ? { skipReason } : undefined,
         eventsAdded,
         eventsUpdated,
         durationMs: Date.now() - startTime,

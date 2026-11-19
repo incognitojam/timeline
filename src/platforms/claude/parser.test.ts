@@ -495,3 +495,31 @@ describe("importClaudeExport", () => {
     expect(raw.key_facts).toEqual(["Fact one", "Fact two"]);
   });
 });
+
+describe("category exports", () => {
+  it("imports multipart conversations through inbox detection, retains raw branches and guards accounts", async () => {
+    const { processAutoDetectZip } = await import("../../inbox/zip-handlers");
+    const { rename } = await import("node:fs/promises");
+    const dir = join(tmpdir(), `claude-category-${randomUUID()}`);
+    await mkdir(dir);
+    const db = new Database(":memory:");
+    initDb(db);
+    try {
+      const conversation = (id: string): FixtureConversation => ({
+        uuid: id, name: "Synthetic conversation", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+        chat_messages: [{ uuid: "message", text: "Hello", sender: "human", created_at: "2026-01-01T00:00:00Z" }],
+      });
+      const first = await buildExportZip(dir, [conversation("first")]);
+      const second = await buildExportZip(dir, [conversation("second")]);
+      const part0 = join(dir, "conversations-000.zip");
+      await rename(first, part0);
+      await rename(second, join(dir, "conversations-001.zip"));
+      expect((await processAutoDetectZip(db, part0, "tester")).detectedType).toBe("claude");
+      expect(await importClaudeExport(db, dir, "tester")).toBe(1);
+      expect(await importClaudeExport(db, dir, "tester")).toBe(0);
+      expect(await importClaudeExport(db, dir, "tester", { dryRun: true })).toBe(0);
+      await expect(importClaudeExport(db, dir, "different")).rejects.toThrow("--allow-new-account");
+      expect(db.query("SELECT count(*) AS n FROM events").get()).toEqual({ n: 2 });
+    } finally { db.close(); await rm(dir, { recursive: true, force: true }); }
+  });
+});

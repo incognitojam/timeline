@@ -35,6 +35,7 @@ test -f "$ARTIFACT/Resources/runtime/scheduler/worker.js"
 test -f "$ARTIFACT/Resources/runtime/db/pool-worker.js"
 test -f "$ARTIFACT/Resources/runtime/db/sqlite.js"
 test -f "$ARTIFACT/Resources/runtime/platforms/monzo/parser.js"
+test -f "$ARTIFACT/Resources/runtime/platforms/claude/parser.js"
 test -f "$ARTIFACT/Resources/web/index.html"
 test -f "$ARTIFACT/Resources/version.json"
 test ! -e "$ARTIFACT/.git"
@@ -179,6 +180,20 @@ fi
 if [[ "$relative_output" != *"TIMELINE_DB_PATH must be an absolute path"* ]]; then
   echo "FAIL: relative database path did not produce migration guidance" >&2
   echo "$relative_output" >&2
+  exit 1
+fi
+
+echo "Probing packaged Claude entry point..."
+if claude_output="$(
+  HOME="$TMP/home" TIMELINE_DB_PATH="$TMP/missing-claude.db" TIMELINE_ENV_FILE="$TMP/missing.env" \
+    "$ARTIFACT/bin/bun" --no-env-file "$ARTIFACT/Resources/runtime/platforms/claude/parser.js" "$TMP/export.zip" synthetic-account --dry-run 2>&1
+)"; then
+  echo "FAIL: Claude parser accepted a missing database" >&2
+  exit 1
+fi
+if [[ "$claude_output" != *"Database does not exist:"* ]] || [[ -e "$TMP/missing-claude.db" ]]; then
+  echo "FAIL: Claude parser did not reject a missing database without creating it" >&2
+  echo "$claude_output" >&2
   exit 1
 fi
 

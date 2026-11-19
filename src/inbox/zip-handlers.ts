@@ -4,11 +4,10 @@
  * Processes different types of ZIP exports (Google Takeout, Spotify, etc.)
  */
 
+import { detectClaudeCategory, extractedExports } from "../platforms/claude/export";
 import { Database } from "../db/sqlite";
 import { basename, dirname } from "path";
 import {
-  extractZip,
-  cleanupExtract,
   detectZipContent,
   type ZipContentType,
 } from "./zip";
@@ -21,6 +20,7 @@ interface AutoDetectResult {
   eventsAdded: number;
   eventsUpdated: number;
   detectedType: string;
+  skipReason?: string;
 }
 
 /**
@@ -32,10 +32,13 @@ export async function processAutoDetectZip(
   sourceAccount: string | null
 ): Promise<AutoDetectResult> {
   console.log(`  Extracting: ${basename(zipPath)}`);
-  const { tempDir, files } = await extractZip(zipPath);
+  const extracts = extractedExports(zipPath);
+  const next = await extracts.next();
+  if (next.done) throw new Error("No archive to process");
+  const { tempDir, files } = next.value;
 
   try {
-    const contentType = detectZipContent(files);
+    const contentType = await detectClaudeCategory(zipPath, tempDir, files) ? "claude" : detectZipContent(files);
     console.log(`  Detected type: ${contentType}`);
 
     let eventsAdded: number;
@@ -71,6 +74,7 @@ export async function processAutoDetectZip(
         break;
 
       case "claude":
+        (await import("../platforms/claude/parser")).getClaudeSkipReason(zipPath);
         eventsAdded = await processClaudeZip(db, zipPath, sourceAccount);
         break;
 
@@ -84,9 +88,10 @@ export async function processAutoDetectZip(
         eventsAdded = 0;
     }
 
-    return { eventsAdded, eventsUpdated, detectedType: contentType };
+    const skipReason = contentType === "claude" ? (await import("../platforms/claude/parser")).getClaudeSkipReason(zipPath) : undefined;
+    return { eventsAdded, eventsUpdated, detectedType: contentType, ...(skipReason ? { skipReason } : {}) };
   } finally {
-    await cleanupExtract(tempDir);
+    await extracts.return(undefined);
   }
 }
 

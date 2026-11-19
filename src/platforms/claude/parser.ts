@@ -1,41 +1,25 @@
+import { parseConversation, extractedExports, detectClaudeCategory, categoryPattern } from "./export";
+import { createBoundedWriter } from "../../db/bounded-writes";
+import { isDeepStrictEqual } from "node:util";
+import { getServiceDbPath } from "../../db/paths";
+import { loadEnvFile } from "../../config";
+import { configureBunSqliteForSqliteVec } from "../../embeddings/sqlite-vec";
+import { existsSync } from "node:fs";
+import { readJsonArray } from "./json-array";
 import { Database } from "../../db/sqlite";
 import { parserCliArgs } from "../../ingest/cli";
-import { getDb, initDb } from "../../db/schema";
+
 import {
   onImportComplete,
   upsertIdentities,
   formatIdentifier,
   type UpsertIdentityOptions,
 } from "../../db/queries";
-import { mkdtemp, rm } from "fs/promises";
-import { tmpdir } from "os";
-import { join } from "path";
+import { basename, join, resolve } from "path";
 import {
-  type ContentBlock,
   extractText,
   toContentBlocks,
 } from "../../ingest/ai/format-content";
-import { backgroundCommand } from "../../lib/background-priority";
-
-interface ClaudeConversation {
-  uuid: string;
-  name: string;
-  summary?: string;
-  created_at: string;
-  updated_at: string;
-  chat_messages: ClaudeMessage[];
-}
-
-interface ClaudeMessage {
-  uuid: string;
-  text: string;
-  sender: "human" | "assistant";
-  created_at: string;
-  updated_at?: string;
-  content?: ContentBlock[];
-  attachments?: unknown[];
-  files?: unknown[];
-}
 
 interface ClaudeMemory {
   conversations_memory?: string;
@@ -54,18 +38,50 @@ interface ImportStats {
 
 export interface ImportClaudeOptions {
   refreshRawData?: boolean;
+  dryRun?: boolean;
+  allowNewAccount?: boolean;
 }
 
 // Claude.ai exports don't include model information, so we use a generic identifier
 const CLAUDE_ASSISTANT_PLATFORM_ID = "assistant";
 const CLAUDE_ASSISTANT_DISPLAY_NAME = "Claude";
 
-export async function importClaudeExport(
+export function getClaudeSkipReason(path: string): string | undefined {
+  const category = categoryPattern.exec(basename(path))?.[1];
+  if (!category || ["conversations"].includes(category)) return undefined;
+  if (["memories", "projects"].includes(category)) throw new Error(`Claude ${category} import is not supported by this version; leave this ZIP unprocessed for a later version`);
+  return `skipped: not imported (${category})`;
+}
+
+export async function importClaudeExport(db: Database, zipPath: string, sourceAccount: string, options: ImportClaudeOptions = {}): Promise<number> {
+  const preview = await runClaudeImport(db, zipPath, sourceAccount, { ...options, dryRun: true }, !options.dryRun);
+  if (options.dryRun) return preview.added;
+  if (!options.allowNewAccount && (preview.otherAccountMessages || preview.accountHasNoHistory)) {
+    throw new Error(`Export messages already exist under another account or the supplied account has no history; confirm a separate account with --allow-new-account\nMessages already present under other accounts: ${preview.otherAccountMessages}\nSupplied account has no history: ${preview.accountHasNoHistory}`);
+  }
+  return (await runClaudeImport(db, zipPath, sourceAccount, options)).added;
+}
+
+async function runClaudeImport(
   db: Database,
   zipPath: string,
   sourceAccount: string,
-  options: ImportClaudeOptions = {}
-): Promise<number> {
+  options: ImportClaudeOptions = {},
+  preflight = false
+): Promise<{ added: number; otherAccountMessages: number; accountHasNoHistory: boolean }> {
+  if (!sourceAccount.trim()) throw new Error("Claude import requires an explicit account name");
+  const accounts = db.prepare("SELECT DISTINCT source_account FROM events WHERE source = 'claude'").all() as { source_account: string }[];
+  const accountHasNoHistory = accounts.length > 0 && !accounts.some((row) => row.source_account === sourceAccount);
+  const skippedCategories = new Set<string>();
+  const writer = createBoundedWriter(db);
+  const existing = db.prepare("SELECT id, title, raw_data FROM events WHERE source = 'claude' AND source_id = ? AND source_account = ?");
+  const otherAccount = db.prepare("SELECT 1 FROM events WHERE source = 'claude' AND source_id = ? AND source_account != ? LIMIT 1");
+  let otherAccountMessages = 0;
+  let emptyConversations = 0;
+  let renamedConversations = 0;
+  let existingMemories = 0;
+  let existingMessages = 0;
+  let existingConversations = 0;
   const importBatch = `claude-${sourceAccount}-${Date.now()}`;
   const refreshRawData = options.refreshRawData ?? false;
 
@@ -105,7 +121,7 @@ export async function importClaudeExport(
     INSERT OR IGNORE INTO events (
       source, source_id, source_account, type, timestamp,
       title, content, people, tags, raw_data, import_batch, conversation_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
   `);
 
   const updateRefresh = db.prepare(`
@@ -113,27 +129,22 @@ export async function importClaudeExport(
     WHERE source = ? AND source_id = ? AND source_account = ?
   `);
 
-  // Extract ZIP to temp directory
-  const tempDir = await mkdtemp(join(tmpdir(), "claude-export-"));
-
-  try {
-    // Extract using unzip command (reliable and handles large files)
-    const proc = Bun.spawn(backgroundCommand(["unzip", "-q", "-o", zipPath, "-d", tempDir]));
-    await proc.exited;
-
-    if (proc.exitCode !== 0) {
-      throw new Error(`Failed to extract ZIP: exit code ${proc.exitCode}`);
+  for await (const { tempDir, category, files, zipPath: archive } of extractedExports(zipPath)) {
+    if (category && !(await detectClaudeCategory(archive, tempDir, files))) throw new Error("Invalid Claude category contents");
+    if (category && category !== "conversations") {
+      skippedCategories.add(category);
+      continue;
     }
-
     // Parse conversations.json
-    const conversationsPath = join(tempDir, "conversations.json");
+    const conversationsPath = files.find((file) => basename(file) === "conversations.json") ?? join(tempDir, "conversations.json");
     const conversationsFile = Bun.file(conversationsPath);
 
     if (await conversationsFile.exists()) {
-      const conversations: ClaudeConversation[] = await conversationsFile.json();
-      console.log(`Found ${conversations.length} conversations`);
-
-      for (const conv of conversations) {
+      for await (const value of readJsonArray(conversationsPath)) {
+        const conv = parseConversation(value);
+        let conversationExists = false;
+        let renamed = false;
+        let importable = false;
         stats.conversations++;
 
         const title = conv.name || `Untitled (${conv.uuid.slice(0, 8)})`;
@@ -149,11 +160,8 @@ export async function importClaudeExport(
               ? toContentBlocks(msg.content)
               : toContentBlocks(msg.text);
           const contentText = extractText(blocks);
-
-          if (blocks.length === 0) {
-            stats.skipped++;
-            continue;
-          }
+          if (blocks.length === 0) { stats.skipped++; continue; }
+          importable = true;
 
           const people =
             msg.sender === "human"
@@ -172,7 +180,19 @@ export async function importClaudeExport(
           }
 
           const sourceId = `${conv.uuid}:${msg.uuid}`;
+          const stored = existing.get(sourceId, sourceAccount) as { id: number; title: string; raw_data: string } | null;
+          if (otherAccount.get(sourceId, sourceAccount)) otherAccountMessages++;
+          if (stored) { existingMessages++; conversationExists = true; if (conv.name && stored.title !== title) renamed = true; }
+          if (stored && !refreshRawData && (!conv.name || stored.title === title)) {
+            await writer.breathe();
+            continue;
+          }
+          const { content: originalContent, text: originalText, ...messageFields } = msg;
           const rawData = JSON.stringify({
+            ...messageFields,
+            text: originalText === contentText ? undefined : originalText,
+            account_uuid: conv.account?.uuid,
+            original_content: isDeepStrictEqual(originalContent, blocks) ? undefined : originalContent,
             conversation_uuid: conv.uuid,
             message_uuid: msg.uuid,
             conversation_name: conv.name,
@@ -183,7 +203,13 @@ export async function importClaudeExport(
             content: blocks,
           });
 
-          const result = insert.run(
+          if (options.dryRun) {
+            if (!stored) stats.messages++;
+            else if (refreshRawData && stored.raw_data !== rawData) stats.refreshed++;
+            continue;
+          }
+          await writer.add(() => {
+          const result = insert.get(
             "claude",
             sourceId,
             sourceAccount,
@@ -198,9 +224,11 @@ export async function importClaudeExport(
             conv.uuid
           );
 
-          if (result.changes > 0) {
+          if (result !== null) {
             stats.messages++;
-          } else if (refreshRawData) {
+          } else if (refreshRawData && stored && stored.raw_data !== rawData) {
+            const previous = JSON.parse(stored.raw_data) as { updated_at?: string | null };
+            db.prepare("INSERT INTO event_versions (event_id, observed_at, source_edited_at, raw_data) VALUES (?, ?, ?, ?)").run(stored.id, new Date().toISOString(), previous.updated_at ?? null, stored.raw_data);
             updateRefresh.run(
               contentText,
               rawData,
@@ -209,20 +237,17 @@ export async function importClaudeExport(
               sourceAccount
             );
             stats.refreshed++;
-          } else {
-            stats.skipped++;
           }
+          if (stored && conv.name && stored.title !== title) db.prepare("UPDATE events SET title = ? WHERE id = ?").run(title, stored.id);
+          }, rawData.length * 2);
+          await writer.breathe();
         }
 
-        // Progress indicator
-        if (stats.conversations % 50 === 0) {
-          console.log(
-            `  Processed ${stats.conversations} conversations, ${stats.messages.toLocaleString()} messages...`
-          );
-        }
+        if (conversationExists) existingConversations++;
+        if (!importable) emptyConversations++;
+        if (renamed) renamedConversations++;
+
       }
-    } else {
-      console.log("No conversations.json found in export");
     }
 
     // Parse memories.json
@@ -231,7 +256,6 @@ export async function importClaudeExport(
 
     if (await memoriesFile.exists()) {
       const memories: ClaudeMemory[] = await memoriesFile.json();
-      console.log(`Found ${memories.length} memory entries`);
 
       for (let i = 0; i < memories.length; i++) {
         const memory = memories[i];
@@ -250,7 +274,10 @@ export async function importClaudeExport(
           continue;
         }
 
-        const result = insert.run(
+        if (existing.get(`memory:${i}`, sourceAccount)) { existingMemories++; continue; }
+        if (options.dryRun) { stats.memories++; continue; }
+        await writer.flush();
+        const result = insert.get(
           "claude",
           `memory:${i}`,
           sourceAccount,
@@ -265,50 +292,56 @@ export async function importClaudeExport(
           null
         );
 
-        if (result.changes > 0) {
+        if (result !== null) {
           stats.memories++;
         }
       }
     }
-  } finally {
-    // Clean up temp directory
-    await rm(tempDir, { recursive: true, force: true });
   }
+  await writer.flush();
 
   // Upsert all collected identities
-  if (identities.size > 0) {
+  if (!options.dryRun && identities.size > 0) {
     upsertIdentities(db, [...identities.values()]);
     stats.identitiesUpserted = identities.size;
   }
 
-  // Print summary
+  if (!preflight) {
   console.log(`\n${"=".repeat(50)}`);
-  console.log("Import complete:");
-  console.log(`  Conversations: ${stats.conversations}`);
-  console.log(`  Messages: ${stats.messages.toLocaleString()}`);
-  console.log(`  Memories: ${stats.memories}`);
+  console.log(options.dryRun ? "Dry run:" : "Import complete:");
+  console.log(`  Conversations new: ${stats.conversations - existingConversations - emptyConversations}; already present: ${existingConversations}`);
+  console.log(`  Empty conversations: ${emptyConversations}; renamed conversations: ${renamedConversations}`);
+  console.log(`  Messages already present under other accounts: ${otherAccountMessages}`);
+  console.log(`  Messages new: ${stats.messages}; already present: ${existingMessages}`);
+  console.log("  Projects: 0 (not imported)");
+  console.log(`  Memories new: ${stats.memories}; already present: ${existingMemories}`);
   if (refreshRawData) {
     console.log(`  Refreshed: ${stats.refreshed.toLocaleString()}`);
   }
   console.log(`  Identities: ${stats.identitiesUpserted}`);
-  console.log(`  Skipped: ${stats.skipped}`);
+  console.log(`  Empty messages skipped: ${stats.skipped}`);
+  for (const category of skippedCategories) console.log(`  Skipped: not imported (${category})`);
+  if (accountHasNoHistory) console.log("  Warning: supplied account has no history, but another Claude account does");
   console.log(`  Batch ID: ${importBatch}`);
+  }
 
-  onImportComplete(db);
+  if (!options.dryRun) onImportComplete(db);
 
-  return stats.messages + stats.memories;
+  return { added: stats.messages + stats.memories, otherAccountMessages, accountHasNoHistory };
 }
 
 // CLI
 if (import.meta.main) {
   const args = parserCliArgs({
-    usage: "bun run src/platforms/claude/parser.ts <export.zip> [account-name]",
-    flags: ["--refresh-raw-data"],
-    minArgs: 1,
+    usage: "bun run src/platforms/claude/parser.ts <export.zip> <account-name>",
+    flags: ["--refresh-raw-data", "--dry-run", "--allow-new-account"],
+    minArgs: 2,
     details: `Imports Claude.ai conversation export into timeline.
 Export from: claude.ai → Settings → Account → Export Data
 
-  --refresh-raw-data  Rewrite content + raw_data for existing rows
+  --dry-run          Read-only counts before importing
+  --allow-new-account Confirm this is a separate Claude account
+  --refresh-raw-data  Archive previous raw data, then rewrite existing content + raw data
 
 Examples:
   bun run src/platforms/claude/parser.ts ~/Downloads/data-export.zip my-account
@@ -321,7 +354,7 @@ Examples:
     ? positional[0].replace("~", process.env.HOME || "")
     : positional[0];
 
-  const accountName = positional[1] || "default";
+  const accountName = positional[1];
 
   console.log(`Importing Claude export from ${zipPath}`);
   console.log(`Account: ${accountName}`);
@@ -332,10 +365,16 @@ Examples:
   }
   console.log();
 
-  const db = getDb();
-  initDb(db);
+  const dryRun = args.includes("--dry-run");
+  loadEnvFile();
+  const dbPath = resolve(process.env.TIMELINE_DB_PATH || getServiceDbPath());
+  if (!existsSync(dbPath)) throw new Error(`Database does not exist: ${dbPath}`);
+  configureBunSqliteForSqliteVec();
+  const db = new Database(dbPath, { readonly: dryRun, create: false });
+  const count = db.prepare("SELECT count(*) AS n FROM events").get() as { n: number };
+  console.log(`Database: ${dbPath} (${count.n} events)`);
 
-  await importClaudeExport(db, zipPath, accountName, { refreshRawData });
+  await importClaudeExport(db, zipPath, accountName, { refreshRawData, dryRun, allowNewAccount: args.includes("--allow-new-account") });
 
   db.close();
 }
