@@ -320,9 +320,14 @@ fails. The rehearsal passes when every line of the summary says `PASS`:
   drop;
 - no drift before the rebuild, and every check clean after it, with no member
   rows from before the rule left;
-- the WAL's peak within about 400 bytes per new row;
-- the new row count within what the 5 GB free-space floor below covers;
-- the WAL's peak plus a 1 GB allowance for temporary files within that floor.
+- the WAL's peak within 400 bytes per new row;
+- the new row count within what the 10 GB free-space floor below covers, at
+  1,300 bytes per new row;
+- the WAL's peak plus 900 bytes per new row for writes outside the WAL (the
+  index sorts' temporary files and the copy's copy-on-write) within that floor.
+
+Those figures come from the rehearsal on a copy with 3.4 million new rows,
+where free space dipped by about 4 GB, 1.07 GB of it WAL.
 
 The `DECIDE` line points at the figures the decision rests on, in the `after`
 step: `eventsNoLongerHiddenBySource`, the events per source that hiding a
@@ -333,7 +338,7 @@ contact will no longer hide, and `identitiesNowWithoutEvents`.
 The first two steps run with the service up; if either stops you, nothing has
 changed and nothing is held.
 
-1. **Free space.** `df -h "${DB:?}"` must show at least 5 GB available. Stop
+1. **Free space.** `df -h "${DB:?}"` must show at least 10 GB available. Stop
    if less is free.
 
 2. **Backup.** On the web app's Sync page, open the `backup` source and run it.

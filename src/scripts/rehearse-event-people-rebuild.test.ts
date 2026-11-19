@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { copyFileSync, linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { applyConnectionPragmas } from "../db/connection";
 import { initDb } from "../db/schema";
 import { Database } from "../db/sqlite";
-import { assertRehearsalCopy, rehearse } from "./rehearse-event-people-rebuild";
+import { REBUILD_SPACE, assertRehearsalCopy, rehearse, spaceCriteria } from "./rehearse-event-people-rebuild";
 import { verifyEventPeople } from "./verify-event-people";
 
 let root: string;
@@ -187,5 +187,37 @@ describe("rehearse", () => {
       passed: false,
       detail: "verification failed: Error: verification interrupted",
     });
+  });
+});
+
+describe("spaceCriteria", () => {
+  const passed = (rows: number, walPeak: number) =>
+    Object.fromEntries(spaceCriteria(rows, walPeak).map((criterion) => [criterion.name, criterion.passed]));
+
+  test("passes the rehearsal measured on a 3.4-million-event copy", () => {
+    expect(passed(3_397_044, 1.07e9)).toEqual({
+      "WAL per new row within the estimate": true,
+      "New rows within what the free-space floor covers": true,
+      "Peak space within the free-space floor": true,
+    });
+  });
+
+  test("fails a WAL larger than the estimate, or more rows than the floor covers", () => {
+    expect(passed(3_397_044, 1.5e9)["WAL per new row within the estimate"]).toBe(false);
+    expect(passed(8_000_000, 3e9)).toEqual({
+      "WAL per new row within the estimate": true,
+      "New rows within what the free-space floor covers": false,
+      "Peak space within the free-space floor": false,
+    });
+  });
+
+  test("states the figures the host guide gives", () => {
+    const guide = readFileSync(resolve(import.meta.dir, "../../docs/user/macos-host.md"), "utf8").replace(/\s+/g, " ");
+    const { floorBytes, walBytesPerRow, otherBytesPerRow } = REBUILD_SPACE;
+    expect(guide).toContain(`at least ${floorBytes / 1e9} GB available`);
+    expect(guide).toContain(`the ${floorBytes / 1e9} GB free-space floor`);
+    expect(guide).toContain(`within ${walBytesPerRow} bytes per new row`);
+    expect(guide).toContain(`at ${(walBytesPerRow + otherBytesPerRow).toLocaleString("en-US")} bytes per new row`);
+    expect(guide).toContain(`plus ${otherBytesPerRow} bytes per new row`);
   });
 });

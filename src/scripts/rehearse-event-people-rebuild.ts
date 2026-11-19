@@ -31,13 +31,47 @@ import {
   verifyEventPeople,
 } from "./verify-event-people";
 
-/** Free space the host guide requires before a rebuild. */
-export const FREE_SPACE_FLOOR_BYTES = 5e9;
-/** Room left for the index sorts' temporary files, which the rehearsal can't see. */
-const TEMP_FILES_ALLOWANCE_BYTES = 1e9;
-/** WAL per new row the floor assumes, plus a fixed allowance for small tables. */
-const WAL_BYTES_PER_ROW = 400;
-const WAL_FIXED_BYTES = 16e6;
+/**
+ * The space a rebuild needs, from a rehearsal on a copy with 3.4 million new
+ * rows: free space dipped about 4 GB, 1.07 GB of it WAL (316 bytes per row).
+ * The host guide's runbook states these figures; a test keeps them in step.
+ */
+export const REBUILD_SPACE = {
+  /** Free space the host guide requires before a rebuild. */
+  floorBytes: 10e9,
+  /** WAL per new row: measured 316. */
+  walBytesPerRow: 400,
+  /** Writes outside the WAL per new row, which the rehearsal can't see: the
+   * index sorts' temporary files and a copy's copy-on-write. Measured about
+   * (4 GB - 1.07 GB) / 3.4 million = 860. */
+  otherBytesPerRow: 900,
+  /** WAL a small table writes regardless of its rows. */
+  walFixedBytes: 16e6,
+} as const;
+
+/** The space criteria for a rebuild that wrote `rows` rows and a WAL that peaked at `walPeak` bytes. */
+export function spaceCriteria(rows: number, walPeak: number): Criterion[] {
+  const { floorBytes, walBytesPerRow, otherBytesPerRow, walFixedBytes } = REBUILD_SPACE;
+  const otherBytes = rows * otherBytesPerRow;
+  const rowsTheFloorCovers = Math.floor(floorBytes / (walBytesPerRow + otherBytesPerRow));
+  return [
+    {
+      name: "WAL per new row within the estimate",
+      passed: walPeak <= rows * walBytesPerRow + walFixedBytes,
+      detail: `${walPeak} bytes for ${rows} rows (estimate ${walBytesPerRow} bytes per row)`,
+    },
+    {
+      name: "New rows within what the free-space floor covers",
+      passed: rows <= rowsTheFloorCovers,
+      detail: `${rows} rows; the floor covers ${rowsTheFloorCovers} at ${walBytesPerRow + otherBytesPerRow} bytes each`,
+    },
+    {
+      name: "Peak space within the free-space floor",
+      passed: walPeak + otherBytes <= floorBytes,
+      detail: `${walPeak} WAL + ${otherBytes} other writes (${otherBytesPerRow} bytes per row) against a floor of ${floorBytes}`,
+    },
+  ];
+}
 
 const SIDECARS = ["", "-wal", "-shm"];
 
@@ -147,13 +181,7 @@ export function rehearse(path: string, { print, verify = verifyEventPeople }: Re
       outcome.kind === "committed" ? JSON.stringify(outcome.after) : `verification failed: ${String(outcome.error)}`);
     if (outcome.kind === "committed") step("verify after", outcome.after);
 
-    check("WAL per new row within the estimate", walPeak <= outcome.rows * WAL_BYTES_PER_ROW + WAL_FIXED_BYTES,
-      `${walPeak} bytes for ${outcome.rows} rows (estimate ${WAL_BYTES_PER_ROW} bytes per row)`);
-    const rowsTheFloorCovers = Math.floor((FREE_SPACE_FLOOR_BYTES - TEMP_FILES_ALLOWANCE_BYTES) / WAL_BYTES_PER_ROW);
-    check("New rows within what the free-space floor covers", outcome.rows <= rowsTheFloorCovers,
-      `${outcome.rows} rows; the floor covers ${rowsTheFloorCovers} at ${WAL_BYTES_PER_ROW} bytes each`);
-    check("Peak WAL and temp files within the free-space floor", walPeak + TEMP_FILES_ALLOWANCE_BYTES <= FREE_SPACE_FLOOR_BYTES,
-      `${walPeak} WAL + ${TEMP_FILES_ALLOWANCE_BYTES} temp allowance against a floor of ${FREE_SPACE_FLOOR_BYTES}`);
+    criteria.push(...spaceCriteria(outcome.rows, walPeak));
 
     const now = snapshot();
     const hiddenNow = new Map(now.hiddenBySource.map((row) => [row.source, row.events]));
