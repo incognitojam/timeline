@@ -74,11 +74,15 @@ export interface DaySummaryResult {
   metadata: SummaryMetadata | null;
 }
 
+function isUsageObject(usage: unknown): usage is Readonly<Record<string, unknown>> {
+  return !!usage && typeof usage === "object" && !Array.isArray(usage);
+}
+
 function openRouterCost(providerMetadata: ProviderMetadata | undefined): number | undefined {
   const metadata = providerMetadata?.openrouter;
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return undefined;
   const usage = metadata.usage;
-  if (!usage || typeof usage !== "object" || Array.isArray(usage)) return undefined;
+  if (!isUsageObject(usage)) return undefined;
   return typeof usage.cost === "number" ? usage.cost : undefined;
 }
 
