@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -51,7 +52,11 @@ func TestDownloadMediaExistingCopies(t *testing.T) {
 			}
 			msg := &gmproto.Message{MessageID: "message", MessageInfo: []*gmproto.MessageInfo{{Data: &gmproto.MessageInfo_MediaContent{MediaContent: media}}}}
 			calls := 0
-			download := func(id string, key []byte) (io.ReadCloser, error) {
+			ctx := t.Context()
+			download := func(downloadCtx context.Context, id string, key []byte) (io.ReadCloser, error) {
+				if downloadCtx != ctx {
+					t.Fatal("download did not receive the caller's context")
+				}
 				calls++
 				if scenario == "download failure" {
 					return nil, fmt.Errorf("synthetic download failure")
@@ -61,7 +66,7 @@ func TestDownloadMediaExistingCopies(t *testing.T) {
 				}
 				return io.NopCloser(strings.NewReader(content)), nil
 			}
-			records := downloadMedia(zerolog.Nop(), download, dir, msg, known)
+			records := downloadMedia(ctx, zerolog.Nop(), download, dir, msg, known)
 			wantCalls, wantStatus := 1, "stored"
 			switch scenario {
 			case "valid":

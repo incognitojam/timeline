@@ -398,7 +398,7 @@ func dumpMessages(ctx context.Context, log zerolog.Logger, cli *libgm.Client, en
 			}
 			rec := messageRecord(msg)
 			if mediaDir != "" {
-				rec.Media = downloadMedia(log, cli.DownloadMedia, mediaDir, msg, knownMedia)
+				rec.Media = downloadMedia(ctx, log, cli.DownloadMedia, mediaDir, msg, knownMedia)
 			}
 			_ = enc.Encode(rec)
 			count++
@@ -419,7 +419,7 @@ func dumpMessages(ctx context.Context, log zerolog.Logger, cli *libgm.Client, en
 // under its own media ID and key; when the phone unlocks only that one, it is
 // downloaded instead so the part is not lost entirely. The record's status says
 // which copy landed on disk.
-func downloadMedia(log zerolog.Logger, download func(string, []byte) (io.ReadCloser, error), mediaDir string, msg *gmproto.Message, knownMedia existingMedia) []mediaRecord {
+func downloadMedia(ctx context.Context, log zerolog.Logger, download func(context.Context, string, []byte) (io.ReadCloser, error), mediaDir string, msg *gmproto.Message, knownMedia existingMedia) []mediaRecord {
 	var out []mediaRecord
 	for _, part := range msg.GetMessageInfo() {
 		mc, ok := part.GetData().(*gmproto.MessageInfo_MediaContent)
@@ -454,7 +454,7 @@ func downloadMedia(log zerolog.Logger, download func(string, []byte) (io.ReadClo
 			continue
 		}
 		path := filepath.Join(mediaDir, mediaFileName(id, media.GetMediaName()))
-		size, err := downloadMediaFile(download, id, key, path)
+		size, err := downloadMediaFile(ctx, download, id, key, path)
 		if err != nil {
 			log.Warn().Err(err).Str("media_id", id).Str("copy", status).Str("path", path).Msg("Media download failed")
 			rec.Status = "failed"
@@ -480,8 +480,8 @@ func mediaFileName(mediaID, mediaName string) string {
 
 // downloadMediaFile streams one decrypted attachment to path and returns the
 // number of bytes written.
-func downloadMediaFile(download func(string, []byte) (io.ReadCloser, error), mediaID string, key []byte, path string) (int64, error) {
-	body, err := download(mediaID, key)
+func downloadMediaFile(ctx context.Context, download func(context.Context, string, []byte) (io.ReadCloser, error), mediaID string, key []byte, path string) (int64, error) {
+	body, err := download(ctx, mediaID, key)
 	if err != nil {
 		return 0, err
 	}
