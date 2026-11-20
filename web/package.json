@@ -18,7 +18,7 @@
     "@kobalte/core": "^0.13.14",
     "@pierre/highlights": "^0.5.1",
     "@pierre/words": "^0.1.2",
-    "@solidjs/router": "^1.0.3",
+    "@solidjs/router": "^2.0.0",
     "@tailwindcss/typography": "^0.5.20",
     "@tanstack/query-persist-client-core": "^5.107.1",
     "@tanstack/query-sync-storage-persister": "^5.107.1",
