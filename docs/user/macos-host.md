@@ -348,15 +348,16 @@ changed and nothing is held.
 1. **Free space.** `df -h "${DB:?}"` must show at least 10 GB available. Stop
    if less is free.
 
-2. **Backup.** On the web app's Sync page, open the `backup` source and run it.
-   It writes `timeline-<date>T<time>.db` to the directory set as its
-   destination in that source's settings, normally on the NAS, and keeps only
-   the most recent copies, so this one will be pruned by later runs. Set
-   `BACKUP_DIR` to that destination and `KEEP_DIR` to a directory outside it
-   with room for a copy as large as `timeline.db`, for example a folder beside
-   it on the NAS. When the run has succeeded, keep the newest copy and check
-   it opens and counts the events the status page shows (this reads the whole
-   file, so it takes a while on a NAS):
+2. **Backup.** On the web app's Sync page, open the `backup` source and run it
+   with **Sync Now**. If it is listed under **Not set up**, first set its
+   **Backup directory**, turn on **Automatic sync** and save. It writes
+   `timeline-<date>T<time>.db` to that directory, normally on the NAS, and
+   keeps only the most recent copies, so this one will be pruned by later
+   runs. Set `BACKUP_DIR` to that directory and `KEEP_DIR` to a directory
+   outside it with room for a copy as large as `timeline.db`, for example a
+   folder beside it on the NAS. When the run has succeeded, keep the newest
+   copy and check it opens and counts the events the status page shows (this
+   reads the whole file, so it takes a while on a NAS):
 
    ```bash
    BACKUP="${BACKUP_DIR:?}/$(ls -t "${BACKUP_DIR:?}" | grep -E '^timeline-.+[.]db$' | head -n 1)"
