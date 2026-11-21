@@ -1,5 +1,23 @@
 # Timeline
 
+## 0.22.0
+
+### Minor Changes
+
+- 09e30d5: Import Claude conversation category ZIPs individually or from a multipart export folder, with bounded writes and read-only preview counts. Preserve the operator's account identity and require confirmation before importing under a new account when Claude history already exists.
+- 89423a3: Import Claude memory files and project memories with stable identities. Retain the legacy conversation memory without duplicating it and archive prior raw data when memory content changes.
+- cd95726: Import Claude projects with their instructions and full documents. Link memories and infer conversation project tags only from unambiguous exact memory-path segments matching exported projects.
+- 70ffcce: Code blocks in Markdown are syntax-highlighted, in colours that follow the light or dark theme, with the language shown above the code. This covers coding-agent and AI chat messages, day summaries, journal reflections, release notes and Discord embeds. The highlighter downloads only when a page first shows a code block.
+
+### Patch Changes
+
+- 8976658: Rebuilding the people index (`verify-event-people --force-rebuild`) is much faster for large group chats and reuses the old index's space instead of growing the database file. The verifier now names the database, event count and SQLite version and library it uses, refuses a SQLite older than 3.38 and a rebuild of a missing or empty database, and exits 2 for a rebuild that rolled back and 3 for one that committed but did not verify. The macOS host guide has a runbook for the rebuild and a rehearsal script that runs it on a copy first.
+- 1d8306c: Editing an event that lists the same person more than once, such as a note with a contact added twice, no longer fails with a database constraint error.
+- cb26b39: `verify-event-people --force-rebuild` now stops before changing the people index when its check finds drift, and says when a rebuild has committed before checking it; `--rebuild` still rebuilds to repair drift. The macOS host guide's rebuild runbook verifies once instead of twice, holding the service for about 31 minutes, gives the times and space measured on a 3.4-million-event database, and raises the free-space floor to 10 GB, which the rehearsal checks against the same figures.
+- 752b1c3: In a group conversation, a message now counts for the person who sent it rather than for every member: contact and identity event counts, a contact's conversations, events with a person, and hiding a contact follow the sender. Hiding a contact no longer hides other people's messages in groups they belong to. Messages indexed before this release keep counting every member until the people index is rebuilt.
+- fdd73b8: Day summaries and journal reflections no longer flash raw Markdown such as `**` or an unclosed link while they are still being written. Markdown images whose address is not a web or Timeline address, such as `data:` or `javascript:`, are no longer shown, matching the rule links already followed.
+- e7ce2ae: The web app and the `/status` page are served with a Content-Security-Policy that runs scripts only from Timeline itself, so script markup that reached a page through imported or generated text, such as a `javascript:` link in a sync error, could not run. The map popup's "View in timeline" button keeps its hover highlight under the policy.
+
 ## 0.21.0
 
 ### Minor Changes
