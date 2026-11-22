@@ -10,7 +10,7 @@
         "@fontsource/ibm-plex-mono": "^5.3.0",
         "@kobalte/core": "^0.13.14",
         "@pierre/highlights": "^0.5.1",
-        "@pierre/words": "^0.1.2",
+        "@pierre/words": "^0.2.2",
         "@solidjs/router": "^1.0.3",
         "@tailwindcss/typography": "^0.5.20",
         "@tanstack/query-persist-client-core": "^5.108.0",
@@ -209,7 +209,7 @@
 
     "@pierre/highlights": ["@pierre/highlights@0.5.1", "", {}, "sha512-c2WF6sgwgKdxXU6FpWDLWUYHRca/cJy+3QJkWAqYqEAFxqlPf8eSH0ehHcFFjKBmT+9KBl9H7q6z7HMRU7+m6g=="],
 
-    "@pierre/words": ["@pierre/words@0.1.2", "", { "peerDependencies": { "@pierre/highlights": ">=0.5.1", "react": "^18.3.1 || ^19.0.0" }, "optionalPeers": ["@pierre/highlights", "react"] }, "sha512-nw0ousjiHdqvdEUNHOCZi57W2m5wZtkLjq1odXsl97aBB32oPV1FMPbwYbL+yy+aqnxX81jk1Dr3QVQojT3JJA=="],
+    "@pierre/words": ["@pierre/words@0.2.2", "", { "peerDependencies": { "@pierre/highlights": ">=0.5.1", "react": "^18.3.1 || ^19.0.0" }, "optionalPeers": ["@pierre/highlights", "react"] }, "sha512-gOMolXeQzPK9IVNDimh8pronqzpFISFxp+rhobKT8NYQsTOpDLQKgr0rjwZn3I/kHLF+Sqoe2aIO/R7H71IzwQ=="],
 
     "@playwright/test": ["@playwright/test@1.65.1", "", { "dependencies": { "playwright": "1.65.1" }, "bin": { "playwright": "cli.js" } }, "sha512-y+NCIRm2LvY4slUVWvGh1nujJ8RF/hEisIsq2mtUPgdQC4L701bq5hZGMhrpeXjACvwvO9tj5dJqhvM6TP9lbw=="],
 
