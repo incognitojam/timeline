@@ -19,6 +19,18 @@
       "schedule": [
         "* 0-3 1 * *"
       ]
+    },
+    {
+      "description": "Hold Solid 2 until stable @solidjs/vite-plugin 3 (vite-plugin-solid's successor) and @tanstack/solid-query 6 are available",
+      "matchPackageNames": [
+        "solid-js",
+        "@solidjs/router",
+        "@solidjs/testing-library",
+        "vite-plugin-solid",
+        "@tanstack/solid-query"
+      ],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
     }
   ]
 }
