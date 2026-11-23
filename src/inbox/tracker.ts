@@ -9,6 +9,7 @@ import { Database } from "../db/sqlite";
 import { createHash } from "crypto";
 import { stat } from "fs/promises";
 import { getAppStateDb } from "../db/app-state";
+import { isHiddenInboxFile } from "./filename";
 
 export interface ProcessedFile {
   id: number;
@@ -149,6 +150,7 @@ export async function findUnprocessedFiles(
     const glob = new Glob(pattern);
 
     for await (const file of glob.scan({ cwd: directory, absolute: true })) {
+      if (isHiddenInboxFile(file)) continue;
       try {
         const fileStats = await stat(file);
         if (!fileStats.isFile()) continue;

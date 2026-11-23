@@ -8,7 +8,7 @@
  * - Recent sync history
  */
 
-import { mkdir } from "fs/promises";
+import { mkdir, rename, rm } from "fs/promises";
 import { Hono } from "hono";
 import { basename, join } from "path";
 import { loadConfig, parseInterval, resolveSourcePath } from "../config";
@@ -440,7 +440,14 @@ export const statusRoutes = new Hono()
     // Write file, then enqueue an inbox-process job directly so uploads do not
     // depend on a separate fs.watch event.
     const targetPath = join(targetDir, basename(filename));
-    await Bun.write(targetPath, file);
+    const tempPath = join(targetDir, `.upload-${crypto.randomUUID()}.tmp`);
+    try {
+      await Bun.write(tempPath, file);
+      await rename(tempPath, targetPath);
+    } catch (error) {
+      await rm(tempPath, { force: true });
+      throw error;
+    }
 
     const outcome = enqueueJob({
       kind: "inbox-process",

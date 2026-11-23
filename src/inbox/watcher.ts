@@ -12,6 +12,7 @@ import type { ServiceConfig, InboxSourceConfig } from "../config";
 import { resolveSourcePath } from "../config";
 import { processSource, type ProcessResult } from "./process";
 import type { InboxConfig } from "./config";
+import { isHiddenInboxFile } from "./filename";
 import { enqueueJob } from "../jobs/store";
 import type { EnqueueOutcome, JobTrigger } from "../jobs/types";
 
@@ -256,7 +257,7 @@ export class InboxWatcher {
     }
 
     // Ignore events for hidden files and temp files
-    if (filename.startsWith(".") || filename.endsWith(".tmp") || filename.endsWith(".part")) {
+    if (isHiddenInboxFile(filename) || filename.endsWith(".tmp") || filename.endsWith(".part")) {
       return;
     }
 
