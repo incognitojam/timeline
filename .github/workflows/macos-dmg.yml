@@ -114,8 +114,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ inputs.tag }}
         run: ./generate-appcast.sh
-      - name: Generate verified edge deltas
-        if: inputs.edge-version != ''
+      - name: Generate verified update deltas
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -123,8 +122,8 @@ jobs:
           VERSION: ${{ inputs.edge-version }}
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
         run: |
-          cp dist/macos/appcast.xml dist/macos/full-appcast.xml
-          python3 -B scripts/ci/sparkle_deltas.py "$VERSION" "${VERSION##*.}" ||
+          if [[ -n "$VERSION" ]]; then cp dist/macos/appcast.xml dist/macos/full-appcast.xml; fi
+          python3 -B scripts/ci/sparkle_deltas.py "${VERSION:-${RELEASE_TAG#v}}" "$(scripts/print-build-number.sh)" ||
             echo "::warning::Delta generation failed; publishing the full update."
       - name: Save the signed edge build
         if: inputs.edge-version != ''
@@ -151,7 +150,8 @@ jobs:
           jq -e --arg tag "$RELEASE_TAG" '[.[][] | select(.tag_name == $tag)] | length == 1' <<< "$releases"
           test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
           # Rebuild the whole draft asset set on retries so signatures and checksums match the DMG.
-          gh release upload "$RELEASE_TAG" dist/macos/*.dmg dist/macos/*.sha256 --clobber
+          shopt -s nullglob
+          gh release upload "$RELEASE_TAG" dist/macos/*.dmg dist/macos/*.sha256 dist/macos/*.delta --clobber
           gh release upload "$RELEASE_TAG" dist/macos/appcast.xml --clobber
       - name: Publish the completed release
         if: inputs.edge-version == ''

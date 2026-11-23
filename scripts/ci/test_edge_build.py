@@ -214,6 +214,13 @@ class AppcastTests(unittest.TestCase):
             with self.assertRaises(Refusal):
                 check(enclosure, directory, ())
 
+    def test_stable_feed_matches_release_tag_and_bundle_build(self):
+        xml = APPCAST.replace(VERSION, "0.21.1").replace("/nightly/", "/v0.21.1/")
+        check_appcast(xml, "example/timeline", "v0.21.1", "0.21.1", 1, build=1347)
+        for tag, build in (("v0.21.0", 1347), ("v0.21.1", 1346)):
+            with self.assertRaises(Refusal):
+                check_appcast(xml, "example/timeline", tag, "0.21.1", 1, build=build)
+
     def test_reads_the_offered_build(self):
         self.assertEqual(feed_build(APPCAST), 1347)
 

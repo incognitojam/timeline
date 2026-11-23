@@ -43,7 +43,7 @@ Every build includes [Sparkle](https://sparkle-project.org/documentation/) updat
 
 Set `SPARKLE_ED_PRIVATE_KEY` in the `release` Actions environment to the exported Sparkle signing seed matching the committed public key. Keep a secure backup outside the repository: existing installations trust this key. Packaging requires the secret, checks it against the app's key, signs the notarized DMG in `appcast.xml`, and always uploads the feed alongside the download assets. The signing-check artifact also includes the appcast. Missing or mismatched keys fail packaging.
 
-The release stays a draft until the appcast and download assets are attached. During packaging, the latest-release URL continues serving the previous published stable release.
+The release stays a draft until the appcast and download assets are attached. Stable releases also offer a signed, verified Sparkle delta from the immediately preceding published stable version when one can be generated. Edge installations switching to stable download the full image. CI uploads the delta alongside the DMG before attaching the feed. During packaging, the latest-release URL continues serving the previous published stable release.
 
 Before replacement, the app pauses service-agent reconciliation, creates an owned maintenance hold, and waits for the service to stop. Failed preparation refuses termination. The relaunched bundle removes only its own hold and lets the service recover; manual maintenance holds and capture preferences are preserved. Capture stops with the old app and resumes according to those preferences when the new app launches. See [Updating](../user/macos-host.md#updating) for install-on-quit behavior and recovery.
 
