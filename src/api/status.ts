@@ -187,7 +187,8 @@ export function getInboxStats(): InboxSourceStatus[] {
           WHERE p2.source = processed_files.source
           ORDER BY processed_at DESC LIMIT 1) as total_size,
          COALESCE(SUM(events_added), 0) as total_events,
-         MAX(processed_at) as last_processed
+         MAX(processed_at) as last_processed,
+         detected_type
        FROM processed_files
        GROUP BY source
        ORDER BY source`
@@ -198,22 +199,8 @@ export function getInboxStats(): InboxSourceStatus[] {
     total_size: number;
     total_events: number;
     last_processed: string | null;
+    detected_type: string | null;
   }[];
-
-  // Get the most recent detected_type for each source
-  const lastTypes = appDb
-    .prepare(
-      `SELECT source, detected_type
-       FROM processed_files
-       WHERE (source, processed_at) IN (
-         SELECT source, MAX(processed_at)
-         FROM processed_files
-         GROUP BY source
-       )`
-    )
-    .all() as { source: string; detected_type: string | null }[];
-
-  const typeMap = new Map(lastTypes.map((t) => [t.source, t.detected_type]));
 
   return stats.map((s) => ({
     source: s.source,
@@ -221,7 +208,7 @@ export function getInboxStats(): InboxSourceStatus[] {
     totalSize: s.total_size || 0,
     totalEvents: s.total_events,
     lastProcessed: s.last_processed,
-    lastDetectedType: typeMap.get(s.source) ?? null,
+    lastDetectedType: s.detected_type,
   }));
 }
 
