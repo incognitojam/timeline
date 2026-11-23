@@ -45,6 +45,7 @@ import { getDiscordServer, listDiscordServers } from "../platforms/discord/serve
 import { getWakaTimeProject, getWakaTimeProjectSessions, getWakaTimeStats } from "../platforms/wakatime/stats";
 import { mcpRoutes } from "./mcp";
 import { generateStatusMarkdown, renderMarkdownToHtml } from "./status-md";
+import { uploadAuth } from "./upload-auth";
 import { authMiddleware, authRoutes, isAuthEnabled, assertApiAuthConfigured } from "./auth";
 import { createMcpHandler, FUNNEL_HEADER } from "./mcp-http";
 import { configureBunSqliteForSqliteVec } from "../embeddings/sqlite-vec";
@@ -317,7 +318,7 @@ if (process.env.NODE_ENV !== "test") {
 
 
 // Create Hono app
-const app = new Hono();
+const app = new Hono<{ Bindings: { peerAddress?: string } }>();
 
 app.onError((error, c) => {
   if (c.req.raw.signal.aborted && error.name === "AbortError") {
@@ -357,25 +358,26 @@ let activeApiRequests = 0;
 // Log structured API request completions to journald-friendly stdout.
 app.use("*", async (c, next) => {
   const isApiRequest = c.req.path.startsWith("/api/");
-  const activeAtStart = isApiRequest ? ++activeApiRequests : activeApiRequests;
+  const logRequest = isApiRequest || /^Bearer\s+tlu_/i.test(c.req.header("Authorization") ?? "");
+  const activeAtStart = logRequest ? ++activeApiRequests : activeApiRequests;
   const start = performance.now();
   try {
     await next();
   } finally {
     const durationMs = Math.round(performance.now() - start);
 
-    if (isApiRequest) {
+    if (logRequest) {
       const activeAtEnd = activeApiRequests - 1;
       activeApiRequests = activeAtEnd;
       const url = new URL(c.req.url);
-      const querySummary = summarizeQueryForLogs(url);
+      const querySummary = isApiRequest ? summarizeQueryForLogs(url) : { queryKeys: [], query: {} };
       const dbPool = readDbPool.getStats();
       console.log(
         JSON.stringify({
           timestamp: new Date().toISOString(),
           event: "request.complete",
           method: c.req.method,
-          path: url.pathname,
+          path: isApiRequest || ["/mcp", "/status", "/status.md"].includes(url.pathname) ? url.pathname : "[non-API route]",
           queryKeys: querySummary.queryKeys,
           query: querySummary.query,
           status: c.res.status,
@@ -401,6 +403,7 @@ app.use("*", async (c, next) => {
 });
 
 // Auth middleware (must be before cors so it runs first on API routes)
+app.use("*", uploadAuth);
 app.use("/api/*", authMiddleware);
 for (const path of ["/status", "/status.md"]) {
   app.use(path, async (c, next) => {
@@ -2751,7 +2754,7 @@ if (webDistPath) {
 // Export app for testing
 export { app };
 
-type RequestTimeoutServer = Pick<Bun.Server<undefined>, "timeout">;
+type RequestTimeoutServer = Pick<Bun.Server<undefined>, "timeout"> & Partial<Pick<Bun.Server<undefined>, "requestIP">>;
 const manualAttachmentDescriptionPath = new RegExp(MANUAL_ATTACHMENT_DESCRIPTION_PATH_PATTERN, "u");
 
 /**
@@ -2764,7 +2767,7 @@ export function fetchApiRequest(request: Request, server: RequestTimeoutServer) 
   if (!request.headers.has(FUNNEL_HEADER) && request.method === "POST" && manualAttachmentDescriptionPath.test(path)) {
     server.timeout(request, 0);
   }
-  return app.fetch(request);
+  return app.fetch(request, { peerAddress: server.requestIP?.(request)?.address });
 }
 
 let apiServer: Bun.Server<undefined> | null = null;

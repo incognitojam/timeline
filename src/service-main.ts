@@ -288,6 +288,7 @@ export async function runService(
   // Set service state for status API
   const inboxDirs = getInboxDirectories(config);
   setServiceComponents({
+    config,
     startTime,
     schedulerEnabled: config.scheduler.enabled,
     watcherEnabled: config.inbox.watch_enabled,

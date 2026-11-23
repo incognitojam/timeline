@@ -20,6 +20,7 @@ export const SMALL_TABLES: Record<string, string> = {
   file_import_epochs: "One row per importing source/account.",
   sync_sources: "One row per registered sync source.",
   app_settings: "One row per application setting.",
+  upload_tokens: "One row per operator-issued upload token.",
   scheduler_state: "One row per scheduled source.",
   sync_state: "One row per sync source.",
   ...Object.fromEntries(FTS_TABLES.map(table => [`${table}_config`, "FTS configuration, not document history."])),

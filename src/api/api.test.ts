@@ -3021,8 +3021,8 @@ describe("API Smoke Tests", () => {
       expect(json.message).toContain("Unknown inbox source");
     });
 
-    test("POST /api/inbox/upload rejects invalid filename", async () => {
-      const file = new File(["test"], ".hidden", { type: "application/json" });
+    test.each([".hidden", "x/.hidden.xml"])("POST /api/inbox/upload rejects filename %s", async (name) => {
+      const file = new File(["test"], name, { type: "application/json" });
       const formData = new FormData();
       formData.append("file", file);
       formData.append("source", "test");

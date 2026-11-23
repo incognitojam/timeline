@@ -68,52 +68,74 @@ type ParserFunction = (
   context?: ParserContext
 ) => Promise<number | ParserResult>;
 
-const PARSERS: Record<string, () => Promise<ParserFunction>> = {
-  "sms-backup-restore": async () => {
-    const module = await import("../platforms/phone/parser");
-    return module.processSmsFile;
+const PARSERS: Record<string, { tokenEligible: boolean; load: () => Promise<ParserFunction> }> = {
+  "sms-backup-restore": {
+    tokenEligible: true,
+    load: async () => {
+      const module = await import("../platforms/phone/parser");
+      return module.processSmsFile;
+    },
   },
-  "google-takeout": async () => {
-    const { processGoogleTakeoutZip } = await import("../platforms/google/takeout/handler");
-    // Wrap to pass context as options
-    return (db, filePath, sourceAccount, context) =>
-      processGoogleTakeoutZip(db, filePath, sourceAccount, {
-        rcloneRemote: context?.rcloneRemote,
-      });
+  "google-takeout": {
+    tokenEligible: false,
+    load: async () => {
+      const { processGoogleTakeoutZip } = await import("../platforms/google/takeout/handler");
+      // Wrap to pass context as options
+      return (db, filePath, sourceAccount, context) =>
+        processGoogleTakeoutZip(db, filePath, sourceAccount, {
+          rcloneRemote: context?.rcloneRemote,
+        });
+    },
   },
-  "google-timeline": async () => {
-    const { importTimelineData } = await import("../platforms/google/location/parser-timeline");
-    return (db, filePath, sourceAccount) => {
-      if (!sourceAccount) {
-        throw new Error("google-timeline parser requires a source account");
-      }
-      return importTimelineData(db, filePath, sourceAccount);
-    };
+  "google-timeline": {
+    tokenEligible: true,
+    load: async () => {
+      const { importTimelineData } = await import("../platforms/google/location/parser-timeline");
+      return (db, filePath, sourceAccount) => {
+        if (!sourceAccount) {
+          throw new Error("google-timeline parser requires a source account");
+        }
+        return importTimelineData(db, filePath, sourceAccount);
+      };
+    },
   },
-  "claude": async () => {
-    const { importClaudeExport, getClaudeSkipReason } = await import("../platforms/claude/parser");
-    return async (db, filePath, sourceAccount) => {
-      if (!sourceAccount) {
-        throw new Error("claude parser requires a source account");
-      }
-      const skipReason = getClaudeSkipReason(filePath);
-      return { eventsAdded: await importClaudeExport(db, filePath, sourceAccount), skipReason };
-    };
+  "claude": {
+    tokenEligible: false,
+    load: async () => {
+      const { importClaudeExport, getClaudeSkipReason } = await import("../platforms/claude/parser");
+      return async (db, filePath, sourceAccount) => {
+        if (!sourceAccount) {
+          throw new Error("claude parser requires a source account");
+        }
+        const skipReason = getClaudeSkipReason(filePath);
+        return { eventsAdded: await importClaudeExport(db, filePath, sourceAccount), skipReason };
+      };
+    },
   },
-  "amex": async () => {
-    const { importAmexData } = await import("../platforms/amex/parser");
-    return (db, filePath, sourceAccount) => {
-      if (!sourceAccount) {
-        throw new Error("amex parser requires a source account");
-      }
-      return importAmexData(db, filePath, sourceAccount);
-    };
+  "amex": {
+    tokenEligible: true,
+    load: async () => {
+      const { importAmexData } = await import("../platforms/amex/parser");
+      return (db, filePath, sourceAccount) => {
+        if (!sourceAccount) {
+          throw new Error("amex parser requires a source account");
+        }
+        return importAmexData(db, filePath, sourceAccount);
+      };
+    },
   },
-  "auto-detect": async () => {
-    const { processAutoDetectZip } = await import("./zip-handlers");
-    return processAutoDetectZip;
+  "auto-detect": {
+    tokenEligible: false,
+    load: async () => {
+      const { processAutoDetectZip } = await import("./zip-handlers");
+      return processAutoDetectZip;
+    },
   },
 };
+
+export function isTokenEligibleParser(parser: string): boolean {
+  return Object.hasOwn(PARSERS, parser) && PARSERS[parser]?.tokenEligible === true;
+}
 
 /**
  * Get parser function for a source
@@ -123,7 +145,7 @@ async function getParser(parserName: string): Promise<ParserFunction | null> {
   if (!loader) {
     return null;
   }
-  return await loader();
+  return await loader.load();
 }
 
 /**
