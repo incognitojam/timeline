@@ -171,9 +171,10 @@ export class InboxWatcher {
       jobId: options.jobId ?? null,
     });
 
-    if (result.filesProcessed > 0) {
+    if (result.filesProcessed > 0 || result.filesWaiting > 0) {
+      const waiting = result.filesWaiting > 0 ? `, ${result.filesWaiting} waiting` : "";
       console.log(
-        `InboxWatcher: ${sourceName}: ${result.filesProcessed} file(s), +${result.eventsAdded} events`
+        `InboxWatcher: ${sourceName}: ${result.filesProcessed} file(s), +${result.eventsAdded} events${waiting}`
       );
     }
 

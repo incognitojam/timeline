@@ -1,10 +1,11 @@
 /**
- * Serves a recording's audio from where call-transcribe keeps it. The path
- * always comes from the stored record, never from the request, and Timeline
- * never copies the file.
+ * Serves a recording's playable copy from Timeline's media store, with byte
+ * ranges so every browser can seek it. The copy is the event's attachment;
+ * the AMR original is never served, since browsers can't play it.
  */
-import { isAbsolute } from "node:path";
-import { playableAudio, readRecording } from "./shared/recording";
+import type { QueryExecutor } from "../../db/pool";
+import { getMediaStore, readOrRestore } from "../../media/storage";
+import { EVENT_SOURCE } from "./parser";
 
 function json(status: number, error: string): Response {
   return Response.json({ error }, { status });
@@ -28,19 +29,23 @@ export function parseRange(header: string | undefined, size: number): { start: n
   return { start, end };
 }
 
-/** The response for `GET /api/call-recordings/:id/audio`, given the event's stored raw_data. */
-export async function recordingAudioResponse(rawData: string, rangeHeader: string | undefined): Promise<Response> {
-  const recording = readRecording(rawData);
-  if (!recording) return json(500, "Stored recording record is unreadable");
-  const audio = playableAudio(recording);
-  if (!audio) return json(415, "No copy of this recording's audio is in a format browsers play");
-  if (!isAbsolute(audio.path)) return json(500, "Stored audio path is not absolute");
-  const file = Bun.file(audio.path);
-  if (!(await file.exists())) return json(404, "Audio file not found");
+/** The response for `GET /api/call-recordings/:id/audio`. */
+export async function recordingAudioResponse(db: QueryExecutor, eventId: number, rangeHeader: string | undefined): Promise<Response> {
+  const event = await db.get<{ id: number }>("SELECT id FROM events WHERE id = ? AND source = ?", eventId, EVENT_SOURCE);
+  if (!event) return json(404, "Recording not found");
+  const copy = await db.get<{ storage_path: string; content_hash: string; mime_type: string }>(
+    `SELECT storage_path, content_hash, mime_type FROM attachments
+     WHERE event_id = ? AND status = 'stored' AND mime_type NOT LIKE 'audio/amr%'
+     ORDER BY id LIMIT 1`,
+    eventId,
+  );
+  if (!copy) return json(415, "This recording has no copy browsers play");
+  const file = await readOrRestore(await getMediaStore(), copy.storage_path, () => copy.content_hash);
+  if (!file) return json(404, "Audio file not found");
 
-  const size = file.size;
+  const size = file.fileSize;
   const headers: Record<string, string> = {
-    "Content-Type": audio.mimeType,
+    "Content-Type": copy.mime_type,
     "Accept-Ranges": "bytes",
     "Cache-Control": "private, max-age=3600",
   };
@@ -48,8 +53,8 @@ export async function recordingAudioResponse(rawData: string, rangeHeader: strin
   if (range === "invalid") {
     return new Response(null, { status: 416, headers: { ...headers, "Content-Range": `bytes */${size}` } });
   }
-  if (range === null) return new Response(file, { status: 200, headers: { ...headers, "Content-Length": String(size) } });
-  return new Response(file.slice(range.start, range.end + 1), {
+  if (range === null) return new Response(file.content, { status: 200, headers: { ...headers, "Content-Length": String(size) } });
+  return new Response(file.content.slice(range.start, range.end + 1), {
     status: 206,
     headers: {
       ...headers,

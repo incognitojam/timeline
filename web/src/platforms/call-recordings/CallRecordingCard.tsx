@@ -1,6 +1,6 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
 import { sourceLabel } from "@shared/sources";
-import { playableAudio, readRecording, recordedSidesLabel, recordingAppLabel } from "@platforms/call-recordings/shared/recording";
+import { readRecording, recordingAppLabel } from "@platforms/call-recordings/shared/recording";
 import { parseTranscript } from "@platforms/call-recordings/shared/transcript";
 import type { TimelineEvent } from "../../lib/types";
 import { getSourceColorStyle } from "../../lib/source-styles";
@@ -33,15 +33,11 @@ const DIRECTIONS: Readonly<Record<string, string>> = {
   "recording:outgoing": "Outgoing",
 };
 
-/** A recorded call: who, when, how long, what was captured, and its transcript as a conversation. */
+/** A recorded call: who, when, how long, its audio, and its transcript as a conversation. */
 export default function CallRecordingCard(props: Props) {
   const [expanded, setExpanded] = createSignal(false);
   const colorStyle = () => getSourceColorStyle(props.event.source);
   const recording = createMemo(() => readRecording(props.event.raw_data));
-  const audio = () => {
-    const rec = recording();
-    return rec ? playableAudio(rec) : null;
-  };
   /**
    * A recording with a number holds just that caller. One placed by its call
    * holds that call's people, the owner included, so its title names it instead.
@@ -54,7 +50,7 @@ export default function CallRecordingCard(props: Props) {
   const turns = createMemo(() => (props.event.content ? parseTranscript(props.event.content) : []));
   const shownTurns = () => (expanded() ? turns() : turns().slice(0, PREVIEW_TURNS));
   const callLabel = () => {
-    const app = recording()?.source;
+    const app = recording()?.app;
     const direction = DIRECTIONS[props.event.type];
     const kind = app ? `${recordingAppLabel(app)} call` : "Call";
     return direction ? `${direction} ${kind.charAt(0).toLowerCase()}${kind.slice(1)}` : kind;
@@ -88,9 +84,6 @@ export default function CallRecordingCard(props: Props) {
                 {callLabel()}
                 <Show when={props.event.duration_ms}>
                   {(ms) => <>{" "}&bull; {formatDuration(ms())}</>}
-                </Show>
-                <Show when={recording()}>
-                  {(rec) => <>{" "}&bull; {recordedSidesLabel(rec().recorded_sides)}</>}
                 </Show>
               </span>
             </div>
@@ -128,10 +121,15 @@ export default function CallRecordingCard(props: Props) {
             </For>
 
             <Show
-              when={audio()}
+              when={recording()?.playable}
               fallback={
                 <Show when={recording()}>
-                  <p class="text-xs text-muted-foreground mt-1">No copy of the audio plays in a browser yet</p>
+                  {(rec) => (
+                    <p class="text-xs text-muted-foreground mt-1">
+                      Can't be played in a browser
+                      <Show when={rec().unplayable_reason}>{(reason) => <>: {reason()}</>}</Show>
+                    </p>
+                  )}
                 </Show>
               }
             >
@@ -143,15 +141,8 @@ export default function CallRecordingCard(props: Props) {
               />
             </Show>
 
-            <Show
-              when={turns().length > 0}
-              fallback={
-                <p class="text-xs text-muted-foreground mt-1">
-                  {recording()?.recorded_sides === "silent" ? "No transcript: the recording is silent" : "No transcript yet"}
-                </p>
-              }
-            >
-              <CallTranscript turns={shownTurns()} start={recording()?.start ?? null} />
+            <Show when={turns().length > 0}>
+              <CallTranscript turns={shownTurns()} start={null} />
               <Show when={turns().length > PREVIEW_TURNS}>
                 <button
                   type="button"

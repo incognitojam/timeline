@@ -15,7 +15,7 @@ import {
 } from "./tracker";
 import { getDb, initDb } from "../db/schema";
 import { getAppStateDb } from "../db/app-state";
-import { startSyncLog, completeSyncLog } from "../sync/log";
+import { startSyncLog, completeSyncLog, discardSyncLog } from "../sync/log";
 import { basename, dirname, join } from "path";
 import { mkdir, rename } from "fs/promises";
 import { spawn } from "child_process";
@@ -33,6 +33,8 @@ export interface ProcessResult {
   source: string;
   filesProcessed: number;
   filesSkipped: number;
+  /** Files a parser left for a later run (see `ParserResult.waiting`). */
+  filesWaiting: number;
   eventsAdded: number;
   errors: string[];
 }
@@ -54,6 +56,11 @@ export interface ParserResult {
   eventsUpdated?: number;
   detectedType?: string;
   skipReason?: string;
+  /**
+   * Why the file can't be imported yet. It is not marked processed or
+   * archived, so every later run of its source tries it again.
+   */
+  waiting?: string;
 }
 
 /**
@@ -68,7 +75,7 @@ type ParserFunction = (
   context?: ParserContext
 ) => Promise<number | ParserResult>;
 
-const PARSERS: Record<string, { tokenEligible: boolean; load: () => Promise<ParserFunction> }> = {
+const PARSERS: Record<string, { tokenEligible: boolean; leavesWaiting?: true; load: () => Promise<ParserFunction> }> = {
   "sms-backup-restore": {
     tokenEligible: true,
     load: async () => {
@@ -124,6 +131,14 @@ const PARSERS: Record<string, { tokenEligible: boolean; load: () => Promise<Pars
       };
     },
   },
+  "cube-acr": {
+    tokenEligible: true,
+    leavesWaiting: true,
+    load: async () => {
+      const { processRecordingFile } = await import("../platforms/call-recordings/inbox");
+      return processRecordingFile;
+    },
+  },
   "auto-detect": {
     tokenEligible: false,
     load: async () => {
@@ -135,6 +150,15 @@ const PARSERS: Record<string, { tokenEligible: boolean; load: () => Promise<Pars
 
 export function isTokenEligibleParser(parser: string): boolean {
   return Object.hasOwn(PARSERS, parser) && PARSERS[parser]?.tokenEligible === true;
+}
+
+/**
+ * Whether a parser can leave a file `waiting`. An rclone source using one is
+ * pulled with `rclone copy`, so a waiting file outlives its remote copy, and is
+ * swept after each pull, so waiting files are retried without a new file arriving.
+ */
+export function parserLeavesWaiting(parser: string): boolean {
+  return Object.hasOwn(PARSERS, parser) && PARSERS[parser]?.leavesWaiting === true;
 }
 
 /**
@@ -161,6 +185,7 @@ export async function processSource(
     source: sourceName,
     filesProcessed: 0,
     filesSkipped: 0,
+    filesWaiting: 0,
     eventsAdded: 0,
     errors: [],
   };
@@ -266,6 +291,16 @@ export async function processSource(
       }
 
       const parserResult = await parser(timelineDb, file.path, accountName, parserContext);
+
+      if (typeof parserResult !== "number" && parserResult.waiting) {
+        // Tried again on every run, so it leaves no log row each time.
+        discardSyncLog(appStateDb, logId);
+        result.filesWaiting++;
+        if (options.verbose) {
+          console.log(`  Waiting: ${basename(file.path)}: ${parserResult.waiting}`);
+        }
+        continue;
+      }
 
       // Handle both number and ParserResult return types
       const eventsAdded = typeof parserResult === "number" ? parserResult : parserResult.eventsAdded;
@@ -390,10 +425,11 @@ export async function processAll(
     results.push(result);
 
     // Print result
-    if (result.filesProcessed > 0 || result.errors.length > 0) {
+    if (result.filesProcessed > 0 || result.filesWaiting > 0 || result.errors.length > 0) {
       const status = result.errors.length > 0 ? "\x1b[33m!\x1b[0m" : "\x1b[32m✓\x1b[0m";
+      const waiting = result.filesWaiting > 0 ? `, ${result.filesWaiting} waiting` : "";
       console.log(
-        `${status} ${name}: ${result.filesProcessed} file(s), +${result.eventsAdded} events`
+        `${status} ${name}: ${result.filesProcessed} file(s), +${result.eventsAdded} events${waiting}`
       );
     } else if (options.verbose) {
       console.log(`  No new files`);

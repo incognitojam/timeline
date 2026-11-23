@@ -810,17 +810,11 @@ app.get("/api/media/*", async (c) => {
   }
 });
 
-// A call recording's audio, read on demand from where call-transcribe keeps it.
+// A call recording's playable copy, with byte ranges for seeking.
 app.get("/api/call-recordings/:id/audio", async (c) => {
   const id = parseIntStrict(c.req.param("id"));
   if (!Number.isSafeInteger(id)) return c.json({ error: "Recording not found" }, 404);
-  const row = await readDb.get<{ raw_data: string }>(
-    "SELECT raw_data FROM events WHERE id = ? AND source = ?",
-    id,
-    CALL_RECORDINGS_SOURCE,
-  );
-  if (!row) return c.json({ error: "Recording not found" }, 404);
-  return recordingAudioResponse(row.raw_data, c.req.header("range"));
+  return recordingAudioResponse(readDb, id, c.req.header("range"));
 });
 
 // Discord custom emoji image serving. The :id may include an extension

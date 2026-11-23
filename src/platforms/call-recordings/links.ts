@@ -74,8 +74,9 @@ async function soleCall(db: QueryExecutor, span: RecordingSpan): Promise<Overlap
 
 async function candidatesFor(db: QueryExecutor, recording: RecordingEvent, people: Map<string, string[]>): Promise<Candidate[]> {
   const record = readRecording(recording.raw_data);
-  const span = recordingSpan(String(recording.timestamp), recording.end_timestamp ? String(recording.end_timestamp) : null, record?.start_precision_s ?? 1);
-  if (!record || !span) return [];
+  if (!record) return [];
+  const span = recordingSpan(String(recording.timestamp), recording.end_timestamp ? String(recording.end_timestamp) : null, record.start_precision_s);
+  if (!span) return [];
   const caller = record.number ? (JSON.parse(recording.people ?? "[]") as string[])[0] : undefined;
   const calls = caller ? await callsWithCaller(db, caller, span, people) : await soleCall(db, span);
   return calls.map((match) => ({ ...match, recordingId: recording.id, sole: !caller }));

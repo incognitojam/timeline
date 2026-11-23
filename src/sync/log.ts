@@ -73,6 +73,11 @@ export function completeSyncLog(
   );
 }
 
+/** Remove a started entry whose work turned out not to be worth a row. */
+export function discardSyncLog(db: Database, logId: number): void {
+  db.prepare("DELETE FROM sync_log WHERE id = ?").run(logId);
+}
+
 /**
  * Record a skipped run as a single completed sync_log row.
  *
