@@ -51,17 +51,6 @@ const MMS_TYPES: Record<number, string> = {
   4: "mms:outbox",
 };
 
-interface CallEntry {
-  number: string;
-  duration: string;
-  date: string;
-  type: string;
-  contact_name: string;
-  readable_date: string;
-  presentation?: string;
-  subscription_id?: string;
-}
-
 interface SmsEntry {
   address: string;
   date: string;
@@ -97,16 +86,29 @@ export async function importCalls(
   const importBatch = `sms-backup-restore-calls-${sourceAccount}-${Date.now()}`;
   const content = await Bun.file(filePath).text();
 
+  // Find all <call ... /> tags
+  const callRegex = /<call\s+[^>]+\/>/g;
+  const calls = content.match(callRegex) || [];
+
+  return importCallEntries(db, calls.map(parseXmlAttributes), sourceAccount, {
+    ...options,
+    importBatch,
+  });
+}
+
+export function importCallEntries(
+  db: Database,
+  entries: Record<string, string>[],
+  sourceAccount: string,
+  options: { silent?: boolean; importBatch: string }
+): { imported: number; identities: number; unkeyed: number } {
+  const { importBatch } = options;
   const insert = db.prepare(`
     INSERT OR IGNORE INTO events (
       source, source_id, source_account, type, timestamp, duration_ms,
       title, content, people, raw_data, import_batch, conversation_id
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-
-  // Find all <call ... /> tags
-  const callRegex = /<call\s+[^>]+\/>/g;
-  const calls = content.match(callRegex) || [];
 
   let imported = 0;
   let skipped = 0;
@@ -116,10 +118,8 @@ export async function importCalls(
   // Get the owner's phone identity (use sourceAccount as platform ID)
   const ownerIdentifier = formatIdentifier("phone", sourceAccount);
 
-  const insertMany = db.transaction((entries: string[]) => {
-    for (const callTag of entries) {
-      const attrs = parseXmlAttributes(callTag) as unknown as CallEntry;
-
+  const insertMany = db.transaction(() => {
+    for (const attrs of entries) {
       const timestamp = parseInt(attrs.date);
       const duration = parseInt(attrs.duration) || 0;
       const callType = parseInt(attrs.type);
@@ -193,7 +193,7 @@ export async function importCalls(
     }
   });
 
-  insertMany(calls);
+  insertMany();
 
   // Batch upsert identities
   let identitiesUpserted = 0;
