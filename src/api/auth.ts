@@ -113,6 +113,8 @@ export async function checkAuth(c: Context): Promise<boolean> {
 export async function authMiddleware(c: Context, next: Next) {
   const path = c.req.path;
 
+  if (c.get("uploadSources")) return next();
+
   // Unauthenticated API access is only allowed in development/test.
   if (!isAuthEnabled() && isDevelopmentMode()) {
     return next();

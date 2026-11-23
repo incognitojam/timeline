@@ -8,11 +8,13 @@
  * - Recent sync history
  */
 
-import { mkdir, rename, rm } from "fs/promises";
+import { lstat, mkdir, rename, rm } from "fs/promises";
 import { Hono } from "hono";
 import { basename, join } from "path";
 import { loadConfig, parseInterval, resolveSourcePath } from "../config";
 import { getAppStateDb } from "../db/app-state";
+import type { ServiceConfig } from "../config/types";
+import { tokenSourceEligible } from "./upload-tokens";
 import { enqueueJob, listJobs } from "../jobs/store";
 import type { TimelineServiceStatus } from "../shared/version";
 import { SYNC_SOURCES } from "../sync/sources";
@@ -28,6 +30,7 @@ const registeredSyncSources = new Set(SYNC_SOURCES.map((source) => source.name))
 // Service state - set by service.ts on startup
 let serviceStartTime: number = Date.now();
 let schedulerEnabled: boolean = false;
+let startupConfig: ServiceConfig | undefined;
 let watcherEnabled: boolean = false;
 let watchedDirectories: string[] = [];
 
@@ -36,6 +39,7 @@ let watchedDirectories: string[] = [];
  * Called by service.ts after components are initialized
  */
 export function setServiceComponents(options: {
+  config?: ServiceConfig;
   startTime?: number;
   schedulerEnabled?: boolean;
   watcherEnabled?: boolean;
@@ -43,6 +47,7 @@ export function setServiceComponents(options: {
 }): void {
   if (options.startTime) serviceStartTime = options.startTime;
   if (options.schedulerEnabled !== undefined) schedulerEnabled = options.schedulerEnabled;
+  if (options.config) startupConfig = options.config;
   if (options.watcherEnabled !== undefined) watcherEnabled = options.watcherEnabled;
   if (options.watchedDirectories) watchedDirectories = options.watchedDirectories;
 }
@@ -401,8 +406,23 @@ export const statusRoutes = new Hono()
       return c.json({ success: false, message: "File too large (max 500MB)" }, 400);
     }
 
-    // Look up the inbox source config
-    const config = await loadConfig();
+    const scope = c.get("uploadSources");
+    const config = scope ? startupConfig : await loadConfig();
+    if (!config) throw new Error("Watcher startup configuration is missing");
+    if (scope) {
+      if (!scope.includes(sourceName)) return c.json({ error: "source_out_of_scope" }, 403);
+      if (!await tokenSourceEligible(config, sourceName)) return c.json({ error: "source_not_token_eligible" }, 403);
+      if (!config.inbox.archive_path) return c.json({ error: "archive_path required for upload tokens" }, 409);
+      const directories = [
+        resolveSourcePath(config, config.inbox.sources[sourceName]),
+        join(config.inbox.archive_path, sourceName),
+      ];
+      for (const directory of directories) {
+        if (await lstat(join(directory, basename(filename))).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT") throw error;
+        })) return c.json({ error: "filename_in_use" }, 409);
+      }
+    }
     const sourceConfig = config.inbox.sources[sourceName];
     if (!sourceConfig) {
       return c.json({ success: false, message: `Unknown inbox source: ${sourceName}` }, 400);
@@ -415,6 +435,7 @@ export const statusRoutes = new Hono()
     // Validate filename against source patterns
     const patterns = sourceConfig.patterns ?? ["*"];
     const matchesPattern = patterns.some((pattern) => {
+      if (scope && !new Bun.Glob(pattern).match(basename(filename))) return false;
       const regex = new RegExp(
         "^" +
           pattern

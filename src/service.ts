@@ -17,8 +17,9 @@ import {
 import { getMonzoParserPath, getPackagedResourceRoot } from "./runtime-paths";
 
 async function main(): Promise<void> {
+  const uploadCommand = process.argv[2] === "upload-token";
   const { values, positionals } = parseArgs({
-    args: process.argv.slice(2),
+    args: uploadCommand ? [] : process.argv.slice(2),
     options: {
       verbose: {
         type: "boolean",
@@ -52,6 +53,7 @@ async function main(): Promise<void> {
 Usage:
   timeline-service [options]
   timeline-service monzo <command>
+  timeline-service upload-token <create|list|revoke>
 
 Options:
   -v, --verbose       Verbose output
@@ -70,7 +72,7 @@ Environment Variables:
   loadEnvFile();
   const packaged = getPackagedResourceRoot() !== null;
   if (packaged) preparePackagedBootstrapEnvironment();
-  console.log("Loading configuration...");
+  if (!uploadCommand) console.log("Loading configuration...");
   const config = await loadConfig();
   if (packaged) validatePackagedConfigPaths(config);
 
@@ -84,6 +86,12 @@ Environment Variables:
   // database is opened. Keep this import ahead of the runtime module graph.
   const { configureBunSqliteForSqliteVec } = await import("./embeddings/sqlite-vec");
   configureBunSqliteForSqliteVec();
+
+  if (uploadCommand) {
+    const { runUploadTokenCommand } = await import("./api/upload-tokens");
+    await runUploadTokenCommand(config, process.argv.slice(3));
+    return;
+  }
 
   if (packaged) {
     const { SYNC_SOURCES } = await import("./sync/sources");

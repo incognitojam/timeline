@@ -45,6 +45,7 @@ import { getDiscordServer, listDiscordServers } from "../platforms/discord/serve
 import { getWakaTimeProject, getWakaTimeProjectSessions, getWakaTimeStats } from "../platforms/wakatime/stats";
 import { mcpRoutes } from "./mcp";
 import { generateStatusMarkdown, renderMarkdownToHtml } from "./status-md";
+import { uploadAuth } from "./upload-auth";
 import { authMiddleware, authRoutes, isAuthEnabled, assertApiAuthConfigured } from "./auth";
 import { createMcpHandler } from "./mcp-http";
 import { configureBunSqliteForSqliteVec } from "../embeddings/sqlite-vec";
@@ -317,7 +318,8 @@ if (process.env.NODE_ENV !== "test") {
 
 
 // Create Hono app
-const app = new Hono();
+const app = new Hono<{ Bindings: { peerAddress?: string } }>();
+app.use("*", uploadAuth);
 
 app.onError((error, c) => {
   if (c.req.raw.signal.aborted && error.name === "AbortError") {
@@ -2741,7 +2743,7 @@ if (webDistPath) {
 // Export app for testing
 export { app };
 
-type RequestTimeoutServer = Pick<Bun.Server<undefined>, "timeout">;
+type RequestTimeoutServer = Pick<Bun.Server<undefined>, "timeout"> & Partial<Pick<Bun.Server<undefined>, "requestIP">>;
 const manualAttachmentDescriptionPath = new RegExp(MANUAL_ATTACHMENT_DESCRIPTION_PATH_PATTERN, "u");
 
 /**
@@ -2754,7 +2756,7 @@ export function fetchApiRequest(request: Request, server: RequestTimeoutServer) 
   if (request.method === "POST" && manualAttachmentDescriptionPath.test(path)) {
     server.timeout(request, 0);
   }
-  return app.fetch(request);
+  return app.fetch(request, { peerAddress: server.requestIP?.(request)?.address });
 }
 
 let apiServer: Bun.Server<undefined> | null = null;

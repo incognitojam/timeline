@@ -17,6 +17,19 @@ export function getAppStateDb(): Database {
 }
 
 export function initAppStateDb(db: Database) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS upload_tokens (
+      id INTEGER PRIMARY KEY,
+      label TEXT NOT NULL UNIQUE,
+      token_sha256 TEXT NOT NULL UNIQUE,
+      sources TEXT NOT NULL,
+      tailnet_login TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_used_at TEXT,
+      revoked_at TEXT
+    )
+  `);
+
   // Day summaries cache
   db.exec(`
     CREATE TABLE IF NOT EXISTS day_summaries (
