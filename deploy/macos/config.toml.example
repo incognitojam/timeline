@@ -274,6 +274,9 @@ account = "personal"
 patterns = ["*.csv"]
 
 # Example: rclone source for cloud sync
+# A non-empty patterns list limits pulls to matches from the source root.
+# For advanced globs, check both Bun and rclone syntax: rclone's **/ requires
+# a subdirectory, and wildcard forms beyond * and *.ext can match dotfiles.
 # [inbox.sources.sms-backup]
 # type = "rclone"
 # remote = "gdrive:SMS Backup"

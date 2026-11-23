@@ -60,6 +60,12 @@ export async function syncSource(
   await mkdir(localPath, { recursive: true });
 
   const args = ["sync", sourceConfig.remote, localPath, "--progress"];
+  for (const pattern of sourceConfig.patterns ?? []) {
+    // Bun scans relative to the inbox root and skips dotfiles for * and *.ext.
+    const relative = pattern.replace(/^\.\//, "");
+    const include = relative === "*" || relative.startsWith("*.") ? `[^.]${relative}` : relative;
+    args.push("--include", `/${include}`);
+  }
 
   if (options.dryRun) {
     args.push("--dry-run");

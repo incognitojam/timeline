@@ -274,6 +274,41 @@ describe("sync:once CLI", () => {
     expect(readFileSync(seen, "utf8").trim()).toBe("absent");
   });
 
+  it("passes source-specific include filters to rclone", async () => {
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    const rclone = join(bin, "rclone");
+    writeFileSync(rclone, '#!/bin/sh\nif [ "$1" = sync ]; then printf "%s\\n" "$@" > "$3.args"; fi\n', { mode: 0o755 });
+    const config = join(dir, "config.toml");
+    writeFileSync(config, `
+[inbox.sources.filtered]
+type = "rclone"
+remote = "demo:filtered"
+local = "filtered"
+patterns = ["*.xml", "exports/call-?.zip"]
+
+[inbox.sources.unfiltered]
+type = "rclone"
+remote = "demo:unfiltered"
+local = "unfiltered"
+`);
+    const sandbox = join(dir, "sandbox");
+    const { exitCode, stderr } = await cli([
+      "inbox-rclone", "--sandbox", sandbox, "--config", config,
+      "--env", `PATH=${bin}:${process.env.PATH}`,
+    ]);
+    expect(exitCode, stderr).toBe(0);
+    const filtered = join(sandbox, "inbox", "filtered");
+    const unfiltered = join(sandbox, "inbox", "unfiltered");
+    expect(readFileSync(`${filtered}.args`, "utf8").trimEnd().split("\n")).toEqual([
+      "sync", "demo:filtered", filtered, "--progress",
+      "--include", "/[^.]*.xml", "--include", "/exports/call-?.zip",
+    ]);
+    expect(readFileSync(`${unfiltered}.args`, "utf8").trimEnd().split("\n")).toEqual([
+      "sync", "demo:unfiltered", unfiltered, "--progress",
+    ]);
+  });
+
   it("refuses config that sends inbox writes outside the sandbox", async () => {
     const outside = join(dir, "outside");
     for (const section of [`[inbox.sources.demo]\ntype = "rclone"\nremote = "demo:path"\nlocal = "${outside}"\n`, `[inbox.sources.demo]\ntype = "rclone"\nremote = "demo:path"\nlocal = "../../outside"\n`, `[inbox]\narchive_path = "${outside}"\n`]) {
