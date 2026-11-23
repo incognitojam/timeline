@@ -9,7 +9,7 @@
         "@fontsource-variable/inter": "^5.3.0",
         "@fontsource/ibm-plex-mono": "^5.3.0",
         "@kobalte/core": "^0.13.14",
-        "@pierre/highlights": "^0.5.1",
+        "@pierre/highlights": "^0.5.2",
         "@pierre/words": "^0.2.2",
         "@solidjs/router": "^1.0.3",
         "@tailwindcss/typography": "^0.5.20",
@@ -207,7 +207,7 @@
 
     "@oxc-project/types": ["@oxc-project/types@0.156.0", "", {}, "sha512-1Duyg48TdJNdyhEB8Xn1L36bT9Pv6GUtlKjHxOys8xkaF/rQq3XJE+bAurSK/AgIz5mGFsb77cn9Pb20+WCScw=="],
 
-    "@pierre/highlights": ["@pierre/highlights@0.5.1", "", {}, "sha512-c2WF6sgwgKdxXU6FpWDLWUYHRca/cJy+3QJkWAqYqEAFxqlPf8eSH0ehHcFFjKBmT+9KBl9H7q6z7HMRU7+m6g=="],
+    "@pierre/highlights": ["@pierre/highlights@0.5.2", "", {}, "sha512-CV+yFa8dodaU3w7U42FR+AfoavrsfcH0/n3rckDu1A/UXan1Dzo6OdM/MPOAAsGM/EbKhDxD6k+qMcNUtnLfsg=="],
 
     "@pierre/words": ["@pierre/words@0.2.2", "", { "peerDependencies": { "@pierre/highlights": ">=0.5.1", "react": "^18.3.1 || ^19.0.0" }, "optionalPeers": ["@pierre/highlights", "react"] }, "sha512-gOMolXeQzPK9IVNDimh8pronqzpFISFxp+rhobKT8NYQsTOpDLQKgr0rjwZn3I/kHLF+Sqoe2aIO/R7H71IzwQ=="],
 
