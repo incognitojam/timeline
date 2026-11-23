@@ -144,8 +144,12 @@ struct TimelineApp: App {
                 Button("Retry Login…") { remoteAccess.logIn() }
             }
         case .running(let dnsName):
-            Text("Remote Access: \(dnsName)")
-            Button("Copy Public URL") { remoteAccess.copyPublicURL() }
+            Text("Remote Access: tailnet only")
+            Text(dnsName)
+            Button("Copy Tailnet-Only URL") { remoteAccess.copyTailnetURL() }
+        case .unconfirmed:
+            Text("Remote Access: could not confirm it is tailnet only")
+            Text("Turn Remote Access off if this persists.")
         }
 
         if remoteAccess.state != .notSetUp {

@@ -155,10 +155,12 @@ To remove the app-owned service agent, quit Timeline and disable or remove
 Timeline in System Settings -> General -> Login Items. `launchctl bootout` stops
 the currently loaded job but does not change the Login Items registration.
 
-## Remote access (Tailscale Funnel)
+## Remote access (tailnet only)
 
-Timeline can expose the local service publicly at a stable
-`https://<node>.ts.net` URL via [Tailscale Funnel](https://tailscale.com/kb/1223/funnel).
+Timeline can serve the local service to your own tailnet at a stable
+`https://<node>.ts.net` URL via [Tailscale Serve](https://tailscale.com/kb/1312/serve).
+Only devices on your tailnet can reach it; Remote Access never puts the service
+on the public internet.
 The menu bar app owns a second LaunchAgent
 (`dev.incognitojam.timeline-tailscale`) that runs a **userspace** `tailscaled`
 just for this — no root, no TUN device, no system extension, separate from any
@@ -171,26 +173,33 @@ and `/opt/homebrew/bin/tailscale`). Until it's installed the menu shows
 **Opt in:** Remote Access is off until you choose **Set Up Remote Access…** in
 the menu. That creates the state directory and registers the agent, then the
 menu offers **Log In to Tailscale…** — click it, authorize the node in the
-browser that opens, and the menu switches to showing the node's DNS name with a
-**Copy Public URL** button. The app never re-runs login on its own (that would
-regenerate the node key and orphan a pending authorization); login is always a
-button click.
+browser that opens, and the menu switches to "Remote Access: tailnet only" with
+the node's DNS name and a **Copy Tailnet-Only URL** button. The app never re-runs
+login on its own (that would regenerate the node key and orphan a pending
+authorization); login is always a button click.
 
 - **State directory:** `~/.local/share/timeline/tailscale/` — daemon state,
-  socket (`tailscaled.sock`). **Login and funnel config persist here**, so a
-  daemon restart needs no re-login or re-funnel; the agent just keeps
-  `tailscaled` alive (`KeepAlive`).
+  socket (`tailscaled.sock`). **Login and serve config persist here**, so a
+  daemon restart needs no re-login; the agent just keeps `tailscaled` alive
+  (`KeepAlive`).
 - **Socket:** every `tailscale` CLI call for this node must pass
   `--socket=~/.local/share/timeline/tailscale/tailscaled.sock`, or the CLI talks
   to the GUI Tailscale.app instead.
-- **Funnel port:** the app funnels the service port from your `config.toml`
-  `[server]` block (default `3001`); it applies the funnel idempotently once the
-  node is Running.
+- **Serve config:** while the node is running, the app checks its serve config
+  regularly and on wake. It serves HTTPS on port 443 as a reverse proxy to
+  the service port from your `config.toml` `[server]` block (default `3001`),
+  which is the form that adds Tailscale's identity headers, such as
+  `Tailscale-User-Login`. If it finds Funnel on for any port, including a config
+  left by an older version of the app, it runs `tailscale serve reset` and serves
+  to the tailnet again. Other serve config you add to this node by hand is kept
+  unless Funnel is on. If the app can't confirm the node is tailnet only, the
+  menu says so instead of showing the address; turn Remote Access off if that
+  persists.
 - **Logs:** `~/Library/Logs/timeline/tailscale.log` (and `.error.log`).
 
 **Turn off:** choose **Turn Off Remote Access** in the menu. This unregisters
 the agent (stopping `tailscaled`) but keeps the state directory, so re-enabling
-via **Set Up Remote Access…** needs no re-login or re-funnel. The off state is
+via **Set Up Remote Access…** needs no re-login. The off state is
 recorded in `~/.local/share/timeline/tailscale.disabled`.
 
 **Manual takeover:** if you set `tailscaled` up by hand and it's still running

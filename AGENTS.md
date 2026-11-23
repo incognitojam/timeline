@@ -247,7 +247,7 @@ Run as a unified service: `bun run service` (or `TIMELINE_CONFIG=/path/to/config
 Timeline exposes an MCP server for AI assistants to query the timeline.
 
 - **Stdio**: `bun run mcp` — for Claude Code, local MCP clients. Configure in `.mcp.json`.
-- **HTTP**: `/mcp/<token>` endpoint (Streamable HTTP transport). Set `MCP_TOKENS` env var. Expose via Tailscale Funnel for remote access (e.g., Claude.ai Custom Connectors).
+- **HTTP**: `/mcp/<token>` endpoint (Streamable HTTP transport). Set `MCP_TOKENS` env var. Reachable from the tailnet via the menu bar app's Remote Access ([docs/user/macos-host.md](docs/user/macos-host.md#remote-access-tailnet-only)).
 
 **Files**: `src/mcp.ts` (stdio entry), `src/mcp-tools.ts` (shared tools), `src/api/mcp-http.ts` (HTTP handler), `src/api/mcp-tokens.ts` (token validation).
 

@@ -2,18 +2,18 @@
 set -euo pipefail
 
 # Wrapper that launchd runs to start a userspace tailscaled for Timeline's
-# "Remote Access" feature. tailscaled exposes the local Timeline service
-# publicly via Tailscale Funnel; login and funnel config persist in the state
+# "Remote Access" feature. tailscaled serves the local Timeline service to the
+# tailnet via Tailscale Serve; login and serve config persist in the state
 # directory, so supervision only needs to keep this process alive — no re-login
-# or re-funnel on restart.
+# or re-serve on restart.
 #
 # Userspace networking means no root, no TUN device, and no system extension:
-# HTTPS certs and Funnel work fine over the userspace socket. Every `tailscale`
+# HTTPS certs and Serve work fine over the userspace socket. Every `tailscale`
 # CLI call for this node must dial the socket below (--socket=…), or it talks to
 # the GUI Tailscale.app instead.
 
 # Must match the path hardcoded in the app (tools/timeline-app/RemoteAccess.swift),
-# which drives login/funnel over the socket in this directory.
+# which drives login/serve over the socket in this directory.
 STATE_DIR="$HOME/.local/share/timeline/tailscale"
 TAILSCALED="${TIMELINE_TAILSCALED:-/opt/homebrew/bin/tailscaled}"
 
