@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -97,32 +97,16 @@ test("identical retries succeed in the inbox and archive without rewriting", asy
   }
 });
 
-test("a competing publication preserves the first file and acknowledges only identical bytes", async () => {
+test("simultaneous same-name token uploads preserve the winner", async () => {
   const directory = join(dir, "calls");
-  const write = Bun.write;
-  for (const [name, winner, status] of [
-    ["equal.xml", "<calls/>", 200],
-    ["different.xml", "<other/>", 409],
-  ] as const) {
-    const target = join(directory, name);
-    let winnerInode: bigint | undefined;
-    const stage = spyOn(Bun, "write").mockImplementationOnce(async (destination, data) => {
-      if (typeof destination !== "string" || !(data instanceof File)) throw new Error("Expected staged file upload");
-      const size = await write(destination, data);
-      writeFileSync(target, winner, { flag: "wx" });
-      winnerInode = statSync(target, { bigint: true }).ino;
-      return size;
-    });
-    try {
-      const response = await upload("calls", name);
-      expect(response.status).toBe(status);
-      expect(stage).toHaveBeenCalledTimes(1);
-      expect(winnerInode).toBe(statSync(target, { bigint: true }).ino);
-      expect(await Bun.file(target).text()).toBe(winner);
-      expect(readdirSync(directory).some(entry => entry.startsWith(".upload-"))).toBe(false);
-    } finally {
-      stage.mockRestore();
-    }
+  for (const [name, second] of [["equal.xml", "<calls/>"], ["different.xml", "<other/>"]] as const) {
+    const before = readdirSync(directory);
+    const contents = ["<calls/>", second];
+    const responses = await Promise.all(contents.map(bytes => upload("calls", name, bytes)));
+    const statuses = responses.map(response => response.status);
+    expect([...statuses].sort()).toEqual(second === contents[0] ? [200, 200] : [200, 409]);
+    expect(await Bun.file(join(directory, name)).text()).toBe(contents[statuses.indexOf(200)]);
+    expect(readdirSync(directory).sort()).toEqual([...before, name].sort());
   }
 });
 

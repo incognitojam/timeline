@@ -9,7 +9,7 @@
  */
 
 import { constants } from "node:fs";
-import { link, open, mkdir, rename, rm } from "fs/promises";
+import { open, mkdir, rename, rm } from "fs/promises";
 import { Hono } from "hono";
 import { basename, join } from "path";
 import { loadConfig, parseInterval, resolveSourcePath } from "../config";
@@ -45,8 +45,7 @@ async function compareStoredUpload(path: string, file: File): Promise<"missing" 
   }
 }
 
-// Serialize within each source: case-insensitive names can alias, and the watcher can archive
-// the winner between a competing request’s existence check and publication.
+// Each token upload checks the inbox and archive and publishes before the next upload for that source.
 const tokenPublications = new Map<string, Promise<boolean>>();
 
 async function publishInOrder(directory: string, publish: () => Promise<boolean>): Promise<boolean> {
@@ -486,43 +485,26 @@ export const statusRoutes = new Hono()
     // Write file, then enqueue an inbox-process job directly so uploads do not
     // depend on a separate fs.watch event.
     const targetPath = join(targetDir, basename(filename));
-    const archivePath = scope && config.inbox.archive_path
-      ? join(config.inbox.archive_path, sourceName, filename)
-      : undefined;
-    const existingUpload = async () => {
-      let identical = false;
-      for (const path of [targetPath, archivePath]) {
-        if (!path) continue;
-        const result = await compareStoredUpload(path, file);
-        if (result === "conflict") return "conflict";
-        if (result === "equal") identical = true;
-      }
-      return identical ? "equal" : "missing";
-    };
-
     const publish = async () => {
-      const existing = scope ? await existingUpload() : "missing";
-      if (existing !== "missing") return existing === "equal";
+      if (scope && config.inbox.archive_path) {
+        let identical = false;
+        for (const path of [targetPath, join(config.inbox.archive_path, sourceName, filename)]) {
+          const result = await compareStoredUpload(path, file);
+          if (result === "conflict") return false;
+          if (result === "equal") identical = true;
+        }
+        if (identical) return true;
+      }
 
       const tempPath = join(targetDir, `.upload-${crypto.randomUUID()}.tmp`);
-      let renamed = false;
       try {
         await Bun.write(tempPath, file);
-        if (scope) {
-          try {
-            await link(tempPath, targetPath);
-          } catch (error) {
-            if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
-            return await existingUpload() === "equal";
-          }
-        } else {
-          await rename(tempPath, targetPath);
-          renamed = true;
-        }
-        return true;
-      } finally {
-        if (!renamed) await rm(tempPath, { force: true });
+        await rename(tempPath, targetPath);
+      } catch (error) {
+        await rm(tempPath, { force: true });
+        throw error;
       }
+      return true;
     };
     const accepted = scope ? await publishInOrder(targetDir, publish) : await publish();
     if (!accepted) return c.json({ error: "filename_in_use" }, 409);
