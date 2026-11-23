@@ -18,6 +18,7 @@ jobs:
           REPO_ROOT="$PWD"
           source tools/timeline-app/sparkle.sh
           mkdir -p .scratch
+          git check-ignore -q .scratch || echo '.scratch/' >> .git/info/exclude
           git check-ignore -q .scratch
           cd .scratch
           for n in 1392 1394; do
