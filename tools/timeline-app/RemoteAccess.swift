@@ -1,14 +1,15 @@
-// Remote Access (Tailscale Funnel) ownership for the Timeline menu bar app.
+// Remote Access (Tailscale Serve) ownership for the Timeline menu bar app.
 //
 // A userspace `tailscaled` (run by the dev.incognitojam.timeline-tailscale
-// LaunchAgent, see deploy/macos/run-tailscale.sh) exposes the local Timeline
-// service publicly via Tailscale Funnel. This controller owns that agent (reusing
-// ServiceAgentController's SMAppService own/reconcile machinery) and drives the
-// tailscale login/funnel state through the CLI over the node's own socket.
+// LaunchAgent, see deploy/macos/run-tailscale.sh) serves the local Timeline
+// service to the user's tailnet only, via Tailscale Serve. This controller owns
+// that agent (reusing ServiceAgentController's SMAppService own/reconcile
+// machinery) and drives the tailscale login/serve state through the CLI over
+// the node's own socket.
 //
 // Opt-in: nothing is registered or spawned until the user sets it up (which
 // creates the state directory). Turning it off unregisters the agent but keeps
-// the state directory, so login/funnel state persists for a later re-enable.
+// the state directory, so login/serve state persists for a later re-enable.
 // Login is strictly user-initiated — the app never re-runs `tailscale up` while
 // a login is pending, because that regenerates the node key and orphans a
 // registration the user may have just authorized; the pending state stays
@@ -66,8 +67,12 @@ enum RemoteAccessState: Equatable {
     // A user-initiated login is pending (auth URL opened); latched until the
     // backend reaches Running so the button can't fire a second `tailscale up`.
     case loggingIn
-    // Up and funnelling; dnsName is the node's DNS name (trailing dot stripped).
+    // Up and serving to the tailnet; dnsName is the node's DNS name (trailing
+    // dot stripped).
     case running(dnsName: String)
+    // Up, but the serve config could not be confirmed tailnet-only (the CLI
+    // failed, or Funnel would not turn off). Never shown as tailnet only.
+    case unconfirmed
 }
 
 @MainActor
@@ -76,7 +81,7 @@ final class RemoteAccessController: ObservableObject {
     // Surfaces the underlying agent ownership issue (approval, failed, …) when set.
     @Published private(set) var agentIssueText: String?
 
-    // The service port is the single source of truth for what to funnel.
+    // The service port is the single source of truth for what to serve.
     private let servicePort: Int
     private var agent: ServiceAgentController?
     private var scheduler: RefreshScheduler?
@@ -89,11 +94,6 @@ final class RemoteAccessController: ObservableObject {
     // How long a pending login blocks retries. After this, an explicit
     // "Retry Login…" is offered (retrying invalidates the pending auth URL).
     private let loginRetryCooldown: TimeInterval = 180
-    // Funnel-config cache (fix for per-poll subprocess spawn): once confirmed
-    // configured, stop running `funnel status` every 30s. Reset when the node
-    // leaves Running.
-    private var funnelConfirmed = false
-    private var funnelCheckInFlight = false
 
     init(endpoint: TimelineServiceEndpoint = loadTimelineServiceEndpoint()) {
         servicePort = endpoint.port
@@ -106,8 +106,9 @@ final class RemoteAccessController: ObservableObject {
         agent?.requiresApproval ?? false
     }
 
-    // https URL for the running node, or nil when not running.
-    var publicURL: URL? {
+    // https URL for the running node, reachable from the tailnet only, or nil
+    // when not running.
+    var tailnetURL: URL? {
         guard case .running(let dnsName) = state else { return nil }
         return URL(string: "https://\(dnsName)")
     }
@@ -135,7 +136,6 @@ final class RemoteAccessController: ObservableObject {
         FileManager.default.createFile(atPath: tailscaleDisabledMarkerURL().path, contents: nil)
         agent = nil
         loginPendingSince = nil
-        funnelConfirmed = false
         agentIssueText = nil
         apply(.notSetUp)
 
@@ -184,8 +184,8 @@ final class RemoteAccessController: ObservableObject {
         }
     }
 
-    func copyPublicURL() {
-        guard let url = publicURL else { return }
+    func copyTailnetURL() {
+        guard let url = tailnetURL else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url.absoluteString, forType: .string)
     }
@@ -205,23 +205,29 @@ final class RemoteAccessController: ObservableObject {
         let enabled = isRemoteAccessEnabled()
         let socket = tailscaleSocketPath()
         let loginPending = loginPendingSince != nil
+        let port = servicePort
 
         Task.detached(priority: .utility) {
-            let next = Self.computeState(
+            var next = Self.computeState(
                 enabled: enabled,
                 socket: socket,
                 loginPending: loginPending
             )
+            if case .running(let dnsName) = next,
+               !Self.enforceTailnetOnly(socket: socket, port: port, dnsName: dnsName) {
+                next = .unconfirmed
+            }
+            let shown = next
             await MainActor.run {
                 self.refreshInFlight = false
-                self.apply(next)
-                if case .running(let dnsName) = next {
+                self.apply(shown)
+                if case .running = shown {
                     // Reaching Running resolves any pending login.
                     self.loginPendingSince = nil
-                    self.ensureFunnel(socket: socket, dnsName: dnsName)
+                } else if shown == .unconfirmed {
+                    self.loginPendingSince = nil
                 } else {
-                    self.funnelConfirmed = false
-                    if next == .notSetUp || next == .notInstalled {
+                    if shown == .notSetUp || shown == .notInstalled {
                         self.loginPendingSince = nil
                     }
                 }
@@ -232,30 +238,6 @@ final class RemoteAccessController: ObservableObject {
     private func apply(_ next: RemoteAccessState) {
         guard next != state else { return }
         state = next
-    }
-
-    // Apply the funnel config idempotently: only when the running node isn't
-    // already funnelling the configured port. Once confirmed configured, the
-    // result is cached so polls stop spawning `funnel status`; an in-flight
-    // guard keeps overlapping wake+timer events from racing.
-    private func ensureFunnel(socket: String, dnsName: String) {
-        guard !funnelConfirmed, !funnelCheckInFlight else { return }
-        funnelCheckInFlight = true
-        let port = servicePort
-
-        Task.detached(priority: .utility) {
-            let configured = Self.isFunnelConfigured(socket: socket, port: port, dnsName: dnsName)
-            if !configured {
-                writeError("Timeline remote access: applying funnel for port \(port).\n")
-                _ = Self.runTailscale(socket: socket, ["funnel", "--bg", String(port)])
-                // Leave funnelConfirmed false: the next poll re-checks and
-                // caches only a verified config.
-            }
-            await MainActor.run {
-                self.funnelCheckInFlight = false
-                self.funnelConfirmed = configured
-            }
-        }
     }
 
     // MARK: - CLI (off-main)
@@ -299,39 +281,66 @@ final class RemoteAccessController: ObservableObject {
         return dnsName.hasSuffix(".") ? String(dnsName.dropLast()) : dnsName
     }
 
-    nonisolated private static func isFunnelConfigured(socket: String, port: Int, dnsName: String) -> Bool {
-        guard let output = runTailscale(socket: socket, ["funnel", "status", "--json"]),
-              let json = try? JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any] else {
-            return false
+    // Makes the node serve the service to the tailnet and nothing to the
+    // internet, and reports whether the resulting config confirms it. Checked
+    // on every poll, so a Funnel config left in the state directory by an
+    // earlier version of the app, or added by hand, is removed.
+    nonisolated private static func enforceTailnetOnly(socket: String, port: Int, dnsName: String) -> Bool {
+        func confirmed(_ config: [String: Any]) -> Bool {
+            !isFunnelOn(config) && isServing(config, port: port, dnsName: dnsName)
         }
-        // Configured means BOTH halves are present: the Web proxy mapping to our
-        // local port AND funnel (public) exposure enabled for the node's :443.
-        // A serve-only config (proxy without AllowFunnel) is not public, so it
-        // must not short-circuit the apply.
-        guard let allowFunnel = json["AllowFunnel"] as? [String: Any],
-              allowFunnel["\(dnsName):443"] as? Bool == true else {
-            return false
+        guard let config = serveConfig(socket: socket) else { return false }
+        if confirmed(config) { return true }
+        if isFunnelOn(config) {
+            // reset clears every handler and Funnel flag in one write; the
+            // serve below then adds back the tailnet-only proxy.
+            writeError("Timeline remote access: Funnel was on; resetting to tailnet only.\n")
+            guard runTailscale(socket: socket, ["serve", "reset"]) != nil else { return false }
         }
-        guard let web = json["Web"] as? [String: Any] else { return false }
-        let needle = "http://127.0.0.1:\(port)"
-        return jsonContainsProxyTarget(web, needle: needle)
+        writeError("Timeline remote access: serving port \(port) to the tailnet.\n")
+        // The HTTPS reverse-proxy form: tailscaled adds Tailscale-User-Login for
+        // tailnet users, which the service relies on. `serve` also clears Funnel
+        // for this port in the same write.
+        _ = runTailscale(socket: socket, ["serve", "--bg", "--https=443", proxyTarget(port)])
+        return serveConfig(socket: socket).map(confirmed) ?? false
     }
 
-    nonisolated private static func jsonContainsProxyTarget(_ node: Any, needle: String) -> Bool {
-        switch node {
-        case let dict as [String: Any]:
-            for (_, value) in dict {
-                if let proxy = value as? String, proxy == needle { return true }
-                if jsonContainsProxyTarget(value, needle: needle) { return true }
-            }
-            return false
-        case let array as [Any]:
-            return array.contains { jsonContainsProxyTarget($0, needle: needle) }
-        case let string as String:
-            return string == needle
-        default:
-            return false
+    nonisolated private static func proxyTarget(_ port: Int) -> String {
+        "http://127.0.0.1:\(port)"
+    }
+
+    // The node's serve config from `serve status --json`, or nil if it can't
+    // be read. No config prints `null`, which is an empty config.
+    nonisolated private static func serveConfig(socket: String) -> [String: Any]? {
+        guard let output = runTailscale(socket: socket, ["serve", "status", "--json"]),
+              let json = try? JSONSerialization.jsonObject(
+                with: Data(output.utf8), options: .fragmentsAllowed) else { return nil }
+        if json is NSNull { return [:] }
+        return json as? [String: Any]
+    }
+
+    // True if any port is open to the internet, in the background config or
+    // in a foreground session nested under it.
+    nonisolated private static func isFunnelOn(_ config: [String: Any]) -> Bool {
+        if let allow = config["AllowFunnel"] as? [String: Any],
+           allow.values.contains(where: { $0 as? Bool == true }) {
+            return true
         }
+        let foreground = config["Foreground"] as? [String: Any] ?? [:]
+        return foreground.values.contains { session in
+            guard let session = session as? [String: Any] else { return false }
+            return isFunnelOn(session)
+        }
+    }
+
+    // True if :443 terminates HTTPS and proxies / to the service.
+    nonisolated private static func isServing(_ config: [String: Any], port: Int, dnsName: String) -> Bool {
+        let tcp = config["TCP"] as? [String: Any]
+        let web = config["Web"] as? [String: Any]
+        let site = web?["\(dnsName):443"] as? [String: Any]
+        let root = (site?["Handlers"] as? [String: Any])?["/"] as? [String: Any]
+        return (tcp?["443"] as? [String: Any])?["HTTPS"] as? Bool == true
+            && root?["Proxy"] as? String == proxyTarget(port)
     }
 
     // Runs `tailscale up --hostname=timeline` with a pipe, parses the auth URL

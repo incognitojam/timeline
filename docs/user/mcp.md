@@ -10,7 +10,7 @@ From a checkout, `bun run mcp` serves the tools over stdio against `./timeline.d
 
 The service serves MCP over Streamable HTTP when `MCP_TOKENS` is set in `~/.config/timeline/env` to a comma-separated list of tokens. Clients connect to `/mcp` with an `Authorization: Bearer <token>` header, or to `/mcp/<token>` for clients that can only take a URL.
 
-To reach it from hosted clients such as Claude.ai custom connectors, expose the service with [Tailscale Funnel](macos-host.md#remote-access-tailscale-funnel).
+To reach it from your other devices, use [Remote Access](macos-host.md#remote-access-tailnet-only), which serves it to your tailnet only. Hosted clients such as Claude.ai custom connectors connect from the internet, so they cannot reach it.
 
 With Tailscale v1.72.0 or later in HTTP reverse-proxy mode, only MCP is available through Funnel. TCP forwarding and older proxies can expose the full service because they omit the marker. The web app, API, and status pages return a plain 403. Keep the service on loopback and use Tailscale's HTTP reverse proxy. It clears client-supplied Funnel headers and sets `Tailscale-Funnel-Request: ?1` from connection metadata on public requests, so a proxied client cannot forge or remove the marker. A direct caller controls its own headers. See [Tailscale's proxy implementation](https://github.com/tailscale/tailscale/blob/main/ipn/ipnlocal/serve.go).
 
