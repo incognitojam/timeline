@@ -8,7 +8,8 @@
  * - Recent sync history
  */
 
-import { lstat, mkdir, rename, rm } from "fs/promises";
+import { constants } from "node:fs";
+import { open, mkdir, rename, rm } from "fs/promises";
 import { Hono } from "hono";
 import { basename, join } from "path";
 import { loadConfig, parseInterval, resolveSourcePath } from "../config";
@@ -24,6 +25,24 @@ import type { SyncLogEntry } from "../sync/types";
 import { runningVersionInfo } from "../version";
 import { getSourceFreshness } from "./source-freshness";
 import { getStorageStatus } from "./storage-status";
+
+async function compareStoredUpload(path: string, file: File): Promise<"missing" | "equal" | "conflict"> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined;
+    if (error.code === "ELOOP") return null;
+    throw error;
+  });
+  if (handle === undefined) return "missing";
+  if (handle === null) return "conflict";
+  try {
+    const info = await handle.stat();
+    if (!info.isFile() || info.size !== file.size) return "conflict";
+    const stored = await handle.readFile();
+    return stored.equals(Buffer.from(await file.arrayBuffer())) ? "equal" : "conflict";
+  } finally {
+    await handle.close();
+  }
+}
 
 const registeredSyncSources = new Set(SYNC_SOURCES.map((source) => source.name));
 
@@ -396,7 +415,7 @@ export const statusRoutes = new Hono()
     }
 
     // Validate filename
-    const filename = file.name;
+    const filename = basename(file.name);
     if (!filename || filename.includes("..") || filename.startsWith(".")) {
       return c.json({ success: false, message: "Invalid filename" }, 400);
     }
@@ -412,16 +431,6 @@ export const statusRoutes = new Hono()
     if (scope) {
       if (!scope.includes(sourceName)) return c.json({ error: "source_out_of_scope" }, 403);
       if (!await tokenSourceEligible(config, sourceName)) return c.json({ error: "source_not_token_eligible" }, 403);
-      if (!config.inbox.archive_path) return c.json({ error: "archive_path required for upload tokens" }, 409);
-      const directories = [
-        resolveSourcePath(config, config.inbox.sources[sourceName]),
-        join(config.inbox.archive_path, sourceName),
-      ];
-      for (const directory of directories) {
-        if (await lstat(join(directory, basename(filename))).catch((error: NodeJS.ErrnoException) => {
-          if (error.code !== "ENOENT") throw error;
-        })) return c.json({ error: "filename_in_use" }, 409);
-      }
     }
     const sourceConfig = config.inbox.sources[sourceName];
     if (!sourceConfig) {
@@ -461,13 +470,23 @@ export const statusRoutes = new Hono()
     // Write file, then enqueue an inbox-process job directly so uploads do not
     // depend on a separate fs.watch event.
     const targetPath = join(targetDir, basename(filename));
-    const tempPath = join(targetDir, `.upload-${crypto.randomUUID()}.tmp`);
-    try {
-      await Bun.write(tempPath, file);
-      await rename(tempPath, targetPath);
-    } catch (error) {
-      await rm(tempPath, { force: true });
-      throw error;
+    let identical = false;
+    if (scope && config.inbox.archive_path) {
+      for (const path of [targetPath, join(config.inbox.archive_path, sourceName, filename)]) {
+        const result = await compareStoredUpload(path, file);
+        if (result === "conflict") return c.json({ error: "filename_in_use" }, 409);
+        if (result === "equal") identical = true;
+      }
+    }
+    if (!identical) {
+      const tempPath = join(targetDir, `.upload-${crypto.randomUUID()}.tmp`);
+      try {
+        await Bun.write(tempPath, file);
+        await rename(tempPath, targetPath);
+      } catch (error) {
+        await rm(tempPath, { force: true });
+        throw error;
+      }
     }
 
     const outcome = enqueueJob({

@@ -14,7 +14,7 @@ export function uploadTokenHash(secret: string): string {
 export async function tokenSourceEligible(config: ServiceConfig, name: string): Promise<boolean> {
   const sources = config.inbox.sources;
   const source = sources[name];
-  if (!Object.hasOwn(sources, name) || !source || source.enabled === false ||
+  if (!config.inbox.archive_path || !Object.hasOwn(sources, name) || !source || source.enabled === false ||
       source.type !== "local" || !source.account?.trim() || !isTokenEligibleParser(source.parser)) return false;
 
   // Comparing filesystem identities also catches symlinks and case-insensitive aliases.
@@ -60,10 +60,15 @@ export async function runUploadTokenCommand(config: ServiceConfig, args: string[
   const { label, source: sources, "tailnet-login": login } = values;
   if (!label?.trim() || !sources?.length || !login?.trim()) throw new Error("Provide --label, --source and --tailnet-login");
   for (const source of sources) {
-    if (!await tokenSourceEligible(config, source)) throw new Error(`Source is not token eligible: ${source}`);
+    if (!await tokenSourceEligible(config, source)) {
+      const reason = config.inbox.archive_path ? "" : " (configure [inbox].archive_path)";
+      throw new Error(`Source is not token eligible: ${source}${reason}`);
+    }
   }
   const secret = "tlu_" + randomBytes(32).toString("base64url");
-  db.run("INSERT INTO upload_tokens(label, sources, tailnet_login, token_sha256) VALUES (?,?,?,?)",
+  const inserted = db.run(`INSERT INTO upload_tokens(label, sources, tailnet_login, token_sha256) VALUES (?,?,?,?)
+    ON CONFLICT(label) WHERE revoked_at IS NULL DO NOTHING`,
     [label, JSON.stringify([...new Set(sources)]), login, uploadTokenHash(secret)]);
+  if (!inserted.changes) throw new Error(`An active upload token already has label: ${label}`);
   console.log(secret);
 }

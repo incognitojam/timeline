@@ -1,7 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { getAppStateDb } from "../db/app-state";
-import { isDevelopmentMode } from "./auth";
 import { getMcpBearerToken } from "./mcp-tokens";
 import { uploadTokenHash } from "./upload-tokens";
 
@@ -50,10 +49,10 @@ export const uploadAuth: MiddlewareHandler<{ Bindings: { peerAddress?: string } 
   const login = c.req.header("Tailscale-User-Login");
   const peer = c.env?.peerAddress;
   const loopback = peer === "127.0.0.1" || peer === "::1" || peer === "::ffff:127.0.0.1";
-  if (!isDevelopmentMode() && (!login || !loopback)) {
+  if (!login || !loopback || c.req.raw.headers.has("Tailscale-Funnel-Request")) {
     return c.json({ error: "tailnet_only" }, 403);
   }
-  if (login !== undefined && login !== token.tailnet_login) return c.json({ error: "login_mismatch" }, 403);
+  if (login !== token.tailnet_login) return c.json({ error: "login_mismatch" }, 403);
 
   const retryAfter = rateLimit(token.id);
   if (retryAfter) {
@@ -63,7 +62,7 @@ export const uploadAuth: MiddlewareHandler<{ Bindings: { peerAddress?: string } 
 
   const sources: string[] = JSON.parse(token.sources);
   if (c.req.method === "GET" && c.req.path === "/api/upload/whoami") {
-    c.res = c.json({ label: token.label, sources, tailnet_login: login ?? null });
+    c.res = c.json({ label: token.label, sources, tailnet_login: login });
   } else if (c.req.method === "POST" && c.req.path === "/api/inbox/upload") {
     c.set("uploadSources", sources);
     const limited = await limitBody(c, next);

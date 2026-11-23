@@ -42,7 +42,7 @@ File exports are imported by dropping them into an inbox directory configured un
 
 ### Upload from a tailnet device
 
-Enable the inbox watcher, configure `[inbox].archive_path`, and give the source an existing dedicated local directory, a fixed account and the `sms-backup-restore`, `google-timeline`, or `amex` parser. Use a local source outside every other configured source directory and a fresh filename for each export. Restart the service after changing inbox configuration. Create a token on the service host and store its one-time output on the uploading device:
+Enable the inbox watcher, configure `[inbox].archive_path`, and give the source an existing dedicated local directory, a fixed account and a token-eligible parser that uses that account. Use a local source outside every other configured source directory and a fresh filename for each export. Restart the service after changing inbox configuration. Create a token on the service host and store its one-time output on the uploading device:
 
 ```sh
 timeline-service upload-token create --label test-phone --source calls --tailnet-login phone@example.com
@@ -58,7 +58,6 @@ curl --fail -H "Authorization: Bearer ${UPLOAD_TOKEN}" -F source=calls -F file=@
 ```
 
 Uploads must match the source’s filename patterns. Each request is limited to 5 MiB and each token to 120 requests per hour. The service trusts the pinned login header only from loopback, where Tailscale Serve is the expected proxy. Public Funnel requests and tagged devices have no identity header and are refused. A local process holding a token can forge the header, which is accepted because the service host is trusted with the databases.
-
 
 ## Credentials and settings
 

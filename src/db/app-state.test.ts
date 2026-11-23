@@ -21,6 +21,22 @@ function teardown(): void {
   db.close();
 }
 
+test("draft token rows survive migration to active-only label uniqueness", () => {
+  using oldDb = new Database(":memory:");
+  oldDb.exec(`CREATE TABLE upload_tokens (
+    id INTEGER PRIMARY KEY, label TEXT NOT NULL UNIQUE, token_sha256 TEXT NOT NULL UNIQUE,
+    sources TEXT NOT NULL, tailnet_login TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TEXT, revoked_at TEXT
+  )`);
+  const insert = "INSERT INTO upload_tokens(label, token_sha256, sources, tailnet_login) VALUES ('test-phone', ?, '[]', 'phone@example.com')";
+  oldDb.run(insert, ["old-digest"]);
+  initAppStateDb(oldDb);
+  expect(() => oldDb.run(insert, ["new-digest"])).toThrow();
+  oldDb.exec("UPDATE upload_tokens SET revoked_at=CURRENT_TIMESTAMP");
+  oldDb.run(insert, ["new-digest"]);
+  expect(oldDb.query("SELECT token_sha256 FROM upload_tokens ORDER BY id").values()).toEqual([["old-digest"], ["new-digest"]]);
+});
+
 describe("spotify_resources image_url", () => {
   beforeEach(setup);
   afterEach(teardown);

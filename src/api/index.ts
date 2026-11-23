@@ -319,7 +319,6 @@ if (process.env.NODE_ENV !== "test") {
 
 // Create Hono app
 const app = new Hono<{ Bindings: { peerAddress?: string } }>();
-app.use("*", uploadAuth);
 
 app.onError((error, c) => {
   if (c.req.raw.signal.aborted && error.name === "AbortError") {
@@ -341,25 +340,26 @@ let activeApiRequests = 0;
 // Log structured API request completions to journald-friendly stdout.
 app.use("*", async (c, next) => {
   const isApiRequest = c.req.path.startsWith("/api/");
-  const activeAtStart = isApiRequest ? ++activeApiRequests : activeApiRequests;
+  const logRequest = isApiRequest || /^Bearer\s+tlu_/i.test(c.req.header("Authorization") ?? "");
+  const activeAtStart = logRequest ? ++activeApiRequests : activeApiRequests;
   const start = performance.now();
   try {
     await next();
   } finally {
     const durationMs = Math.round(performance.now() - start);
 
-    if (isApiRequest) {
+    if (logRequest) {
       const activeAtEnd = activeApiRequests - 1;
       activeApiRequests = activeAtEnd;
       const url = new URL(c.req.url);
-      const querySummary = summarizeQueryForLogs(url);
+      const querySummary = isApiRequest ? summarizeQueryForLogs(url) : { queryKeys: [], query: {} };
       const dbPool = readDbPool.getStats();
       console.log(
         JSON.stringify({
           timestamp: new Date().toISOString(),
           event: "request.complete",
           method: c.req.method,
-          path: url.pathname,
+          path: isApiRequest || ["/mcp", "/status", "/status.md"].includes(url.pathname) ? url.pathname : "[non-API route]",
           queryKeys: querySummary.queryKeys,
           query: querySummary.query,
           status: c.res.status,
@@ -385,6 +385,7 @@ app.use("*", async (c, next) => {
 });
 
 // Auth middleware (must be before cors so it runs first on API routes)
+app.use("*", uploadAuth);
 app.use("/api/*", authMiddleware);
 for (const path of ["/status", "/status.md"]) {
   app.use(path, async (c, next) => {
