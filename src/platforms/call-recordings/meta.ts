@@ -8,7 +8,8 @@ export const callRecordingsMeta = {
       id: "call-recordings",
       label: "Call recordings",
       traits: { personal: true, corpus: true },
-      eventTypes: ["recording:incoming", "recording:outgoing", "recording:unknown"],
+      eventTypes: ["recording:unknown"],
+      legacyEventTypes: ["recording:incoming", "recording:outgoing"],
     },
   ],
 } as const satisfies PlatformMeta;

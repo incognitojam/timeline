@@ -75,7 +75,7 @@ describe("call recording links", () => {
     for (const type of ["call:incoming", "call:outgoing", "call:log", "message:call", "message:dm:call", "message:guild:call"]) {
       expect(isCallEventType(type)).toBe(true);
     }
-    for (const type of ["message", "message:dm", "sms:sent", "recording:incoming", "message:dm:attachment"]) {
+    for (const type of ["message", "message:dm", "sms:sent", "recording:unknown", "message:dm:attachment"]) {
       expect(isCallEventType(type)).toBe(false);
     }
   });

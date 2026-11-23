@@ -4,30 +4,18 @@ import type { TimelineEvent } from "../../lib/types";
 import { clearCache, populateCache } from "../../lib/identities";
 import CallRecordingCard from "./CallRecordingCard";
 
-const TRANSCRIPT = [
-  "# Call with: Alice (2 Jun 2026, 13:11)",
-  "",
-  "13:11 <Alice> Hello?",
-  "",
-  "13:12 <Bob> Hi, it's me.",
-  "",
-  "13:12 <Alice> Are we still on for Saturday?",
-  "",
-  "13:13 <Bob> Yes, see you then.",
-].join("\n");
-
 function recordingEvent(overrides: Partial<TimelineEvent> = {}, record: Record<string, unknown> = {}): TimelineEvent {
   return {
     id: 1,
     source: "call-recordings",
     source_id: "phone_20260315-181753_07700900123.amr",
     source_account: "owner",
-    type: "recording:outgoing",
+    type: "recording:unknown",
     timestamp: "2026-06-02T12:11:35.000Z",
     end_timestamp: "2026-06-02T12:14:05.000Z",
     duration_ms: 150_000,
     title: "+447700900123",
-    content: TRANSCRIPT,
+    content: null,
     latitude: null,
     longitude: null,
     location_name: null,
@@ -56,15 +44,11 @@ function recordingEvent(overrides: Partial<TimelineEvent> = {}, record: Record<s
 describe("CallRecordingCard", () => {
   afterEach(() => clearCache());
 
-  it("shows the call, who it was with, and a transcript preview that expands", () => {
+  it("shows the call, who it was with, and the app it was in", () => {
     populateCache({ "phone:+447700900123": { name: "John Doe", username: null, contactId: 7, avatarUrl: null, isSelf: false } });
-    const { getByText, queryByText, container } = render(() => <CallRecordingCard event={recordingEvent()} />);
-    expect(container.textContent).toContain("Outgoing phone call");
+    const { getByText, container } = render(() => <CallRecordingCard event={recordingEvent()} />);
+    expect(container.textContent).toContain("Phone call");
     expect(getByText("John Doe", { selector: "button" })).toBeTruthy();
-    expect(getByText("Are we still on for Saturday?")).toBeTruthy();
-    expect(queryByText("Yes, see you then.")).toBeNull();
-    fireEvent.click(getByText("Show full transcript (4 turns)"));
-    expect(getByText("Yes, see you then.")).toBeTruthy();
   });
 
   it("names a recording placed by its call from the call's title, not its first person", () => {

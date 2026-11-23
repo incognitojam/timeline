@@ -1,16 +1,11 @@
-import { For, Show, createMemo, createSignal } from "solid-js";
+import { For, Show, createMemo } from "solid-js";
 import { sourceLabel } from "@shared/sources";
 import { readRecording, recordingAppLabel } from "@platforms/call-recordings/shared/recording";
-import { parseTranscript } from "@platforms/call-recordings/shared/transcript";
 import type { TimelineEvent } from "../../lib/types";
 import { getSourceColorStyle } from "../../lib/source-styles";
 import { extractIdentifiers, getResolvedNameOr } from "../../lib/identities";
 import { formatDuration, formatTime } from "../../lib/format";
 import SourceIcon from "../../components/SourceIcon";
-import CallTranscript from "./CallTranscript";
-
-/** Turns shown before the transcript is expanded. */
-const PREVIEW_TURNS = 3;
 
 interface Props {
   event: TimelineEvent;
@@ -28,14 +23,8 @@ function callTypeLabel(type: string): string {
   return `${kind.charAt(0).toUpperCase()}${kind.slice(1)} call`;
 }
 
-const DIRECTIONS: Readonly<Record<string, string>> = {
-  "recording:incoming": "Incoming",
-  "recording:outgoing": "Outgoing",
-};
-
-/** A recorded call: who, when, how long, its audio, and its transcript as a conversation. */
+/** A recorded call: who, when, how long, and its audio. */
 export default function CallRecordingCard(props: Props) {
-  const [expanded, setExpanded] = createSignal(false);
   const colorStyle = () => getSourceColorStyle(props.event.source);
   const recording = createMemo(() => readRecording(props.event.raw_data));
   /**
@@ -47,13 +36,9 @@ export default function CallRecordingCard(props: Props) {
     return people.length === 1 ? (people[0] ?? null) : null;
   };
   const name = () => getResolvedNameOr(counterparty(), props.event.title ?? "Unknown caller");
-  const turns = createMemo(() => (props.event.content ? parseTranscript(props.event.content) : []));
-  const shownTurns = () => (expanded() ? turns() : turns().slice(0, PREVIEW_TURNS));
   const callLabel = () => {
     const app = recording()?.app;
-    const direction = DIRECTIONS[props.event.type];
-    const kind = app ? `${recordingAppLabel(app)} call` : "Call";
-    return direction ? `${direction} ${kind.charAt(0).toLowerCase()}${kind.slice(1)}` : kind;
+    return app ? `${recordingAppLabel(app)} call` : "Call";
   };
 
   return (
@@ -139,19 +124,6 @@ export default function CallRecordingCard(props: Props) {
                 preload="none"
                 src={`/api/call-recordings/${props.event.id}/audio`}
               />
-            </Show>
-
-            <Show when={turns().length > 0}>
-              <CallTranscript turns={shownTurns()} start={null} />
-              <Show when={turns().length > PREVIEW_TURNS}>
-                <button
-                  type="button"
-                  class="text-xs text-primary hover:underline mt-1"
-                  onClick={() => setExpanded(!expanded())}
-                >
-                  {expanded() ? "Show less" : `Show full transcript (${turns().length} turns)`}
-                </button>
-              </Show>
             </Show>
           </div>
         </div>
