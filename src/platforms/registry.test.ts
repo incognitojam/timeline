@@ -57,7 +57,6 @@ const EXPECTED_SYNC_ORDER = [
   "codex",
   "steam",
   "recall",
-  "call-recordings",
   "remote-agents",
   "inbox-rclone",
   "thumbhash",

@@ -97,6 +97,7 @@ function buildHandlers(
         source: result.source,
         filesProcessed: result.filesProcessed,
         filesSkipped: result.filesSkipped,
+        filesWaiting: result.filesWaiting,
         eventsAdded: result.eventsAdded,
         errors: result.errors,
       };

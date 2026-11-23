@@ -283,3 +283,13 @@ patterns = ["*.csv"]
 # parser = "sms-backup-restore"
 # account = "personal"
 # patterns = ["*.xml"]
+
+# Example: Cube ACR call recordings from its Google Drive backup folder
+# (see docs/user/source-setup.md, "Call recordings Setup").
+# [inbox.sources.call-recordings]
+# type = "rclone"
+# remote = "gdrive:Cube ACR"
+# local = "call-recordings"
+# parser = "cube-acr"
+# account = "personal"
+# patterns = ["*.amr"]

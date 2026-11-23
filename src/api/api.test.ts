@@ -27,6 +27,7 @@ import {
   recordPlaylistObservation,
 } from "../platforms/spotify/playlist-follows";
 import { getDb } from "../db/schema";
+import type { Database } from "../db/sqlite";
 import { findUnprocessedFiles, hashFile, markFileProcessed } from "../inbox/tracker";
 import { seed } from "../testing/seed";
 import type { AttachmentsStats } from "../shared/attachments";
@@ -1797,78 +1798,66 @@ describe("API Smoke Tests", () => {
   });
 
   describe("Call recordings", () => {
+    /** Import a synthetic one-frame recording through the real importer. */
+    async function importRecording(db: Database, dir: string, name: string): Promise<number> {
+      const { importRecordingFile } = await import("../platforms/call-recordings/parser");
+      const path = join(dir, name);
+      writeFileSync(path, new Uint8Array([...new TextEncoder().encode("#!AMR\n"), 0x7c]));
+      const outcome = await importRecordingFile(db, path, {
+        sourceAccount: "api-test",
+        importBatch: "api-test",
+        timeZone: "UTC",
+        convert: async () => ({ bytes: new TextEncoder().encode("RIFF-audio"), extension: ".wav", mimeType: "audio/wav" }),
+      });
+      if (outcome.status !== "imported") throw new Error(`recording not imported: ${outcome.status}`);
+      return outcome.eventId;
+    }
+
     test("GET /api/day returns the call each recording recorded", async () => {
       const { getDb, initDb } = await import("../db/schema");
-      const { importCallRecordings, parseListing } = await import("../platforms/call-recordings/parser");
+      const dir = mkdtempSync(join(tmpdir(), "api-call-day-"));
       const db = getDb();
       try {
         initDb(db);
-        const recording = {
-          id: "Call_day", sha1: "d".repeat(40), source: "phone",
-          start: "2099-03-01T10:00:20+00:00", end: "2099-03-01T10:05:00+00:00", start_precision_s: 1, duration_s: 280,
-          direction: "outgoing", number: "+447700900123", contact: null, caller_unknown: false, recorded_sides: "both_expected",
-          audio: { original: "/recordings/Call_day.amr", flac: null, levelled: null }, transcripts: [], best_transcript: null,
-          updated_at: "2099-03-01T10:05:00+00:00", fingerprint: "f1",
-        };
-        importCallRecordings(db, parseListing(JSON.stringify({ schema_version: 1, count: 1, recordings: [recording] })), {
-          sourceAccount: "api-test",
-          importBatch: "api-test",
-        });
+        const id = await importRecording(db, dir, "phone_20990301-100020_07700900123.amr");
         const call = db.prepare(`
           INSERT INTO events (source, source_id, source_account, type, timestamp, duration_ms, title, people, raw_data, conversation_id)
-          VALUES ('phone', 'api-day-call', 'api-test', 'call:outgoing', '2099-03-01T10:00:00.000Z', 300000, 'Alice',
+          VALUES ('phone', 'api-day-call', 'api-test', 'call:outgoing', '2099-03-01T10:00:00.000Z', 300000, 'John Doe',
                   '["phone:api-test","phone:+447700900123"]', '{"number":"+447700900123"}', '+447700900123')
           RETURNING id`).get() as { id: number };
-        const { id } = db.prepare("SELECT id FROM events WHERE source = 'call-recordings' AND source_id = 'Call_day'").get() as { id: number };
 
         const res = await app.request("/api/day?date=2099-03-01");
         expect(res.status).toBe(200);
         const body = await res.json() as { callLinks: Record<string, Array<{ id: number }>> };
         expect(body.callLinks[String(id)]?.map((linked) => linked.id)).toEqual([call.id]);
       } finally {
-        db.prepare("DELETE FROM events WHERE source_id IN ('Call_day', 'api-day-call')").run();
+        db.prepare("DELETE FROM attachments WHERE source = 'call-recordings'").run();
+        db.prepare("DELETE FROM events WHERE source = 'call-recordings' OR source_id = 'api-day-call'").run();
         db.close();
+        rmSync(dir, { recursive: true, force: true });
       }
     });
 
-    test("GET /api/call-recordings/:id/audio serves the stored recording's audio with ranges", async () => {
+    test("GET /api/call-recordings/:id/audio serves a recording's playable copy", async () => {
       const { getDb, initDb } = await import("../db/schema");
-      const { importCallRecordings, parseListing } = await import("../platforms/call-recordings/parser");
       const dir = mkdtempSync(join(tmpdir(), "api-call-audio-"));
       const db = getDb();
       try {
         initDb(db);
-        const audio = join(dir, "Call_api.wav");
-        writeFileSync(audio, "RIFF-audio");
-        const recording = {
-          id: "Call_api", sha1: "e".repeat(40), source: "phone",
-          start: "2099-02-01T10:00:00+00:00", end: "2099-02-01T10:01:00+00:00", start_precision_s: 1, duration_s: 60,
-          direction: "incoming", number: "+447700900123", contact: null, caller_unknown: false, recorded_sides: "both_expected",
-          audio: { original: audio, flac: null, levelled: null }, transcripts: [], best_transcript: null,
-          updated_at: "2099-02-01T10:01:00+00:00", fingerprint: "f1",
-        };
-        importCallRecordings(db, parseListing(JSON.stringify({ schema_version: 1, count: 1, recordings: [recording] })), {
-          sourceAccount: "api-test",
-          importBatch: "api-test",
-        });
-        const { id } = db.prepare("SELECT id FROM events WHERE source = 'call-recordings' AND source_id = 'Call_api'").get() as { id: number };
+        const id = await importRecording(db, dir, "phone_20990201-100000_07700900123.amr");
         const other = db.prepare("SELECT id FROM events WHERE source != 'call-recordings' LIMIT 1").get() as { id: number } | null;
-
-        const whole = await app.request(`/api/call-recordings/${id}/audio`);
-        expect(whole.status).toBe(200);
-        expect(whole.headers.get("Content-Type")).toBe("audio/wav");
-        expect(await whole.text()).toBe("RIFF-audio");
 
         const part = await app.request(`/api/call-recordings/${id}/audio`, { headers: { Range: "bytes=5-" } });
         expect(part.status).toBe(206);
-        expect(part.headers.get("Content-Range")).toBe("bytes 5-9/10");
+        expect(part.headers.get("Content-Type")).toBe("audio/wav");
         expect(await part.text()).toBe("audio");
 
         expect((await app.request("/api/call-recordings/999999999/audio")).status).toBe(404);
         expect((await app.request("/api/call-recordings/not-a-number/audio")).status).toBe(404);
         if (other) expect((await app.request(`/api/call-recordings/${other.id}/audio`)).status).toBe(404);
       } finally {
-        db.prepare("DELETE FROM events WHERE source = 'call-recordings' AND source_id = 'Call_api'").run();
+        db.prepare("DELETE FROM attachments WHERE source = 'call-recordings'").run();
+        db.prepare("DELETE FROM events WHERE source = 'call-recordings'").run();
         db.close();
         rmSync(dir, { recursive: true, force: true });
       }

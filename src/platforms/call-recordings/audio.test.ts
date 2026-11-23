@@ -3,35 +3,41 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { Database } from "../../db/sqlite";
+import { wrapDatabase } from "../../db/pool";
+import { initDb } from "../../db/schema";
 import { parseRange, recordingAudioResponse } from "./audio";
-import { playableAudio, type CallsRecording } from "./shared/recording";
+import { type Converter, importRecordingFile } from "./parser";
 
 let dir: string;
+let db: Database;
 
 beforeEach(() => {
   dir = join(tmpdir(), `call-audio-${randomUUID()}`);
   mkdirSync(dir, { recursive: true });
+  db = new Database(":memory:");
+  initDb(db);
 });
 
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  db.close();
+  rmSync(dir, { recursive: true, force: true });
+});
 
-function rawData(audio: Partial<CallsRecording["audio"]>): string {
-  return JSON.stringify({
-    id: "Call_1",
-    source: "phone",
-    recorded_sides: "both_expected",
-    audio: { original: join(dir, "Call_1.amr"), flac: null, levelled: null, ...audio },
-  });
+/** Import a one-frame recording whose playable copy, if any, is `copy`. */
+async function imported(name: string, copy: string | null): Promise<number> {
+  const path = join(dir, name);
+  writeFileSync(path, new Uint8Array([...new TextEncoder().encode("#!AMR\n"), 0x7c]));
+  const convert: Converter = async () => {
+    if (copy === null) throw new Error("no converter here");
+    return { bytes: new TextEncoder().encode(copy), extension: ".wav", mimeType: "audio/wav" };
+  };
+  const outcome = await importRecordingFile(db, path, { sourceAccount: "owner", importBatch: "test", timeZone: "UTC", convert });
+  if (outcome.status !== "imported") throw new Error(`not imported: ${outcome.status}`);
+  return outcome.eventId;
 }
 
 describe("call recording audio", () => {
-  it("picks the first copy a browser can play", () => {
-    const recording = (audio: Partial<CallsRecording["audio"]>) => JSON.parse(rawData(audio)) as CallsRecording;
-    expect(playableAudio(recording({}))).toBeNull();
-    expect(playableAudio(recording({ flac: "/r/Call_1.flac" }))).toEqual({ path: "/r/Call_1.flac", mimeType: "audio/flac" });
-    expect(playableAudio(recording({ original: "/r/Pixel_1.M4A", flac: "/r/x.flac" }))?.mimeType).toBe("audio/mp4");
-  });
-
   it("parses single byte ranges and rejects ones it cannot satisfy", () => {
     expect(parseRange(undefined, 100)).toBeNull();
     expect(parseRange("bytes=0-9", 100)).toEqual({ start: 0, end: 9 });
@@ -44,30 +50,28 @@ describe("call recording audio", () => {
     expect(parseRange("items=0-1", 100)).toBe("invalid");
   });
 
-  it("serves the whole file, or the range asked for", async () => {
-    const flac = join(dir, "Call_1.flac");
-    writeFileSync(flac, "0123456789");
-    const whole = await recordingAudioResponse(rawData({ flac }), undefined);
+  it("serves the playable copy whole, or the range asked for", async () => {
+    const id = await imported("phone_20260315-181753_07700900123.amr", "0123456789");
+    const whole = await recordingAudioResponse(wrapDatabase(db), id, undefined);
     expect(whole.status).toBe(200);
-    expect(whole.headers.get("Content-Type")).toBe("audio/flac");
+    expect(whole.headers.get("Content-Type")).toBe("audio/wav");
     expect(whole.headers.get("Accept-Ranges")).toBe("bytes");
     expect(await whole.text()).toBe("0123456789");
 
-    const part = await recordingAudioResponse(rawData({ flac }), "bytes=2-5");
+    const part = await recordingAudioResponse(wrapDatabase(db), id, "bytes=2-5");
     expect(part.status).toBe(206);
     expect(part.headers.get("Content-Range")).toBe("bytes 2-5/10");
     expect(part.headers.get("Content-Length")).toBe("4");
     expect(await part.text()).toBe("2345");
 
-    const beyond = await recordingAudioResponse(rawData({ flac }), "bytes=20-");
+    const beyond = await recordingAudioResponse(wrapDatabase(db), id, "bytes=20-");
     expect(beyond.status).toBe(416);
     expect(beyond.headers.get("Content-Range")).toBe("bytes */10");
   });
 
-  it("explains when there is nothing a browser can play, or the file has gone", async () => {
-    writeFileSync(join(dir, "Call_1.amr"), "amr");
-    expect((await recordingAudioResponse(rawData({}), undefined)).status).toBe(415);
-    expect((await recordingAudioResponse(rawData({ flac: join(dir, "missing.flac") }), undefined)).status).toBe(404);
-    expect((await recordingAudioResponse(rawData({ flac: "relative/Call_1.flac" }), undefined)).status).toBe(500);
+  it("never serves the AMR original, and 404s for anything that isn't a recording", async () => {
+    const id = await imported("phone_20260315-181753_07700900123.amr", null);
+    expect((await recordingAudioResponse(wrapDatabase(db), id, undefined)).status).toBe(415);
+    expect((await recordingAudioResponse(wrapDatabase(db), id + 1, undefined)).status).toBe(404);
   });
 });

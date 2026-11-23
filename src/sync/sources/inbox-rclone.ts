@@ -3,7 +3,8 @@
  *
  * Pulls files from rclone-configured inbox sources (e.g. Google Drive, Dropbox)
  * into their local inbox directories, where the inbox watcher then picks them
- * up and runs the configured parser.
+ * up and runs the configured parser. Sources whose parser can leave files
+ * waiting are swept after every pull as well.
  *
  * Enable by adding a [sync.inbox-rclone] block to config.toml and defining one
  * or more [inbox.sources.<name>] entries with type = "rclone".
@@ -11,7 +12,9 @@
 
 import type { InboxSourceConfig } from "../../config";
 import { type InboxConfig, loadConfig as loadInboxConfig } from "../../inbox/config";
+import { parserLeavesWaiting } from "../../inbox/process";
 import { checkRclone, syncAll } from "../../inbox/sync";
+import { enqueueJob } from "../../jobs/store";
 import type { SyncOptions, SyncResult, SyncSource } from "../types";
 
 function getRcloneInboxSources(
@@ -48,6 +51,14 @@ export const inboxRcloneSyncSource: SyncSource = {
 
     const failed = results.filter((r) => !r.success);
     const succeeded = results.filter((r) => r.success);
+
+    // New files wake the watcher; files waiting from earlier runs need a sweep.
+    for (const { source } of succeeded) {
+      const parser = inbox.sources[source]?.parser;
+      if (parser && parserLeavesWaiting(parser)) {
+        enqueueJob({ kind: "inbox-process", source, dedupeKey: `inbox-process:${source}`, trigger: "scheduler" });
+      }
+    }
 
     return {
       source: "inbox-rclone",

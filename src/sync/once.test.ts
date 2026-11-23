@@ -274,11 +274,11 @@ describe("sync:once CLI", () => {
     expect(readFileSync(seen, "utf8").trim()).toBe("absent");
   });
 
-  it("passes source-specific include filters to rclone", async () => {
+  it("passes source-specific include filters to rclone, and copies for a parser that leaves files waiting", async () => {
     const bin = join(dir, "bin");
     mkdirSync(bin);
     const rclone = join(bin, "rclone");
-    writeFileSync(rclone, '#!/bin/sh\nif [ "$1" = sync ]; then printf "%s\\n" "$@" > "$3.args"; fi\n', { mode: 0o755 });
+    writeFileSync(rclone, '#!/bin/sh\nif [ "$1" != version ]; then printf "%s\\n" "$@" > "$3.args"; fi\n', { mode: 0o755 });
     const config = join(dir, "config.toml");
     writeFileSync(config, `
 [inbox.sources.filtered]
@@ -291,6 +291,12 @@ patterns = ["*.xml", "exports/call-?.zip"]
 type = "rclone"
 remote = "demo:unfiltered"
 local = "unfiltered"
+
+[inbox.sources.recordings]
+type = "rclone"
+remote = "demo:recordings"
+local = "recordings"
+parser = "cube-acr"
 `);
     const sandbox = join(dir, "sandbox");
     const { exitCode, stderr } = await cli([
@@ -306,6 +312,10 @@ local = "unfiltered"
     ]);
     expect(readFileSync(`${unfiltered}.args`, "utf8").trimEnd().split("\n")).toEqual([
       "sync", "demo:unfiltered", unfiltered, "--progress",
+    ]);
+    const recordings = join(sandbox, "inbox", "recordings");
+    expect(readFileSync(`${recordings}.args`, "utf8").trimEnd().split("\n")).toEqual([
+      "copy", "demo:recordings", recordings, "--progress",
     ]);
   });
 

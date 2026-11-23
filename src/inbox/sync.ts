@@ -9,6 +9,7 @@ import { resolveSourcePath, getEnabledSources } from "./config";
 import { spawn } from "child_process";
 import { mkdir } from "fs/promises";
 import { backgroundCommand } from "../lib/background-priority";
+import { parserLeavesWaiting } from "./process";
 
 export interface SyncOptions {
   verbose?: boolean;
@@ -59,7 +60,9 @@ export async function syncSource(
   // Ensure local directory exists
   await mkdir(localPath, { recursive: true });
 
-  const args = ["sync", sourceConfig.remote, localPath, "--progress"];
+  // A file waiting for a later run must survive its removal from the remote.
+  const mode = parserLeavesWaiting(sourceConfig.parser) ? "copy" : "sync";
+  const args = [mode, sourceConfig.remote, localPath, "--progress"];
   for (const pattern of sourceConfig.patterns ?? []) {
     args.push("--include", `/${pattern}`);
   }
