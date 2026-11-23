@@ -47,7 +47,7 @@ import { mcpRoutes } from "./mcp";
 import { generateStatusMarkdown, renderMarkdownToHtml } from "./status-md";
 import { uploadAuth } from "./upload-auth";
 import { authMiddleware, authRoutes, isAuthEnabled, assertApiAuthConfigured } from "./auth";
-import { createMcpHandler } from "./mcp-http";
+import { createMcpHandler, FUNNEL_HEADER } from "./mcp-http";
 import { configureBunSqliteForSqliteVec } from "../embeddings/sqlite-vec";
 import { notConfiguredMessage } from "../embeddings/config";
 import { getEmbeddingsDbPath } from "../embeddings/db";
@@ -331,6 +331,24 @@ app.onError((error, c) => {
   return c.text("Internal Server Error", 500);
 });
 
+const mcpHttp = new Hono();
+// MCP HTTP endpoint - NOT under /api/ so it bypasses cookie auth.
+// Supports bearer auth at /mcp and legacy token-in-URL auth at /mcp/<token>.
+mcpHttp.all("/mcp/:token", cors(), async (c) => {
+  const token = c.req.param("token");
+  return handleMcpRequest(c.req.raw, token);
+});
+
+mcpHttp.all("/mcp", cors(), async (c) => handleMcpRequest(c.req.raw));
+mcpHttp.all("/mcp/", cors(), async (c) => handleMcpRequest(c.req.raw));
+
+mcpHttp.notFound(c => c.text("Forbidden", 403));
+
+// Public traffic terminates in the MCP-only router, including unmatched paths.
+app.use("*", async (c, next) => c.req.raw.headers.has(FUNNEL_HEADER)
+  ? mcpHttp.fetch(c.req.raw)
+  : next());
+
 // Server-Timing header (visible in browser DevTools > Network > Timing)
 app.use("*", timing());
 
@@ -411,15 +429,7 @@ app.route("/", createReleaseRoutes({
   runningVersion: runningVersionInfo,
 }));
 
-// MCP HTTP endpoint - NOT under /api/ so it bypasses cookie auth.
-// Supports bearer auth at /mcp and legacy token-in-URL auth at /mcp/<token>.
-app.all("/mcp/:token", async (c) => {
-  const token = c.req.param("token");
-  return handleMcpRequest(c.req.raw, token);
-});
-
-app.all("/mcp", async (c) => handleMcpRequest(c.req.raw));
-app.all("/mcp/", async (c) => handleMcpRequest(c.req.raw));
+app.route("/", mcpHttp);
 
 // Health check endpoint
 app.get("/api/health", async (c) => {
@@ -2754,7 +2764,7 @@ const manualAttachmentDescriptionPath = new RegExp(MANUAL_ATTACHMENT_DESCRIPTION
  */
 export function fetchApiRequest(request: Request, server: RequestTimeoutServer) {
   const path = new URL(request.url).pathname;
-  if (request.method === "POST" && manualAttachmentDescriptionPath.test(path)) {
+  if (!request.headers.has(FUNNEL_HEADER) && request.method === "POST" && manualAttachmentDescriptionPath.test(path)) {
     server.timeout(request, 0);
   }
   return app.fetch(request, { peerAddress: server.requestIP?.(request)?.address });

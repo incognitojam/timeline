@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { Database } from "../../db/sqlite";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
@@ -54,6 +54,67 @@ describe("sms-backup-restore", () => {
     const result = await importSms(db, await writeSmsXml(xml), "Owner", { silent: true });
     expect(result).toMatchObject({ imported: 1, unkeyed: 1 });
     expect(getRows().map((row) => row.content)).toEqual(["hello"]);
+  });
+
+  it("preserves all imported call fields and skips duplicate and unkeyed calls", async () => {
+    const path = join(fixtureDir, "calls-test.xml");
+    await writeFile(path, `<calls>
+  <call number="07700900123" duration="65" date="1700000000000" type="2" contact_name="Alice &amp; Bob" presentation="1" />
+  <call number="+447700900124" duration="0" date="1700000001000" type="3" contact_name="(Unknown)" />
+  <call number="" duration="0" date="1700000002000" type="1" contact_name="(Unknown)" />
+</calls>`);
+
+    const clock = spyOn(Date, "now").mockReturnValue(1700000010000);
+    try {
+      expect(await importCalls(db, path, "tester", { silent: true })).toEqual({
+        imported: 2,
+        identities: 3,
+        unkeyed: 1,
+      });
+      clock.mockReturnValue(1700000020000);
+      expect(await importCalls(db, path, "tester", { silent: true })).toEqual({
+        imported: 0,
+        identities: 3,
+        unkeyed: 1,
+      });
+    } finally {
+      clock.mockRestore();
+    }
+
+    expect(db.query(`
+      SELECT source, source_id, source_account, type, timestamp, duration_ms,
+             title, content, people, raw_data, import_batch, conversation_id
+      FROM events ORDER BY source_id
+    `).all()).toEqual([
+      {
+        source: "phone",
+        source_id: "1700000000000-+447700900123",
+        source_account: "tester",
+        type: "call:outgoing",
+        timestamp: "2023-11-14T22:13:20.000Z",
+        duration_ms: 65000,
+        title: "Alice & Bob",
+        content: "1m 5s",
+        people: '["phone:tester","phone:+447700900123"]',
+        raw_data: '{"number":"07700900123","duration":"65","date":"1700000000000","type":"2","contact_name":"Alice & Bob","presentation":"1"}',
+        import_batch: "sms-backup-restore-calls-tester-1700000010000",
+        conversation_id: "+447700900123",
+      },
+      {
+        source: "phone",
+        source_id: "1700000001000-+447700900124",
+        source_account: "tester",
+        type: "call:missed",
+        timestamp: "2023-11-14T22:13:21.000Z",
+        duration_ms: 0,
+        title: "+447700900124",
+        content: "No answer",
+        people: '["phone:+447700900124","phone:tester"]',
+        raw_data: '{"number":"+447700900124","duration":"0","date":"1700000001000","type":"3","contact_name":"(Unknown)"}',
+        import_batch: "sms-backup-restore-calls-tester-1700000010000",
+        conversation_id: "+447700900124",
+      },
+    ]);
   });
 
   describe("conversation_id", () => {

@@ -274,6 +274,8 @@ account = "personal"
 patterns = ["*.csv"]
 
 # Example: rclone source for cloud sync
+# A non-empty patterns list limits pulls to matches relative to the source root.
+# Patterns go to rclone's --include. Check rclone's filter syntax for globs beyond *.
 # [inbox.sources.sms-backup]
 # type = "rclone"
 # remote = "gdrive:SMS Backup"

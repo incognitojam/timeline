@@ -31,6 +31,8 @@ interface McpSession {
 }
 
 // Session timeout: 1 hour of inactivity
+export const FUNNEL_HEADER = "Tailscale-Funnel-Request";
+
 const SESSION_TIMEOUT_MS = 60 * 60 * 1000;
 
 // Cleanup interval: every 5 minutes
@@ -51,9 +53,24 @@ export function createMcpHandler(
 ) {
   const sessions = new Map<string, McpSession>();
 
+  const hour = 60 * 60 * 1000;
+  const failureWindow = 15 * 60 * 1000;
+  const requests = new Map<string, number[]>();
+  const failures = new Map<string, number[]>();
+
+  function limited(until: number, now: number) {
+    return new Response("Too many requests", {
+      status: 429,
+      headers: { "Retry-After": String(Math.ceil((until - now) / 1000)) },
+    });
+  }
+
   // Periodically clean up stale sessions
   setInterval(() => {
     const now = Date.now();
+    for (const [source, times] of failures) {
+      if (times[times.length - 1] + failureWindow <= now) failures.delete(source);
+    }
     for (const [sessionId, session] of sessions) {
       if (now - session.createdAt > SESSION_TIMEOUT_MS) {
         console.log(`[MCP] Cleaning up stale session: ${sessionId}`);
@@ -163,7 +180,21 @@ export function createMcpHandler(
       }
 
       const token = getMcpBearerToken(req.headers.get("Authorization")) ?? pathToken ?? "";
+      const funnel = req.headers.has(FUNNEL_HEADER);
+      const now = Date.now();
+      const source = req.headers.get("X-Forwarded-For") ?? "";
+      const recentFailures = funnel ? failures.get(source) : undefined;
+      if (recentFailures && recentFailures.length >= 10) {
+        const until = recentFailures[9] + failureWindow;
+        if (now < until) return limited(until, now);
+      }
       if (!validateMcpToken(token)) {
+        if (funnel) {
+          const recent = (recentFailures ?? []).filter(time => time > now - failureWindow);
+          recent.push(now);
+          failures.set(source, recent);
+          if (recent.length >= 10) return limited(now + failureWindow, now);
+        }
         return new Response(JSON.stringify({
           jsonrpc: "2.0",
           error: { code: -32001, message: "Unauthorized: Invalid MCP token" },
@@ -172,6 +203,14 @@ export function createMcpHandler(
           status: 401,
           headers: { "Content-Type": "application/json" },
         });
+      }
+
+      if (funnel) {
+        const key = hashMcpToken(token);
+        const recent = (requests.get(key) ?? []).filter(time => time > now - hour);
+        if (recent.length >= 600) return limited(recent[0] + hour, now);
+        recent.push(now);
+        requests.set(key, recent);
       }
 
       const sessionId = req.headers.get("mcp-session-id");

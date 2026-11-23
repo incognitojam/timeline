@@ -60,6 +60,9 @@ export async function syncSource(
   await mkdir(localPath, { recursive: true });
 
   const args = ["sync", sourceConfig.remote, localPath, "--progress"];
+  for (const pattern of sourceConfig.patterns ?? []) {
+    args.push("--include", `/${pattern}`);
+  }
 
   if (options.dryRun) {
     args.push("--dry-run");
