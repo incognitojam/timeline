@@ -13,6 +13,8 @@ swiftc -Onone UpdateInstallation.swift UpdateInstallationTests.swift -o "$work/i
 "$work/installation"
 swiftc -Onone LaunchAgentConfig.swift UpdateMaintenance.swift UpdateMaintenanceTests.swift -o "$work/maintenance"
 "$work/maintenance" "$work"
+swiftc -Onone PublicAccess.swift PublicAccessTests.swift -o "$work/public-access"
+"$work/public-access"
 swiftc -Onone TimelineServiceConfig.swift Subprocess.swift ServiceConfigurationCheckTests.swift -o "$work/configuration"
 mkdir "$work/home"
 env -u TIMELINE_CONFIG -u TIMELINE_DB_PATH -u AUTH_PASSWORD HOME="$work/home" \

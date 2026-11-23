@@ -159,8 +159,8 @@ the currently loaded job but does not change the Login Items registration.
 
 Timeline can serve the local service to your own tailnet at a stable
 `https://<node>.ts.net` URL via [Tailscale Serve](https://tailscale.com/kb/1312/serve).
-Only devices on your tailnet can reach it; Remote Access never puts the service
-on the public internet.
+Only devices on your tailnet can reach it, unless you turn on
+[public access](#public-access) for a limited time.
 The menu bar app owns a second LaunchAgent
 (`dev.incognitojam.timeline-tailscale`) that runs a **userspace** `tailscaled`
 just for this — no root, no TUN device, no system extension, separate from any
@@ -191,8 +191,9 @@ authorization); login is always a button click.
   which is the form that adds Tailscale's identity headers, such as
   `Tailscale-User-Login`. If it finds Funnel on for any port, including a config
   left by an older version of the app, it runs `tailscale serve reset` and serves
-  to the tailnet again. Other serve config you add to this node by hand is kept
-  unless Funnel is on. If the app can't confirm the node is tailnet only, the
+  to the tailnet again, unless public access is on. Serve config you add to
+  this node by hand is removed whenever Funnel is found on or `tailscaled`
+  starts. If the app can't confirm the node is tailnet only, the
   menu says so instead of showing the address; turn Remote Access off if that
   persists.
 - **Logs:** `~/Library/Logs/timeline/tailscale.log` (and `.error.log`).
@@ -205,6 +206,35 @@ recorded in `~/.local/share/timeline/tailscale.disabled`.
 **Manual takeover:** if you set `tailscaled` up by hand and it's still running
 from a shell session, quit that process before the agent can bind the socket —
 two daemons can't share it.
+
+### Public access
+
+To let a client outside your tailnet, such as a Claude.ai custom connector,
+reach the service's [MCP endpoint](mcp.md#remote-http), choose **Make Public on
+the Internet** and a duration: 5 minutes, 1 hour or 1 day. Public requests
+reach only MCP, with the limits described there. The app turns on
+[Tailscale Funnel](https://tailscale.com/kb/1223/funnel) at the same address,
+and the menu shows "Remote Access: PUBLIC on the internet" with the time it
+ends. It goes back to tailnet only when that time comes, when you choose
+**Turn Off Public Access Now**, when you turn Remote Access off, when you
+quit Timeline, and whenever `tailscaled` starts, such as after the Mac
+restarts. Each `tailscaled` start resets the node's serve config, so after a
+restart the service is not reachable even from the tailnet until Timeline is
+running again; enable **Launch at Login** to keep Remote Access available.
+
+The end time is kept in `~/.local/share/timeline/tailscale-public-access`.
+Each time the app checks the node, including at launch and on wake, it turns
+Funnel off unless that file allows public access at that moment: missing,
+unreadable, ended, longer than a day, or starting later than the clock now
+reads (the clock moved back) all mean tailnet only. If Funnel can't be turned
+on, for example because the tailnet policy doesn't allow it, the menu stays
+tailnet only.
+
+If Timeline is force-quit or crashes while the service is public and
+`tailscaled` keeps running, or is quit within a second or two of choosing
+**Make Public on the Internet**, Funnel can stay on until Timeline next runs or
+`tailscaled` restarts, or until you turn it off with
+`tailscale --socket=~/.local/share/timeline/tailscale/tailscaled.sock serve reset`.
 
 ## Stopping the service for maintenance
 

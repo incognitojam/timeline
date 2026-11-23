@@ -33,7 +33,7 @@ swiftc -target "$(uname -m)-apple-macos14.0" -O -parse-as-library \
   -F "$SPARKLE_ROOT" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
   TimelineApp.swift LaunchAgentConfig.swift RefreshScheduler.swift \
   RecallController.swift LoginItemController.swift ServiceAgentController.swift \
-  ServiceController.swift RecallNotifier.swift RemoteAccess.swift \
+  ServiceController.swift RecallNotifier.swift RemoteAccess.swift PublicAccess.swift \
   RecallLog.swift RecallAgeMenu.swift RecallCapture.swift RecallPipeline.swift RecallMigration.swift \
   TimelineServiceConfig.swift LaunchAgentIdentity.swift Subprocess.swift \
   UpdateController.swift UpdateMaintenance.swift UpdateInstallation.swift -o Timeline
