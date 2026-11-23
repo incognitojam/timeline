@@ -9,7 +9,7 @@
 process.env.NODE_ENV = "test";
 
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { homedir, tmpdir } from "os";
 import { dirname, join } from "path";
 import { MAX_TIMEOUT_DELAY_MS } from "../config/types";
@@ -27,6 +27,7 @@ import {
   recordPlaylistObservation,
 } from "../platforms/spotify/playlist-follows";
 import { getDb } from "../db/schema";
+import { findUnprocessedFiles, hashFile, markFileProcessed } from "../inbox/tracker";
 import { seed } from "../testing/seed";
 import type { AttachmentsStats } from "../shared/attachments";
 import {
@@ -3033,6 +3034,64 @@ describe("API Smoke Tests", () => {
       const json = await res.json();
       expect(json.success).toBe(false);
       expect(json.message).toContain("Invalid filename");
+    });
+
+    test("POST /api/inbox/upload publishes complete files and cleans up failed writes", async () => {
+      const source = "upload-test";
+      const filename = "sample.json";
+      const payload = '{"value":42}';
+      const directory = mkdtempSync(join(tmpdir(), "inbox-upload-"));
+      const configPath = join(directory, "config.toml");
+      const sourceDir = join(directory, "source");
+      const finalPath = join(sourceDir, filename);
+      const previousConfig = process.env.TIMELINE_CONFIG;
+      const db = getAppStateDb();
+      const upload = () => {
+        const body = new FormData();
+        body.append("file", new File([payload], filename));
+        body.append("source", source);
+        return app.request("/api/inbox/upload", { method: "POST", body });
+      };
+
+      writeFileSync(configPath, `[inbox.sources.${source}]\nlocal = "${sourceDir}"\npatterns = ["*", ".upload-*.tmp"]\n`);
+      process.env.TIMELINE_CONFIG = configPath;
+      try {
+        const response = await upload();
+        expect(response.status).toBe(200);
+        expect(readFileSync(finalPath, "utf8")).toBe(payload);
+        expect(readdirSync(sourceDir)).toEqual([filename]);
+        markFileProcessed(db, source, finalPath, await hashFile(finalPath), payload.length);
+
+        expect((await upload()).status).toBe(200);
+        expect(readFileSync(finalPath, "utf8")).toBe(payload);
+        expect(readdirSync(sourceDir)).toEqual([filename]);
+        expect(await findUnprocessedFiles(db, source, sourceDir)).toEqual([]);
+
+        let filesDuringWrite: Awaited<ReturnType<typeof findUnprocessedFiles>> | undefined;
+        const writeFailure = spyOn(Bun, "write").mockImplementation(async (destination) => {
+          const tempPath = String(destination);
+          writeFileSync(tempPath, '{"value":');
+          filesDuringWrite = await findUnprocessedFiles(db, source, sourceDir, ["*", ".upload-*.tmp"]);
+          throw new Error("Injected upload write failure");
+        });
+        try {
+          expect((await upload()).status).toBe(500);
+          expect(writeFailure).toHaveBeenCalledTimes(1);
+          const tempPath = String(writeFailure.mock.calls[0]?.[0]);
+          expect(dirname(tempPath)).toBe(sourceDir);
+          expect(tempPath).toMatch(/\/\.upload-[0-9a-f-]+\.tmp$/);
+          expect(filesDuringWrite).toEqual([]);
+          expect(readFileSync(finalPath, "utf8")).toBe(payload);
+          expect(readdirSync(sourceDir)).toEqual([filename]);
+        } finally {
+          writeFailure.mockRestore();
+        }
+      } finally {
+        process.env.TIMELINE_CONFIG = previousConfig;
+        db.prepare("DELETE FROM processed_files WHERE source = ?").run(source);
+        db.prepare("DELETE FROM jobs WHERE source = ?").run(source);
+        rmSync(directory, { recursive: true, force: true });
+      }
     });
 
     test("POST /api/status/trigger-sync rejects missing source", async () => {
