@@ -49,6 +49,13 @@ private func tailscaleDisabledMarkerURL() -> URL {
         .appendingPathComponent(".local/share/timeline/tailscale.disabled")
 }
 
+// Present only while the user has turned public access on; its contents decide
+// whether Funnel may stay on (see PublicAccess).
+private func publicAccessRecordURL() -> URL {
+    FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".local/share/timeline/tailscale-public-access")
+}
+
 private func isRemoteAccessEnabled() -> Bool {
     FileManager.default.fileExists(atPath: tailscaleStateDirectory().path)
         && !FileManager.default.fileExists(atPath: tailscaleDisabledMarkerURL().path)
@@ -70,6 +77,9 @@ enum RemoteAccessState: Equatable {
     // Up and serving to the tailnet; dnsName is the node's DNS name (trailing
     // dot stripped).
     case running(dnsName: String)
+    // Up and public on the internet via Funnel until `until`, as the user
+    // asked; also served to the tailnet.
+    case publicAccess(dnsName: String, until: Date)
     // Up, but the serve config could not be confirmed tailnet-only (the CLI
     // failed, or Funnel would not turn off). Never shown as tailnet only.
     case unconfirmed
@@ -86,6 +96,10 @@ final class RemoteAccessController: ObservableObject {
     private var agent: ServiceAgentController?
     private var scheduler: RefreshScheduler?
     private var refreshInFlight = false
+    // A refresh asked for while one was in flight, run when it finishes so a
+    // change to public access is never left to the next poll.
+    private var refreshQueued = false
+    private var terminationObserver: NSObjectProtocol?
     // Latched at logIn() and cleared only when the backend reaches Running (or
     // the feature is turned off / the login never started). While latched the
     // poll renders .loggingIn instead of .needsLogin, so the login button can't
@@ -99,6 +113,11 @@ final class RemoteAccessController: ObservableObject {
         servicePort = endpoint.port
         adoptAgentIfEnabled()
         scheduler = RefreshScheduler { [weak self] in Task { @MainActor in self?.refresh() } }
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.endPublicAccessOnQuit() }
+        }
         refresh()
     }
 
@@ -106,11 +125,14 @@ final class RemoteAccessController: ObservableObject {
         agent?.requiresApproval ?? false
     }
 
-    // https URL for the running node, reachable from the tailnet only, or nil
-    // when not running.
-    var tailnetURL: URL? {
-        guard case .running(let dnsName) = state else { return nil }
-        return URL(string: "https://\(dnsName)")
+    // https URL for the running node, or nil when not running.
+    var nodeURL: URL? {
+        switch state {
+        case .running(let dnsName), .publicAccess(let dnsName, _):
+            return URL(string: "https://\(dnsName)")
+        default:
+            return nil
+        }
     }
 
     // True while a pending login has outlived the cooldown: offer an explicit
@@ -134,12 +156,16 @@ final class RemoteAccessController: ObservableObject {
     func turnOff() {
         guard agent != nil else { return }
         FileManager.default.createFile(atPath: tailscaleDisabledMarkerURL().path, contents: nil)
+        removePublicAccessRecord()
         agent = nil
         loginPendingSince = nil
         agentIssueText = nil
         apply(.notSetUp)
 
+        let socket = tailscaleSocketPath()
         Task.detached(priority: .utility) {
+            // In case unregistering fails and tailscaled keeps running.
+            _ = Self.runTailscale(socket: socket, ["serve", "reset"])
             let sm = SMAppService.agent(plistName: tailscaleLaunchAgentConfig.plistName)
             do {
                 try await sm.unregister()
@@ -184,10 +210,40 @@ final class RemoteAccessController: ObservableObject {
         }
     }
 
-    func copyTailnetURL() {
-        guard let url = tailnetURL else { return }
+    func copyURL() {
+        guard let url = nodeURL else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url.absoluteString, forType: .string)
+    }
+
+    // Records when public access ends, then lets refresh turn Funnel on.
+    func makePublic(for duration: TimeInterval) {
+        guard case .running = state else { return }
+        let record = PublicAccess.record(start: Date(), duration: duration)
+        do {
+            try record.write(to: publicAccessRecordURL(), atomically: true, encoding: .utf8)
+        } catch {
+            writeError("Timeline remote access: could not record public access: \(error)\n")
+        }
+        refresh()
+    }
+
+    func endPublicAccess() {
+        removePublicAccessRecord()
+        refresh()
+    }
+
+    // Public access needs the app to watch its expiry, so it ends when the app
+    // quits. This blocks the quit for as long as one CLI call takes.
+    private func endPublicAccessOnQuit() {
+        guard removePublicAccessRecord() else { return }
+        _ = Self.runTailscale(socket: tailscaleSocketPath(), ["serve", "reset"])
+    }
+
+    // Returns whether there was a record to remove.
+    @discardableResult
+    private func removePublicAccessRecord() -> Bool {
+        (try? FileManager.default.removeItem(at: publicAccessRecordURL())) != nil
     }
 
     // Register (own) the agent only while the user's opt-in is active.
@@ -199,7 +255,10 @@ final class RemoteAccessController: ObservableObject {
     func refresh() {
         agentIssueText = agent?.issueText
 
-        guard !refreshInFlight else { return }
+        guard !refreshInFlight else {
+            refreshQueued = true
+            return
+        }
         refreshInFlight = true
 
         let enabled = isRemoteAccessEnabled()
@@ -208,28 +267,45 @@ final class RemoteAccessController: ObservableObject {
         let port = servicePort
 
         Task.detached(priority: .utility) {
+            // Fail closed: any record that doesn't allow public access now is
+            // removed, and the node goes back to tailnet only.
+            let record = try? String(contentsOf: publicAccessRecordURL(), encoding: .utf8)
+            let publicUntil = enabled ? PublicAccess.end(of: record, now: Date()) : nil
+            if record != nil, publicUntil == nil {
+                try? FileManager.default.removeItem(at: publicAccessRecordURL())
+            }
             var next = Self.computeState(
                 enabled: enabled,
                 socket: socket,
                 loginPending: loginPending
             )
-            if case .running(let dnsName) = next,
-               !Self.enforceTailnetOnly(socket: socket, port: port, dnsName: dnsName) {
-                next = .unconfirmed
+            if case .running(let dnsName) = next {
+                next = Self.enforceExposure(
+                    publicUntil: publicUntil, socket: socket, port: port, dnsName: dnsName)
+            } else if enabled, publicUntil == nil,
+                      let config = Self.serveConfig(socket: socket), Self.isFunnelOn(config) {
+                // Not Running yet (e.g. just after wake) but already carrying
+                // Funnel: end it now rather than at the first Running poll.
+                _ = Self.runTailscale(socket: socket, ["serve", "reset"])
             }
             let shown = next
             await MainActor.run {
                 self.refreshInFlight = false
                 self.apply(shown)
-                if case .running = shown {
-                    // Reaching Running resolves any pending login.
+                switch shown {
+                case .starting, .needsLogin, .loggingIn:
+                    break
+                default:
+                    // Reaching Running resolves any pending login; so does
+                    // the feature being off or uninstalled.
                     self.loginPendingSince = nil
-                } else if shown == .unconfirmed {
-                    self.loginPendingSince = nil
-                } else {
-                    if shown == .notSetUp || shown == .notInstalled {
-                        self.loginPendingSince = nil
-                    }
+                }
+                if case .publicAccess(_, let until) = shown, until.timeIntervalSinceNow < 30 {
+                    self.scheduler?.scheduleNextPoll(at: until)
+                }
+                if self.refreshQueued {
+                    self.refreshQueued = false
+                    self.refresh()
                 }
             }
         }
@@ -279,6 +355,42 @@ final class RemoteAccessController: ObservableObject {
               !dnsName.isEmpty else { return nil }
         // The status DNSName carries a trailing dot; strip it for a usable host.
         return dnsName.hasSuffix(".") ? String(dnsName.dropLast()) : dnsName
+    }
+
+    // Makes the node public until `publicUntil` if it is set, else tailnet
+    // only, and returns the state that the resulting config confirms. A failed
+    // attempt at public access ends it.
+    nonisolated private static func enforceExposure(
+        publicUntil: Date?, socket: String, port: Int, dnsName: String
+    ) -> RemoteAccessState {
+        if let until = publicUntil {
+            if enforcePublic(socket: socket, port: port, dnsName: dnsName) {
+                return .publicAccess(dnsName: dnsName, until: until)
+            }
+            writeError("Timeline remote access: could not turn on public access.\n")
+            try? FileManager.default.removeItem(at: publicAccessRecordURL())
+        }
+        return enforceTailnetOnly(socket: socket, port: port, dnsName: dnsName)
+            ? .running(dnsName: dnsName) : .unconfirmed
+    }
+
+    // Funnel on for the service's :443 proxy and for nothing else, so no other
+    // port (such as a raw TCP forward without Tailscale's headers) is public.
+    nonisolated private static func enforcePublic(socket: String, port: Int, dnsName: String) -> Bool {
+        func confirmed(_ config: [String: Any]) -> Bool {
+            let allow = config["AllowFunnel"] as? [String: Any] ?? [:]
+            return allow.count == 1 && allow["\(dnsName):443"] as? Bool == true
+                && (config["Foreground"] as? [String: Any] ?? [:]).isEmpty
+                && isServing(config, port: port, dnsName: dnsName)
+        }
+        guard let config = serveConfig(socket: socket) else { return false }
+        if confirmed(config) { return true }
+        if isFunnelOn(config) {
+            guard runTailscale(socket: socket, ["serve", "reset"]) != nil else { return false }
+        }
+        writeError("Timeline remote access: turning on public access for port \(port).\n")
+        _ = runTailscale(socket: socket, ["funnel", "--bg", "--https=443", proxyTarget(port)])
+        return serveConfig(socket: socket).map(confirmed) ?? false
     }
 
     // Makes the node serve the service to the tailnet and nothing to the

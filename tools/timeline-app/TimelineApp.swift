@@ -146,7 +146,19 @@ struct TimelineApp: App {
         case .running(let dnsName):
             Text("Remote Access: tailnet only")
             Text(dnsName)
-            Button("Copy Tailnet-Only URL") { remoteAccess.copyTailnetURL() }
+            Button("Copy Tailnet-Only URL") { remoteAccess.copyURL() }
+            Menu("Make Public on the Internet") {
+                ForEach(PublicAccess.durations.indices, id: \.self) { index in
+                    let duration = PublicAccess.durations[index]
+                    Button("For \(duration.label)") { remoteAccess.makePublic(for: duration.seconds) }
+                }
+            }
+        case .publicAccess(let dnsName, let until):
+            Text("Remote Access: PUBLIC on the internet")
+            Text("Until \(until.formatted(date: Calendar.current.isDateInToday(until) ? .omitted : .abbreviated, time: .shortened))")
+            Text(dnsName)
+            Button("Copy Public URL") { remoteAccess.copyURL() }
+            Button("Turn Off Public Access Now") { remoteAccess.endPublicAccess() }
         case .unconfirmed:
             Text("Remote Access: could not confirm it is tailnet only")
             Text("Turn Remote Access off if this persists.")
