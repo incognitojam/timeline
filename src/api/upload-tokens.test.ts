@@ -145,7 +145,11 @@ test("identity requires a loopback peer and matching login", async () => {
   const missing = await app.request(whoami, { headers: { Authorization: `Bearer ${secret}` } }, { peerAddress: "127.0.0.1" });
   expect(missing.status).toBe(403);
   expect(await missing.json()).toEqual({ error: "tailnet_only" });
-  expect((await request(whoami, { headers: { "Tailscale-Funnel-Request": "?1" } })).status).toBe(403);
+  for (const [path, method] of [[whoami, "GET"], ["/api/inbox/upload", "POST"]]) {
+    const funnel = await request(path, { method, headers: { "Tailscale-Funnel-Request": "?1" } });
+    expect(funnel.status).toBe(403);
+    expect(await funnel.text()).toBe("Forbidden");
+  }
   expect((await request(whoami, {}, "192.0.2.1")).status).toBe(403);
   expect((await request(whoami, { headers: { "Tailscale-User-Login": "other@example.com" } })).status).toBe(403);
   expect(await (await request(whoami)).json()).toEqual({ label: "test-phone", sources: ["calls"], tailnet_login: login });

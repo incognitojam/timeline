@@ -1,6 +1,7 @@
 import type { MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { getAppStateDb } from "../db/app-state";
+import { FUNNEL_HEADER } from "./mcp-http";
 import { getMcpBearerToken } from "./mcp-tokens";
 import { uploadTokenHash } from "./upload-tokens";
 
@@ -49,7 +50,7 @@ export const uploadAuth: MiddlewareHandler<{ Bindings: { peerAddress?: string } 
   const login = c.req.header("Tailscale-User-Login");
   const peer = c.env?.peerAddress;
   const loopback = peer === "127.0.0.1" || peer === "::1" || peer === "::ffff:127.0.0.1";
-  if (!login || !loopback || c.req.raw.headers.has("Tailscale-Funnel-Request")) {
+  if (!login || !loopback || c.req.raw.headers.has(FUNNEL_HEADER)) {
     return c.json({ error: "tailnet_only" }, 403);
   }
   if (login !== token.tailnet_login) return c.json({ error: "login_mismatch" }, 403);
