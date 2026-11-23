@@ -333,13 +333,10 @@ export function renderEvent(
     return `${formatTimestamp(timestamp, options)} <${sender}> ${text}`;
   }
 
-  // Call recordings: the call, then its transcript when there is one
+  // Call recordings
   if (type.startsWith("recording:")) {
-    const direction = type.slice("recording:".length);
     const dur = duration_ms ? ` (${formatDuration(duration_ms)})` : "";
-    const call = direction === "unknown" ? "call" : `${direction} call`;
-    const line = `${formatTimestamp(timestamp, options)} Recorded ${call} with ${title ?? "unknown caller"}${dur}`;
-    return content ? `${line}\n${content}` : line;
+    return `${formatTimestamp(timestamp, options)} Recorded call with ${title ?? "unknown caller"}${dur}`;
   }
 
   // Calls

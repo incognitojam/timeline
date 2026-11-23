@@ -10,9 +10,6 @@ import { parseRecordingName, zonedInstant } from "./filename";
 import { callTypeClause, isCallEventType } from "./match";
 import { type Converter, EVENT_SOURCE, type ImportOptions, importRecordingFile } from "./parser";
 import { readRecording } from "./shared/recording";
-import { parseTranscript, turnInstant } from "./shared/transcript";
-
-const SCRIBE_TXT = "# Call with: Alice (2 Jun 2026, 13:11)\n\n13:11 <Alice> Hello?\nIs that you?\n\n13:12 <Bob> Yes, it's me.\n";
 
 let dir: string;
 let db: Database;
@@ -243,30 +240,6 @@ describe("the cube-acr inbox source", () => {
     expect(result.afterSecond).toEqual({ processed: 1, logs: 1 });
     expect(result.events).toEqual([{ title: "John Doe" }]);
     expect(await Bun.file(join(dir, "archive/calls/whatsapp_20261109-065019_John Doe.amr")).exists()).toBe(true);
-  });
-});
-
-describe("call recording transcripts", () => {
-  it("reads Scribe turns, joining a speaker's sentences, and skips the header", () => {
-    expect(parseTranscript(SCRIBE_TXT)).toEqual([
-      { time: "13:11", speaker: "Alice", text: "Hello? Is that you?" },
-      { time: "13:12", speaker: "Bob", text: "Yes, it's me." },
-    ]);
-  });
-
-  it("reads Parakeet lines as unattributed turns with offsets", () => {
-    expect(parseTranscript("[0:00:04] Hello?\n[0:01:10] Yes.\n")).toEqual([
-      { time: "0:00:04", speaker: null, text: "Hello?" },
-      { time: "0:01:10", speaker: null, text: "Yes." },
-    ]);
-  });
-
-  it("places turn times in the recorder's offset, across midnight, and from Parakeet offsets", () => {
-    const start = "2026-06-02T23:58:30+01:00";
-    expect(turnInstant({ time: "23:59", speaker: "Alice", text: "" }, start)).toBe(Date.parse("2026-06-02T23:59:00+01:00"));
-    expect(turnInstant({ time: "00:01", speaker: "Alice", text: "" }, start)).toBe(Date.parse("2026-06-03T00:01:00+01:00"));
-    expect(turnInstant({ time: "0:01:10", speaker: null, text: "" }, start)).toBe(Date.parse("2026-06-02T23:59:40+01:00"));
-    expect(turnInstant({ time: null, speaker: null, text: "" }, start)).toBeNull();
   });
 });
 

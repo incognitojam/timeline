@@ -74,7 +74,7 @@ describe("DayTimeline", () => {
       tags: null, imported_at: "2026-07-07T12:00:00.000Z", import_batch: null, conversation_id: null, content: null,
     };
     const recordingEvent: TimelineEvent = {
-      ...base, id: 1, source: "call-recordings", type: "recording:outgoing", timestamp: "2026-07-07T12:00:05.000Z",
+      ...base, id: 1, source: "call-recordings", type: "recording:unknown", timestamp: "2026-07-07T12:00:05.000Z",
       end_timestamp: "2026-07-07T12:10:00.000Z", duration_ms: 595_000, title: "Alice", people: JSON.stringify(["phone:+447700900123"]),
       raw_data: JSON.stringify({ file: "phone_20260707-130005.amr", app: "phone", start_precision_s: 1, number: null, playable: false, unplayable_reason: null }),
     };
