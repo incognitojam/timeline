@@ -9,13 +9,14 @@
  */
 
 import { constants } from "node:fs";
-import { open, mkdir, rename, rm } from "fs/promises";
+import { link, open, mkdir, rename, rm } from "fs/promises";
 import { Hono } from "hono";
 import { basename, join } from "path";
 import { loadConfig, parseInterval, resolveSourcePath } from "../config";
 import { getAppStateDb } from "../db/app-state";
 import type { ServiceConfig } from "../config/types";
 import { tokenSourceEligible } from "./upload-tokens";
+import { isHiddenInboxFile } from "../inbox/filename";
 import { enqueueJob, listJobs } from "../jobs/store";
 import type { TimelineServiceStatus } from "../shared/version";
 import { SYNC_SOURCES } from "../sync/sources";
@@ -41,6 +42,21 @@ async function compareStoredUpload(path: string, file: File): Promise<"missing" 
     return stored.equals(Buffer.from(await file.arrayBuffer())) ? "equal" : "conflict";
   } finally {
     await handle.close();
+  }
+}
+
+// Serialize within each source: case-insensitive names can alias, and the watcher can archive
+// the winner between a competing request’s existence check and publication.
+const tokenPublications = new Map<string, Promise<boolean>>();
+
+async function publishInOrder(directory: string, publish: () => Promise<boolean>): Promise<boolean> {
+  const previous = tokenPublications.get(directory);
+  const current = previous ? previous.then(publish, publish) : publish();
+  tokenPublications.set(directory, current);
+  try {
+    return await current;
+  } finally {
+    if (tokenPublications.get(directory) === current) tokenPublications.delete(directory);
   }
 }
 
@@ -416,7 +432,7 @@ export const statusRoutes = new Hono()
 
     // Validate filename
     const filename = basename(file.name);
-    if (!filename || filename.includes("..") || filename.startsWith(".")) {
+    if (!filename || filename.includes("..") || isHiddenInboxFile(filename)) {
       return c.json({ success: false, message: "Invalid filename" }, 400);
     }
 
@@ -470,24 +486,46 @@ export const statusRoutes = new Hono()
     // Write file, then enqueue an inbox-process job directly so uploads do not
     // depend on a separate fs.watch event.
     const targetPath = join(targetDir, basename(filename));
-    let identical = false;
-    if (scope && config.inbox.archive_path) {
-      for (const path of [targetPath, join(config.inbox.archive_path, sourceName, filename)]) {
+    const archivePath = scope && config.inbox.archive_path
+      ? join(config.inbox.archive_path, sourceName, filename)
+      : undefined;
+    const existingUpload = async () => {
+      let identical = false;
+      for (const path of [targetPath, archivePath]) {
+        if (!path) continue;
         const result = await compareStoredUpload(path, file);
-        if (result === "conflict") return c.json({ error: "filename_in_use" }, 409);
+        if (result === "conflict") return "conflict";
         if (result === "equal") identical = true;
       }
-    }
-    if (!identical) {
+      return identical ? "equal" : "missing";
+    };
+
+    const publish = async () => {
+      const existing = scope ? await existingUpload() : "missing";
+      if (existing !== "missing") return existing === "equal";
+
       const tempPath = join(targetDir, `.upload-${crypto.randomUUID()}.tmp`);
+      let renamed = false;
       try {
         await Bun.write(tempPath, file);
-        await rename(tempPath, targetPath);
-      } catch (error) {
-        await rm(tempPath, { force: true });
-        throw error;
+        if (scope) {
+          try {
+            await link(tempPath, targetPath);
+          } catch (error) {
+            if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+            return await existingUpload() === "equal";
+          }
+        } else {
+          await rename(tempPath, targetPath);
+          renamed = true;
+        }
+        return true;
+      } finally {
+        if (!renamed) await rm(tempPath, { force: true });
       }
-    }
+    };
+    const accepted = scope ? await publishInOrder(targetDir, publish) : await publish();
+    if (!accepted) return c.json({ error: "filename_in_use" }, 409);
 
     const outcome = enqueueJob({
       kind: "inbox-process",

@@ -1,5 +1,5 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../config";
@@ -94,6 +94,35 @@ test("identical retries succeed in the inbox and archive without rewriting", asy
     expect(await Bun.file(path).text()).toBe("<calls/>");
     expect(statSync(path, { bigint: true }).mtimeNs).toBe(before.mtimeNs);
     expect(existsSync(inbox)).toBe(path === inbox);
+  }
+});
+
+test("a competing publication preserves the first file and acknowledges only identical bytes", async () => {
+  const directory = join(dir, "calls");
+  const write = Bun.write;
+  for (const [name, winner, status] of [
+    ["equal.xml", "<calls/>", 200],
+    ["different.xml", "<other/>", 409],
+  ] as const) {
+    const target = join(directory, name);
+    let winnerInode: bigint | undefined;
+    const stage = spyOn(Bun, "write").mockImplementationOnce(async (destination, data) => {
+      if (typeof destination !== "string" || !(data instanceof File)) throw new Error("Expected staged file upload");
+      const size = await write(destination, data);
+      writeFileSync(target, winner, { flag: "wx" });
+      winnerInode = statSync(target, { bigint: true }).ino;
+      return size;
+    });
+    try {
+      const response = await upload("calls", name);
+      expect(response.status).toBe(status);
+      expect(stage).toHaveBeenCalledTimes(1);
+      expect(winnerInode).toBe(statSync(target, { bigint: true }).ino);
+      expect(await Bun.file(target).text()).toBe(winner);
+      expect(readdirSync(directory).some(entry => entry.startsWith(".upload-"))).toBe(false);
+    } finally {
+      stage.mockRestore();
+    }
   }
 });
 
