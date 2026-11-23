@@ -17,7 +17,7 @@ export function getAppStateDb(): Database {
 }
 
 export function initAppStateDb(db: Database) {
-  const uploadTokensSchema = `
+  db.exec(`
     CREATE TABLE IF NOT EXISTS upload_tokens (
       id INTEGER PRIMARY KEY,
       label TEXT NOT NULL,
@@ -29,18 +29,7 @@ export function initAppStateDb(db: Database) {
       revoked_at TEXT
     );
     CREATE UNIQUE INDEX IF NOT EXISTS upload_tokens_active_label ON upload_tokens(label) WHERE revoked_at IS NULL;
-  `;
-
-  db.transaction(() => {
-    const oldLabelConstraint = db.query(
-      "SELECT 1 FROM sqlite_schema WHERE name='upload_tokens' AND sql LIKE '%label TEXT NOT NULL UNIQUE%'"
-    ).get();
-    if (oldLabelConstraint) db.exec("ALTER TABLE upload_tokens RENAME TO upload_tokens_old");
-    db.exec(uploadTokensSchema);
-    if (oldLabelConstraint) {
-      db.exec("INSERT INTO upload_tokens SELECT * FROM upload_tokens_old; DROP TABLE upload_tokens_old");
-    }
-  }).immediate();
+  `);
 
   // Day summaries cache
   db.exec(`

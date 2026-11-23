@@ -1,12 +1,6 @@
 {
   "accepted": [
     {
-      "database": "app-state",
-      "sql": "INSERT INTO upload_tokens SELECT * FROM upload_tokens_old",
-      "reason": "The active-label migration copies every token before dropping the old table in the same transaction. The old table exists only during migration.",
-      "error": "SQLiteError: no such table: upload_tokens_old"
-    },
-    {
       "database": "timeline",
       "sql": "SELECT COUNT ( * ) AS count FROM sync_once_snapshot . events was WHERE NOT EXISTS ( SELECT 1 FROM main . events now WHERE now . id = was . id )",
       "reason": "sync:once comparison attaches a per-run snapshot; it is absent from the fresh schema. Keep explicit replay gap until attached-schema replay is supported.",
