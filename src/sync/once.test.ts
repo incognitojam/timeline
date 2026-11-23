@@ -302,7 +302,7 @@ local = "unfiltered"
     const unfiltered = join(sandbox, "inbox", "unfiltered");
     expect(readFileSync(`${filtered}.args`, "utf8").trimEnd().split("\n")).toEqual([
       "sync", "demo:filtered", filtered, "--progress",
-      "--include", "/[^.]*.xml", "--include", "/exports/call-?.zip",
+      "--include", "/*.xml", "--include", "/exports/call-?.zip",
     ]);
     expect(readFileSync(`${unfiltered}.args`, "utf8").trimEnd().split("\n")).toEqual([
       "sync", "demo:unfiltered", unfiltered, "--progress",
