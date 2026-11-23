@@ -5,6 +5,32 @@ import { upsertSyncSourcePatch } from "../sync/config";
 import { seed } from "../testing/seed";
 import { app } from "./index";
 
+it("reports the latest processed file type in inbox status", async () => {
+  const db = getAppStateDb();
+  const source = "test-inbox-source";
+  try {
+    db.prepare(
+      `INSERT INTO processed_files (source, file_path, file_hash, file_size, processed_at, detected_type)
+       VALUES (?, 'new.json', 'new', 20, '2026-01-02 00:00:00', 'json'),
+              (?, 'old.csv', 'old', 10, '2026-01-01 00:00:00', 'csv')`,
+    ).run(source, source);
+
+    const response = await app.request("/api/status");
+    expect(response.status).toBe(200);
+    const status = await response.json();
+    expect(status.inbox.sources).toContainEqual({
+      source,
+      filesProcessed: 2,
+      totalSize: 20,
+      totalEvents: 0,
+      lastProcessed: "2026-01-02 00:00:00",
+      lastDetectedType: "json",
+    });
+  } finally {
+    db.prepare("DELETE FROM processed_files WHERE source = ?").run(source);
+  }
+});
+
 describe("/status.md sync history", () => {
   const sources = ["remote-agents", "test-deferred-source"];
 

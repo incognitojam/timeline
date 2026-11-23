@@ -861,15 +861,7 @@
     },
     {
       "database": "app-state",
-      "sql": "SELECT source , COUNT ( * ) as file_count , ( SELECT file_size FROM processed_files p2 WHERE p2 . source = processed_files . source ORDER BY processed_at DESC LIMIT 1 ) as total_size , COALESCE ( SUM ( events_added ) , 0 ) as total_events , MAX ( processed_at ) as last_processed FROM processed_files GROUP BY source ORDER BY source",
-      "reason": "found by the first run; under review",
-      "findings": [
-        "processed_files:index-scan"
-      ]
-    },
-    {
-      "database": "app-state",
-      "sql": "SELECT source , detected_type FROM processed_files WHERE ( source , processed_at ) IN ( SELECT source , MAX ( processed_at ) FROM processed_files GROUP BY source )",
+      "sql": "SELECT source , COUNT ( * ) as file_count , ( SELECT file_size FROM processed_files p2 WHERE p2 . source = processed_files . source ORDER BY processed_at DESC LIMIT 1 ) as total_size , COALESCE ( SUM ( events_added ) , 0 ) as total_events , MAX ( processed_at ) as last_processed , detected_type FROM processed_files GROUP BY source ORDER BY source",
       "reason": "found by the first run; under review",
       "findings": [
         "processed_files:index-scan"
