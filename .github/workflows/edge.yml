@@ -1,203 +1,35 @@
-name: Edge build
-
-on:
-  workflow_run:
-    workflows: [Trusted CI]
-    types: [completed]
-    branches: [main]
-  workflow_dispatch:
-    inputs:
-      dry_run:
-        description: Print what would be built and removed, without signing, uploading or deleting
-        type: boolean
-        default: true
-
-permissions: {}
-
-# One building run at a time. GitHub keeps at most one run waiting per group:
-# a newer run replaces it, and none cancels the run in progress. Dry runs use
-# their own group so they never replace a waiting build.
-concurrency:
-  group: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'edge-build-dry-run' || 'edge-build' }}
-  cancel-in-progress: false
-
-defaults:
-  run:
-    shell: bash
-
-env:
-  NO_COLOR: "1"
-  # The one rolling prerelease that holds the feed and the newest builds' DMGs.
-  # Its tag keeps an old name because Macs follow its download URL.
-  FEED_TAG: nightly
-
+name: Measure Sparkle delta
+on: workflow_dispatch
+permissions:
+  contents: read
 jobs:
-  select:
-    # Every Trusted CI completion runs this, failed or not: a skipped run would
-    # still replace the waiting one, and selection finds the newest green commit.
-    if: github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || vars.EDGE_BUILDS_ENABLED == 'true')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      actions: read
-    outputs:
-      build: ${{ steps.select.outputs.build }}
-      dry-run: ${{ steps.select.outputs.dry-run }}
-      commit: ${{ steps.select.outputs.commit }}
-      build-number: ${{ steps.select.outputs.build-number }}
-      version: ${{ steps.select.outputs.version }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Choose the newest green commit newer than the feed and the latest stable
-        id: select
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
-        run: |
-          echo "dry-run=$DRY_RUN" >> "$GITHUB_OUTPUT"
-          # A run triggered by an older push still walks main as it is now.
-          git fetch --quiet origin main
-          # The rolling release must already exist; this workflow never creates or deletes releases.
-          release="$RUNNER_TEMP/release.json"
-          gh api "repos/$GH_REPO/releases/tags/$FEED_TAG" > "$release"
-          feed=()
-          if jq -e '.assets | any(.name == "appcast.xml" and .state == "uploaded")' "$release" > /dev/null; then
-            gh release download "$FEED_TAG" --pattern appcast.xml --dir "$RUNNER_TEMP/feed"
-            feed=(--feed "$RUNNER_TEMP/feed/appcast.xml")
-          fi
-          offered="$(python3 -B scripts/ci/edge_build.py offered-build "$release" --tag "$FEED_TAG" "${feed[@]}")"
-          stable="$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)"
-          stable_build="$(./scripts/print-build-number.sh "$stable")"
-          shipped=$(( offered > stable_build ? offered : stable_build ))
-          echo "The edge release offers build $offered; latest stable $stable is build $stable_build."
-
-          # Build numbers rise along main, so everything at or below the shipped one is shipped.
-          commit=""
-          build=""
-          while read -r sha; do
-            sha_build="$(./scripts/print-build-number.sh "$sha")"
-            if [ "$sha_build" -le "$shipped" ]; then break; fi
-            conclusion="$(gh api "repos/$GH_REPO/actions/workflows/trusted-ci.yml/runs?head_sha=$sha&event=push" \
-              --jq '[.workflow_runs[]] | sort_by(.created_at) | last | .conclusion // ""')"
-            if [ "$conclusion" = success ]; then
-              commit="$sha"
-              build="$sha_build"
-              break
-            fi
-            echo "Skipping $sha: Trusted CI ${conclusion:-has not finished}."
-          done < <(git rev-list --first-parent --max-count=50 origin/main)
-
-          if [ -z "$commit" ]; then
-            echo "build=false" >> "$GITHUB_OUTPUT"
-            echo "No green commit on main is newer than build $shipped; nothing to build." | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          package_version="$(git show "$commit:package.json" | jq -er .version)"
-          if [ "$package_version" != "$(git show "$commit^:package.json" | jq -er .version)" ]; then
-            echo "build=false" >> "$GITHUB_OUTPUT"
-            echo "$commit releases $package_version; the release workflow builds it, not this one." | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          version="$(python3 -B scripts/ci/edge_build.py version "$package_version" "$build")"
-          {
-            echo "build=true"
-            echo "commit=$commit"
-            echo "build-number=$build"
-            echo "version=$version"
-          } >> "$GITHUB_OUTPUT"
-          echo "Building $version from $commit." | tee -a "$GITHUB_STEP_SUMMARY"
-
-          if [ "$DRY_RUN" = true ]; then
-            # Preview removal against the release as it would look after this build's upload.
-            dmg="Timeline-$version-macos-arm64.dmg"
-            jq --arg dmg "$dmg" '.assets = (.assets + [{name: "appcast.xml"}, {name: $dmg}, {name: ($dmg + ".sha256")}] | unique_by(.name))' \
-              "$release" > "$RUNNER_TEMP/release-after.json"
-            if ! remove="$(python3 -B scripts/ci/edge_build.py prune-plan "$RUNNER_TEMP/release-after.json" --tag "$FEED_TAG" --current "$build" 2>&1)"; then
-              remove="nothing; the removal step would refuse: $remove"
-            fi
-            {
-              echo
-              echo "Would remove after uploading: ${remove:-nothing}"
-              echo
-              echo "**Dry run:** nothing was signed, uploaded or deleted."
-            } | tee -a "$GITHUB_STEP_SUMMARY"
-          fi
-
-  macos-dmg:
-    needs: select
-    if: needs.select.outputs.build == 'true' && needs.select.outputs.dry-run != 'true'
-    permissions:
-      contents: write
-    uses: ./.github/workflows/macos-dmg.yml
-    # Enables called-job environment secrets: https://github.com/actions/runner/issues/4453
-    secrets: inherit
-    with:
-      tag: nightly
-      commit: ${{ needs.select.outputs.commit }}
-      edge-version: ${{ needs.select.outputs.version }}
-
-  publish:
-    needs: [select, macos-dmg]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+  measure:
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v8
-        with:
-          name: edge-${{ needs.select.outputs.version }}
-          path: ${{ runner.temp }}/build
-      - name: Upload the build, then point the feed at it, then remove old DMGs
-        env:
+      - env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          VERSION: ${{ needs.select.outputs.version }}
-          BUILD: ${{ needs.select.outputs.build-number }}
+        shell: bash
         run: |
-          files="$RUNNER_TEMP/build"
-          dmg="Timeline-$VERSION-macos-arm64.dmg"
-          (cd "$files" && sha256sum --check --strict "$dmg.sha256")
-          python3 -B scripts/ci/edge_build.py check-appcast "$files/appcast.xml" \
-            --repository "$GH_REPO" --tag "$FEED_TAG" --version "$VERSION" --dmg "$files/$dmg"
-
-          release="$RUNNER_TEMP/release.json"
-          gh api "repos/$GH_REPO/releases/tags/$FEED_TAG" > "$release"
-          feed=()
-          if jq -e '.assets | any(.name == "appcast.xml" and .state == "uploaded")' "$release" > /dev/null; then
-            gh release download "$FEED_TAG" --pattern appcast.xml --dir "$RUNNER_TEMP/current"
-            feed=(--feed "$RUNNER_TEMP/current/appcast.xml")
-          fi
-          # Refuses unless this build is newer than the feed and every other edge DMG;
-          # "published" means an earlier attempt already moved the feed to it.
-          action="$(python3 -B scripts/ci/edge_build.py publish-action "$release" --tag "$FEED_TAG" --build "$BUILD" "${feed[@]}")"
-          # --clobber deletes an existing asset before uploading, so retry rather than leave it missing.
-          upload() {
-            local attempt
-            for attempt in 1 2 3; do
-              if gh release upload "$FEED_TAG" "$@" --clobber; then return 0; fi
-              echo "Upload attempt $attempt failed." >&2
-              sleep $(( attempt * 15 ))
-            done
-            return 1
+          set -euo pipefail
+          REPO_ROOT="$PWD"
+          source tools/timeline-app/sparkle.sh
+          mkdir -p .scratch
+          git check-ignore -q .scratch
+          cd .scratch
+          for n in 1392 1394; do
+            dmg="Timeline-0.21.1-edge.$n-macos-arm64.dmg"
+            gh release download nightly --pattern "$dmg"
+            hdiutil attach -readonly -nobrowse -mountpoint "$PWD/$n" "$dmg"
+          done
+          TIMEFORMAT='Elapsed %3R seconds'
+          time "$SPARKLE_ROOT/bin/BinaryDelta" create --version=4 1392/Timeline.app 1394/Timeline.app patch.delta
+          time {
+            "$SPARKLE_ROOT/bin/BinaryDelta" apply 1392/Timeline.app patched.app patch.delta
+            diff -qr 1394/Timeline.app patched.app
+            codesign --verify --deep --strict patched.app
           }
-          if [ "$action" = upload ]; then
-            upload "$files/$dmg" "$files/$dmg.sha256"
-            upload "$files/appcast.xml"
-          else
-            echo "The feed already offers build $BUILD."
-          fi
-
-          # The plan is computed in full before anything is deleted; any doubt fails here.
-          gh api "repos/$GH_REPO/releases/tags/$FEED_TAG" > "$release"
-          remove="$(python3 -B scripts/ci/edge_build.py prune-plan "$release" --tag "$FEED_TAG" --current "$BUILD")"
-          while read -r name; do
-            [ -n "$name" ] || continue
-            echo "Removing $name"
-            gh release delete-asset "$FEED_TAG" "$name" --yes
-          done <<< "$remove"
+          wc -c patch.delta *1394*.dmg
