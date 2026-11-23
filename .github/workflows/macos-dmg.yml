@@ -114,6 +114,18 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ inputs.tag }}
         run: ./generate-appcast.sh
+      - name: Generate verified edge deltas
+        if: inputs.edge-version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          VERSION: ${{ inputs.edge-version }}
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          cp dist/macos/appcast.xml dist/macos/full-appcast.xml
+          python3 -B scripts/ci/sparkle_deltas.py "$VERSION" "${VERSION##*.}" ||
+            echo "::warning::Delta generation failed; publishing the full update."
       - name: Save the signed edge build
         if: inputs.edge-version != ''
         uses: actions/upload-artifact@v7
@@ -122,7 +134,8 @@ jobs:
           path: |
             dist/macos/*.dmg
             dist/macos/*.sha256
-            dist/macos/appcast.xml
+            dist/macos/*.delta
+            dist/macos/*.xml
           if-no-files-found: error
           retention-days: 7
       - name: Attach assets to draft release

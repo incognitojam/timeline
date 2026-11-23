@@ -43,6 +43,25 @@ class PrunePlanTests(unittest.TestCase):
             [dmg(1340), dmg(1340) + ".sha256", dmg(1341), dmg(1341) + ".sha256"],
         )
 
+    def test_removes_superseded_patches_before_images(self):
+        old = "Timeline1345-1340.delta"
+        kept = "Timeline1346-1345.delta"
+        names = ["appcast.xml", old, kept, *build_assets(*range(1340, 1347))]
+        self.assertEqual(prune_plan(release(names), TAG, 1346), [
+            old, dmg(1340), dmg(1340) + ".sha256", dmg(1341), dmg(1341) + ".sha256",
+        ])
+        for stray in ("Timeline9999-1340.delta", "Timeline1345-1346.delta", kept + ".bak"):
+            with self.subTest(stray=stray), self.assertRaises(Refusal):
+                prune_plan(release(names + [stray]), TAG, 1346)
+
+    def test_catches_up_after_one_missed_cleanup(self):
+        patches = [f"Timeline{target}-{old}.delta" for target in (1344, 1345)
+                   for old in range(target - 5, target)]
+        names = ["appcast.xml", *patches, *build_assets(*range(1340, 1347))]
+        plan = prune_plan(release(names), TAG, 1346)
+        self.assertEqual(plan[:10], sorted(patches))
+        self.assertEqual(plan[10:], build_assets(1340, 1341))
+
     def test_orders_builds_numerically(self):
         names = ["appcast.xml", *build_assets(999, 1000, 1001, 1002, 1003, 1004)]
         self.assertEqual(prune_plan(release(names), TAG, 1004), [dmg(999), dmg(999) + ".sha256"])
@@ -178,6 +197,23 @@ VERSION = "0.21.1-edge.1347"
 
 
 class AppcastTests(unittest.TestCase):
+    def test_delta_must_match_retained_source_and_local_file(self):
+        name = "Timeline1347-1346.delta"
+        enclosure = f'<enclosure url="https://github.com/example/timeline/releases/download/nightly/{name}" length="3" sparkle:deltaFrom="1346" sparkle:edSignature="sig"/>'
+        def check(element, directory, sources=(1346,)):
+            xml = APPCAST.replace("</item>", f"<sparkle:deltas>{element}</sparkle:deltas></item>")
+            return check_appcast(xml, "example/timeline", TAG, VERSION, 1, directory, sources)
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / name).write_bytes(b"abc")
+            self.assertEqual(check(enclosure, directory), [name])
+            for invalid in (enclosure.replace("/nightly/", "/other/"), enclosure.replace('length="3"', 'length="1"'),
+                            enclosure.replace('="sig"', '=""'), enclosure * 2):
+                with self.subTest(invalid=invalid), self.assertRaises(Refusal):
+                    check(invalid, directory)
+            with self.assertRaises(Refusal):
+                check(enclosure, directory, ())
+
     def test_reads_the_offered_build(self):
         self.assertEqual(feed_build(APPCAST), 1347)
 
