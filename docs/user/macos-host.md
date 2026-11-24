@@ -174,7 +174,7 @@ and `/opt/homebrew/bin/tailscale`). Until it's installed the menu shows
 the menu. That creates the state directory and registers the agent, then the
 menu offers **Log In to Tailscale…** — click it, authorize the node in the
 browser that opens, and the menu switches to "Remote Access: tailnet only" with
-the node's DNS name and a **Copy Tailnet-Only URL** button. The app never re-runs
+the node's DNS name and a **Copy URL** button. The app never re-runs
 login on its own (that would regenerate the node key and orphan a pending
 authorization); login is always a button click.
 
@@ -197,6 +197,14 @@ authorization); login is always a button click.
   menu says so instead of showing the address; turn Remote Access off if that
   persists.
 - **Logs:** `~/Library/Logs/timeline/tailscale.log` (and `.error.log`).
+
+**Firewall prompt:** with the macOS firewall on, the first connection from
+another device can make macOS ask whether `tailscaled` may accept incoming
+network connections. Choose **Allow**: it lets tailnet devices connect directly
+to this node instead of through Tailscale's relays, which are
+[slower](https://tailscale.com/kb/1257/connection-types). Homebrew's
+`tailscaled` is ad-hoc signed, which identifies only that exact build, so the
+prompt may appear again after `brew upgrade tailscale`.
 
 **Turn off:** choose **Turn Off Remote Access** in the menu. This unregisters
 the agent (stopping `tailscaled`) but keeps the state directory, so re-enabling
@@ -227,8 +235,13 @@ Each time the app checks the node, including at launch and on wake, it turns
 Funnel off unless that file allows public access at that moment: missing,
 unreadable, ended, longer than a day, or starting later than the clock now
 reads (the clock moved back) all mean tailnet only. If Funnel can't be turned
-on, for example because the tailnet policy doesn't allow it, the menu stays
-tailnet only.
+on, the node stays tailnet only and the menu says why until you try again or
+turn Remote Access off. If the tailnet policy doesn't grant this device the
+`funnel` node attribute, the menu says Funnel is not enabled for this device and,
+when Tailscale gives a link for enabling it, offers **Enable Funnel in
+Tailscale…**; enable it in the Tailscale admin console, then choose a duration
+again. The app gives `tailscale funnel` 10 seconds, so it stops waiting for you
+to enable Funnel after that.
 
 If Timeline is force-quit or crashes while the service is public and
 `tailscaled` keeps running, or is quit within a second or two of choosing

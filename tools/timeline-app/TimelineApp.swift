@@ -146,7 +146,7 @@ struct TimelineApp: App {
         case .running(let dnsName):
             Text("Remote Access: tailnet only")
             Text(dnsName)
-            Button("Copy Tailnet-Only URL") { remoteAccess.copyURL() }
+            Button("Copy URL") { remoteAccess.copyURL() }
             Menu("Make Public on the Internet") {
                 ForEach(PublicAccess.durations.indices, id: \.self) { index in
                     let duration = PublicAccess.durations[index]
@@ -157,11 +157,24 @@ struct TimelineApp: App {
             Text("Remote Access: PUBLIC on the internet")
             Text("Until \(until.formatted(date: Calendar.current.isDateInToday(until) ? .omitted : .abbreviated, time: .shortened))")
             Text(dnsName)
-            Button("Copy Public URL") { remoteAccess.copyURL() }
+            Button("Copy URL") { remoteAccess.copyURL() }
             Button("Turn Off Public Access Now") { remoteAccess.endPublicAccess() }
         case .unconfirmed:
             Text("Remote Access: could not confirm it is tailnet only")
             Text("Turn Remote Access off if this persists.")
+        }
+
+        switch remoteAccess.publicAccessFailure {
+        case .funnelNotEnabled(let enableURL):
+            Text("Could not make public: Funnel is not enabled for this device.")
+            Text("Enable Funnel for it in the Tailscale admin console, then try again.")
+            if let enableURL {
+                Button("Enable Funnel in Tailscale…") { _ = NSWorkspace.shared.open(enableURL) }
+            }
+        case .other(let reason):
+            Text("Could not make public: \(reason)")
+        case nil:
+            EmptyView()
         }
 
         if remoteAccess.state != .notSetUp {
