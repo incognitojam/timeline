@@ -144,13 +144,15 @@ struct TimelineApp: App {
                 Button("Retry Login…") { remoteAccess.logIn() }
             }
         case .running(let dnsName):
-            Text("Remote Access: tailnet only")
+            Text(remoteAccess.makingPublic ? "Remote Access: making public…" : "Remote Access: tailnet only")
             Text(dnsName)
             Button("Copy URL") { remoteAccess.copyURL() }
-            Menu("Make Public on the Internet") {
-                ForEach(PublicAccess.durations.indices, id: \.self) { index in
-                    let duration = PublicAccess.durations[index]
-                    Button("For \(duration.label)") { remoteAccess.makePublic(for: duration.seconds) }
+            if !remoteAccess.makingPublic {
+                Menu("Make Public on the Internet") {
+                    ForEach(PublicAccess.durations.indices, id: \.self) { index in
+                        let duration = PublicAccess.durations[index]
+                        Button("For \(duration.label)") { remoteAccess.makePublic(for: duration.seconds) }
+                    }
                 }
             }
         case .publicAccess(let dnsName, let until):
@@ -166,10 +168,10 @@ struct TimelineApp: App {
 
         switch remoteAccess.publicAccessFailure {
         case .funnelNotEnabled(let enableURL):
-            Text("Could not make public: Funnel is not enabled for this device.")
-            Text("Enable Funnel for it in the Tailscale admin console, then try again.")
+            Text("Could not make public: \(PublicAccessFailure.funnelNotEnabledText)")
+            Text(PublicAccessFailure.enableFunnelHint)
             if let enableURL {
-                Button("Enable Funnel in Tailscale…") { _ = NSWorkspace.shared.open(enableURL) }
+                Button(PublicAccessFailure.enableFunnelLabel) { _ = NSWorkspace.shared.open(enableURL) }
             }
         case .other(let reason):
             Text("Could not make public: \(reason)")

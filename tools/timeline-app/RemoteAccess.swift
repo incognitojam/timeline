@@ -92,6 +92,10 @@ enum PublicAccessFailure: Equatable {
     // `tailscale funnel` printed for enabling it, if any.
     case funnelNotEnabled(enableURL: URL?)
     case other(reason: String)
+
+    static let funnelNotEnabledText = "Funnel is not enabled for this device."
+    static let enableFunnelHint = "Enable Funnel for it in the Tailscale admin console, then try again."
+    static let enableFunnelLabel = "Enable Funnel in Tailscale…"
 }
 
 @MainActor
@@ -100,6 +104,9 @@ final class RemoteAccessController: ObservableObject {
     // Surfaces the underlying agent ownership issue (approval, failed, …) when set.
     @Published private(set) var agentIssueText: String?
     @Published private(set) var publicAccessFailure: PublicAccessFailure?
+    // From a Make Public click until the refresh that reads its record ends.
+    // Display only: what is exposed is still decided by the record and config.
+    @Published private(set) var makingPublic = false
 
     // The service port is the single source of truth for what to serve.
     private let servicePort: Int
@@ -168,6 +175,7 @@ final class RemoteAccessController: ObservableObject {
         FileManager.default.createFile(atPath: tailscaleDisabledMarkerURL().path, contents: nil)
         removePublicAccessRecord()
         publicAccessFailure = nil
+        makingPublic = false
         agent = nil
         loginPendingSince = nil
         agentIssueText = nil
@@ -229,16 +237,42 @@ final class RemoteAccessController: ObservableObject {
 
     // Records when public access ends, then lets refresh turn Funnel on.
     func makePublic(for duration: TimeInterval) {
-        guard case .running = state else { return }
+        guard case .running = state, !makingPublic else { return }
         publicAccessFailure = nil
         let record = PublicAccess.record(start: Date(), duration: duration)
         do {
             try record.write(to: publicAccessRecordURL(), atomically: true, encoding: .utf8)
+            makingPublic = true
         } catch {
             writeError("Timeline remote access: could not record public access: \(error)\n")
-            publicAccessFailure = .other(reason: "could not record when it ends.")
+            let failure = PublicAccessFailure.other(reason: "could not record when it ends.")
+            publicAccessFailure = failure
+            showMakePublicFailure(failure)
         }
         refresh()
+    }
+
+    // An alert, so a failed click is answered even with the menu closed.
+    private func showMakePublicFailure(_ failure: PublicAccessFailure) {
+        // Shown after the caller returns: runModal blocks until dismissed.
+        Task { @MainActor in
+            let alert = NSAlert()
+            alert.messageText = "Could not make Timeline public"
+            var enableURL: URL?
+            switch failure {
+            case .funnelNotEnabled(let url):
+                alert.informativeText = "\(PublicAccessFailure.funnelNotEnabledText) \(PublicAccessFailure.enableFunnelHint)"
+                enableURL = url
+            case .other(let reason):
+                alert.informativeText = reason
+            }
+            if enableURL != nil { alert.addButton(withTitle: PublicAccessFailure.enableFunnelLabel) }
+            alert.addButton(withTitle: "OK")
+            NSApp.activate()
+            if alert.runModal() == .alertFirstButtonReturn, let enableURL {
+                _ = NSWorkspace.shared.open(enableURL)
+            }
+        }
     }
 
     func endPublicAccess() {
@@ -278,6 +312,8 @@ final class RemoteAccessController: ObservableObject {
         let socket = tailscaleSocketPath()
         let loginPending = loginPendingSince != nil
         let port = servicePort
+        // A refresh that starts after the click reads the record it wrote.
+        let endsAttempt = makingPublic
 
         Task.detached(priority: .utility) {
             // Fail closed: any record that doesn't allow public access now is
@@ -308,6 +344,11 @@ final class RemoteAccessController: ObservableObject {
                 self.refreshInFlight = false
                 self.apply(shown)
                 if let failed { self.publicAccessFailure = failed }
+                // Not if Remote Access was turned off meanwhile.
+                if endsAttempt, self.makingPublic {
+                    self.makingPublic = false
+                    if let failed { self.showMakePublicFailure(failed) }
+                }
                 switch shown {
                 case .starting, .needsLogin, .loggingIn:
                     break

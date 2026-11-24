@@ -234,14 +234,15 @@ The end time is kept in `~/.local/share/timeline/tailscale-public-access`.
 Each time the app checks the node, including at launch and on wake, it turns
 Funnel off unless that file allows public access at that moment: missing,
 unreadable, ended, longer than a day, or starting later than the clock now
-reads (the clock moved back) all mean tailnet only. If Funnel can't be turned
-on, the node stays tailnet only and the menu says why until you try again or
-turn Remote Access off. If the tailnet policy doesn't grant this device the
-`funnel` node attribute, the menu says Funnel is not enabled for this device and,
-when Tailscale gives a link for enabling it, offers **Enable Funnel in
-Tailscale…**; enable it in the Tailscale admin console, then choose a duration
-again. The app gives `tailscale funnel` 10 seconds, so it stops waiting for you
-to enable Funnel after that.
+reads (the clock moved back) all mean tailnet only. While the app turns Funnel
+on, the menu shows "Remote Access: making public…". If Funnel can't be turned
+on, the node stays tailnet only, an alert says why, and the menu keeps saying
+why until you try again or turn Remote Access off. If the tailnet policy doesn't
+grant this device the `funnel` node attribute, the alert and the menu say Funnel
+is not enabled for this device and, when Tailscale gives a link for enabling it,
+offer **Enable Funnel in Tailscale…**; enable it in the Tailscale admin console,
+then choose a duration again. The app gives `tailscale funnel` 10 seconds, so it
+stops waiting for you to enable Funnel after that.
 
 If Timeline is force-quit or crashes while the service is public and
 `tailscaled` keeps running, or is quit within a second or two of choosing
