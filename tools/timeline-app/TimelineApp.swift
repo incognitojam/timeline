@@ -14,7 +14,10 @@ struct TimelineApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            serviceStatusText
+            if service.status != .running {
+                serviceStatusText
+                restartServiceButton
+            }
             if let issue = serviceAgent.issueText {
                 Text(issue)
             }
@@ -30,12 +33,8 @@ struct TimelineApp: App {
                 }
             }
 
-            Button("Open Timeline") {
+            Button("Open Timeline", systemImage: "arrow.up.forward.app") {
                 service.openTimeline()
-            }
-
-            Button("Restart Service") {
-                service.restartService()
             }
 
             Divider()
@@ -44,8 +43,12 @@ struct TimelineApp: App {
 
             Divider()
 
-            statusText
+            Toggle("Record Screen", isOn: Binding(
+                get: { recall.isRecordingEnabled },
+                set: { recall.setRecording($0) }
+            ))
 
+            recallStatusText
             if let age = recall.lastCaptureAgeString {
                 Text(age)
             }
@@ -63,35 +66,38 @@ struct TimelineApp: App {
                 }
             }
 
-            Toggle("Record Screen", isOn: Binding(
-                get: { recall.isRecordingEnabled },
-                set: { recall.setRecording($0) }
-            ))
-
-            Toggle("Launch at Login", isOn: Binding(
-                get: { loginItems.isEnabled },
-                set: { loginItems.setEnabled($0) }
-            ))
+            Divider()
 
             if loginItems.requiresApproval {
                 Button("Approve in Login Items Settings") {
                     SMAppService.openSystemSettingsLoginItems()
                 }
             }
-
-            Divider()
-
-            Button("Check for Updates…") {
-                updates.checkForUpdates()
-            }
-            .disabled(!updates.canCheck)
             if updates.updateStaged {
                 Button("Install Update and Relaunch…") { updates.checkForUpdates() }
                     .disabled(!updates.canInstallStagedUpdate)
             }
             if let issue = updates.issue { Text(issue) }
 
-            Button("Quit Timeline") { NSApplication.shared.terminate(nil) }
+            Menu("Settings", systemImage: "gearshape") {
+                Toggle("Launch at Login", isOn: Binding(
+                    get: { loginItems.isEnabled },
+                    set: { loginItems.setEnabled($0) }
+                ))
+                if service.status == .running {
+                    restartServiceButton
+                }
+                Button("Check for Updates…", systemImage: "arrow.down.circle") {
+                    updates.checkForUpdates()
+                }
+                .disabled(!updates.canCheck)
+                if let version = service.runningVersion.flatMap({ $0.version ?? $0.commit }) {
+                    Divider()
+                    Text("Version \(version)")
+                }
+            }
+
+            Button("Quit Timeline", systemImage: "xmark.rectangle") { NSApplication.shared.terminate(nil) }
                 .keyboardShortcut("q")
         } label: {
             Image(systemName: iconName)
@@ -100,10 +106,11 @@ struct TimelineApp: App {
         .menuBarExtraStyle(.menu)
     }
 
+    // Shown only while the service is not healthy.
     @ViewBuilder private var serviceStatusText: some View {
         switch service.status {
         case .checking: Text("Service: checking...")
-        case .running: Text(runningStatusLabel)
+        case .running: EmptyView()
         case .notResponding:
             if let error = service.configurationError {
                 Text("Service: configuration error")
@@ -114,14 +121,10 @@ struct TimelineApp: App {
         }
     }
 
-    private var runningStatusLabel: String {
-        if let version = service.runningVersion?.version {
-            return "Service: running (\(version))"
+    private var restartServiceButton: some View {
+        Button("Restart Service", systemImage: "arrow.clockwise") {
+            service.restartService()
         }
-        if let commit = service.runningVersion?.commit {
-            return "Service: running (\(commit))"
-        }
-        return "Service: running"
     }
 
     @ViewBuilder private var remoteAccessSection: some View {
@@ -143,24 +146,10 @@ struct TimelineApp: App {
                 // Retrying invalidates the pending auth URL (new node key).
                 Button("Retry Login…") { remoteAccess.logIn() }
             }
-        case .running(let dnsName):
+        case .running:
             Text(remoteAccess.makingPublic ? "Remote Access: making public…" : "Remote Access: tailnet only")
-            Text(dnsName)
-            Button("Copy URL") { remoteAccess.copyURL() }
-            if !remoteAccess.makingPublic {
-                Menu("Make Public on the Internet") {
-                    ForEach(PublicAccess.durations.indices, id: \.self) { index in
-                        let duration = PublicAccess.durations[index]
-                        Button("For \(duration.label)") { remoteAccess.makePublic(for: duration.seconds) }
-                    }
-                }
-            }
-        case .publicAccess(let dnsName, let until):
-            Text("Remote Access: PUBLIC on the internet")
-            Text("Until \(until.formatted(date: Calendar.current.isDateInToday(until) ? .omitted : .abbreviated, time: .shortened))")
-            Text(dnsName)
-            Button("Copy URL") { remoteAccess.copyURL() }
-            Button("Turn Off Public Access Now") { remoteAccess.endPublicAccess() }
+        case .publicAccess(_, let until):
+            Text("Remote Access: public until \(until.formatted(date: Calendar.current.isDateInToday(until) ? .omitted : .abbreviated, time: .shortened))")
         case .unconfirmed:
             Text("Remote Access: could not confirm it is tailnet only")
             Text("Turn Remote Access off if this persists.")
@@ -179,8 +168,18 @@ struct TimelineApp: App {
             EmptyView()
         }
 
-        if remoteAccess.state != .notSetUp {
-            Button("Turn Off Remote Access") { remoteAccess.turnOff() }
+        switch remoteAccess.state {
+        case .notSetUp:
+            EmptyView()
+        case .running(let dnsName):
+            copyURLButton
+            remoteAccessMenu(dnsName: dnsName, offerPublic: !remoteAccess.makingPublic)
+        case .publicAccess(let dnsName, _):
+            Button("Stop Public Access", systemImage: "stop.circle") { remoteAccess.endPublicAccess() }
+            copyURLButton
+            remoteAccessMenu(dnsName: dnsName, offerPublic: false)
+        case .notInstalled, .starting, .needsLogin, .loggingIn, .unconfirmed:
+            turnOffRemoteAccessButton
         }
 
         if let issue = remoteAccess.agentIssueText {
@@ -193,15 +192,43 @@ struct TimelineApp: App {
         }
     }
 
-    @ViewBuilder private var statusText: some View {
+    private var copyURLButton: some View {
+        Button("Copy URL", systemImage: "doc.on.doc") { remoteAccess.copyURL() }
+    }
+
+    private var turnOffRemoteAccessButton: some View {
+        Button("Turn Off Remote Access", systemImage: "power") { remoteAccess.turnOff() }
+    }
+
+    private func remoteAccessMenu(dnsName: String, offerPublic: Bool) -> some View {
+        Menu("Remote Access", systemImage: "network") {
+            Text(dnsName)
+            if offerPublic {
+                Menu("Make Public on the Internet", systemImage: "globe") {
+                    ForEach(PublicAccess.durations.indices, id: \.self) { index in
+                        let duration = PublicAccess.durations[index]
+                        Button("For \(duration.label)") { remoteAccess.makePublic(for: duration.seconds) }
+                    }
+                }
+            }
+            Divider()
+            turnOffRemoteAccessButton
+        }
+    }
+
+    // Only states the ticked Record Screen toggle does not already say.
+    @ViewBuilder private var recallStatusText: some View {
         switch recall.status {
-        case .recording: Text("Recall: recording")
+        case .recording: EmptyView()
         case .notCapturing: Text("Recall: not capturing")
         case .paused: Text("Recall: paused")
         }
     }
 
     private var iconName: String {
+        if case .publicAccess = remoteAccess.state {
+            return "globe"
+        }
         if service.status == .notResponding {
             return "exclamationmark.triangle.fill"
         }

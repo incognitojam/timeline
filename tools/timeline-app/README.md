@@ -35,9 +35,11 @@ The app owns and surfaces the Timeline service and recall capture jobs:
   safety net, and migration is skipped once that legacy file is gone.
 - If macOS requires approval for the background item, the menu shows an item
   that opens System Settings -> General -> Login Items.
-- **Service: running / not responding** is checked with `GET /api/health` on the
-  configured service URL every 30s, and again after wake or app activation. The
-  menu shows the service release version, or its source commit for a checkout.
+- Service health is checked with `GET /api/health` on the configured service
+  URL every 30s, and again after wake or app activation. Until it succeeds, the
+  menu shows the service status and **Restart Service** at the top; once the
+  service is running, **Restart Service** moves into **Settings**, which also
+  shows the service release version, or its source commit for a checkout.
   Detailed build information is in the web app's **Settings → Version & build**.
 - **Open Timeline** opens the service base URL in the default browser.
 - **Restart Service** runs
@@ -45,7 +47,7 @@ The app owns and surfaces the Timeline service and recall capture jobs:
   the maintenance hold is active, then re-checks health every few seconds until
   it comes back or the restart window expires. If kickstart fails, the app
   requests the same guarded service-agent reconcile used by the background poll.
-- **Check for Updates…** checks the release feed in every installed build; automatic checks are enabled and installation asks first. **Install Update and Relaunch…** resumes a staged update. Any normal quit while one is staged, including from the ready-to-install window, holds and stops the service until Timeline is reopened. Opting into automatic downloads installs and relaunches when ready.
+- **Check for Updates…** (under **Settings**) checks the release feed in every installed build; automatic checks are enabled and installation asks first. **Install Update and Relaunch…** resumes a staged update. Any normal quit while one is staged, including from the ready-to-install window, holds and stops the service until Timeline is reopened. Opting into automatic downloads installs and relaunches when ready.
 - Updates are app replacements rather than mutations of a live checkout. Update a development installation by
   pulling/building in any checkout and running `./build.sh --install` again.
   The web Settings page reports the running release/build/commit but does not offer
@@ -77,9 +79,9 @@ cd tools/timeline-app
 ./build.sh --install
 ```
 
-Use the **Launch at Login** menu toggle to keep it running across reboots. If
-macOS requires approval, the menu shows an item that opens System Settings →
-General → Login Items.
+Use the **Launch at Login** toggle under the menu's **Settings** to keep it
+running across reboots. If macOS requires approval, the menu shows an item that
+opens System Settings → General → Login Items.
 
 For a build-only local bundle, run `./build.sh` without `--install`; it still
 writes `Timeline.app` in this directory. Updates stay disabled when this copy is

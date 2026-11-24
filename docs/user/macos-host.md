@@ -174,7 +174,8 @@ and `/opt/homebrew/bin/tailscale`). Until it's installed the menu shows
 the menu. That creates the state directory and registers the agent, then the
 menu offers **Log In to Tailscale…** — click it, authorize the node in the
 browser that opens, and the menu switches to "Remote Access: tailnet only" with
-the node's DNS name and a **Copy URL** button. The app never re-runs
+a **Copy URL** button and a **Remote Access** submenu that shows the node's DNS
+name. The app never re-runs
 login on its own (that would regenerate the node key and orphan a pending
 authorization); login is always a button click.
 
@@ -206,7 +207,8 @@ to this node instead of through Tailscale's relays, which are
 `tailscaled` is ad-hoc signed, which identifies only that exact build, so the
 prompt may appear again after `brew upgrade tailscale`.
 
-**Turn off:** choose **Turn Off Remote Access** in the menu. This unregisters
+**Turn off:** choose **Turn Off Remote Access** in the menu (in the
+**Remote Access** submenu once the node is running). This unregisters
 the agent (stopping `tailscaled`) but keeps the state directory, so re-enabling
 via **Set Up Remote Access…** needs no re-login. The off state is
 recorded in `~/.local/share/timeline/tailscale.disabled`.
@@ -219,16 +221,17 @@ two daemons can't share it.
 
 To let a client outside your tailnet, such as a Claude.ai custom connector,
 reach the service's [MCP endpoint](mcp.md#remote-http), choose **Make Public on
-the Internet** and a duration: 5 minutes, 1 hour or 1 day. Public requests
-reach only MCP, with the limits described there. The app turns on
-[Tailscale Funnel](https://tailscale.com/kb/1223/funnel) at the same address,
-and the menu shows "Remote Access: PUBLIC on the internet" with the time it
-ends. It goes back to tailnet only when that time comes, when you choose
-**Turn Off Public Access Now**, when you turn Remote Access off, when you
-quit Timeline, and whenever `tailscaled` starts, such as after the Mac
-restarts. Each `tailscaled` start resets the node's serve config, so after a
-restart the service is not reachable even from the tailnet until Timeline is
-running again; enable **Launch at Login** to keep Remote Access available.
+the Internet** in the **Remote Access** submenu and a duration: 5 minutes,
+1 hour or 1 day. Public requests reach only MCP, with the limits described
+there. The app turns on [Tailscale Funnel](https://tailscale.com/kb/1223/funnel)
+at the same address, the menu shows "Remote Access: public until" the time it
+ends, and the menu bar icon becomes a globe. It goes back to tailnet only when
+that time comes, when you choose **Stop Public Access**, when you turn Remote
+Access off, when you quit Timeline, and whenever `tailscaled` starts, such as
+after the Mac restarts. Each `tailscaled` start resets the node's serve config,
+so after a restart the service is not reachable even from the tailnet until
+Timeline is running again; enable **Launch at Login** (under **Settings**) to
+keep Remote Access available.
 
 The end time is kept in `~/.local/share/timeline/tailscale-public-access`.
 Each time the app checks the node, including at launch and on wake, it turns
@@ -289,7 +292,8 @@ rm ~/.local/share/timeline/service.hold
 ```
 
 Timeline restores the service within the next 30s poll, or immediately if you
-choose **Restart Service** or relaunch the app after removing the hold. A bare
+choose **Restart Service** (in the menu while the service is down, otherwise
+under **Settings**) or relaunch the app after removing the hold. A bare
 `launchctl bootout` without the hold self-heals within about 30s by design.
 Do not manually `launchctl bootstrap` the bundled plist from the app bundle:
 SMAppService-managed plists with `AssociatedBundleIdentifiers` must be submitted
@@ -587,7 +591,7 @@ remove it.
 
 ## Updating
 
-Every installed build checks for updates automatically and offers **Check for Updates…** in the menu. Installation asks for confirmation unless you opt into automatic downloads. **Install Update and Relaunch…** resumes a staged update. Any normal quit while an update is staged first holds and stops the service. Quitting from the menu while the ready-to-install window is open, or after choosing **Install on Quit** when offered, leaves the service stopped until Timeline is opened again; opening the app recovers its update hold. A manual maintenance hold refuses the update and stays in place.
+Every installed build checks for updates automatically and offers **Check for Updates…** in the menu's **Settings** submenu. Installation asks for confirmation unless you opt into automatic downloads. **Install Update and Relaunch…** resumes a staged update. Any normal quit while an update is staged first holds and stops the service. Quitting from the menu while the ready-to-install window is open, or after choosing **Install on Quit** when offered, leaves the service stopped until Timeline is opened again; opening the app recovers its update hold. A manual maintenance hold refuses the update and stays in place.
 
 Updates replace `Timeline.app`; the running service never pulls or builds a git
 checkout. For signed downloads, follow [macOS distribution](../operations/macos-distribution.md).
