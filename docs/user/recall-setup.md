@@ -8,7 +8,7 @@ Timeline.app periodically captures on-screen application windows, runs Apple Vis
 2. Install and open Timeline.app using [macOS host setup](macos-host.md), or the signed DMG. Source builds require Xcode command-line tools; DMG users do not need a separate Swift build.
 3. Choose **Record Screen** or **Allow Timeline to Record Screen…** from the menu bar app. Approve the macOS permission request and enable **Timeline** in **System Settings → Privacy & Security → Screen & System Audio Recording**. The menu opens that settings pane when permission is missing. Quit and reopen Timeline after granting access if macOS requests it.
 4. Enable the `recall` source in the web app's **Sync** page, with its path set to `~/.local/share/timeline/recall`.
-5. Enable **Launch at Login** in Timeline's menu if recording should resume after you sign in. macOS may require approval in **General → Login Items**.
+5. Enable **Launch at Login** under **Settings** in Timeline's menu if recording should resume after you sign in. macOS may require approval in **General → Login Items**.
 
 Screen Recording permission belongs to Timeline.app. You do not need to locate or grant access to a hidden executable. Keep the same signing identity across source builds to preserve the app's identity: `tools/timeline-recall/create-signing-identity.sh` creates the stable local identity used by the app build. Ad-hoc builds may require renewed permission; signed releases use Developer ID.
 
