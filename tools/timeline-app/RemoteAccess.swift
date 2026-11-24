@@ -93,8 +93,8 @@ enum PublicAccessFailure: Equatable {
     case funnelNotEnabled(enableURL: URL?)
     case other(reason: String)
 
-    static let funnelNotEnabledText = "Funnel is not enabled for this device."
-    static let enableFunnelHint = "Enable Funnel for it in the Tailscale admin console, then try again."
+    static let funnelNotEnabledText = "Funnel is not allowed for this device."
+    static let enableFunnelHint = "Allow it in your tailnet's access controls (the funnel node attribute), then try again."
     static let enableFunnelLabel = "Enable Funnel in Tailscale…"
 }
 
