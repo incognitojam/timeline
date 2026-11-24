@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import re
+from pathlib import Path
 import sys
 import xml.etree.ElementTree as ElementTree
 
@@ -19,11 +20,12 @@ STABLE_VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
 EDGE_VERSION = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)-edge\.([1-9][0-9]*)"
 # The DMG package-dmg.sh writes for an edge version on Apple silicon, and its checksum.
 BUILD_DMG = re.compile(rf"Timeline-{EDGE_VERSION}-macos-arm64\.dmg")
+DELTA = re.compile(r"Timeline([1-9][0-9]*)-([1-9][0-9]*)\.delta")
 CHECKSUM = ".sha256"
 FEED_FILE = "appcast.xml"
 KEEP_BUILDS = 5
 # A normal build removes one DMG and its checksum; far more means something is wrong.
-MAX_DELETIONS = 10
+MAX_EXPIRED_BUILDS = 5
 SPARKLE = "{http://www.andymatuschak.org/xml-namespaces/sparkle}"
 
 
@@ -65,7 +67,7 @@ def feed_build(xml: str) -> int:
     return int(build)
 
 
-def check_appcast(xml: str, repository: str, release_tag: str, version: str, dmg_size: int) -> None:
+def check_appcast(xml: str, repository: str, release_tag: str, version: str, dmg_size: int, directory=None, sources=()) -> list[str]:
     """Require a feed whose one signed item is `version`'s DMG, of `dmg_size` bytes, on the rolling release.
 
     Sparkle checks only that an item is signed with the app's key and newer
@@ -90,6 +92,20 @@ def check_appcast(xml: str, repository: str, release_tag: str, version: str, dmg
         raise Refusal(f"appcast length {enclosures[0].get('length')!r} is not the DMG's {dmg_size} bytes")
     if not enclosures[0].get(f"{SPARKLE}edSignature"):
         raise Refusal("appcast download has no EdDSA signature")
+
+    patches = []
+    for enclosure in item.findall(f"{SPARKLE}deltas/enclosure"):
+        old = enclosure.get(f"{SPARKLE}deltaFrom", "")
+        if not re.fullmatch(r"[1-9][0-9]*", old) or int(old) not in sources or int(old) >= feed_build(xml):
+            raise Refusal(f"unexpected delta source {old!r}")
+        name = f"Timeline{feed_build(xml)}-{old}.delta"
+        if name in patches or enclosure.get("url") != expected.rsplit("/", 1)[0] + "/" + name:
+            raise Refusal(f"duplicate or incorrect delta URL for {name}")
+        size = (directory / name).stat().st_size
+        if not size or enclosure.get("length") != str(size) or not enclosure.get(f"{SPARKLE}edSignature", "").strip():
+            raise Refusal(f"incorrect length or missing signature for {name}")
+        patches.append(name)
+    return patches
 
 
 def _asset_names(release: object, release_tag: str) -> list[str]:
@@ -165,7 +181,13 @@ def prune_plan(release: object, release_tag: str, current: int) -> list[str]:
     if FEED_FILE not in names:
         raise Refusal(f"the release has no {FEED_FILE}")
     builds = _dmg_builds(names)
+    old_patches = []
     for name in names:
+        patch = DELTA.fullmatch(name)
+        if patch and int(patch[1]) in builds.values() and int(patch[2]) < int(patch[1]):
+            if int(patch[1]) != current:
+                old_patches.append(name)
+            continue
         if name != FEED_FILE and name not in builds and name.removesuffix(CHECKSUM) not in builds:
             raise Refusal(f"unexpected asset {name!r}")
     for dmg in builds:
@@ -174,12 +196,12 @@ def prune_plan(release: object, release_tag: str, current: int) -> list[str]:
     if max(builds.values(), default=None) != current:
         raise Refusal(f"the newest DMG on {release_tag} is not build {current}")
     kept = sorted(builds.values(), reverse=True)[:KEEP_BUILDS]
-    doomed = []
+    doomed = sorted(old_patches)
     for build, dmg in sorted((build, dmg) for dmg, build in builds.items()):
         if build not in kept:
             doomed += [dmg, dmg + CHECKSUM]
-    if len(doomed) > MAX_DELETIONS:
-        raise Refusal(f"refusing to delete {len(doomed)} assets at once (limit {MAX_DELETIONS})")
+    if len(builds) - len(kept) > MAX_EXPIRED_BUILDS or len(old_patches) > MAX_EXPIRED_BUILDS * KEEP_BUILDS:
+        raise Refusal("cleanup exceeds five builds of expired images or superseded patches")
     return doomed
 
 
@@ -200,6 +222,7 @@ def main(argv: list[str]) -> int:
     feed_command.add_argument("--tag", required=True, help="the rolling release's tag")
     feed_command.add_argument("--version", required=True)
     feed_command.add_argument("--dmg", required=True, help="the DMG the feed must describe")
+    feed_command.add_argument("--build-sources", nargs="*", type=int, default=[])
     release_help = "gh api output for the rolling release"
     offered_command = commands.add_parser("offered-build", help="print the build the rolling release offers")
     offered_command.add_argument("release", help=release_help)
@@ -219,7 +242,9 @@ def main(argv: list[str]) -> int:
         if args.command == "version":
             print(edge_version(args.stable_version, args.build))
         elif args.command == "check-appcast":
-            check_appcast(_read(args.appcast), args.repository, args.tag, args.version, os.path.getsize(args.dmg))
+            patches = check_appcast(_read(args.appcast), args.repository, args.tag, args.version, os.path.getsize(args.dmg), Path(args.dmg).parent, args.build_sources)
+            for name in patches:
+                print(name)
         else:
             release = json.loads(_read(args.release))
             if args.command == "offered-build":
