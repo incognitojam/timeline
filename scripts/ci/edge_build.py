@@ -67,7 +67,7 @@ def feed_build(xml: str) -> int:
     return int(build)
 
 
-def check_appcast(xml: str, repository: str, release_tag: str, version: str, dmg_size: int, directory=None, sources=()) -> list[str]:
+def check_appcast(xml: str, repository: str, release_tag: str, version: str, dmg_size: int, directory=None, sources=(), build=None) -> list[str]:
     """Require a feed whose one signed item is `version`'s DMG, of `dmg_size` bytes, on the rolling release.
 
     Sparkle checks only that an item is signed with the app's key and newer
@@ -75,11 +75,13 @@ def check_appcast(xml: str, repository: str, release_tag: str, version: str, dmg
     still be offered. This runs before the feed is replaced.
     """
     match = re.fullmatch(EDGE_VERSION, version)
-    if not match:
-        raise Refusal(f"not an edge version: {version!r}")
+    if match:
+        build = int(match[1])
+    elif not STABLE_VERSION.fullmatch(version) or release_tag != f"v{version}" or build is None:
+        raise Refusal(f"unexpected release version: {version!r}")
     item = _item(xml)
-    if str(feed_build(xml)) != match.group(1):
-        raise Refusal(f"appcast item is not build {match.group(1)}")
+    if feed_build(xml) != build:
+        raise Refusal(f"appcast item is not build {build}")
     if (item.findtext(f"{SPARKLE}shortVersionString") or "").strip() != version:
         raise Refusal(f"appcast item is not version {version}")
     enclosures = item.findall("enclosure")
@@ -96,9 +98,9 @@ def check_appcast(xml: str, repository: str, release_tag: str, version: str, dmg
     patches = []
     for enclosure in item.findall(f"{SPARKLE}deltas/enclosure"):
         old = enclosure.get(f"{SPARKLE}deltaFrom", "")
-        if not re.fullmatch(r"[1-9][0-9]*", old) or int(old) not in sources or int(old) >= feed_build(xml):
+        if not re.fullmatch(r"[1-9][0-9]*", old) or int(old) not in sources or int(old) >= build:
             raise Refusal(f"unexpected delta source {old!r}")
-        name = f"Timeline{feed_build(xml)}-{old}.delta"
+        name = f"Timeline{build}-{old}.delta"
         if name in patches or enclosure.get("url") != expected.rsplit("/", 1)[0] + "/" + name:
             raise Refusal(f"duplicate or incorrect delta URL for {name}")
         size = (directory / name).stat().st_size
