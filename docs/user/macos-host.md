@@ -198,6 +198,14 @@ authorization); login is always a button click.
   persists.
 - **Logs:** `~/Library/Logs/timeline/tailscale.log` (and `.error.log`).
 
+**Firewall prompt:** with the macOS firewall on, the first connection from
+another device can make macOS ask whether `tailscaled` may accept incoming
+network connections. Choose **Allow**: it lets tailnet devices connect directly
+to this node instead of through Tailscale's relays, which are
+[slower](https://tailscale.com/kb/1257/connection-types). Homebrew's
+`tailscaled` is ad-hoc signed, which identifies only that exact build, so the
+prompt may appear again after `brew upgrade tailscale`.
+
 **Turn off:** choose **Turn Off Remote Access** in the menu. This unregisters
 the agent (stopping `tailscaled`) but keeps the state directory, so re-enabling
 via **Set Up Remote Access…** needs no re-login. The off state is
