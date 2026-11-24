@@ -85,11 +85,21 @@ enum RemoteAccessState: Equatable {
     case unconfirmed
 }
 
+// Why the last attempt to turn on public access failed, shown until the next
+// attempt or until Remote Access is turned off.
+enum PublicAccessFailure: Equatable {
+    // The node lacks the funnel (or https) capability; enableURL is the link
+    // `tailscale funnel` printed for enabling it, if any.
+    case funnelNotEnabled(enableURL: URL?)
+    case other(reason: String)
+}
+
 @MainActor
 final class RemoteAccessController: ObservableObject {
     @Published private(set) var state: RemoteAccessState = .notSetUp
     // Surfaces the underlying agent ownership issue (approval, failed, …) when set.
     @Published private(set) var agentIssueText: String?
+    @Published private(set) var publicAccessFailure: PublicAccessFailure?
 
     // The service port is the single source of truth for what to serve.
     private let servicePort: Int
@@ -157,6 +167,7 @@ final class RemoteAccessController: ObservableObject {
         guard agent != nil else { return }
         FileManager.default.createFile(atPath: tailscaleDisabledMarkerURL().path, contents: nil)
         removePublicAccessRecord()
+        publicAccessFailure = nil
         agent = nil
         loginPendingSince = nil
         agentIssueText = nil
@@ -219,11 +230,13 @@ final class RemoteAccessController: ObservableObject {
     // Records when public access ends, then lets refresh turn Funnel on.
     func makePublic(for duration: TimeInterval) {
         guard case .running = state else { return }
+        publicAccessFailure = nil
         let record = PublicAccess.record(start: Date(), duration: duration)
         do {
             try record.write(to: publicAccessRecordURL(), atomically: true, encoding: .utf8)
         } catch {
             writeError("Timeline remote access: could not record public access: \(error)\n")
+            publicAccessFailure = .other(reason: "could not record when it ends.")
         }
         refresh()
     }
@@ -274,13 +287,14 @@ final class RemoteAccessController: ObservableObject {
             if record != nil, publicUntil == nil {
                 try? FileManager.default.removeItem(at: publicAccessRecordURL())
             }
+            var failure: PublicAccessFailure?
             var next = Self.computeState(
                 enabled: enabled,
                 socket: socket,
                 loginPending: loginPending
             )
             if case .running(let dnsName) = next {
-                next = Self.enforceExposure(
+                (next, failure) = Self.enforceExposure(
                     publicUntil: publicUntil, socket: socket, port: port, dnsName: dnsName)
             } else if enabled, publicUntil == nil,
                       let config = Self.serveConfig(socket: socket), Self.isFunnelOn(config) {
@@ -289,9 +303,11 @@ final class RemoteAccessController: ObservableObject {
                 _ = Self.runTailscale(socket: socket, ["serve", "reset"])
             }
             let shown = next
+            let failed = failure
             await MainActor.run {
                 self.refreshInFlight = false
                 self.apply(shown)
+                if let failed { self.publicAccessFailure = failed }
                 switch shown {
                 case .starting, .needsLogin, .loggingIn:
                     break
@@ -359,38 +375,77 @@ final class RemoteAccessController: ObservableObject {
 
     // Makes the node public until `publicUntil` if it is set, else tailnet
     // only, and returns the state that the resulting config confirms. A failed
-    // attempt at public access ends it.
+    // attempt at public access ends it, and is returned with why.
     nonisolated private static func enforceExposure(
         publicUntil: Date?, socket: String, port: Int, dnsName: String
-    ) -> RemoteAccessState {
+    ) -> (RemoteAccessState, PublicAccessFailure?) {
+        var failure: PublicAccessFailure?
         if let until = publicUntil {
-            if enforcePublic(socket: socket, port: port, dnsName: dnsName) {
-                return .publicAccess(dnsName: dnsName, until: until)
+            failure = enforcePublic(socket: socket, port: port, dnsName: dnsName)
+            if failure == nil {
+                return (.publicAccess(dnsName: dnsName, until: until), nil)
             }
-            writeError("Timeline remote access: could not turn on public access.\n")
             try? FileManager.default.removeItem(at: publicAccessRecordURL())
         }
-        return enforceTailnetOnly(socket: socket, port: port, dnsName: dnsName)
+        let state: RemoteAccessState = enforceTailnetOnly(socket: socket, port: port, dnsName: dnsName)
             ? .running(dnsName: dnsName) : .unconfirmed
+        return (state, failure)
     }
 
     // Funnel on for the service's :443 proxy and for nothing else, so no other
     // port (such as a raw TCP forward without Tailscale's headers) is public.
-    nonisolated private static func enforcePublic(socket: String, port: Int, dnsName: String) -> Bool {
+    // Returns nil once the config confirms it, else why not.
+    nonisolated private static func enforcePublic(
+        socket: String, port: Int, dnsName: String
+    ) -> PublicAccessFailure? {
         func confirmed(_ config: [String: Any]) -> Bool {
             let allow = config["AllowFunnel"] as? [String: Any] ?? [:]
             return allow.count == 1 && allow["\(dnsName):443"] as? Bool == true
                 && (config["Foreground"] as? [String: Any] ?? [:]).isEmpty
                 && isServing(config, port: port, dnsName: dnsName)
         }
-        guard let config = serveConfig(socket: socket) else { return false }
-        if confirmed(config) { return true }
+        guard let config = serveConfig(socket: socket) else {
+            return .other(reason: "could not read the serve config.")
+        }
+        if confirmed(config) { return nil }
         if isFunnelOn(config) {
-            guard runTailscale(socket: socket, ["serve", "reset"]) != nil else { return false }
+            guard runTailscale(socket: socket, ["serve", "reset"]) != nil else {
+                return .other(reason: "could not reset the serve config.")
+            }
         }
         writeError("Timeline remote access: turning on public access for port \(port).\n")
-        _ = runTailscale(socket: socket, ["funnel", "--bg", "--https=443", proxyTarget(port)])
-        return serveConfig(socket: socket).map(confirmed) ?? false
+        // Without Funnel enabled for the node, `funnel` prints how to enable it
+        // and then either exits or waits until it is enabled; the timeout ends
+        // that wait, keeping what it printed.
+        let result = runCommand(
+            tailscaleExecutable,
+            ["--socket=\(socket)", "funnel", "--bg", "--https=443", proxyTarget(port)],
+            timeout: 10,
+            returnTerminatedResult: true)
+        if serveConfig(socket: socket).map(confirmed) == true { return nil }
+
+        let output = result?.output ?? ""
+        writeError("Timeline remote access: could not turn on public access: \(output)\n")
+        if let capabilities = selfCapabilities(socket: socket),
+           !(capabilities.contains("funnel") && capabilities.contains("https")) {
+            return .funnelNotEnabled(enableURL: firstURL(in: output))
+        }
+        let lastLine = output.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .last(where: { !$0.isEmpty })
+        guard let lastLine else {
+            return .other(reason: result?.terminationStatus == 0
+                ? "Funnel did not turn on." : "tailscale funnel did not finish.")
+        }
+        return .other(reason: lastLine.count > 100 ? String(lastLine.prefix(100)) + "…" : lastLine)
+    }
+
+    // The node's own capabilities from `status --json`, or nil if unreadable.
+    nonisolated private static func selfCapabilities(socket: String) -> Set<String>? {
+        guard let status = runTailscale(socket: socket, ["status", "--json"]),
+              let json = try? JSONSerialization.jsonObject(with: Data(status.utf8)) as? [String: Any],
+              let selfNode = json["Self"] as? [String: Any] else { return nil }
+        return Set((selfNode["CapMap"] as? [String: Any] ?? [:]).keys)
     }
 
     // Makes the node serve the service to the tailnet and nothing to the
@@ -508,15 +563,15 @@ final class RemoteAccessController: ObservableObject {
                 continue
             }
             buffer.append(chunk)
-            if let url = firstURL(inLoginOutput: String(decoding: buffer, as: UTF8.self)) {
+            if let url = firstURL(in: String(decoding: buffer, as: UTF8.self)) {
                 return url
             }
         }
 
-        return firstURL(inLoginOutput: String(decoding: buffer, as: UTF8.self))
+        return firstURL(in: String(decoding: buffer, as: UTF8.self))
     }
 
-    nonisolated private static func firstURL(inLoginOutput text: String) -> URL? {
+    nonisolated private static func firstURL(in text: String) -> URL? {
         for token in text.split(whereSeparator: { $0.isWhitespace }) {
             let trimmed = token.trimmingCharacters(in: CharacterSet(charactersIn: "\t \n\r"))
             if trimmed.hasPrefix("https://"), let url = URL(string: trimmed) {
