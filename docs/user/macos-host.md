@@ -234,14 +234,35 @@ The end time is kept in `~/.local/share/timeline/tailscale-public-access`.
 Each time the app checks the node, including at launch and on wake, it turns
 Funnel off unless that file allows public access at that moment: missing,
 unreadable, ended, longer than a day, or starting later than the clock now
-reads (the clock moved back) all mean tailnet only. If Funnel can't be turned
-on, the node stays tailnet only and the menu says why until you try again or
-turn Remote Access off. If the tailnet policy doesn't grant this device the
-`funnel` node attribute, the menu says Funnel is not enabled for this device and,
-when Tailscale gives a link for enabling it, offers **Enable Funnel in
-Tailscale…**; enable it in the Tailscale admin console, then choose a duration
-again. The app gives `tailscale funnel` 10 seconds, so it stops waiting for you
-to enable Funnel after that.
+reads (the clock moved back) all mean tailnet only. While the app turns Funnel
+on, the menu shows "Remote Access: making public…". If Funnel can't be turned
+on, the node stays tailnet only, an alert says why, and the menu keeps saying
+why until you try again or turn Remote Access off. The app gives
+`tailscale funnel` 10 seconds, so it stops waiting for you to allow Funnel after
+that.
+
+If the alert and the menu say Funnel is not allowed for this device, the
+tailnet policy file doesn't give it the `funnel` node attribute (or HTTPS
+certificates are off for the tailnet). There is no Funnel switch on the
+device's Machines page. When Tailscale printed a link for allowing it, the
+alert and the menu offer **Enable Funnel in Tailscale…**. To do it yourself, an Owner,
+Admin or Network admin opens **Access controls** in the
+[admin console](https://console.tailscale.com/admin/acls) and adds a `nodeAttrs`
+entry, either with **Add Funnel to policy** in its Funnel section or by hand:
+
+```jsonc
+"nodeAttrs": [
+  {
+    "target": ["autogroup:member"],
+    "attr": ["funnel"],
+  },
+],
+```
+
+`autogroup:member` lets every member's devices use Funnel; narrow `target` to a
+user such as `alice@example.com` or a tag to limit it. Then choose a duration
+again. See [Tailscale Funnel](https://tailscale.com/kb/1223/funnel) for the
+other requirements.
 
 If Timeline is force-quit or crashes while the service is public and
 `tailscaled` keeps running, or is quit within a second or two of choosing
