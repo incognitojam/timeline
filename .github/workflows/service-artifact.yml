@@ -10,7 +10,7 @@ jobs:
   artifact:
     name: Linux service artifact
     runs-on: ubuntu-26.04
-    container: swift:6.4.2-noble@sha256:97b9d09f1e922ee794067ea8eec4874083c97d2d5027a6a409e398d82ebca016
+    container: swift:6.4.3-noble@sha256:4ed5e0210b244aab174450e0b79014c17db60c63c6daf0709347fe50c767293a
     env:
       VITE_MAPTILER_API_KEY: ci-test
     steps:
