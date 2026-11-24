@@ -104,9 +104,11 @@ final class RemoteAccessController: ObservableObject {
     // Surfaces the underlying agent ownership issue (approval, failed, …) when set.
     @Published private(set) var agentIssueText: String?
     @Published private(set) var publicAccessFailure: PublicAccessFailure?
-    // From a Make Public click until the refresh that reads its record ends.
-    // Display only: what is exposed is still decided by the record and config.
-    @Published private(set) var makingPublic = false
+    // The record a Make Public click wrote, until a refresh that read it or
+    // started after it ends. Display only: what is exposed is still decided
+    // by the record and config.
+    @Published private var attemptRecord: String?
+    var makingPublic: Bool { attemptRecord != nil }
 
     // The service port is the single source of truth for what to serve.
     private let servicePort: Int
@@ -175,7 +177,7 @@ final class RemoteAccessController: ObservableObject {
         FileManager.default.createFile(atPath: tailscaleDisabledMarkerURL().path, contents: nil)
         removePublicAccessRecord()
         publicAccessFailure = nil
-        makingPublic = false
+        attemptRecord = nil
         agent = nil
         loginPendingSince = nil
         agentIssueText = nil
@@ -242,7 +244,7 @@ final class RemoteAccessController: ObservableObject {
         let record = PublicAccess.record(start: Date(), duration: duration)
         do {
             try record.write(to: publicAccessRecordURL(), atomically: true, encoding: .utf8)
-            makingPublic = true
+            attemptRecord = record
         } catch {
             writeError("Timeline remote access: could not record public access: \(error)\n")
             let failure = PublicAccessFailure.other(reason: "could not record when it ends.")
@@ -312,8 +314,7 @@ final class RemoteAccessController: ObservableObject {
         let socket = tailscaleSocketPath()
         let loginPending = loginPendingSince != nil
         let port = servicePort
-        // A refresh that starts after the click reads the record it wrote.
-        let endsAttempt = makingPublic
+        let attemptAtStart = attemptRecord
 
         Task.detached(priority: .utility) {
             // Fail closed: any record that doesn't allow public access now is
@@ -344,18 +345,20 @@ final class RemoteAccessController: ObservableObject {
                 self.refreshInFlight = false
                 self.apply(shown)
                 if let failed { self.publicAccessFailure = failed }
-                // Not if Remote Access was turned off meanwhile.
-                if endsAttempt, self.makingPublic {
-                    self.makingPublic = false
-                    if let failed { self.showMakePublicFailure(failed) }
-                }
                 switch shown {
                 case .starting, .needsLogin, .loggingIn:
+                    // The record is kept, so a later refresh answers a click.
                     break
                 default:
                     // Reaching Running resolves any pending login; so does
                     // the feature being off or uninstalled.
                     self.loginPendingSince = nil
+                    // Answers the click if this refresh read its record or
+                    // started after it (the record may be gone by then).
+                    if let attempt = self.attemptRecord, record == attempt || attemptAtStart == attempt {
+                        self.attemptRecord = nil
+                        if let failed { self.showMakePublicFailure(failed) }
+                    }
                 }
                 if case .publicAccess(_, let until) = shown, until.timeIntervalSinceNow < 30 {
                     self.scheduler?.scheduleNextPoll(at: until)
