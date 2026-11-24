@@ -36,10 +36,10 @@ The app owns and surfaces the Timeline service and recall capture jobs:
 - If macOS requires approval for the background item, the menu shows an item
   that opens System Settings -> General -> Login Items.
 - Service health is checked with `GET /api/health` on the configured service
-  URL every 30s, and again after wake or app activation. While it fails, the
-  menu shows "Service: not responding" and **Restart Service** at the top;
-  otherwise **Restart Service** is under **Settings**, which also shows the
-  service release version, or its source commit for a checkout.
+  URL every 30s, and again after wake or app activation. Until it succeeds, the
+  menu shows the service status and **Restart Service** at the top; once the
+  service is running, **Restart Service** moves into **Settings**, which also
+  shows the service release version, or its source commit for a checkout.
   Detailed build information is in the web app's **Settings → Version & build**.
 - **Open Timeline** opens the service base URL in the default browser.
 - **Restart Service** runs

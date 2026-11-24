@@ -226,11 +226,11 @@ struct TimelineApp: App {
     }
 
     private var iconName: String {
-        if service.status == .notResponding {
-            return "exclamationmark.triangle.fill"
-        }
         if case .publicAccess = remoteAccess.state {
             return "globe"
+        }
+        if service.status == .notResponding {
+            return "exclamationmark.triangle.fill"
         }
 
         switch recall.status {
