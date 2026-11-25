@@ -5,13 +5,19 @@ let appStateDb: Database | null = null;
 
 export function getAppStateDb(): Database {
   if (!appStateDb) {
-    const appStatePath = getAppStateDbPath(getTimelineDbPath());
-    appStateDb = new Database(appStatePath);
-    // Set first: switching to WAL needs a lock another connection may hold.
-    appStateDb.exec("PRAGMA busy_timeout = 30000");
-    appStateDb.exec("PRAGMA journal_mode = WAL");
-    appStateDb.exec("PRAGMA foreign_keys = ON");
-    initAppStateDb(appStateDb);
+    const db = new Database(getAppStateDbPath(getTimelineDbPath()));
+    try {
+      // Set first: switching to WAL needs a lock another connection may hold.
+      db.exec("PRAGMA busy_timeout = 30000");
+      db.exec("PRAGMA journal_mode = WAL");
+      db.exec("PRAGMA foreign_keys = ON");
+      initAppStateDb(db);
+    } catch (error) {
+      // Keep nothing, so the next call opens and initialises again.
+      db.close();
+      throw error;
+    }
+    appStateDb = db;
   }
   return appStateDb;
 }
