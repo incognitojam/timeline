@@ -4,7 +4,7 @@ import type { Database } from "../../db/sqlite";
 import { createBoundedWriter } from "../../db/bounded-writes";
 
 const timestamp = z.string().refine((s) => Number.isFinite(Date.parse(s)), "Invalid memory timestamp");
-const memorySchema = z.object({
+export const memorySchema = z.object({
   account_uuid: z.string().min(1),
   conversations_memory: z.string().nullish(),
   project_memories: z.record(z.string().uuid(), z.string()),

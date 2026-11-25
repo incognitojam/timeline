@@ -15,6 +15,7 @@ import {
   fetchMemoryIndex,
   fetchMemoryNote,
   fetchMemoryVersions,
+  importClaudeMemory,
   type MemoryNoteEdit,
   restoreMemoryVersion,
   setProjectUsesAccountMemory,
@@ -1253,7 +1254,7 @@ export function useMemoryVersions(scope: () => { project: string; name: string }
 }
 
 /** A change to one note can show on every memory query: the index, the note, and its versions. */
-function useMemoryMutation<T>(mutationFn: (variables: T) => Promise<unknown>) {
+function useMemoryMutation<T, R>(mutationFn: (variables: T) => Promise<R>) {
   const queryClient = useQueryClient();
   return createMutation(() => ({
     mutationFn,
@@ -1271,6 +1272,14 @@ export function useDeleteMemoryNote() {
 
 export function useRestoreMemoryVersion() {
   return useMemoryMutation((id: number) => restoreMemoryVersion(id));
+}
+
+export function usePreviewClaudeMemoryImport() {
+  return createMutation(() => ({ mutationFn: (file: File) => importClaudeMemory(file) }));
+}
+
+export function useClaudeMemoryImport() {
+  return useMemoryMutation((v: { file: File; planId: string }) => importClaudeMemory(v.file, v.planId));
 }
 
 export function useSetProjectUsesAccountMemory() {

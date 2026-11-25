@@ -64,6 +64,8 @@ vi.mock("../lib/queries", () => ({
   useSetProjectUsesAccountMemory: () => idle,
   useUpdateMemoryNote: () => idle,
   useDeleteMemoryNote: () => idle,
+  usePreviewClaudeMemoryImport: () => idle,
+  useClaudeMemoryImport: () => idle,
 }));
 
 describe("Memory page", () => {

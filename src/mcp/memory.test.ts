@@ -183,7 +183,7 @@ describe("memory instructions", () => {
 
   test("include the newest you notes that fit, then a cut index, to stay within the cap", async () => {
     for (let i = 0; i < 3; i++) {
-      await text("save_memory_note", { name: `you-${i}`, kind: "you", title: `Long ${i}`, summary: "s", details: `${i}`.repeat(MEMORY_LIMITS.details) });
+      await text("save_memory_note", { name: `you-${i}`, kind: "you", title: `Long ${i}`, summary: "s", details: `${i}`.repeat(8000) });
       appDb.prepare("UPDATE memory_notes SET updated_at = ? WHERE name = ?").run(`2026-01-0${i + 1}T00:00:00.000Z`, `you-${i}`);
     }
     const partial = memoryInstructions(appDb);
