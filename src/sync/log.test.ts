@@ -1,7 +1,14 @@
 import { Database } from "../db/sqlite";
 import { describe, expect, test } from "bun:test";
 import { initAppStateDb } from "../db/app-state";
-import { formatSyncResult, getAttachmentDescriptionHistory } from "./log";
+import {
+  completeSyncLog,
+  formatSyncResult,
+  getAttachmentDescriptionHistory,
+  getRecentSyncLogs,
+  recordSkippedSync,
+  startSyncLog,
+} from "./log";
 import type { SyncResult } from "./types";
 
 describe("formatSyncResult", () => {
@@ -281,6 +288,100 @@ describe("getAttachmentDescriptionHistory", () => {
       },
     ]);
 
+    db.close();
+  });
+});
+
+describe("recordSkippedSync", () => {
+  const SOURCE = "attachment-descriptions";
+  const deferral = (skipReason: string): SyncResult => ({
+    source: SOURCE,
+    success: true,
+    skipped: true,
+    eventsAdded: 0,
+    eventsUpdated: 0,
+    durationMs: 5,
+    metadata: { guard: "vision", skipReason },
+  });
+  const openDb = () => {
+    const db = new Database(":memory:");
+    initAppStateDb(db);
+    return db;
+  };
+  const now = (db: Database) => (db.prepare("SELECT datetime('now') AS now").get() as { now: string }).now;
+  // Newest first, by insertion: rows written in the same second tie on started_at.
+  const rows = (db: Database) =>
+    getRecentSyncLogs(db, SOURCE)
+      .sort((a, b) => b.id - a.id)
+      .map((row) => ({
+        skipped: row.skipped,
+        repeat_count: row.repeat_count,
+        reason: row.metadata ? JSON.parse(row.metadata).skipReason ?? null : null,
+      }));
+
+  test("repeated scheduled deferrals with the same reason share one row from first to latest", () => {
+    const db = openDb();
+    recordSkippedSync(db, null, deferral("model not listed"), true);
+    // As if the first tick ran at the start of this hour.
+    db.exec("UPDATE sync_log SET started_at = strftime('%Y-%m-%d %H:00:00', 'now'), finished_at = strftime('%Y-%m-%d %H:00:00', 'now')");
+    const [first] = getRecentSyncLogs(db, SOURCE);
+    recordSkippedSync(db, null, deferral("model not listed"), true);
+    recordSkippedSync(db, null, deferral("model not listed"), true);
+
+    const [row, ...rest] = getRecentSyncLogs(db, SOURCE);
+    expect(rest).toHaveLength(0);
+    expect(row.repeat_count).toBe(3);
+    expect(row.started_at).toBe(first.started_at);
+    expect(row.finished_at).toBe(now(db));
+    db.close();
+  });
+
+  test("a changed reason, a real run, a manual skip, or a new hour starts a new row", () => {
+    const db = openDb();
+    recordSkippedSync(db, null, deferral("model not listed"), true);
+    recordSkippedSync(db, null, deferral("server offline"), true);
+    const logId = startSyncLog(db, SOURCE);
+    completeSyncLog(db, logId, { source: SOURCE, success: true, eventsAdded: 1, eventsUpdated: 0, durationMs: 10 });
+    recordSkippedSync(db, null, deferral("server offline"), true);
+    recordSkippedSync(db, null, deferral("server offline"), false);
+    recordSkippedSync(db, null, deferral("server offline"), true);
+    expect(rows(db)).toEqual([
+      { skipped: 1, repeat_count: 1, reason: "server offline" },
+      { skipped: 1, repeat_count: null, reason: "server offline" },
+      { skipped: 1, repeat_count: 1, reason: "server offline" },
+      { skipped: 0, repeat_count: null, reason: null },
+      { skipped: 1, repeat_count: 1, reason: "server offline" },
+      { skipped: 1, repeat_count: 1, reason: "model not listed" },
+    ]);
+
+    // A row begun in the previous hour is closed; this hour's skips get a new row.
+    db.exec("UPDATE sync_log SET started_at = datetime(started_at, '-1 hour'), finished_at = datetime(finished_at, '-1 hour')");
+    recordSkippedSync(db, null, deferral("server offline"), true);
+    expect(rows(db)[0]).toEqual({ skipped: 1, repeat_count: 1, reason: "server offline" });
+    expect(rows(db)).toHaveLength(7);
+    db.close();
+  });
+
+  test("a database from before repeat_count migrates, keeps its history, and its rows stay untouched", () => {
+    const db = openDb();
+    db.exec("ALTER TABLE sync_log DROP COLUMN repeat_count");
+    const thisHour = now(db).slice(0, 13);
+    const insert = db.prepare(`
+      INSERT INTO sync_log (source, started_at, finished_at, success, skipped, metadata)
+      VALUES (?, ?, ?, 1, 1, '{"skipReason":"model not listed"}')
+    `);
+    insert.run(SOURCE, `${thisHour}:00:00`, `${thisHour}:00:00`);
+    insert.run(SOURCE, `${thisHour}:00:01`, `${thisHour}:00:01`);
+    const before = db.prepare("SELECT * FROM sync_log ORDER BY id").all();
+
+    initAppStateDb(db);
+    expect(getAttachmentDescriptionHistory(db)[0]).toMatchObject({ runs: 2, deferredRuns: 2 });
+
+    // The next scheduled deferral, same reason and hour, starts its own row.
+    recordSkippedSync(db, null, deferral("model not listed"), true);
+    const after = db.prepare("SELECT * FROM sync_log ORDER BY id").all();
+    expect(after.slice(0, 2)).toEqual(before.map((row) => ({ ...(row as object), repeat_count: null })));
+    expect(rows(db).map((row) => row.repeat_count)).toEqual([1, null, null]);
     db.close();
   });
 });

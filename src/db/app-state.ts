@@ -142,6 +142,15 @@ export function initAppStateDb(db: Database) {
     db.exec(`ALTER TABLE sync_log ADD COLUMN skipped INTEGER NOT NULL DEFAULT 0`);
   } catch {}
 
+  // Migration: count of scheduled skips a row stands for; see recordSkippedSync.
+  // Additive: existing rows stay NULL, which readers count as one run.
+  db.transaction(() => {
+    const syncLogColumns = db.prepare("PRAGMA table_info(sync_log)").all() as { name: string }[];
+    if (!syncLogColumns.some((column) => column.name === "repeat_count")) {
+      db.exec(`ALTER TABLE sync_log ADD COLUMN repeat_count INTEGER`);
+    }
+  }).immediate();
+
   // Migration: add metadata column to day_summaries (JSON blob with generation stats)
   try {
     db.exec(`ALTER TABLE day_summaries ADD COLUMN metadata TEXT`);

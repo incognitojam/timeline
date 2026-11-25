@@ -200,8 +200,10 @@ export function getLastSyncForSource(source: string): LastSyncRun | null {
 
   if (!entry) return null;
 
+  // A collapsed deferral row's latest deferral is its finished_at.
+  const time = entry.skipped === 1 && entry.finished_at !== null ? entry.finished_at : entry.started_at;
   return {
-    time: entry.started_at + "Z",
+    time: time + "Z",
     success: entry.success === 1,
     skipped: entry.skipped === 1,
     isRunning: entry.finished_at === null,

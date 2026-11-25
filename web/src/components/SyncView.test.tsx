@@ -125,6 +125,7 @@ function historyEntry(sourceName: string, id: number): SyncHistoryEntry {
     finished_at: "2026-07-10 12:01:00",
     success: 1,
     skipped: 0,
+    repeat_count: 1,
     events_added: 1,
     events_updated: 0,
     error: null,

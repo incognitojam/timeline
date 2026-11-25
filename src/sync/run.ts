@@ -22,6 +22,8 @@ export interface SyncRunInput {
   verbose?: boolean;
   /** Returns a skip result to defer the run after canSync passes, or null to proceed. */
   guard?: () => Promise<SyncResult | null>;
+  /** True for a scheduled run, whose repeated skips collapse into one sync_log row. */
+  scheduled: boolean;
 }
 
 export interface SyncRunOutcome {
@@ -48,7 +50,7 @@ export async function runSyncSource(input: SyncRunInput): Promise<SyncRunOutcome
       error: cannotSync,
       durationMs: 0,
     };
-    recordSkippedSync(appDb, jobId, result);
+    recordSkippedSync(appDb, jobId, result, input.scheduled);
     report(result);
     return { result, ran: false };
   }
@@ -57,7 +59,7 @@ export async function runSyncSource(input: SyncRunInput): Promise<SyncRunOutcome
   // startSyncLog and would leave no record of the deferral.
   const skip = input.guard ? await input.guard() : null;
   if (skip) {
-    recordSkippedSync(appDb, jobId, skip);
+    recordSkippedSync(appDb, jobId, skip, input.scheduled);
     report(skip);
     return { result: skip, ran: false };
   }

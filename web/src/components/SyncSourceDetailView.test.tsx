@@ -145,6 +145,7 @@ function historyEntry(
     finished_at: finishedAt,
     success: 1,
     skipped: 0,
+    repeat_count: 1,
     events_added: 10,
     events_updated: 0,
     error: null,

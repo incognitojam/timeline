@@ -591,16 +591,17 @@ export class Scheduler {
       // a tethered iPhone). A deferral is recorded as a skipped sync_log row
       // with success=1 — worker.ts treats a result with success=false as a
       // hard failure and retries it, which a polite deferral must not trigger.
-      // Manual ("force it now") triggers bypass the guard.
-      const guard =
-        trigger === "manual"
-          ? undefined
-          : () =>
-              this.guardCheck({
-                source: sourceName,
-                sourceConfig: syncConfig.sources[sourceName],
-                blockedNetworks: getBlockedNetworks(this.db),
-              });
+      // Manual ("force it now") triggers bypass the guard, and their skips
+      // always get a row of their own that later skips never fold into.
+      const scheduled = trigger !== "manual";
+      const guard = scheduled
+        ? () =>
+            this.guardCheck({
+              source: sourceName,
+              sourceConfig: syncConfig.sources[sourceName],
+              blockedNetworks: getBlockedNetworks(this.db),
+            })
+        : undefined;
       const { result, ran } = await runSyncSource({
         appDb: this.db,
         source: syncSource,
@@ -615,6 +616,7 @@ export class Scheduler {
         localWork,
         verbose: this.verbose,
         guard,
+        scheduled,
       });
       if (ran) {
         this.recordRunAndReschedule(sourceName, syncSource, sourceConfig);

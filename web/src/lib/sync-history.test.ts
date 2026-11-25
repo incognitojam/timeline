@@ -17,6 +17,7 @@ function historyEntry(metadata: string | null): SyncHistoryEntry {
     finished_at: "2026-07-10 12:05:00",
     success: 1,
     skipped: 0,
+    repeat_count: 1,
     events_added: 2,
     events_updated: 0,
     error: null,
@@ -66,6 +67,21 @@ describe("sync history metadata", () => {
     entry.skipped = 1;
 
     expect(historyStatusLabel(entry)).toEqual({ label: "Deferred", className: "text-yellow-400", title: "offline" });
+  });
+
+  it("labels a row of repeated deferrals with its count and span", () => {
+    const entry = historyEntry('{"guard":"vision","skipReason":"model not listed"}');
+    entry.skipped = 1;
+    entry.repeat_count = 43;
+    entry.started_at = "2026-07-10 16:02:00";
+    entry.finished_at = "2026-07-10 16:58:00";
+
+    const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    expect(historyStatusLabel(entry)).toEqual({
+      label: `Deferred 43 times, ${clock("2026-07-10T16:02:00Z")} to ${clock("2026-07-10T16:58:00Z")}`,
+      className: "text-yellow-400",
+      title: "model not listed",
+    });
   });
 
   it("leaves the title off a deferred run without a reason", () => {

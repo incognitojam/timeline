@@ -278,6 +278,7 @@ export async function runSourceOnce(
         ),
         signal: options.signal,
         verbose: options.verbose,
+        scheduled: false,
       });
       return {
         source: source.name,
