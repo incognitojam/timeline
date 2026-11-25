@@ -1,6 +1,7 @@
 import type { ConversationRangeExportFormat } from "@shared/conversation-export";
 import type { MusicPeriod, MusicRankingsOverview, MusicRecentResponse } from "@platforms/spotify/shared/music";
 import type { NetworkSettings } from "@shared/network-settings";
+import type { MemoryIndex, MemoryNote, MemoryVersion } from "@shared/memory";
 import type { ReleaseStatus } from "@shared/releases";
 import type { SourceFreshness } from "@shared/source-freshness";
 import type { TimelineServiceStatus, VersionInfo } from "@shared/version";
@@ -2327,4 +2328,59 @@ export async function fetchLatestFriendListens(signal: AbortSignal): Promise<{ f
 export async function fetchPlaylistDetail(id: string, signal: AbortSignal): Promise<PlaylistDetail> {
   const res = await apiFetch(`${API_BASE}/api/playlists/${encodeURIComponent(id)}`, { signal });
   return parseApiJson(res, "Failed to fetch playlist");
+}
+
+// ============================================================================
+// Shared agent memory
+// ============================================================================
+
+function memoryNotePath(project: string, name: string, suffix = ""): string {
+  const query = project ? `?project=${encodeURIComponent(project)}` : "";
+  return `${API_BASE}/api/memory/notes/${encodeURIComponent(name)}${suffix}${query}`;
+}
+
+export type MemoryNoteEdit = Pick<MemoryNote, "kind" | "title" | "summary" | "details">;
+
+export async function fetchMemoryIndex(signal: AbortSignal): Promise<MemoryIndex> {
+  const res = await apiFetch(`${API_BASE}/api/memory`, { signal });
+  return parseApiJson<MemoryIndex>(res, "Failed to load memory");
+}
+
+export async function fetchMemoryNote(project: string, name: string, signal: AbortSignal): Promise<MemoryNote | null> {
+  const res = await apiFetch(memoryNotePath(project, name), { signal });
+  if (res.status === 404) return null;
+  return (await parseApiJson<{ note: MemoryNote }>(res, "Failed to load note")).note;
+}
+
+export async function fetchMemoryVersions(project: string, name: string, signal: AbortSignal): Promise<MemoryVersion[]> {
+  const res = await apiFetch(memoryNotePath(project, name, "/versions"), { signal });
+  return (await parseApiJson<{ versions: MemoryVersion[] }>(res, "Failed to load previous versions")).versions;
+}
+
+export async function updateMemoryNote(project: string, name: string, edit: MemoryNoteEdit): Promise<MemoryNote> {
+  const res = await apiFetch(memoryNotePath(project, name), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(edit),
+  });
+  return (await parseApiJson<{ note: MemoryNote }>(res, "Failed to save note")).note;
+}
+
+export async function deleteMemoryNote(project: string, name: string): Promise<void> {
+  const res = await apiFetch(memoryNotePath(project, name), { method: "DELETE" });
+  await parseApiJson<{ ok: true }>(res, "Failed to delete note");
+}
+
+export async function restoreMemoryVersion(id: number): Promise<MemoryNote> {
+  const res = await apiFetch(`${API_BASE}/api/memory/versions/${id}/restore`, { method: "POST" });
+  return (await parseApiJson<{ note: MemoryNote }>(res, "Failed to restore note")).note;
+}
+
+export async function setProjectUsesAccountMemory(project: string, useAccountMemory: boolean): Promise<void> {
+  const res = await apiFetch(`${API_BASE}/api/memory/projects/${encodeURIComponent(project)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ useAccountMemory }),
+  });
+  await parseApiJson<{ ok: true }>(res, "Failed to change the project's memory setting");
 }

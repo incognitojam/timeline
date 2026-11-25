@@ -4,6 +4,7 @@ import { SYNC_SOURCES } from "../sync/sources";
 import { upsertSyncSourcePatch } from "../sync/config";
 import { parseInterval } from "../config/types";
 import type { SeedContext, SeedSource } from "./context";
+import { seedMemory } from "./memory";
 import { HOME_DIR } from "./persona";
 
 /** Model id the seeded day summaries are cached under. */
@@ -69,8 +70,8 @@ const INBOX_EXPORTS: Readonly<Record<string, string>> = {
 /**
  * App-state rows that make /status, Settings, and the day summary look like a
  * running instance: per-source sync settings, a few days of sync history with
- * the occasional failure, scheduler state, processed inbox files, and cached
- * day summaries derived from each day's actual events.
+ * the occasional failure, scheduler state, processed inbox files, cached
+ * day summaries derived from each day's actual events, and agent memory.
  *
  * Sync sources are seeded disabled: their history is synthetic, and enabling
  * them would let `bun run service` pull a real account into the synthetic DB.
@@ -133,6 +134,7 @@ export function seedAppState(
     seedProcessedFiles(ctx, db, seeded, imports, now);
     seedDaySummaries(ctx, db);
   })();
+  seedMemory(ctx, db);
 }
 
 /** One inbox file per export-based generator, processed shortly after its newest event. */

@@ -11,6 +11,14 @@ import {
   useQueryClient,
 } from "@tanstack/solid-query";
 import {
+  deleteMemoryNote,
+  fetchMemoryIndex,
+  fetchMemoryNote,
+  fetchMemoryVersions,
+  type MemoryNoteEdit,
+  restoreMemoryVersion,
+  setProjectUsesAccountMemory,
+  updateMemoryNote,
   addEvalExpectationApi,
   addEvalQueryApi,
   type CodingAgentConversationListParams,
@@ -226,6 +234,10 @@ export const queryKeys = {
   evalCasesRoot: () => ["evalCases"] as const,
   evalCases: () => ["evalCases", "list"] as const,
   evalCase: (id: number | undefined) => ["evalCases", "detail", id] as const,
+  memoryRoot: () => ["memory"] as const,
+  memoryIndex: () => ["memory", "index"] as const,
+  memoryNote: (project: string, name: string) => ["memory", "note", project, name] as const,
+  memoryVersions: (project: string, name: string) => ["memory", "versions", project, name] as const,
 };
 
 // Re-export SearchParams type for convenience
@@ -726,6 +738,24 @@ export const queryOptions = {
       enabled: sessionId !== undefined && sessionId !== "",
       placeholderData: keepPreviousData,
     }),
+
+  memoryIndex: () =>
+    defineQueryOptions({
+      queryKey: queryKeys.memoryIndex(),
+      queryFn: ({ signal }) => fetchMemoryIndex(signal),
+    }),
+
+  memoryNote: (project: string, name: string) =>
+    defineQueryOptions({
+      queryKey: queryKeys.memoryNote(project, name),
+      queryFn: ({ signal }) => fetchMemoryNote(project, name, signal),
+    }),
+
+  memoryVersions: (project: string, name: string) =>
+    defineQueryOptions({
+      queryKey: queryKeys.memoryVersions(project, name),
+      queryFn: ({ signal }) => fetchMemoryVersions(project, name, signal),
+    }),
 };
 
 function invalidateTimelineEventQueries(queryClient: ReturnType<typeof useQueryClient>) {
@@ -1208,6 +1238,43 @@ export function useReleaseStatus() {
 
 export function useNetworkSettings() {
   return createQuery(() => queryOptions.networkSettings());
+}
+
+export function useMemoryIndex() {
+  return createQuery(() => queryOptions.memoryIndex());
+}
+
+export function useMemoryNote(scope: () => { project: string; name: string }) {
+  return createQuery(() => queryOptions.memoryNote(scope().project, scope().name));
+}
+
+export function useMemoryVersions(scope: () => { project: string; name: string }) {
+  return createQuery(() => queryOptions.memoryVersions(scope().project, scope().name));
+}
+
+/** A change to one note can show on every memory query: the index, the note, and its versions. */
+function useMemoryMutation<T>(mutationFn: (variables: T) => Promise<unknown>) {
+  const queryClient = useQueryClient();
+  return createMutation(() => ({
+    mutationFn,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.memoryRoot() }),
+  }));
+}
+
+export function useUpdateMemoryNote() {
+  return useMemoryMutation((v: { project: string; name: string; edit: MemoryNoteEdit }) => updateMemoryNote(v.project, v.name, v.edit));
+}
+
+export function useDeleteMemoryNote() {
+  return useMemoryMutation((v: { project: string; name: string }) => deleteMemoryNote(v.project, v.name));
+}
+
+export function useRestoreMemoryVersion() {
+  return useMemoryMutation((id: number) => restoreMemoryVersion(id));
+}
+
+export function useSetProjectUsesAccountMemory() {
+  return useMemoryMutation((v: { project: string; useAccountMemory: boolean }) => setProjectUsesAccountMemory(v.project, v.useAccountMemory));
 }
 
 export function useSyncSources() {

@@ -4,7 +4,8 @@
  */
 
 import type { Database } from "../db/sqlite";
-import { listMemoryNotes, MEMORY_KINDS, type MemoryNote } from "../db/memory-notes";
+import { listMemoryNotes } from "../db/memory-notes";
+import { MEMORY_KINDS, type MemoryNote } from "../shared/memory";
 
 /** Most characters the memory part of the initialise instructions may take. */
 export const MEMORY_INSTRUCTIONS_CAP = 12_000;
@@ -25,11 +26,15 @@ function indexSection(heading: string, notes: MemoryNote[]): string[] {
   return lines;
 }
 
-/** The index of the account's notes, preceded by the project's notes when a project is given. */
-export function renderMemoryIndex(notes: MemoryNote[], project = ""): string {
+/**
+ * The index of the account's notes, preceded by the project's notes when a
+ * project is given. A project can switch the account's notes off, leaving only its own.
+ */
+export function renderMemoryIndex(notes: MemoryNote[], project = "", withAccount = true): string {
   const account = indexSection("Account notes (shared by every project):", notes.filter((note) => note.project === ""));
   if (!project) return account.join("\n");
   const own = indexSection(`Project notes (${project}):`, notes.filter((note) => note.project === project));
+  if (!withAccount) return [...own, "", "(The user has switched account notes off for this project.)"].join("\n");
   return [...own, "", ...account].join("\n");
 }
 
