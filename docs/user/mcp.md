@@ -29,7 +29,7 @@ A note belongs to the account or to one project. A project is named by the key t
 - `save_memory_note` creates a note, or updates the note of that name in that scope, replacing only the fields given.
 - `delete_memory_note` deletes a note.
 
-When a client connects, the server's instructions tell the agent about the memory and include the `you` notes in full and the account index, up to about 12,000 characters. Past that the agent gets the index alone and fetches the rest with the tools.
+When a client connects, the server's instructions tell the agent about the memory and include the `you` notes in full and the account index, up to about 12,000 characters. Past that the agent gets the index alone and fetches the rest with the tools. A note's details can be up to 16,000 characters, so a long `you` note is named in the instructions rather than included.
 
 Memory lives in `app-state.db` and holds at most 500 notes. Each update or delete keeps the note's previous version in the same table: the last 10 versions of each note, and the newest 2,000 overall. That covers an agent's mistake, not someone holding a token who sets out to flush it; database backups cover that, if you have them set up. Saves and reads are also recorded with other MCP tool calls for 30 days, so a note deleted by mistake, a secret included, stays there until then.
 
@@ -38,3 +38,11 @@ The **Memory** page in the web app (under **More**) lists the account's notes by
 Each project on the page has a **Use account memory** switch, on by default. Turned off, `list_memory` with that project lists only the project's own notes. It changes nothing else: the connect-time instructions are the same for every project and still include the account's `you` notes and index, and agents can still read account notes by name.
 
 Any client with an MCP token can read, overwrite and delete notes, and the `you` notes reach every agent at connect. While [public access](macos-host.md#public-access) is on, that includes clients on the internet.
+
+### Importing claude.ai's memory
+
+**Import from Claude** on the Memory page brings in the memory claude.ai has built up. Request the export in claude.ai under **Settings → Privacy → Export data**. Of the files it gives you, upload `memories-000.zip`, or the JSON file inside it. The page first shows what the import would add, per kind and project, which notes are already in memory and which files it cannot import and why. Nothing is written until you press **Import**, which adds all of those notes in one go or none. If memory changed after the preview so that the import would add something else, Import refuses and you choose the file again.
+
+Each memory file becomes a note: `preferences` and `profile` are `you` notes, and files under `topics`, `areas` and `people` keep that kind. Each claude.ai project becomes a project keyed by its title as a slug (`Garden Planner` → `garden-planner`); its files keep their folder's kind, files directly in the project are `project` notes, and the project's title and description become its `overview` unless it has an overview file of its own. The note's name is the file's name, its title is that name title-cased as claude.ai shows it, its summary the file's description, and its details the file's text with its `[[name]]` links. A person note is linked to a contact only when its title or aliases are, ignoring case, the name of exactly one contact; the preview lists each link.
+
+An import never changes or deletes a note: a note whose name already exists in its scope is left as it is, so running the same import again adds nothing. It is refused if it would take memory past its 500 notes. claude.ai's older prose summaries in the same file, the account summary and one per project, are not imported.

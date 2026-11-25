@@ -242,6 +242,14 @@
     },
     {
       "database": "timeline",
+      "sql": "SELECT id , display_name FROM contacts WHERE display_name COLLATE NOCASE IN ( SELECT value FROM json_each ( ? ) )",
+      "reason": "Importing claude.ai memory matches each person note's names to contacts ignoring case, once per person note in an upload; contacts is small and has no case-insensitive name index.",
+      "findings": [
+        "contacts:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
       "sql": "SELECT c . * , ( SELECT COUNT ( * ) FROM identities i WHERE i . contact_id = c . id ) as identityCount , ( SELECT COUNT ( DISTINCT i . platform ) FROM identities i WHERE i . contact_id = c . id ) as platformCount , ( SELECT COUNT ( * ) FROM identities i WHERE i . contact_id = c . id AND i . event_count > 0 ) as activeIdentityCount , 0 as eventCount FROM contacts c WHERE c . display_name LIKE ? ORDER BY c . is_self DESC , c . display_name COLLATE NOCASE",
       "reason": "found by the first run; under review",
       "findings": [

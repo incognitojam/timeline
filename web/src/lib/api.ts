@@ -1,7 +1,7 @@
 import type { ConversationRangeExportFormat } from "@shared/conversation-export";
 import type { MusicPeriod, MusicRankingsOverview, MusicRecentResponse } from "@platforms/spotify/shared/music";
 import type { NetworkSettings } from "@shared/network-settings";
-import type { MemoryIndex, MemoryNote, MemoryVersion } from "@shared/memory";
+import type { MemoryImportResult, MemoryIndex, MemoryNote, MemoryVersion } from "@shared/memory";
 import type { ReleaseStatus } from "@shared/releases";
 import type { SourceFreshness } from "@shared/source-freshness";
 import type { TimelineServiceStatus, VersionInfo } from "@shared/version";
@@ -2374,6 +2374,16 @@ export async function deleteMemoryNote(project: string, name: string): Promise<v
 export async function restoreMemoryVersion(id: number): Promise<MemoryNote> {
   const res = await apiFetch(`${API_BASE}/api/memory/versions/${id}/restore`, { method: "POST" });
   return (await parseApiJson<{ note: MemoryNote }>(res, "Failed to restore note")).note;
+}
+
+/** Preview an import of claude.ai's memories-000.zip (or the JSON inside it), or with a preview's planId, run it. */
+export async function importClaudeMemory(file: File, planId?: string): Promise<MemoryImportResult> {
+  const res = await apiFetch(`${API_BASE}/api/memory/import${planId ? `?plan=${encodeURIComponent(planId)}` : ""}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: file,
+  });
+  return parseApiJson<MemoryImportResult>(res, "Failed to read the export");
 }
 
 export async function setProjectUsesAccountMemory(project: string, useAccountMemory: boolean): Promise<void> {

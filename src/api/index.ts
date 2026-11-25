@@ -421,7 +421,7 @@ app.route("/", authRoutes);
 app.route("/", statusRoutes);
 app.route("/", jobsRoutes);
 app.route("/", mcpRoutes);
-app.route("/", createMemoryRoutes());
+app.route("/", createMemoryRoutes(readDb));
 app.route("/", evalRoutes);
 app.route("/", createSyncSourceRoutes(apiConfig.scheduler.default_interval));
 app.route("/", createRemoteAgentsRoutes());

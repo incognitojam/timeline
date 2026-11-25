@@ -5,6 +5,7 @@ import { ACCOUNT_GROUPS, formatMemoryDate, projectNotesInOrder, scopeLabel } fro
 import { useMemoryIndex, useRestoreMemoryVersion, useSetProjectUsesAccountMemory } from "../lib/queries";
 import { buildMemoryNoteUrl } from "../lib/routes";
 import { IconChevronRight, IconPsychology } from "../ui/icons";
+import MemoryImport, { MEMORY_IMPORT_INPUT_ID } from "./MemoryImport";
 
 const HEADING = "font-mono text-[0.625rem] uppercase tracking-[0.16em] text-muted-foreground";
 const LIST = "divide-y divide-border overflow-hidden rounded-lg border border-border bg-card";
@@ -86,17 +87,34 @@ export default function MemoryView() {
   return (
     <div class="h-full overflow-auto">
       <div class="mx-auto max-w-4xl px-4 pt-6 pb-12">
-        <header class="mb-8 flex items-start gap-3">
+        <header class="mb-8 flex flex-wrap items-start gap-3">
           <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm bg-secondary text-secondary-foreground">
             <IconPsychology class="h-5 w-5" aria-hidden />
           </span>
-          <div class="min-w-0">
+          <div class="min-w-0 flex-1 basis-64">
             <h1 class="font-display text-2xl font-medium">Memory</h1>
             <p class="mt-1 text-sm text-muted-foreground">
               What AI agents have saved about you, shared by every agent connected to Timeline.
             </p>
           </div>
+          {/* A label opens the file picker; the import panel below holds the input. */}
+          <label
+            for={MEMORY_IMPORT_INPUT_ID}
+            tabindex="0"
+            role="button"
+            class={`${SECONDARY_BUTTON} ml-12 cursor-pointer sm:ml-0`}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                event.currentTarget.click();
+              }
+            }}
+          >
+            Import from Claude
+          </label>
         </header>
+
+        <MemoryImport />
 
         <Show when={query.error}>
           {(error) => <p role="alert" class="mb-4 rounded-lg border border-destructive/40 p-4 text-sm text-destructive">{error().message}</p>}
@@ -104,7 +122,7 @@ export default function MemoryView() {
 
         <Show when={isEmpty()}>
           <div class="rounded-lg bg-card p-6 text-center text-sm text-muted-foreground">
-            No notes yet. Agents save notes here through Timeline's MCP server as they learn your preferences, the people you mention and the projects you work on.
+            No notes yet. Agents save notes here through Timeline's MCP server as they learn your preferences, the people you mention and the projects you work on. To start from what claude.ai remembers, use Import from Claude.
           </div>
         </Show>
 

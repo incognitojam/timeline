@@ -6,7 +6,7 @@ test("Funnel serves only MCP and locks public requests after repeated authentica
   process.env.MCP_TOKENS = "example-token";
   const headers = { "Tailscale-Funnel-Request": "?1", "mcp-session-id": "unknown-session" };
   try {
-    for (const path of ["/", "/api/health", "/status", "/mcp/a/b"]) {
+    for (const path of ["/", "/api/health", "/api/memory/import", "/status", "/mcp/a/b"]) {
       const denied = await app.request(path, { headers });
       expect(denied.status).toBe(403);
       expect(await denied.text()).toBe("Forbidden");

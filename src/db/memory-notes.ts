@@ -11,7 +11,7 @@ export const MEMORY_LIMITS = {
   name: 64,
   title: 120,
   summary: 240,
-  details: 8000,
+  details: 16000,
   /** Live notes across every scope. */
   notes: 500,
   /** Previous versions kept per note for restoring, newest first. */
@@ -149,6 +149,84 @@ export function saveMemoryNote(db: Database, input: SaveMemoryNoteInput): { note
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING ${COLUMNS}
     `).get(input.project, input.name, kind, title, summary, details, contactId, now, now) as MemoryNote;
     return { note, created: true };
+  }).immediate();
+}
+
+export interface ImportedMemoryNote {
+  /** Where the note came from in the export, to name it in the result. */
+  path: string;
+  project: string;
+  name: string;
+  kind: string;
+  title: string;
+  summary: string;
+  details: string;
+  contactId: number | null;
+  updatedAt: string;
+}
+
+export interface MemoryImportPlan {
+  add: ImportedMemoryNote[];
+  /** Left out: a note of that name already exists in that scope. */
+  existing: ImportedMemoryNote[];
+  problems: { path: string; reason: string }[];
+  /** Why adding would break the note limit, or null when it fits. */
+  overLimit: string | null;
+}
+
+/**
+ * What importing these notes would do: add the ones whose name is new in their
+ * scope, never touching an existing note. A note the store would refuse, or one
+ * sharing its scope and name with another in the same import, is a problem.
+ */
+export function planMemoryImport(db: Database, notes: ImportedMemoryNote[]): MemoryImportPlan {
+  const plan: MemoryImportPlan = { add: [], existing: [], problems: [], overLimit: null };
+  const key = (note: ImportedMemoryNote) => `${note.project}/${note.name}`;
+  const seen = new Map<string, number>();
+  for (const note of notes) seen.set(key(note), (seen.get(key(note)) ?? 0) + 1);
+  for (const note of notes) {
+    try {
+      checkName(note.name);
+      checkFields(note, null);
+    } catch (error) {
+      plan.problems.push({ path: note.path, reason: error instanceof Error ? error.message : String(error) });
+      continue;
+    }
+    if ((seen.get(key(note)) ?? 0) > 1) {
+      plan.problems.push({ path: note.path, reason: `Another file in this export is also named "${note.name}" in the same scope.` });
+    } else if (getMemoryNote(db, note.project, note.name)) {
+      plan.existing.push(note);
+    } else {
+      plan.add.push(note);
+    }
+  }
+  const { count } = db.prepare("SELECT COUNT(*) AS count FROM memory_notes WHERE replaced_at IS NULL").get() as { count: number };
+  if (count + plan.add.length > MEMORY_LIMITS.notes) {
+    plan.overLimit = `Memory holds ${count} notes; adding ${plan.add.length} would pass the limit of ${MEMORY_LIMITS.notes}. Delete notes first.`;
+  }
+  return plan;
+}
+
+/**
+ * Add the notes planMemoryImport would add, all or none, in one transaction.
+ * `confirm` sees the plan first and throws to refuse it.
+ */
+export function importMemoryNotes(db: Database, notes: ImportedMemoryNote[], confirm: (plan: MemoryImportPlan) => void): MemoryImportPlan {
+  return db.transaction(() => {
+    const plan = planMemoryImport(db, notes);
+    if (plan.overLimit) throw new Error(plan.overLimit);
+    confirm(plan);
+    const insert = db.prepare(`
+      INSERT INTO memory_notes (project, name, kind, title, summary, details, contact_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const now = Date.now();
+    for (const note of plan.add) {
+      // A time in the future would sort the note first wherever the newest come first.
+      const at = new Date(Math.min(Date.parse(note.updatedAt), now)).toISOString();
+      insert.run(note.project, note.name, note.kind, note.title, note.summary, note.details, note.contactId, at, at);
+    }
+    return plan;
   }).immediate();
 }
 

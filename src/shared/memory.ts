@@ -35,3 +35,20 @@ export interface MemoryIndex {
   /** The last version of each note that is now deleted, most recently deleted first. */
   deleted: MemoryVersion[];
 }
+
+/** What an import from claude.ai's memory export adds, or would add on a preview. */
+export interface MemoryImportResult {
+  imported: boolean;
+  /** Identifies what a preview would add; Import with it refuses if memory has changed since. */
+  planId: string;
+  /** Notes added (or to add), per scope ("" for the account) and kind. */
+  add: { project: string; kind: MemoryKind; count: number }[];
+  /** Person notes, among those added, linked to a contact. */
+  links: { project: string; name: string; contact: string }[];
+  /** Notes left out because one of that name already exists in that scope. */
+  existing: number;
+  /** Files that cannot be imported, with the reason. */
+  problems: { path: string; reason: string }[];
+  /** Why the notes to add would pass the store's note limit; Import then refuses. */
+  overLimit: string | null;
+}

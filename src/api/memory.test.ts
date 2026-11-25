@@ -30,7 +30,7 @@ async function versions(name: string, project = ""): Promise<MemoryVersion[]> {
 beforeEach(() => {
   appDb = new Database(":memory:");
   initAppStateDb(appDb);
-  app = createMemoryRoutes(() => appDb);
+  app = createMemoryRoutes(wrapDatabase(new Database(":memory:")), () => appDb);
   saveMemoryNote(appDb, { project: "", name: "tone", kind: "you", title: "Tone", summary: "Plain and short" });
   saveMemoryNote(appDb, { project: "", name: "rowan", kind: "person", title: "Rowan Hale", summary: "Climbing partner", contactId: 2 });
   saveMemoryNote(appDb, { project: "garden-app", name: "overview", kind: "project", title: "Garden app", summary: "Watering planner" });
