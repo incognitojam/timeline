@@ -329,6 +329,29 @@ export function initAppStateDb(db: Database) {
   `);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_eval_queries_case ON eval_queries(case_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_eval_expectations_case ON eval_expectations(case_id)`);
+
+  // Shared agent memory (src/db/memory-notes.ts). project '' is the account
+  // scope. A row with replaced_at set is the previous version of an updated or
+  // deleted note, kept so it can be restored.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memory_notes (
+      id INTEGER PRIMARY KEY,
+      project TEXT NOT NULL,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      details TEXT NOT NULL,
+      contact_id INTEGER,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      replaced_at TEXT
+    )
+  `);
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_notes_live
+      ON memory_notes(project, name) WHERE replaced_at IS NULL
+  `);
 }
 
 // Day summary types and CRUD operations

@@ -9,6 +9,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { RequestId } from "@modelcontextprotocol/sdk/types.js";
 import { loadConfig } from "./config";
+import { getAppStateDb } from "./db/app-state";
 import { getDb, initDb } from "./db/schema";
 import { wrapDatabase } from "./db/pool";
 import { openVectorSearchDb } from "./embeddings/db";
@@ -21,6 +22,7 @@ import {
   upsertMcpSession,
   type RecordToolCallInput,
 } from "./mcp/recording";
+import { memoryInstructions } from "./mcp/memory";
 import { registerTools } from "./mcp-tools";
 import { PRODUCT_VERSION } from "./product-version";
 
@@ -33,10 +35,11 @@ configureBunSqliteForSqliteVec();
 const db = getDb();
 initDb(db);
 
-const server = new McpServer({
-  name: "timeline",
-  version: PRODUCT_VERSION,
-});
+// stdio clients start a process per connection, so this is read at connect time.
+const server = new McpServer(
+  { name: "timeline", version: PRODUCT_VERSION },
+  { instructions: memoryInstructions(getAppStateDb()) },
+);
 const sessionId = `stdio:${process.pid}:${Date.now()}`;
 
 // Resolve public URL from config + env override; used to embed clickable
