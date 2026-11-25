@@ -175,9 +175,11 @@ export default function SyncSourceDetailView() {
   const stats = createMemo(() => {
     const entries = history();
     const finished = entries.filter((e) => e.finished_at !== null);
-    const total = finished.length;
-    const deferred = finished.filter((e) => e.skipped === 1).length;
-    const blocked = finished.filter((e) => e.skipped === 1 && e.error !== null).length;
+    // A collapsed skip row counts once per scheduled skip it stands for.
+    const runs = (rows: typeof finished) => rows.reduce((sum, e) => sum + (e.repeat_count ?? 1), 0);
+    const total = runs(finished);
+    const deferred = runs(finished.filter((e) => e.skipped === 1));
+    const blocked = runs(finished.filter((e) => e.skipped === 1 && e.error !== null));
     const completed = finished.filter((e) => e.skipped !== 1);
     const succeeded = completed.filter((e) => e.success === 1).length;
     const failed = completed.filter((e) => e.success === 0).length;
@@ -440,7 +442,7 @@ export default function SyncSourceDetailView() {
                     </span>
                     <span class="h-px flex-1 bg-border" />
                     <span class="text-sm font-normal text-muted-foreground ml-2">
-                      from last <span class="font-mono">{history().length}</span> run{history().length === 1 ? "" : "s"}
+                      from last <span class="font-mono">{stats().total}</span> run{stats().total === 1 ? "" : "s"}
                     </span>
                   </h3>
                   <div class="grid grid-cols-2 md:grid-cols-4 gap-3">

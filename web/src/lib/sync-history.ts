@@ -1,3 +1,4 @@
+import { formatTime } from "./format";
 import type { SyncHistoryEntry } from "./api";
 
 export function parseSyncHistoryMetadata(value: string | null): unknown {
@@ -26,11 +27,19 @@ export function getSyncHistoryWarning(entry: SyncHistoryEntry): { failed: number
   };
 }
 
+/** " 43 times, 16:02 to 16:58" for a row standing for repeated scheduled skips, else "". */
+function repeatedSkipSpan(entry: SyncHistoryEntry): string {
+  if (entry.repeat_count === null || entry.repeat_count < 2 || entry.finished_at === null) return "";
+  const clock = (timestamp: string) => formatTime(`${timestamp.replace(" ", "T")}Z`);
+  return ` ${entry.repeat_count} times, ${clock(entry.started_at)} to ${clock(entry.finished_at)}`;
+}
+
 export function historyStatusLabel(entry: SyncHistoryEntry): { label: string; className: string; title?: string } {
   if (entry.skipped === 1) {
+    const span = repeatedSkipSpan(entry);
     if (entry.error !== null) {
       return {
-        label: `Blocked: ${entry.error.slice(0, 60)}`,
+        label: `Blocked${span}: ${entry.error.slice(0, 60)}`,
         className: "text-red-400",
         title: entry.error,
       };
@@ -40,7 +49,7 @@ export function historyStatusLabel(entry: SyncHistoryEntry): { label: string; cl
       ? (metadata as Record<string, unknown>).skipReason
       : undefined;
     return {
-      label: "Deferred",
+      label: `Deferred${span}`,
       className: "text-yellow-400",
       ...(typeof reason === "string" ? { title: reason } : {}),
     };

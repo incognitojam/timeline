@@ -96,6 +96,8 @@ export interface SyncLogEntry {
   finished_at: string | null;
   success: number; // SQLite boolean
   skipped: number; // SQLite boolean — guard deferral (distinct from success/failure)
+  /** Scheduled skips this row stands for (see recordSkippedSync); NULL counts as one run. */
+  repeat_count: number | null;
   events_added: number;
   events_updated: number;
   error: string | null;

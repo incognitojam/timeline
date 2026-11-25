@@ -845,7 +845,7 @@
     },
     {
       "database": "app-state",
-      "sql": "SELECT source , COUNT ( * ) as syncs , SUM ( CASE WHEN success = 1 AND skipped = 0 THEN 1 ELSE 0 END ) as successes , SUM ( CASE WHEN skipped = 1 THEN 1 ELSE 0 END ) as deferred , SUM ( CASE WHEN success = 0 THEN 1 ELSE 0 END ) as failures , COALESCE ( SUM ( events_added ) , 0 ) as events_added , AVG ( CASE WHEN skipped = 0 THEN duration_ms ELSE NULL END ) as avg_duration FROM sync_log WHERE started_at > datetime ( 'now' , '-7 days' ) GROUP BY source ORDER BY source",
+      "sql": "SELECT source , SUM ( COALESCE ( repeat_count , 1 ) ) as syncs , SUM ( CASE WHEN success = 1 AND skipped = 0 THEN 1 ELSE 0 END ) as successes , SUM ( CASE WHEN skipped = 1 THEN COALESCE ( repeat_count , 1 ) ELSE 0 END ) as deferred , SUM ( CASE WHEN success = 0 THEN 1 ELSE 0 END ) as failures , COALESCE ( SUM ( events_added ) , 0 ) as events_added , AVG ( CASE WHEN skipped = 0 THEN duration_ms ELSE NULL END ) as avg_duration FROM sync_log WHERE started_at > datetime ( 'now' , '-7 days' ) GROUP BY source ORDER BY source",
       "reason": "found by the first run; under review",
       "findings": [
         "sync_log:index-scan"

@@ -334,9 +334,9 @@ async function gatherStatusData() {
     .prepare(
       `SELECT
          source,
-         COUNT(*) as syncs,
+         SUM(COALESCE(repeat_count, 1)) as syncs,
          SUM(CASE WHEN success = 1 AND skipped = 0 THEN 1 ELSE 0 END) as successes,
-         SUM(CASE WHEN skipped = 1 THEN 1 ELSE 0 END) as deferred,
+         SUM(CASE WHEN skipped = 1 THEN COALESCE(repeat_count, 1) ELSE 0 END) as deferred,
          SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failures,
          COALESCE(SUM(events_added), 0) as events_added,
          AVG(CASE WHEN skipped = 0 THEN duration_ms ELSE NULL END) as avg_duration
@@ -377,10 +377,10 @@ async function gatherStatusData() {
     .prepare(
       `SELECT
          strftime('%Y-%m-%dT%H:00:00Z', started_at) as bucket,
-         COUNT(*) as syncs,
+         SUM(COALESCE(repeat_count, 1)) as syncs,
          COALESCE(SUM(events_added), 0) as events_added,
          SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failures,
-         SUM(CASE WHEN skipped = 1 THEN 1 ELSE 0 END) as deferred
+         SUM(CASE WHEN skipped = 1 THEN COALESCE(repeat_count, 1) ELSE 0 END) as deferred
        FROM sync_log
        WHERE started_at > datetime('now', '-24 hours')
        GROUP BY strftime('%Y-%m-%dT%H:00:00Z', started_at)
@@ -417,10 +417,10 @@ async function gatherStatusData() {
     .prepare(
       `SELECT
          strftime('%Y-%m-%d', started_at) as bucket,
-         COUNT(*) as syncs,
+         SUM(COALESCE(repeat_count, 1)) as syncs,
          COALESCE(SUM(events_added), 0) as events_added,
          SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failures,
-         SUM(CASE WHEN skipped = 1 THEN 1 ELSE 0 END) as deferred
+         SUM(CASE WHEN skipped = 1 THEN COALESCE(repeat_count, 1) ELSE 0 END) as deferred
        FROM sync_log
        WHERE started_at > datetime('now', '-30 days')
        GROUP BY strftime('%Y-%m-%d', started_at)
@@ -751,7 +751,10 @@ export async function generateStatusMarkdown(options: StatusMarkdownOptions = {}
       if (row.type === "deferred") {
         const e = row.entry;
         const reason = authenticated ? deferredReason(e) : null;
-        const result = reason ? `deferred: ${sanitizeForTable(reason)}` : "deferred";
+        const repeats = e.repeat_count !== null && e.repeat_count > 1
+          ? ` ${e.repeat_count} times, ${formatShortDateTime(e.started_at).slice(-5)} to ${formatShortDateTime(e.finished_at ?? e.started_at).slice(-5)}`
+          : "";
+        const result = `deferred${repeats}${reason ? `: ${sanitizeForTable(reason)}` : ""}`;
         lines.push(`| ${formatShortDateTime(e.started_at)} | ${e.source} | ${result} |`);
       } else if (row.type === "success") {
         const e = row.entry;

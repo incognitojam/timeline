@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { getAppStateDb } from "../db/app-state";
 import { getDb } from "../db/schema";
 import { upsertSyncSourcePatch } from "../sync/config";
+import { recordSkippedSync } from "../sync/log";
 import { seed } from "../testing/seed";
 import { app } from "./index";
 
@@ -59,6 +60,26 @@ describe("/status.md sync history", () => {
     const res = await app.request("/status.md");
     expect(res.status).toBe(200);
     expect(await res.text()).toContain("| test-deferred-source | deferred: on a blocked Wi-Fi network |");
+  });
+
+  it("shows repeated scheduled deferrals as one line and counts each one", async () => {
+    const deferral = {
+      source: "test-deferred-source",
+      success: true,
+      skipped: true,
+      eventsAdded: 0,
+      eventsUpdated: 0,
+      durationMs: 5,
+      metadata: { guard: "network", skipReason: "on a blocked Wi-Fi network" },
+    };
+    for (let i = 0; i < 3; i++) recordSkippedSync(getAppStateDb(), null, deferral, true);
+    const { start, end } = getAppStateDb()
+      .prepare("SELECT substr(started_at, 12, 5) AS start, substr(finished_at, 12, 5) AS end FROM sync_log WHERE source = ?")
+      .get(deferral.source) as { start: string; end: string };
+
+    const text = await (await app.request("/status.md")).text();
+    expect(text).toContain(`| test-deferred-source | deferred 3 times, ${start} to ${end}: on a blocked Wi-Fi network |`);
+    expect(text).toContain("| test-deferred-source | 3 | - | 3 |");
   });
 
   it("shows per-target details of a remote agents pull", async () => {

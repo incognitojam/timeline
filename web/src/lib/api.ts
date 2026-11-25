@@ -1816,6 +1816,8 @@ export interface SyncHistoryEntry {
   finished_at: string | null;
   success: number;
   skipped: number;
+  /** Scheduled skips this row stands for; started_at is the first, finished_at the latest. NULL counts as one run. */
+  repeat_count: number | null;
   events_added: number;
   events_updated: number;
   error: string | null;

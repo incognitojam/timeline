@@ -85,25 +85,70 @@ export function discardSyncLog(db: Database, logId: number): void {
  * skip *before* the work begins, so this writes one finished row directly. A
  * skipped result keeps `success = 1` to avoid a retry and sets `skipped = 1` so
  * `/status` and health can tell it apart from real work.
+ *
+ * A scheduled skip gets `repeat_count = 1`. It is folded into the source's latest
+ * row instead when that row is a scheduled skip (`repeat_count` set) begun in
+ * the current UTC clock hour, with the same `error` and `metadata.skipReason`:
+ * the count goes up and `finished_at` moves to now, so `started_at` is the first
+ * skip and `finished_at` the latest. A row therefore never spans an hour, and
+ * readers that bucket by `started_at` count every skip in the right hour. Older
+ * rows, real runs and manual skips have a NULL count, are never folded into, and
+ * count as one run.
  */
 export function recordSkippedSync(
   db: Database,
   jobId: number | null,
-  result: SyncResult
+  result: SyncResult,
+  scheduled: boolean
 ): void {
-  db.prepare(`
-    INSERT INTO sync_log
-      (source, started_at, finished_at, success, skipped, events_added, events_updated, error, duration_ms, metadata, job_id)
-    VALUES (?, datetime('now'), datetime('now'), ?, ?, 0, 0, ?, ?, ?, ?)
-  `).run(
-    result.source,
-    result.success ? 1 : 0,
-    result.skipped ? 1 : 0,
-    result.error ?? null,
-    result.durationMs,
-    result.metadata ? JSON.stringify(result.metadata) : null,
-    jobId
-  );
+  const error = result.error ?? null;
+  const skipReason = result.metadata?.skipReason ?? null;
+  if (skipReason !== null && typeof skipReason !== "string") {
+    throw new Error(`skipReason must be a string, got ${typeof skipReason}`);
+  }
+  const metadata = result.metadata ? JSON.stringify(result.metadata) : null;
+
+  // IMMEDIATE takes the write lock before the read, so two writers can never
+  // both see the same latest row and both insert or both bump it.
+  db.transaction(() => {
+    if (scheduled) {
+      const repeated = db.prepare(`
+        UPDATE sync_log
+        SET finished_at = datetime('now'),
+            repeat_count = repeat_count + 1,
+            duration_ms = ?,
+            metadata = ?,
+            job_id = ?
+        WHERE id = (
+            SELECT id FROM sync_log
+            WHERE source = ?
+            ORDER BY started_at DESC, id DESC
+            LIMIT 1
+          )
+          AND skipped = 1
+          AND repeat_count IS NOT NULL
+          AND strftime('%Y-%m-%d %H', started_at) = strftime('%Y-%m-%d %H', 'now')
+          AND error IS ?
+          AND (CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.skipReason') END) IS ?
+      `).run(result.durationMs, metadata, jobId, result.source, error, skipReason);
+      if (repeated.changes > 0) return;
+    }
+
+    db.prepare(`
+      INSERT INTO sync_log
+        (source, started_at, finished_at, success, skipped, events_added, events_updated, error, duration_ms, metadata, job_id, repeat_count)
+      VALUES (?, datetime('now'), datetime('now'), ?, ?, 0, 0, ?, ?, ?, ?, ?)
+    `).run(
+      result.source,
+      result.success ? 1 : 0,
+      result.skipped ? 1 : 0,
+      error,
+      result.durationMs,
+      metadata,
+      jobId,
+      scheduled ? 1 : null
+    );
+  }).immediate();
 }
 
 /**
@@ -143,6 +188,7 @@ export function getAttachmentDescriptionHistory(db: Database): AttachmentDescrip
         finished_at,
         success,
         skipped,
+        repeat_count,
         CASE
           WHEN metadata IS NOT NULL AND json_valid(metadata) THEN metadata
           ELSE '{}'
@@ -154,9 +200,9 @@ export function getAttachmentDescriptionHistory(db: Database): AttachmentDescrip
     daily AS (
       SELECT
         date(finished_at) AS date,
-        COUNT(*) AS runs,
+        SUM(COALESCE(repeat_count, 1)) AS runs,
         SUM(CASE WHEN success = 0 AND skipped = 0 THEN 1 ELSE 0 END) AS failedRuns,
-        SUM(CASE WHEN skipped = 1 THEN 1 ELSE 0 END) AS deferredRuns,
+        SUM(CASE WHEN skipped = 1 THEN COALESCE(repeat_count, 1) ELSE 0 END) AS deferredRuns,
         SUM(CASE
           WHEN json_type(metadata_json, '$.described') = 'integer'
             AND json_extract(metadata_json, '$.described') >= 0
