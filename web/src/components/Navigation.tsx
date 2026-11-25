@@ -25,6 +25,7 @@ import {
   IconMoreHoriz,
   IconMusicNote,
   IconPerson,
+  IconPsychology,
   IconSearch,
   IconSettings,
   IconSync,
@@ -46,6 +47,7 @@ const NAVIGATION_ICONS: Record<NavigationIcon, NavigationIconComponent> = {
   settings: IconSettings,
   attachments: IconAttachFile,
   mcp: IconHub,
+  memory: IconPsychology,
   eval: IconFactCheck,
 };
 

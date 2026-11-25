@@ -19,11 +19,12 @@ import {
   deleteMemoryNote,
   getMemoryNote,
   listMemoryNotes,
-  MEMORY_KINDS,
   MEMORY_LIMITS,
   projectScope,
+  projectUsesAccountMemory,
   saveMemoryNote,
 } from "./db/memory-notes";
+import { MEMORY_KINDS } from "./shared/memory";
 import { resolveIdentities } from "./db/identities";
 import type { QueryExecutor } from "./db/pool";
 import {
@@ -1408,7 +1409,8 @@ ${idHint}`,
     async (params, extra) => instrumentToolCall("list_memory", params, extra, async () => {
       try {
         const project = projectScope(params.project);
-        const index = renderMemoryIndex(listMemoryNotes(getMcpHistoryDb(), project), project);
+        const db = getMcpHistoryDb();
+        const index = renderMemoryIndex(listMemoryNotes(db, project), project, projectUsesAccountMemory(db, project));
         return { content: [{ type: "text" as const, text: index }] };
       } catch (error) {
         return memoryError(error);

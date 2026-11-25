@@ -17,6 +17,8 @@ export const ROUTES = {
   MCP: "/mcp-sessions",
   EVAL: "/eval",
   MCP_SESSION: "/mcp-sessions/:id",
+  MEMORY: "/memory",
+  MEMORY_NOTE: "/memory/note/:name",
   CONVERSATIONS: "/conversations",
   AI_CHATS: "/ai-chats",
   CONVERSATION: "/conversation/:source/:conversationId",
@@ -38,6 +40,7 @@ export type NavigationIcon =
   | "settings"
   | "attachments"
   | "mcp"
+  | "memory"
   | "eval";
 
 export type NavigationSection = "primary" | "utility";
@@ -183,6 +186,15 @@ export const NAV_ITEMS = [
     activePaths: [ROUTES.ATTACHMENTS],
   },
   {
+    path: ROUTES.MEMORY,
+    label: "Memory",
+    icon: "memory",
+    section: "utility",
+    mobile: false,
+    rail: false,
+    activePaths: [ROUTES.MEMORY],
+  },
+  {
     path: ROUTES.MCP,
     label: "MCP sessions",
     documentTitle: "MCP",
@@ -307,6 +319,12 @@ export function buildCodingConversationsUrl(params?: {
   if (params?.unassigned) searchParams.set("unassigned", "1");
   const query = searchParams.toString();
   return `${ROUTES.CODING_CONVERSATIONS}${query ? `?${query}` : ""}`;
+}
+
+/** A memory note's page; `project` is "" for the account's notes. */
+export function buildMemoryNoteUrl(project: string, name: string): string {
+  const query = project ? `?project=${encodeURIComponent(project)}` : "";
+  return `/memory/note/${encodeURIComponent(name)}${query}`;
 }
 
 export function buildMcpSessionUrl(id: string): string {
