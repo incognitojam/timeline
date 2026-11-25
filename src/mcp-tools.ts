@@ -2,10 +2,11 @@
  * MCP Tools Registration
  *
  * Shared tool definitions for both stdio and HTTP MCP transports.
- * 13 tools: list_mcp_sessions, get_mcp_session, search_mcp_tool_calls,
+ * 17 tools: list_mcp_sessions, get_mcp_session, search_mcp_tool_calls,
  *           query_events, get_context, get_summary, get_schema, run_sql,
  *           list_contacts, get_contact_info, remember_contact_fact,
- *           semantic_search, export_conversation
+ *           semantic_search, export_conversation, list_memory,
+ *           get_memory_note, save_memory_note, delete_memory_note
  */
 
 import type { Database } from "bun:sqlite";
@@ -14,6 +15,15 @@ import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/proto
 import type { CallToolResult, RequestId, ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { getAppStateDb } from "./db/app-state";
+import {
+  deleteMemoryNote,
+  getMemoryNote,
+  listMemoryNotes,
+  MEMORY_KINDS,
+  MEMORY_LIMITS,
+  projectScope,
+  saveMemoryNote,
+} from "./db/memory-notes";
 import { resolveIdentities } from "./db/identities";
 import type { QueryExecutor } from "./db/pool";
 import {
@@ -60,6 +70,7 @@ import {
   normalizeMcpToolCallSince,
   searchMcpToolCalls,
 } from "./mcp/recording";
+import { renderMemoryIndex, renderMemoryNote } from "./mcp/memory";
 import { getDiscordComponentsText } from "./platforms/discord/shared/components";
 import { discordMentionsToPlainText, extractUserMentionIds } from "./platforms/discord/shared/mentions";
 
@@ -1378,5 +1389,112 @@ ${idHint}`,
         }],
       };
     })
+  );
+
+  // ========================================================================
+  // 14-17. Shared memory: notes any connected agent can read and write
+  // ========================================================================
+  const memoryError = (error: unknown): CallToolResult => ({
+    isError: true,
+    content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+  });
+  const projectParam = z.string().optional().describe("Repository name; omit for account notes");
+  const nameParam = z.string().max(MEMORY_LIMITS.name).describe("Lowercase slug, unique in its scope");
+
+  server.tool(
+    "list_memory",
+    "Index of the user's shared memory: each note's name, title, summary and update date, by kind. With project, that project's notes come first, then the account's, which apply everywhere.",
+    { project: projectParam },
+    async (params, extra) => instrumentToolCall("list_memory", params, extra, async () => {
+      try {
+        const project = projectScope(params.project);
+        const index = renderMemoryIndex(listMemoryNotes(getMcpHistoryDb(), project), project);
+        return { content: [{ type: "text" as const, text: index }] };
+      } catch (error) {
+        return memoryError(error);
+      }
+    }),
+  );
+
+  server.tool(
+    "get_memory_note",
+    "Read a memory note in full. [[name]] in its details links to another note, in the same project or the account; it may not exist.",
+    { name: nameParam, project: projectParam },
+    async (params, extra) => instrumentToolCall("get_memory_note", params, extra, async () => {
+      try {
+        const project = projectScope(params.project);
+        const note = getMemoryNote(getMcpHistoryDb(), project, params.name);
+        if (!note) {
+          return memoryError(`No note named "${params.name}" in ${project ? `project ${project}` : "the account"}.`);
+        }
+        return { content: [{ type: "text" as const, text: renderMemoryNote(note) }] };
+      } catch (error) {
+        return memoryError(error);
+      }
+    }),
+  );
+
+  server.tool(
+    "save_memory_note",
+    "Create a memory note, or update the one with this name in this scope, replacing only the fields given. Save durable facts, preferences and corrections; never secrets, credentials or task state. Link other notes as [[name]], even ones not written yet.",
+    {
+      name: nameParam,
+      project: projectParam,
+      kind: z.enum(MEMORY_KINDS).optional().describe('you = the user\'s preferences and profile; project = the project itself, "overview" listed first'),
+      title: z.string().optional(),
+      summary: z.string().optional().describe("One line, shown in the index"),
+      details: z.string().optional().describe("Markdown, usually bullets"),
+      contact: z.string().optional().describe("Contact to link, as get_contact_info takes; \"\" unlinks"),
+    },
+    async (params, extra) => instrumentToolCall("save_memory_note", params, extra, async () => {
+      try {
+        let contactId: number | null | undefined;
+        if (params.contact === "") {
+          contactId = null;
+        } else if (params.contact !== undefined) {
+          const resolved = await resolveContact(db, params.contact);
+          if (resolved.error) return { content: resolved.error, isError: true };
+          contactId = resolved.contact.id;
+        }
+        const project = projectScope(params.project);
+        const { note, created } = saveMemoryNote(getMcpHistoryDb(), {
+          project,
+          name: params.name,
+          kind: params.kind,
+          title: params.title,
+          summary: params.summary,
+          details: params.details,
+          contactId,
+        });
+        const scope = project ? `project ${project}` : "account";
+        return {
+          content: [{
+            type: "text" as const,
+            text: `${created ? "Created" : "Updated"} memory: ${note.title} (${note.name}, ${scope})`,
+          }],
+        };
+      } catch (error) {
+        return memoryError(error);
+      }
+    }),
+  );
+
+  server.tool(
+    "delete_memory_note",
+    "Delete a memory note. Its last version is kept for a time, so the user can restore it.",
+    { name: nameParam, project: projectParam },
+    async (params, extra) => instrumentToolCall("delete_memory_note", params, extra, async () => {
+      try {
+        const project = projectScope(params.project);
+        const note = deleteMemoryNote(getMcpHistoryDb(), project, params.name);
+        if (!note) {
+          return memoryError(`No note named "${params.name}" in ${project ? `project ${project}` : "the account"}.`);
+        }
+        const scope = project ? `project ${project}` : "account";
+        return { content: [{ type: "text" as const, text: `Deleted memory: ${note.title} (${note.name}, ${scope})` }] };
+      } catch (error) {
+        return memoryError(error);
+      }
+    }),
   );
 }

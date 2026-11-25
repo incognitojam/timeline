@@ -10,7 +10,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { RequestId } from "@modelcontextprotocol/sdk/types.js";
 import type { SemanticSearch } from "../embeddings/search";
+import { getAppStateDb } from "../db/app-state";
 import type { QueryExecutor } from "../db/pool";
+import { memoryInstructions } from "../mcp/memory";
 import {
   hashMcpToken,
   type InvalidToolCallRecorder,
@@ -89,10 +91,10 @@ export function createMcpHandler(
     transport: WebStandardStreamableHTTPServerTransport;
     server: McpServer;
   } {
-    const server = new McpServer({
-      name: "timeline",
-      version: PRODUCT_VERSION,
-    });
+    const server = new McpServer(
+      { name: "timeline", version: PRODUCT_VERSION },
+      { instructions: memoryInstructions(getAppStateDb()) },
+    );
     let invalidRecorder: InvalidToolCallRecorder | undefined;
 
     function persistToolCall(rec: Omit<RecordToolCallInput, "sessionId"> & {

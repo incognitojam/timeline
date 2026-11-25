@@ -10,6 +10,7 @@ process.env.MCP_TOKENS = "test-token";
 
 import { describe, expect, test } from "bun:test";
 import { getAppStateDb } from "../db/app-state";
+import { saveMemoryNote } from "../db/memory-notes";
 import { app } from "./index";
 
 /** Parse the first JSON-RPC message from an SSE response body */
@@ -97,6 +98,47 @@ describe("MCP HTTP Transport", () => {
     expect(callData.result.content).toBeArray();
     expect(callData.result.content[0].type).toBe("text");
     expect(callData.result.content[0].text).toContain("Total events:");
+  });
+
+  test("initialize carries the memory instructions and the memory tools work over HTTP", async () => {
+    const appState = getAppStateDb();
+    saveMemoryNote(appState, { project: "", name: "tone", kind: "you", title: "Tone", summary: "Plain and short", details: "- No emoji" });
+    let sessionId: string | null = null;
+    try {
+      const init = await app.request(MCP_URL, {
+        method: "POST",
+        headers: BEARER_HEADERS,
+        body: jsonrpc(201, "initialize", {
+          protocolVersion: "2025-03-26",
+          capabilities: {},
+          clientInfo: { name: "test", version: "0.1.0" },
+        }),
+      });
+      sessionId = init.headers.get("mcp-session-id");
+      const instructions = (parseSSE(await init.text()) as any).result.instructions as string;
+      expect(instructions).toStartWith("Timeline holds this user's memory");
+      expect(instructions).toContain("- No emoji");
+
+      const save = await app.request(MCP_URL, {
+        method: "POST",
+        headers: { ...BEARER_HEADERS, "mcp-session-id": sessionId! },
+        body: jsonrpc(202, "tools/call", {
+          name: "save_memory_note",
+          arguments: { name: "tone", summary: "Plain, short and direct" },
+        }),
+      });
+      expect((parseSSE(await save.text()) as any).result.content[0].text).toBe("Updated memory: Tone (tone, account)");
+
+      const list = await app.request(MCP_URL, {
+        method: "POST",
+        headers: { ...BEARER_HEADERS, "mcp-session-id": sessionId! },
+        body: jsonrpc(203, "tools/call", { name: "list_memory", arguments: {} }),
+      });
+      expect((parseSSE(await list.text()) as any).result.content[0].text).toContain("- tone: Tone — Plain, short and direct");
+    } finally {
+      appState.exec("DELETE FROM memory_notes");
+      if (sessionId) appState.prepare("DELETE FROM mcp_sessions WHERE id = ?").run(sessionId);
+    }
   });
 
   test("records handler-level tool errors", async () => {

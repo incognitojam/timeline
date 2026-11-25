@@ -23,6 +23,7 @@ export const SMALL_TABLES: Record<string, string> = {
   upload_tokens: "One row per operator-issued upload token.",
   scheduler_state: "One row per scheduled source.",
   sync_state: "One row per sync source.",
+  memory_notes: "Bounded by MEMORY_LIMITS in src/db/memory-notes.ts: live notes plus kept previous versions.",
   ...Object.fromEntries(FTS_TABLES.map(table => [`${table}_config`, "FTS configuration, not document history."])),
 };
 
