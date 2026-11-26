@@ -73,6 +73,7 @@ const exempt = {
   "/api/location": "Location filtering is a documented later audit.",
   "/api/map/day/:date": "Map filtering is a documented later audit.",
   "/api/mcp/sessions": "Returns MCP session metadata only.",
+  "/api/mcp/tokens": "Returns MCP token metadata only.",
   "/api/mcp/sessions/:id": "Direct MCP transcript access remains unfiltered.",
   "/api/mcp/sessions/:id{.+\\.md}": "Direct MCP transcript access remains unfiltered.",
   "/api/memory": "Memory notes are not events, and the page shows what agents get over MCP, which ignores hiding.",

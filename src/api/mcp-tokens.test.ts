@@ -198,6 +198,67 @@ describe("managed MCP tokens", () => {
   });
 });
 
+describe("token routes", () => {
+  const json = { "Content-Type": "application/json", "Sec-Fetch-Site": "same-origin" };
+  const body = (label: string, read_only = false) => JSON.stringify({ label, read_only, tailnet_only: false });
+
+  test("create returns the token once; it works and the list never shows it", async () => {
+    const created = await app.request("/api/mcp/tokens", { method: "POST", headers: json, body: body("web-made", true) });
+    expect(created.status).toBe(201);
+    expect(created.headers.get("Cache-Control")).toBe("no-store");
+    const { id, token } = await created.json();
+    expect(token).toMatch(/^tlm_/);
+    issued.push(token);
+    expect((await open(token)).instructions).toContain("read-only");
+
+    process.env.MCP_TOKENS = "env-one,env-two";
+    try {
+      const listed = await app.request("/api/mcp/tokens");
+      const text = await listed.text();
+      expect(text).not.toContain(token);
+      expect(text).not.toContain("env-one");
+      const data = JSON.parse(text);
+      expect(data.env_token_count).toBe(2);
+      expect(data.tokens.find((t: { id: number }) => t.id === id)).toMatchObject({ label: "web-made", read_only: true, revoked_at: null });
+    } finally {
+      process.env.MCP_TOKENS = "";
+    }
+
+    expect((await app.request(`/api/mcp/tokens/${id}`, { method: "DELETE", headers: { "Sec-Fetch-Site": "same-origin" } })).status).toBe(200);
+    expect((await rpc("/mcp", token, 1, "initialize", {})).status).toBe(401);
+    expect((await app.request(`/api/mcp/tokens/${id}`, { method: "DELETE" })).status).toBe(404);
+  });
+
+  test("cross-site and form requests cannot create or revoke, and bad input is refused", async () => {
+    for (const headers of [{ ...json, "Sec-Fetch-Site": "cross-site" }, { ...json, "Sec-Fetch-Site": "same-site" }, { "Content-Type": "text/plain" }]) {
+      expect((await app.request("/api/mcp/tokens", { method: "POST", headers, body: body("forged") })).status).toBe(403);
+    }
+    const [live] = JSON.parse(cli("list")).filter((t: { revoked_at: string | null }) => !t.revoked_at);
+    expect((await app.request(`/api/mcp/tokens/${live.id}`, { method: "DELETE", headers: { "Sec-Fetch-Site": "cross-site" } })).status).toBe(403);
+    expect((await app.request("/api/mcp/tokens", { method: "POST", headers: json, body: JSON.stringify({ label: "x" }) })).status).toBe(400);
+    const duplicate = await app.request("/api/mcp/tokens", { method: "POST", headers: json, body: body(live.label) });
+    expect(duplicate.status).toBe(400);
+    expect(JSON.parse(cli("list")).map((t: { label: string }) => t.label)).not.toContain("forged");
+  });
+
+  test("token routes are refused over Funnel and need the web password", async () => {
+    for (const method of ["GET", "POST"]) {
+      expect((await app.request("/api/mcp/tokens", { method, headers: { ...json, ...FUNNEL }, body: method === "POST" ? body("public") : undefined })).status).toBe(403);
+    }
+    expect((await app.request("/api/mcp/tokens/1", { method: "DELETE", headers: { ...json, ...FUNNEL } })).status).toBe(403);
+    const previous = process.env.AUTH_PASSWORD;
+    process.env.AUTH_PASSWORD = "example-password";
+    try {
+      expect((await app.request("/api/mcp/tokens")).status).toBe(401);
+      expect((await app.request("/api/mcp/tokens", { method: "POST", headers: json, body: body("anon") })).status).toBe(401);
+      expect((await app.request("/api/mcp/tokens/1", { method: "DELETE", headers: json })).status).toBe(401);
+    } finally {
+      if (previous === undefined) delete process.env.AUTH_PASSWORD;
+      else process.env.AUTH_PASSWORD = previous;
+    }
+  });
+});
+
 test("an existing app-state database gains mcp_tokens and keeps its sessions", () => {
   const db = new Database(":memory:");
   db.exec(`CREATE TABLE mcp_sessions (id TEXT PRIMARY KEY, transport TEXT NOT NULL, client_name TEXT, client_version TEXT,

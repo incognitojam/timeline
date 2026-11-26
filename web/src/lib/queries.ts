@@ -87,6 +87,8 @@ import {
   fetchMusicRankings,
   fetchMcpSession,
   fetchMcpSessions,
+  fetchMcpTokens,
+  revokeMcpToken,
   fetchPlaylistDetail,
   fetchRecentMusicPlays,
   fetchSearch,
@@ -232,6 +234,7 @@ export const queryKeys = {
     ["mcpSessions", params] as const,
   mcpSession: (id: string | undefined, params?: { limit?: number; offset?: number }) =>
     ["mcpSession", id, params] as const,
+  mcpTokens: () => ["mcpTokens"] as const,
   evalCasesRoot: () => ["evalCases"] as const,
   evalCases: () => ["evalCases", "list"] as const,
   evalCase: (id: number | undefined) => ["evalCases", "detail", id] as const,
@@ -1216,6 +1219,23 @@ export function useDiscordServers() {
 
 export function useMcpSessions(params: () => { limit?: number; offset?: number }) {
   return createQuery(() => queryOptions.mcpSessions(params()));
+}
+
+export function useMcpTokens() {
+  return createQuery(() => ({
+    queryKey: queryKeys.mcpTokens(),
+    queryFn: ({ signal }) => fetchMcpTokens(signal),
+  }));
+}
+
+// Creating a token is not a mutation here: the mutation cache would keep the
+// token after the page dismisses it. McpTokensPanel calls the API directly.
+export function useRevokeMcpToken() {
+  const queryClient = useQueryClient();
+  return createMutation(() => ({
+    mutationFn: (id: number) => revokeMcpToken(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.mcpTokens() }),
+  }));
 }
 
 export function useMcpSession(

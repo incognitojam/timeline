@@ -133,8 +133,32 @@ export function seedAppState(
 
     seedProcessedFiles(ctx, db, seeded, imports, now);
     seedDaySummaries(ctx, db);
+    seedMcpTokens(ctx, db, now);
   })();
   seedMemory(ctx, db);
+}
+
+/**
+ * A few managed MCP tokens for the MCP page. Each hash is random, so no token
+ * value can authenticate against the seeded database.
+ */
+function seedMcpTokens(ctx: SeedContext, db: Database, now: number): void {
+  const rng = ctx.rng("app-state:mcp-tokens");
+  const day = 86_400_000;
+  const insert = db.prepare(`
+    INSERT INTO mcp_tokens (label, token_sha256, read_only, tailnet_only, created_at, last_used_at, last_client, revoked_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const at = (ms: number | null) => (ms === null ? null : sqliteTimestamp(ms));
+  const tokens = [
+    { label: "claude-ai", readOnly: 1, tailnetOnly: 0, created: now - 40 * day, used: now - 2 * 3_600_000, client: "claude-ai", revoked: null },
+    { label: "laptop", readOnly: 0, tailnetOnly: 1, created: now - 90 * day, used: now - 20 * 60_000, client: "claude-code", revoked: null },
+    { label: "reading-agent", readOnly: 1, tailnetOnly: 1, created: now - 3 * day, used: null, client: null, revoked: null },
+    { label: "old-phone", readOnly: 0, tailnetOnly: 0, created: now - 200 * day, used: now - 120 * day, client: "Example MCP Client", revoked: now - 100 * day },
+  ];
+  for (const t of tokens) {
+    insert.run(t.label, rng.hex(64), t.readOnly, t.tailnetOnly, at(t.created), at(t.used), t.client, at(t.revoked));
+  }
 }
 
 /** One inbox file per export-based generator, processed shortly after its newest event. */

@@ -8,7 +8,7 @@ From a checkout, `bun run mcp` serves the tools over stdio against `./timeline.d
 
 ## Remote (HTTP)
 
-The service serves MCP over Streamable HTTP at `/mcp` while at least one MCP token exists. Create a token on the service host and copy its output, which is shown once and never stored:
+The service serves MCP over Streamable HTTP at `/mcp` while at least one MCP token exists. Create tokens on the **MCP sessions** page of the web app (under **More**), or on the service host; either way the token is shown once and never stored:
 
 ```sh
 timeline-service mcp-token create --label claude-ai --read-only
@@ -19,7 +19,7 @@ timeline-service mcp-token revoke claude-ai
 - `--read-only`: the client is not offered the tools that change anything (`save_memory_note`, `delete_memory_note`, `remember_contact_fact`), and a call to one is refused. Its calls are still recorded with their arguments, like every client's, and other agents can read them with the MCP session tools, so treat what a read-only client sends as untrusted text. Every tool declares whether it writes, so a new writing tool is never offered to a read-only token by mistake. The connect-time instructions tell the agent it cannot save.
 - `--tailnet-only`: the token is refused over Funnel ([public access](macos-host.md#public-access)), with the same answer as an unknown token; it works from the Mac and the tailnet.
 
-A token's flags are fixed when it is created; to change them, create a new token and revoke the old one. `list` shows each token's label, flags, creation time, when it was last used and the last client name it connected with, never the token. `revoke` takes the label or the id from `list` and takes effect on the next request, including requests in sessions the token already opened. The MCP sessions page shows the label of the token each session used.
+A token's flags are fixed when it is created; to change them, create a new token and revoke the old one. The page and `list` show each token's label, flags, creation time, when it was last used and the last client name it connected with, never the token; the page also counts the `MCP_TOKENS` values without showing them. Revoke from the page, or with `revoke` and the label or the id from `list`; revoking takes effect on the next request, including requests in sessions the token already opened. The MCP sessions page shows the label of the token each session used.
 
 Clients send the token in an `Authorization: Bearer <token>` header to `https://<node>.ts.net/mcp`. Prefer the header to putting the token in the URL as `/mcp/<token>`: clients show, store and log the URLs of their servers, so a token in the URL is easily copied into a screenshot or a log. Use the path form only for a client that cannot send a header.
 
