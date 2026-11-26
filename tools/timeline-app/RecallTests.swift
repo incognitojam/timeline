@@ -51,6 +51,7 @@ struct RecallTests {
         try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: encoder.path)
         let directory = pipeline.root.appendingPathComponent("2025-01-01")
 
+        print("Publication: fixture encoders")
         do {
             _ = try pipeline.publish(work: work, to: directory, encoder: "/usr/bin/false")
             preconditionFailure("Encoding failure must not publish a pair")
@@ -117,6 +118,7 @@ struct RecallTests {
         precondition(CommandLine.arguments.count > 2, "Missing required tool: cwebp. Install with brew install webp and pass its path.")
         do {
             let realOutput = root.appendingPathComponent("real-encoder-output")
+            print("Publication: real WebP encoding")
             let written = try pipeline.publish(work: work, to: realOutput, encoder: CommandLine.arguments[2])
             precondition(written == 1)
             let webp = try Data(contentsOf: realOutput.appendingPathComponent("120000-00.webp"))

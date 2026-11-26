@@ -23,7 +23,7 @@ enum RecallOCR {
         }
     }
 
-    static func recognize(_ image: CGImage) -> [String] {
+    private static func recognize(_ image: CGImage) -> [String] {
         let req = VNRecognizeTextRequest()
         req.recognitionLevel = .accurate
         req.usesLanguageCorrection = true
