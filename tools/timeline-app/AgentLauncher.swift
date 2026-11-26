@@ -9,7 +9,6 @@ struct AgentLauncher {
         guard CommandLine.arguments.count == 2 else {
             throw NSError(domain: "TimelineAgent", code: 1, userInfo: [NSLocalizedDescriptionKey: "Expected service, recall, or tailscale"])
         }
-        let home = FileManager.default.homeDirectoryForCurrentUser
         var size: UInt32 = 0
         _ = _NSGetExecutablePath(nil, &size)
         var path = [CChar](repeating: 0, count: Int(size))
@@ -20,13 +19,12 @@ struct AgentLauncher {
             .resolvingSymlinksInPath().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Resources")
         let script: URL
-        let logs: URL
+        let logs = timelineLogsDirectory()
         let stdoutName: String
         let stderrName: String
         switch CommandLine.arguments[1] {
         case "service":
             script = resources.appendingPathComponent("timeline-service/bin/timeline-service")
-            logs = home.appendingPathComponent("Library/Logs/timeline")
             stdoutName = "service.log"
             stderrName = "service.error.log"
         case "recall":
@@ -35,7 +33,6 @@ struct AgentLauncher {
             return
         case "tailscale":
             script = resources.appendingPathComponent("run-tailscale.sh")
-            logs = home.appendingPathComponent("Library/Logs/timeline")
             stdoutName = "tailscale.log"
             stderrName = "tailscale.error.log"
         default:

@@ -24,91 +24,11 @@ struct TimelineApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            if service.status != .running {
-                serviceStatusText
-                restartServiceButton
-            }
-            if let issue = serviceAgent.issueText {
-                Text(issue)
-            }
-            if let other = serviceAgent.otherInstalledCopy {
-                Text("Timeline is also installed at \((other.path as NSString).abbreviatingWithTildeInPath)")
-                Button("Show Other Copy in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([other])
-                }
-            }
-            if serviceAgent.requiresApproval {
-                Button("Approve Service in Login Items Settings") {
-                    SMAppService.openSystemSettingsLoginItems()
-                }
-            }
-
-            Button("Open Timeline", systemImage: "arrow.up.forward.app") {
-                service.openTimeline()
-            }
-
-            Divider()
-
-            remoteAccessSection
-
-            Divider()
-
-            Toggle("Record Screen", isOn: Binding(
-                get: { recall.isRecordingEnabled },
-                set: { recall.setRecording($0) }
-            ))
-
-            recallStatusText
-            if let age = recall.lastCaptureAgeString {
-                Text(age)
-            }
-            if let issue = recall.issue {
-                Text(issue)
-            }
-            if recall.needsPermission {
-                Button("Allow Timeline to Record Screen…") {
-                    recall.setRecording(true)
-                }
-                Text("Enable Timeline in Settings, then quit and reopen it.")
-            } else if recall.status == .notCapturing && !recall.captureStuck {
-                Button("Open Screen Recording Settings…") {
-                    recall.openPermissionSettings()
-                }
-            }
-
-            Divider()
-
-            if loginItems.requiresApproval {
-                Button("Approve in Login Items Settings") {
-                    SMAppService.openSystemSettingsLoginItems()
-                }
-            }
-            if updates.updateStaged {
-                Button("Install Update and Relaunch…") { updates.checkForUpdates() }
-                    .disabled(!updates.canInstallStagedUpdate)
-            }
-            if let issue = updates.issue { Text(issue) }
-
-            Menu("Settings", systemImage: "gearshape") {
-                Toggle("Launch at Login", isOn: Binding(
-                    get: { loginItems.isEnabled },
-                    set: { loginItems.setEnabled($0) }
-                ))
-                if service.status == .running {
-                    restartServiceButton
-                }
-                Button("Check for Updates…", systemImage: "arrow.down.circle") {
-                    updates.checkForUpdates()
-                }
-                .disabled(!updates.canCheck)
-                if let version = service.runningVersion.flatMap({ $0.version ?? $0.commit }) {
-                    Divider()
-                    Text("Version \(version)")
-                }
-            }
-
-            Button("Quit Timeline", systemImage: "xmark.rectangle") { NSApplication.shared.terminate(nil) }
-                .keyboardShortcut("q")
+            // Status lines are Buttons, not Text: a menu draws Text as a
+            // disabled item, which is illegible over a translucent menu.
+            menuContent
+                // macOS 27 hides menu item symbols unless asked to show them.
+                .labelStyle(.titleAndIcon)
         } label: {
             Image(systemName: iconName)
                 .onAppear { updates.configure(serviceAgent: serviceAgent) }
@@ -116,17 +36,106 @@ struct TimelineApp: App {
         .menuBarExtraStyle(.menu)
     }
 
+    @ViewBuilder private var menuContent: some View {
+        if service.status != .running {
+            serviceStatusText
+            restartServiceButton
+        }
+        if let issue = serviceAgent.issueText {
+            Button(issue, action: openLogs)
+        }
+        if let other = serviceAgent.otherInstalledCopy {
+            let showOther = { NSWorkspace.shared.activateFileViewerSelecting([other]) }
+            Button("Timeline is also installed at \((other.path as NSString).abbreviatingWithTildeInPath)", action: showOther)
+            Button("Show Other Copy in Finder", action: showOther)
+        }
+        if serviceAgent.requiresApproval {
+            Button("Approve Service in Login Items Settings") {
+                SMAppService.openSystemSettingsLoginItems()
+            }
+        }
+
+        Button("Open Timeline", systemImage: "arrow.up.forward.app") {
+            service.openTimeline()
+        }
+
+        Divider()
+
+        remoteAccessSection
+
+        Divider()
+
+        Toggle("Record Screen", isOn: Binding(
+            get: { recall.isRecordingEnabled },
+            set: { recall.setRecording($0) }
+        ))
+
+        recallStatusText
+        if let age = recall.lastCaptureAgeString {
+            Button(age, action: openRecallPage)
+        }
+        if let issue = recall.issue {
+            Button(issue, action: openRecallPage)
+        }
+        if recall.needsPermission {
+            Button("Allow Timeline to Record Screen…") {
+                recall.setRecording(true)
+            }
+            Button("Enable Timeline in Settings, then quit and reopen it.") {
+                recall.openPermissionSettings()
+            }
+        } else if recall.status == .notCapturing && !recall.captureStuck {
+            Button("Open Screen Recording Settings…") {
+                recall.openPermissionSettings()
+            }
+        }
+
+        Divider()
+
+        if loginItems.requiresApproval {
+            Button("Approve in Login Items Settings") {
+                SMAppService.openSystemSettingsLoginItems()
+            }
+        }
+        if updates.updateStaged {
+            Button("Install Update and Relaunch…") { updates.checkForUpdates() }
+                .disabled(!updates.canInstallStagedUpdate)
+        }
+        if let issue = updates.issue { Button(issue, action: openLogs) }
+
+        Menu("Settings", systemImage: "gearshape") {
+            Toggle("Launch at Login", isOn: Binding(
+                get: { loginItems.isEnabled },
+                set: { loginItems.setEnabled($0) }
+            ))
+            if service.status == .running {
+                restartServiceButton
+            }
+            Button("Check for Updates…", systemImage: "arrow.down.circle") {
+                updates.checkForUpdates()
+            }
+            .disabled(!updates.canCheck)
+            if let version = service.runningVersion.flatMap({ $0.version ?? $0.commit }) {
+                Divider()
+                Button("Version \(version)") { copyToClipboard(version) }
+            }
+        }
+
+        Button("Quit Timeline", systemImage: "xmark.rectangle") { NSApplication.shared.terminate(nil) }
+            .keyboardShortcut("q")
+    }
+
     // Shown only while the service is not healthy.
     @ViewBuilder private var serviceStatusText: some View {
         switch service.status {
-        case .checking: Text("Service: checking...")
+        case .checking: Button("Service: checking...", action: openLogs)
         case .running: EmptyView()
         case .notResponding:
             if let error = service.configurationError {
-                Text("Service: configuration error")
-                Text(error)
+                Button("Service: configuration error", action: openLogs)
+                Button(error, action: openLogs)
             } else {
-                Text("Service: not responding")
+                Button("Service: not responding", action: openLogs)
             }
         }
     }
@@ -140,40 +149,47 @@ struct TimelineApp: App {
     @ViewBuilder private var remoteAccessSection: some View {
         switch remoteAccess.state {
         case .notSetUp:
-            Text("Remote Access: off")
+            Button("Remote Access: off", action: openLogs)
             Button("Set Up Remote Access…") { remoteAccess.setUp() }
         case .notInstalled:
-            Text("Remote Access: Tailscale not installed")
-            Text("Install with: brew install tailscale")
+            let installCommand = "brew install tailscale"
+            Button("Remote Access: Tailscale not installed", action: openLogs)
+            Button("Install with: \(installCommand)") { copyToClipboard(installCommand) }
         case .starting:
-            Text("Remote Access: starting…")
+            Button("Remote Access: starting…", action: openLogs)
         case .needsLogin:
-            Text("Remote Access: needs login")
+            Button("Remote Access: needs login", action: openLogs)
             Button("Log In to Tailscale…") { remoteAccess.logIn() }
         case .loggingIn:
-            Text("Remote Access: waiting for browser authorization…")
+            Button("Remote Access: waiting for browser authorization…", action: openLogs)
             if remoteAccess.canRetryLogin {
                 // Retrying invalidates the pending auth URL (new node key).
                 Button("Retry Login…") { remoteAccess.logIn() }
             }
         case .running:
-            Text(remoteAccess.makingPublic ? "Remote Access: making public…" : "Remote Access: tailnet only")
+            Button(remoteAccess.makingPublic ? "Remote Access: making public…" : "Remote Access: tailnet only") {
+                remoteAccess.copyURL()
+            }
         case .publicAccess(_, let until):
-            Text("Remote Access: public until \(until.formatted(date: Calendar.current.isDateInToday(until) ? .omitted : .abbreviated, time: .shortened))")
+            Button("Remote Access: public until \(until.formatted(date: Calendar.current.isDateInToday(until) ? .omitted : .abbreviated, time: .shortened))") {
+                remoteAccess.copyURL()
+            }
         case .unconfirmed:
-            Text("Remote Access: could not confirm it is tailnet only")
-            Text("Turn Remote Access off if this persists.")
+            Button("Remote Access: could not confirm it is tailnet only", action: openLogs)
+            Button("Turn Remote Access off if this persists.", action: openLogs)
         }
 
         switch remoteAccess.publicAccessFailure {
         case .funnelNotEnabled(let enableURL):
-            Text("Could not make public: \(PublicAccessFailure.funnelNotEnabledText)")
-            Text(PublicAccessFailure.enableFunnelHint)
+            Button("Could not make public: \(PublicAccessFailure.funnelNotEnabledText)", action: openLogs)
+            Button(PublicAccessFailure.enableFunnelHint) {
+                if let enableURL { _ = NSWorkspace.shared.open(enableURL) } else { openLogs() }
+            }
             if let enableURL {
                 Button(PublicAccessFailure.enableFunnelLabel) { _ = NSWorkspace.shared.open(enableURL) }
             }
         case .other(let reason):
-            Text("Could not make public: \(reason)")
+            Button("Could not make public: \(reason)", action: openLogs)
         case nil:
             EmptyView()
         }
@@ -193,7 +209,7 @@ struct TimelineApp: App {
         }
 
         if let issue = remoteAccess.agentIssueText {
-            Text(issue)
+            Button(issue, action: openLogs)
         }
         if remoteAccess.requiresApproval {
             Button("Approve Remote Access in Login Items Settings") {
@@ -212,7 +228,7 @@ struct TimelineApp: App {
 
     private func remoteAccessMenu(dnsName: String, offerPublic: Bool) -> some View {
         Menu("Remote Access", systemImage: "network") {
-            Text(dnsName)
+            Button(dnsName) { remoteAccess.copyURL() }
             if offerPublic {
                 Menu("Make Public on the Internet", systemImage: "globe") {
                     ForEach(PublicAccess.durations.indices, id: \.self) { index in
@@ -230,9 +246,31 @@ struct TimelineApp: App {
     @ViewBuilder private var recallStatusText: some View {
         switch recall.status {
         case .recording: EmptyView()
-        case .notCapturing: Text("Recall: not capturing")
-        case .paused: Text("Recall: paused")
+        case .notCapturing: Button("Recall: not capturing", action: openRecallPage)
+        case .paused: Button("Recall: paused", action: openRecallPage)
         }
+    }
+
+    // Click actions for status lines: each only opens something or copies.
+    private func openLogs() {
+        // The agents create it on first run, which may not have happened yet.
+        let logs = timelineLogsDirectory()
+        do {
+            try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        } catch {
+            writeError("Could not create \(logs.path): \(error)\n")
+            return
+        }
+        NSWorkspace.shared.open(logs)
+    }
+
+    private func openRecallPage() {
+        NSWorkspace.shared.open(service.baseURL.appendingPathComponent("sync/recall"))
+    }
+
+    private func copyToClipboard(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     private var iconName: String {
