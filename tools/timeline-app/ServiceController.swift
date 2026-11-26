@@ -4,6 +4,8 @@ import AppKit
 
 enum ServiceStatus: Equatable {
     case checking
+    // Just started by the app and not answering yet.
+    case starting
     case running
     case notResponding
 }
@@ -33,6 +35,9 @@ final class ServiceController: ObservableObject {
     private var healthRequestID = 0
     private var configurationCheckInFlight = false
     private var lastConfigurationCheck: Date?
+    // When the app last started or restarted the service, until it answers.
+    private var startedAt: Date?
+    private var registeredObserver: NSObjectProtocol?
 
     init(endpoint: TimelineServiceEndpoint = loadTimelineServiceEndpoint()) {
         baseURL = timelineServiceBaseURL(for: endpoint)
@@ -40,6 +45,16 @@ final class ServiceController: ObservableObject {
             .appendingPathComponent("api")
             .appendingPathComponent("health")
         scheduler = RefreshScheduler { [weak self] in Task { @MainActor in self?.refresh() } }
+        registeredObserver = NotificationCenter.default.addObserver(
+            forName: .timelineServiceAgentRegistered,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.startedAt = Date()
+                self?.refresh()
+            }
+        }
         refresh()
     }
 
@@ -57,6 +72,7 @@ final class ServiceController: ObservableObject {
         restartTask?.cancel()
         // Invalidate any in-flight health response from before the kickstart.
         healthRequestID += 1
+        startedAt = Date()
         apply(nil)
 
         restartTask = Task {
@@ -101,7 +117,7 @@ final class ServiceController: ObservableObject {
         let health = await Self.checkHealth(url: healthURL)
         guard healthRequestID == requestID else { return nil }
         apply(health)
-        if health == nil { checkConfiguration() }
+        if status == .notResponding { checkConfiguration() }
         return health
     }
 
@@ -126,10 +142,20 @@ final class ServiceController: ObservableObject {
     }
 
     private func apply(_ health: ServiceVersion?) {
-        let next: ServiceStatus = health != nil ? .running : .notResponding
+        let next: ServiceStatus
+        if health != nil {
+            next = .running
+        } else if let startedAt, Date().timeIntervalSince(startedAt) < 60 {
+            next = .starting
+            // Check again soon, to drop "starting" when it answers or the minute is up.
+            scheduler?.scheduleNextPoll(at: Date().addingTimeInterval(5))
+        } else {
+            next = .notResponding
+        }
         if next != status { status = next }
         if health != runningVersion { runningVersion = health }
         if health != nil {
+            startedAt = nil
             if configurationError != nil { configurationError = nil }
             lastConfigurationCheck = nil
         }
@@ -177,5 +203,6 @@ final class ServiceController: ObservableObject {
 
     deinit {
         restartTask?.cancel()
+        if let registeredObserver { NotificationCenter.default.removeObserver(registeredObserver) }
     }
 }

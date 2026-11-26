@@ -36,7 +36,7 @@ swiftc -target "$(uname -m)-apple-macos14.0" -O -parse-as-library \
   ServiceController.swift RecallNotifier.swift RemoteAccess.swift PublicAccess.swift \
   RecallLog.swift RecallAgeMenu.swift RecallCapture.swift RecallOCR.swift OCRWorker.swift RecallPipeline.swift RecallMigration.swift \
   TimelineServiceConfig.swift LaunchAgentIdentity.swift Subprocess.swift \
-  UpdateController.swift UpdateMaintenance.swift UpdateInstallation.swift TimelineLogs.swift -o Timeline
+  UpdateController.swift UpdateMaintenance.swift UpdateInstallation.swift -o Timeline
 
 # Assemble a minimal .app bundle.
 rm -rf "$APP"
@@ -57,7 +57,7 @@ fi
 cp ../../deploy/macos/run-tailscale.sh "$APP/Contents/Resources/run-tailscale.sh"
 chmod 755 "$APP/Contents/Resources/run-tailscale.sh"
 mv Timeline "$APP/Contents/MacOS/Timeline"
-swiftc -target "$(uname -m)-apple-macos14.0" -O -parse-as-library AgentLauncher.swift TimelineLogs.swift -o "$APP/Contents/MacOS/TimelineAgent"
+swiftc -target "$(uname -m)-apple-macos14.0" -O -parse-as-library AgentLauncher.swift -o "$APP/Contents/MacOS/TimelineAgent"
 
 SERVICE_ARTIFACT="$APP/Contents/Resources/timeline-service"
 TIMELINE_BUILD_NUMBER="$BUNDLE_BUILD" bun run "$REPO_ROOT/scripts/build-service-artifact.ts" --output "$SERVICE_ARTIFACT"

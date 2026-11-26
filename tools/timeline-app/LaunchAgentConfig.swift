@@ -38,6 +38,8 @@ let serviceLaunchAgentConfig = LaunchAgentConfig(
 
 extension Notification.Name {
     static let timelineServiceAgentReconcileRequested = Notification.Name("timelineServiceAgentReconcileRequested")
+    // Posted when the app registers the service agent, which starts the service.
+    static let timelineServiceAgentRegistered = Notification.Name("timelineServiceAgentRegistered")
 }
 
 func timelineDataDirectory() -> URL {
