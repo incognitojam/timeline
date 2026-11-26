@@ -264,6 +264,7 @@ describe("MCP HTTP Transport", () => {
     });
 
     expect(res.status).toBe(401);
+    expect(res.headers.get("WWW-Authenticate")).toBe('Bearer error="invalid_token"');
     const json = await res.json();
     expect(json.error.message).toContain("Unauthorized");
   });
@@ -316,6 +317,7 @@ describe("MCP HTTP Transport", () => {
     });
 
     expect(res.status).toBe(401);
+    expect(res.headers.get("WWW-Authenticate")).toBe("Bearer");
     const json = await res.json();
     expect(json.error.message).toContain("Unauthorized");
   });
@@ -332,6 +334,7 @@ describe("MCP HTTP Transport", () => {
     });
 
     expect(res.status).toBe(401);
+    expect(res.headers.get("WWW-Authenticate")).toBe('Bearer error="invalid_token"');
     const json = await res.json();
     expect(json.error.message).toContain("Unauthorized");
   });

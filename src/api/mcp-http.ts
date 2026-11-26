@@ -6,6 +6,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { createHash, randomBytes } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { RequestId } from "@modelcontextprotocol/sdk/types.js";
@@ -36,6 +37,48 @@ interface McpSession {
 export const FUNNEL_HEADER = "Tailscale-Funnel-Request";
 
 const SESSION_TIMEOUT_MS = 60 * 60 * 1000;
+
+const sourceSalt = randomBytes(16);
+const REFUSED_LOG_PER_MINUTE = 60;
+let refusedLogMinute = 0;
+let refusedLogged = 0;
+let refusedSuppressed = 0;
+
+/**
+ * Log an MCP request refused before it reached a session, to diagnose clients
+ * that cannot connect. Never the token, the Authorization value, the full
+ * source or the body. At most 60 lines a minute, so the internet cannot fill
+ * the disk; the next minute's first refusal reports how many were dropped.
+ */
+export function logRefusedMcpRequest(req: Request, status: number, path: "mcp" | "mcp-path-token" | "well-known" | "other") {
+  const minute = Math.floor(Date.now() / 60_000);
+  if (minute !== refusedLogMinute) {
+    if (refusedSuppressed) {
+      console.log(JSON.stringify({ timestamp: new Date().toISOString(), event: "mcp.refused.suppressed", count: refusedSuppressed }));
+    }
+    refusedLogMinute = minute;
+    refusedLogged = 0;
+    refusedSuppressed = 0;
+  }
+  if (++refusedLogged > REFUSED_LOG_PER_MINUTE) {
+    refusedSuppressed++;
+    return;
+  }
+  const authorization = req.headers.get("Authorization");
+  const source = req.headers.get("X-Forwarded-For");
+  console.log(JSON.stringify({
+    timestamp: new Date().toISOString(),
+    event: "mcp.refused",
+    method: req.method,
+    path,
+    status,
+    funnel: req.headers.has(FUNNEL_HEADER),
+    authorization: authorization === null ? "none" : /^Bearer\s/i.test(authorization) ? "bearer" : "other",
+    source: source ? createHash("sha256").update(sourceSalt).update(source).digest("hex").slice(0, 8) : null,
+    userAgent: req.headers.get("User-Agent")?.slice(0, 80) ?? null,
+    mcpProtocolVersion: req.headers.get("MCP-Protocol-Version")?.slice(0, 20) ?? null,
+  }));
+}
 
 // Cleanup interval: every 5 minutes
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
@@ -181,6 +224,10 @@ export function createMcpHandler(
         });
       }
 
+      const refuse = (res: Response) => {
+        logRefusedMcpRequest(req, res.status, pathToken === undefined ? "mcp" : "mcp-path-token");
+        return res;
+      };
       const token = getMcpBearerToken(req.headers.get("Authorization")) ?? pathToken ?? "";
       const funnel = req.headers.has(FUNNEL_HEADER);
       const now = Date.now();
@@ -188,29 +235,34 @@ export function createMcpHandler(
       const recentFailures = funnel ? failures.get(source) : undefined;
       if (recentFailures && recentFailures.length >= 10) {
         const until = recentFailures[9] + failureWindow;
-        if (now < until) return limited(until, now);
+        if (now < until) return refuse(limited(until, now));
       }
       if (!validateMcpToken(token)) {
-        if (funnel) {
+        // Hosted clients probe without credentials before connecting, from
+        // shared addresses, so only a presented and wrong token counts.
+        if (funnel && token) {
           const recent = (recentFailures ?? []).filter(time => time > now - failureWindow);
           recent.push(now);
           failures.set(source, recent);
-          if (recent.length >= 10) return limited(now + failureWindow, now);
+          if (recent.length >= 10) return refuse(limited(now + failureWindow, now));
         }
-        return new Response(JSON.stringify({
+        return refuse(new Response(JSON.stringify({
           jsonrpc: "2.0",
           error: { code: -32001, message: "Unauthorized: Invalid MCP token" },
           id: null,
         }), {
           status: 401,
-          headers: { "Content-Type": "application/json" },
-        });
+          headers: {
+            "Content-Type": "application/json",
+            "WWW-Authenticate": token ? 'Bearer error="invalid_token"' : "Bearer",
+          },
+        }));
       }
 
       if (funnel) {
         const key = hashMcpToken(token);
         const recent = (requests.get(key) ?? []).filter(time => time > now - hour);
-        if (recent.length >= 600) return limited(recent[0] + hour, now);
+        if (recent.length >= 600) return refuse(limited(recent[0] + hour, now));
         recent.push(now);
         requests.set(key, recent);
       }
