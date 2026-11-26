@@ -35,6 +35,18 @@ export function initAppStateDb(db: Database) {
       revoked_at TEXT
     );
     CREATE UNIQUE INDEX IF NOT EXISTS upload_tokens_active_label ON upload_tokens(label) WHERE revoked_at IS NULL;
+    CREATE TABLE IF NOT EXISTS mcp_tokens (
+      id INTEGER PRIMARY KEY,
+      label TEXT NOT NULL,
+      token_sha256 TEXT NOT NULL UNIQUE,
+      read_only INTEGER NOT NULL DEFAULT 0,
+      tailnet_only INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_used_at TEXT,
+      last_client TEXT,
+      revoked_at TEXT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS mcp_tokens_active_label ON mcp_tokens(label) WHERE revoked_at IS NULL;
   `);
 
   // Day summaries cache
@@ -273,6 +285,13 @@ export function initAppStateDb(db: Database) {
       last_activity_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
+  // Additive: the label of the managed token a session used; never the token.
+  db.transaction(() => {
+    const columns = db.prepare("PRAGMA table_info(mcp_sessions)").all() as { name: string }[];
+    if (!columns.some((column) => column.name === "token_label")) {
+      db.exec(`ALTER TABLE mcp_sessions ADD COLUMN token_label TEXT`);
+    }
+  }).immediate();
   db.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_sessions_activity ON mcp_sessions(last_activity_at DESC)`);
 
   db.exec(`

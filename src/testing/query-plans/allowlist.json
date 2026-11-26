@@ -277,7 +277,7 @@
     },
     {
       "database": "app-state",
-      "sql": "SELECT s . id , s . transport , s . client_name , s . client_version , s . token_hash , s . created_at , s . last_activity_at , COUNT ( c . id ) AS call_count , COALESCE ( SUM ( c . is_error ) , 0 ) AS error_count , MAX ( c . created_at ) AS last_call_at FROM mcp_sessions s LEFT JOIN mcp_tool_calls c ON c . session_id = s . id GROUP BY s . id ORDER BY s . last_activity_at DESC LIMIT ? OFFSET ?",
+      "sql": "SELECT s . id , s . transport , s . client_name , s . client_version , s . token_hash , s . token_label , s . created_at , s . last_activity_at , COUNT ( c . id ) AS call_count , COALESCE ( SUM ( c . is_error ) , 0 ) AS error_count , MAX ( c . created_at ) AS last_call_at FROM mcp_sessions s LEFT JOIN mcp_tool_calls c ON c . session_id = s . id GROUP BY s . id ORDER BY s . last_activity_at DESC LIMIT ? OFFSET ?",
       "reason": "found by the first run; under review",
       "findings": [
         "mcp_sessions:index-scan"

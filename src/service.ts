@@ -17,9 +17,9 @@ import {
 import { getMonzoParserPath, getPackagedResourceRoot } from "./runtime-paths";
 
 async function main(): Promise<void> {
-  const uploadCommand = process.argv[2] === "upload-token";
+  const tokenCommand = ["upload-token", "mcp-token"].includes(process.argv[2]) ? process.argv[2] : null;
   const { values, positionals } = parseArgs({
-    args: uploadCommand ? [] : process.argv.slice(2),
+    args: tokenCommand ? [] : process.argv.slice(2),
     options: {
       verbose: {
         type: "boolean",
@@ -54,6 +54,8 @@ Usage:
   timeline-service [options]
   timeline-service monzo <command>
   timeline-service upload-token <create|list|revoke>
+  timeline-service mcp-token create --label <label> [--read-only] [--tailnet-only]
+  timeline-service mcp-token <list|revoke <id or label>>
 
 Options:
   -v, --verbose       Verbose output
@@ -72,7 +74,7 @@ Environment Variables:
   loadEnvFile();
   const packaged = getPackagedResourceRoot() !== null;
   if (packaged) preparePackagedBootstrapEnvironment();
-  if (!uploadCommand) console.log("Loading configuration...");
+  if (!tokenCommand) console.log("Loading configuration...");
   const config = await loadConfig();
   if (packaged) validatePackagedConfigPaths(config);
 
@@ -87,9 +89,14 @@ Environment Variables:
   const { configureBunSqliteForSqliteVec } = await import("./embeddings/sqlite-vec");
   configureBunSqliteForSqliteVec();
 
-  if (uploadCommand) {
+  if (tokenCommand === "upload-token") {
     const { runUploadTokenCommand } = await import("./api/upload-tokens");
     await runUploadTokenCommand(config, process.argv.slice(3));
+    return;
+  }
+  if (tokenCommand === "mcp-token") {
+    const { runMcpTokenCommand } = await import("./api/mcp-tokens");
+    runMcpTokenCommand(process.argv.slice(3));
     return;
   }
 

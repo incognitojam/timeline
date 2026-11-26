@@ -27,7 +27,7 @@ function captureHandlers(
 ): Map<string, ToolHandler> {
   const handlers = new Map<string, ToolHandler>();
   const fakeServer = {
-    tool: (name: string, _description: string, _schema: unknown, handler: ToolHandler) => {
+    tool: (name: string, _description: string, _schema: unknown, _annotations: unknown, handler: ToolHandler) => {
       handlers.set(name, handler);
     },
   } as unknown as McpServer;
@@ -704,7 +704,7 @@ describe("MCP tool handlers — identity-aware contact lookup workflow", () => {
 
           const handlers = new Map();
           const fakeServer = {
-            tool: (name, _description, _schema, handler) => handlers.set(name, handler),
+            tool: (name, _description, _schema, _annotations, handler) => handlers.set(name, handler),
           };
           // The service's path: vector search on its own pool worker.
           const vectorPool = await DbPool.create(embeddingsDbPath, { workers: 1, vectorSearch: true });

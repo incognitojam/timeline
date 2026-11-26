@@ -62,7 +62,8 @@ export function renderMcpSessionMarkdown(
     "",
     `- Transport: ${session.transport}`,
     `- Client: ${formatClient(session.client_name, session.client_version)}`,
-    `- Token hash: ${session.token_hash ?? "none"}`,
+    // Never the hash: an MCP_TOKENS value may be weak, and a read-only client reads this.
+    `- Token: ${session.token_label ?? (session.token_hash ? "MCP_TOKENS" : "none")}`,
     `- Created: ${session.created_at}`,
     `- Last activity: ${session.last_activity_at}`,
     `- Calls: ${stats.call_count}`,

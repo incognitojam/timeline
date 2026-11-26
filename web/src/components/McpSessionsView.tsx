@@ -13,7 +13,7 @@ function clientLabel(session: McpSessionSummary): string {
 }
 
 function tokenLabel(session: McpSessionSummary): string {
-  return session.token_hash ? session.token_hash : "stdio";
+  return session.token_label ?? session.token_hash ?? "stdio";
 }
 
 export default function McpSessionsView() {

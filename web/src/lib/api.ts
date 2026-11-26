@@ -2143,6 +2143,8 @@ export interface McpSessionSummary {
   client_name: string | null;
   client_version: string | null;
   token_hash: string | null;
+  /** Label of the managed token the session used; null for MCP_TOKENS and stdio. */
+  token_label: string | null;
   created_at: string;
   last_activity_at: string;
   call_count: number;
@@ -2156,6 +2158,7 @@ export interface McpSession {
   client_name: string | null;
   client_version: string | null;
   token_hash: string | null;
+  token_label: string | null;
   created_at: string;
   last_activity_at: string;
 }

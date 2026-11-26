@@ -2,8 +2,7 @@ import type { MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { getAppStateDb } from "../db/app-state";
 import { FUNNEL_HEADER } from "./mcp-http";
-import { getMcpBearerToken } from "./mcp-tokens";
-import { uploadTokenHash } from "./upload-tokens";
+import { getMcpBearerToken, tokenSha256 } from "./mcp-tokens";
 
 interface UploadToken {
   id: number;
@@ -44,7 +43,7 @@ export const uploadAuth: MiddlewareHandler<{ Bindings: { peerAddress?: string } 
   const db = getAppStateDb();
   const token = db.query<UploadToken, [string]>(
     "SELECT id, label, sources, tailnet_login FROM upload_tokens WHERE token_sha256=? AND revoked_at IS NULL"
-  ).get(uploadTokenHash(secret));
+  ).get(tokenSha256(secret));
   if (!token) return c.json({ error: "Unauthorized" }, 401);
 
   const login = c.req.header("Tailscale-User-Login");

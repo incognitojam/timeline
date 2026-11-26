@@ -87,7 +87,7 @@ points load this file before service modules open configuration or databases:
 ```sh
 # ~/.config/timeline/env
 AUTH_PASSWORD=choose-a-password
-# Optional: enables MCP HTTP; clients can use /mcp with Bearer auth or /mcp/<token>.
+# Optional, the older way to allow MCP clients; see mcp.md for managed tokens.
 MCP_TOKENS=token-1,token-2
 DISCORD_TOKEN=...
 # API key for an [llm.providers.*] OpenRouter provider (config.toml). AI features

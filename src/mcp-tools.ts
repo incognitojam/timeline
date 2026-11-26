@@ -10,7 +10,8 @@
  */
 
 import type { Database } from "bun:sqlite";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { ZodRawShapeCompat } from "@modelcontextprotocol/sdk/server/zod-compat.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { CallToolResult, RequestId, ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
@@ -407,6 +408,8 @@ export interface RegisterToolsOptions {
   defaultSessionId?: () => string | undefined;
   /** Embedding model and index for semantic_search; unset leaves the tool returning a setup message. */
   semanticSearch?: SemanticSearch;
+  /** Leave out every tool that can change anything (a read-only MCP token). */
+  readOnly?: boolean;
 }
 
 export interface ToolCallRecord {
@@ -418,6 +421,9 @@ export interface ToolCallRecord {
   isError: boolean;
   durationMs: number;
 }
+
+const READS = { readOnlyHint: true };
+const WRITES = { readOnlyHint: false };
 
 type ToolCallExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 
@@ -436,6 +442,18 @@ export function registerTools(
   const getMcpHistoryDb = (): Database => options.appStateDb ?? getAppStateDb();
   const getCallerSessionId = (extra?: ToolCallExtra): string | undefined =>
     extra?.sessionId ?? options.defaultSessionId?.();
+  // Every tool declares whether it can change anything. A read-only session is
+  // not offered the tools that can, and the SDK refuses a call to one.
+  function tool<Args extends ZodRawShapeCompat>(
+    name: string,
+    description: string,
+    schema: Args,
+    annotations: { readOnlyHint: boolean },
+    cb: ToolCallback<Args>,
+  ): void {
+    const registered = server.tool(name, description, schema, annotations, cb);
+    if (options.readOnly && !annotations.readOnlyHint) registered.disable();
+  }
   const mcpTranscriptExcerptHint = `Arguments are excerpted to ${DEFAULT_MCP_ARGS_EXCERPT_CHARS} chars and results to ${DEFAULT_MCP_RESULT_EXCERPT_CHARS} chars.`;
 
   async function instrumentToolCall(
@@ -481,7 +499,7 @@ export function registerTools(
   // ========================================================================
   // 1. list_mcp_sessions — recent MCP session history
   // ========================================================================
-  server.tool(
+  tool(
     "list_mcp_sessions",
     `List recently recorded MCP sessions as markdown, including transport, client, call count, error count, and last activity.
 
@@ -490,6 +508,7 @@ Use this to find previous sessions before calling get_mcp_session. Results are p
       limit: z.number().int().min(1).max(100).optional().default(20).describe("Max sessions to return (default 20, max 100)"),
       offset: z.number().int().min(0).optional().default(0).describe("Number of sessions to skip for paging"),
     },
+    READS,
     async (params, extra) => instrumentToolCall("list_mcp_sessions", params, extra, async () => {
       const limit = params.limit ?? 20;
       const offset = params.offset ?? 0;
@@ -503,7 +522,7 @@ Use this to find previous sessions before calling get_mcp_session. Results are p
   // ========================================================================
   // 2. get_mcp_session — one MCP session transcript
   // ========================================================================
-  server.tool(
+  tool(
     "get_mcp_session",
     `Render one recorded MCP session transcript as markdown.
 
@@ -513,6 +532,7 @@ If session_id is omitted, this defaults to the caller's own recorded MCP session
       limit: z.number().int().min(1).max(200).optional().default(100).describe("Max tool calls to include (default 100, max 200)"),
       offset: z.number().int().min(0).optional().default(0).describe("Number of tool calls to skip for paging"),
     },
+    READS,
     async (params, extra) => instrumentToolCall("get_mcp_session", params, extra, async () => {
       const sessionId = params.session_id ?? getCallerSessionId(extra);
       const limit = params.limit ?? 100;
@@ -547,7 +567,7 @@ If session_id is omitted, this defaults to the caller's own recorded MCP session
   // ========================================================================
   // 3. search_mcp_tool_calls — cross-session MCP call search
   // ========================================================================
-  server.tool(
+  tool(
     "search_mcp_tool_calls",
     `Search recorded MCP tool calls across sessions and render matching calls as markdown.
 
@@ -560,6 +580,7 @@ Filters are composable: session_id scopes to one session, tool_name scopes to on
       limit: z.number().int().min(1).max(200).optional().default(100).describe("Max tool calls to return (default 100, max 200)"),
       offset: z.number().int().min(0).optional().default(0).describe("Number of tool calls to skip for paging"),
     },
+    READS,
     async (params, extra) => instrumentToolCall("search_mcp_tool_calls", params, extra, async () => {
       const errorsOnly = params.errors_only ?? false;
       const limit = params.limit ?? 100;
@@ -604,7 +625,7 @@ Filters are composable: session_id scopes to one session, tool_name scopes to on
   // ========================================================================
   // 4. query_events — unified search/browse/filter
   // ========================================================================
-  server.tool(
+  tool(
     "query_events",
     `Search and filter timeline events. All parameters are optional and composable.
 
@@ -635,6 +656,7 @@ Examples:
       limit: z.number().optional().default(50).describe("Max results (default 50)"),
       full_content: z.boolean().optional().default(false).describe("Return full content instead of truncated previews"),
     },
+    READS,
     async (params, extra) => instrumentToolCall("query_events", params, extra, async () => {
       const { query, source, type, contact, date, start_date, end_date, location, latitude, longitude, radius_km, limit, full_content } = params;
       let events: TimelineEvent[];
@@ -785,7 +807,7 @@ Examples:
   // ========================================================================
   // 5. export_conversation — full untruncated conversation transcript
   // ========================================================================
-  server.tool(
+  tool(
     "export_conversation",
     "Export a full conversation transcript in markdown. Unlike query_events, this returns untruncated message content in chronological order. Pass either a conversation_id or an event_id from the #<id> prefix in query_events output.",
     {
@@ -795,6 +817,7 @@ Examples:
       start_date: z.string().optional().describe("Inclusive ISO 8601 lower timestamp bound. Any date bound overrides event_id centering."),
       end_date: z.string().optional().describe("Inclusive ISO 8601 upper timestamp bound. Any date bound overrides event_id centering."),
     },
+    READS,
     async (params, extra) => instrumentToolCall("export_conversation", params, extra, async () => {
       const { conversation_id, event_id, start_date, end_date } = params;
       const limit = params.limit ?? MCP_EXPORT_LIMIT;
@@ -873,7 +896,7 @@ Examples:
   // ========================================================================
   // 6. get_context — events around a specific time
   // ========================================================================
-  server.tool(
+  tool(
     "get_context",
     `Get events surrounding a specific event or timestamp to understand context.
 
@@ -887,6 +910,7 @@ ${idHint}`,
       limit: z.number().optional().default(50).describe("Max results (default 50)"),
       full_content: z.boolean().optional().default(false).describe("Return full content instead of truncated previews"),
     },
+    READS,
     async (params, extra) => instrumentToolCall("get_context", params, extra, async () => {
       const { event_id, timestamp, hours_window, source, exclude_source, limit, full_content } = params;
       const events = await getEventContext(db, {
@@ -910,7 +934,7 @@ ${idHint}`,
   // ========================================================================
   // 7. get_summary — period summary or global stats
   // ========================================================================
-  server.tool(
+  tool(
     "get_summary",
     `Get a summary of timeline data. With date params, returns an aggregated breakdown for that period. Without date params, returns global stats (total events, date range, source counts). Source filters apply to both.`,
     {
@@ -920,6 +944,7 @@ ${idHint}`,
       source: z.string().optional().describe("Only include these sources (comma-separated, e.g. \"discord,spotify\")"),
       exclude_source: z.string().optional().describe("Drop these sources from the summary (comma-separated) — e.g. \"claude-code,conductor,t3code,codex\" to hide AI agent-session noise, or \"spotify-friends\" to hide friends' activity"),
     },
+    READS,
     async (params, extra) => instrumentToolCall("get_summary", params, extra, async () => {
       const { date, start_date, end_date, source, exclude_source } = params;
       const includeSources = splitSources(source);
@@ -1002,13 +1027,14 @@ ${idHint}`,
   // ========================================================================
   // 8. get_schema — DB schema + source catalog, or raw_data JSON paths
   // ========================================================================
-  server.tool(
+  tool(
     "get_schema",
     `Get database schema information. Without params, returns full schema (tables, columns, indexes) and source catalog. With source param, returns raw_data JSON paths for use with json_extract() in SQL.`,
     {
       source: z.string().optional().describe("Source to inspect raw_data JSON structure (spotify, discord, monzo, etc.)"),
       type: z.string().optional().describe("Optional type filter when inspecting raw_data"),
     },
+    READS,
     async (params, extra) => instrumentToolCall("get_schema", params, extra, async () => {
       const { source, type } = params;
       // Source specified → raw_data JSON schema
@@ -1092,7 +1118,7 @@ ${idHint}`,
   // ========================================================================
   // 9. run_sql — raw SELECT queries
   // ========================================================================
-  server.tool(
+  tool(
     "run_sql",
     `Execute SELECT queries for complex analysis beyond what specialized tools provide.
 Returns TSV format, max 150 rows. Call get_schema for full table/column details.
@@ -1109,6 +1135,7 @@ Tips:
     {
       sql: z.string().describe("SQL SELECT query to execute"),
     },
+    READS,
     async (params, extra) => instrumentToolCall("run_sql", params, extra, async () => {
       const { sql } = params;
       const result = await runReadOnlySql(db, sql, 150);
@@ -1145,13 +1172,14 @@ Tips:
   // ========================================================================
   // 10. list_contacts — unchanged
   // ========================================================================
-  server.tool(
+  tool(
     "list_contacts",
     "List all contacts in the timeline. Contacts link people across platforms (e.g., same person on Discord, Skype, Facebook).",
     {
       include_hidden: z.boolean().optional().default(false).describe("Include hidden contacts"),
       search: z.string().optional().describe("Filter by name; also accepts a platform identifier (e.g. discord:123…, phone:+44…, or a bare Discord snowflake) to look up the linked contact"),
     },
+    READS,
     async (params, extra) => instrumentToolCall("list_contacts", params, extra, async () => {
       const { include_hidden, search } = params;
       let contacts = await listContacts(db, {
@@ -1199,12 +1227,13 @@ Tips:
   // ========================================================================
   // 11. get_contact_info — unchanged
   // ========================================================================
-  server.tool(
+  tool(
     "get_contact_info",
     "Get detailed profile information for a contact including structured fields (birthday, location, email, phone), notes, identities, and AI memories. Accepts a contact ID, display name, or platform identifier (e.g. discord:123…, phone:+44…, or a bare snowflake from a Discord <@id> mention).",
     {
       contact: z.string().describe("Contact ID, display name, or platform identifier (e.g. discord:123…, phone:+44…, or a bare Discord snowflake)"),
     },
+    READS,
     async (params, extra) => instrumentToolCall("get_contact_info", params, extra, async () => {
       const { contact } = params;
       const resolved = await resolveContact(db, contact);
@@ -1273,13 +1302,14 @@ Tips:
   // ========================================================================
   // 12. remember_contact_fact — unchanged
   // ========================================================================
-  server.tool(
+  tool(
     "remember_contact_fact",
     "Store a fact or memory about a contact. Use this when you learn something about a person during conversation that would be useful to remember for future interactions.",
     {
       contact: z.string().describe("Contact ID, display name, or platform identifier (e.g. discord:123…, phone:+44…)"),
       fact: z.string().describe("The fact or memory to store (e.g., 'Prefers tea over coffee', 'Works at Acme Corp', 'Has a dog named Max')"),
     },
+    WRITES,
     async (params, extra) => instrumentToolCall("remember_contact_fact", params, extra, async () => {
       const { contact, fact } = params;
       if (!writeDb) {
@@ -1314,7 +1344,7 @@ Tips:
   //     can run on either transport; it still gates on options.embeddings at
   //     call time and reports a clear error if sqlite-vec can't load.
   // ========================================================================
-  server.tool(
+  tool(
     "semantic_search",
     `Search timeline events by *meaning* using vector embeddings, complementing query_events (which does keyword/FTS matching). Reach for this on conceptual queries where the exact words may not appear in the events — e.g. "times I felt burned out", "planning a trip abroad", "conversations about moving house". Results are ranked by similarity, closest first.
 
@@ -1326,6 +1356,7 @@ ${idHint}`,
       limit: z.number().int().min(1).max(50).optional().default(10).describe("Max events to return (1-50, default 10)"),
       full_content: z.boolean().optional().default(false).describe("Return full content instead of truncated previews"),
     },
+    READS,
     async (params, extra) => instrumentToolCall("semantic_search", params, extra, async () => {
       const { query, limit, full_content } = params;
       if (!options.semanticSearch) {
@@ -1402,10 +1433,11 @@ ${idHint}`,
   const projectParam = z.string().optional().describe("Repository name; omit for account notes");
   const nameParam = z.string().max(MEMORY_LIMITS.name).describe("Lowercase slug, unique in its scope");
 
-  server.tool(
+  tool(
     "list_memory",
     "Index of the user's shared memory: each note's name, title, summary and update date, by kind. With project, that project's notes come first, then the account's, which apply everywhere.",
     { project: projectParam },
+    READS,
     async (params, extra) => instrumentToolCall("list_memory", params, extra, async () => {
       try {
         const project = projectScope(params.project);
@@ -1418,10 +1450,11 @@ ${idHint}`,
     }),
   );
 
-  server.tool(
+  tool(
     "get_memory_note",
     "Read a memory note in full. [[name]] in its details links to another note, in the same project or the account; it may not exist.",
     { name: nameParam, project: projectParam },
+    READS,
     async (params, extra) => instrumentToolCall("get_memory_note", params, extra, async () => {
       try {
         const project = projectScope(params.project);
@@ -1436,7 +1469,7 @@ ${idHint}`,
     }),
   );
 
-  server.tool(
+  tool(
     "save_memory_note",
     "Create a memory note, or update the one with this name in this scope, replacing only the fields given. Save durable facts, preferences and corrections; never secrets, credentials or task state. Link other notes as [[name]], even ones not written yet.",
     {
@@ -1448,6 +1481,7 @@ ${idHint}`,
       details: z.string().optional().describe("Markdown, usually bullets"),
       contact: z.string().optional().describe("Contact to link, as get_contact_info takes; \"\" unlinks"),
     },
+    WRITES,
     async (params, extra) => instrumentToolCall("save_memory_note", params, extra, async () => {
       try {
         let contactId: number | null | undefined;
@@ -1481,10 +1515,11 @@ ${idHint}`,
     }),
   );
 
-  server.tool(
+  tool(
     "delete_memory_note",
     "Delete a memory note. Its last version is kept for a time, so the user can restore it.",
     { name: nameParam, project: projectParam },
+    WRITES,
     async (params, extra) => instrumentToolCall("delete_memory_note", params, extra, async () => {
       try {
         const project = projectScope(params.project);

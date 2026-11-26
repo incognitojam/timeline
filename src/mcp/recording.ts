@@ -4,12 +4,11 @@
  * Recording is observability: callers on the live tool path must catch and log
  * failures from this module so a broken recorder never breaks MCP tools.
  *
- * Future work: structured tool results, named MCP tokens, and links from MCP
+ * Future work: structured tool results and links from MCP
  * sessions to conversation rows.
  */
 
 import type { Database } from "bun:sqlite";
-import { createHash } from "node:crypto";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage, RequestId } from "@modelcontextprotocol/sdk/types.js";
 import {
@@ -29,6 +28,7 @@ export interface McpSessionInit {
   clientName?: string | null;
   clientVersion?: string | null;
   tokenHash?: string | null;
+  tokenLabel?: string | null;
 }
 
 export interface McpSessionRow {
@@ -37,6 +37,7 @@ export interface McpSessionRow {
   client_name: string | null;
   client_version: string | null;
   token_hash: string | null;
+  token_label: string | null;
   created_at: string;
   last_activity_at: string;
 }
@@ -129,30 +130,28 @@ function stringifyArgs(args: unknown): string | null {
   }
 }
 
-export function hashMcpToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex").slice(0, 16);
-}
-
 export function upsertMcpSession(
   init: McpSessionInit,
   db: Database = getAppStateDb(),
 ): void {
   db.prepare(`
     INSERT INTO mcp_sessions (
-      id, transport, client_name, client_version, token_hash, last_activity_at
+      id, transport, client_name, client_version, token_hash, token_label, last_activity_at
     )
-    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(id) DO UPDATE SET
       last_activity_at = datetime('now'),
       client_name = COALESCE(mcp_sessions.client_name, excluded.client_name),
       client_version = COALESCE(mcp_sessions.client_version, excluded.client_version),
-      token_hash = COALESCE(mcp_sessions.token_hash, excluded.token_hash)
+      token_hash = COALESCE(mcp_sessions.token_hash, excluded.token_hash),
+      token_label = COALESCE(mcp_sessions.token_label, excluded.token_label)
   `).run(
     init.id,
     init.transport,
     init.clientName ?? null,
     init.clientVersion ?? null,
     init.tokenHash ?? null,
+    init.tokenLabel ?? null,
   );
 }
 
@@ -195,6 +194,7 @@ export function listMcpSessions(
       s.client_name,
       s.client_version,
       s.token_hash,
+      s.token_label,
       s.created_at,
       s.last_activity_at,
       COUNT(c.id) AS call_count,
@@ -214,7 +214,7 @@ export function getMcpSession(
 ): McpSessionRow | null {
   return db
     .prepare(`
-      SELECT id, transport, client_name, client_version, token_hash, created_at, last_activity_at
+      SELECT id, transport, client_name, client_version, token_hash, token_label, created_at, last_activity_at
       FROM mcp_sessions
       WHERE id = ?
     `)

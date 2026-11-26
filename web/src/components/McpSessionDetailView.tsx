@@ -95,7 +95,7 @@ export default function McpSessionDetailView() {
                   <div>
                     <div class="text-xs text-muted-foreground mb-1">Token</div>
                     <div class="font-mono text-xs text-muted-foreground">
-                      {detail().session.token_hash ?? "stdio"}
+                      {detail().session.token_label ?? detail().session.token_hash ?? "stdio"}
                     </div>
                   </div>
                   <div>
