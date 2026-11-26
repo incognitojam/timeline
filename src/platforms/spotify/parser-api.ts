@@ -598,6 +598,78 @@ function buildTags(
   return tags;
 }
 
+/** Store recently-played items as `listen:track` events, skipping plays already stored. */
+export function insertRecentlyPlayed(
+  db: Database,
+  items: SpotifyPlayHistoryItem[],
+  accountName: string,
+  importBatch: string,
+  resourceCache: Map<string, string>,
+): { imported: number; skipped: number; latestPlayedAtMs: number | undefined } {
+  const people = JSON.stringify(["spotify:" + accountName]);
+
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO events (
+      source, source_id, source_account, type, timestamp, duration_ms,
+      title, content, tags, raw_data, import_batch, people
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  let totalImported = 0;
+  let totalSkipped = 0;
+  let latestPlayedAtMs: number | undefined;
+
+  const insertMany = db.transaction((plays: SpotifyPlayHistoryItem[]) => {
+    for (const item of plays) {
+      const playedAt = item.played_at;
+      const playedAtMs = Date.parse(playedAt);
+      if (!Number.isFinite(playedAtMs)) {
+        totalSkipped++;
+        continue;
+      }
+
+      if (!item.track || !item.track.uri) {
+        totalSkipped++;
+        continue;
+      }
+
+      const title = item.track.name || null;
+      const content = buildContent(item.track);
+      const sourceId = `${item.track.uri}@${playedAt}`;
+      const tags = buildTags(item.track, item.context, resourceCache);
+
+      const result = insert.run(
+        "spotify",
+        sourceId,
+        accountName,
+        "listen:track",
+        playedAt,
+        null,
+        title,
+        content,
+        JSON.stringify(tags),
+        JSON.stringify(item),
+        importBatch,
+        people
+      );
+
+      if (result.changes > 0) {
+        totalImported++;
+      } else {
+        totalSkipped++;
+      }
+
+      if (!latestPlayedAtMs || playedAtMs > latestPlayedAtMs) {
+        latestPlayedAtMs = playedAtMs;
+      }
+    }
+  });
+
+  insertMany(items);
+
+  return { imported: totalImported, skipped: totalSkipped, latestPlayedAtMs };
+}
+
 async function syncSpotifyWithDb(
   db: Database,
   sourceAccount: string | undefined,
@@ -668,66 +740,8 @@ async function syncSpotifyWithDb(
     }
   }
 
-  const people = JSON.stringify(["spotify:" + accountName]);
-
-  const insert = db.prepare(`
-    INSERT OR IGNORE INTO events (
-      source, source_id, source_account, type, timestamp, duration_ms,
-      title, content, tags, raw_data, import_batch, people
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  let totalImported = 0;
-  let totalSkipped = 0;
-  let latestPlayedAtMs: number | undefined;
-
-  const insertMany = db.transaction((plays: SpotifyPlayHistoryItem[]) => {
-    for (const item of plays) {
-      const playedAt = item.played_at;
-      const playedAtMs = Date.parse(playedAt);
-      if (!Number.isFinite(playedAtMs)) {
-        totalSkipped++;
-        continue;
-      }
-
-      if (!item.track || !item.track.uri) {
-        totalSkipped++;
-        continue;
-      }
-
-      const title = item.track.name || null;
-      const content = buildContent(item.track);
-      const sourceId = `${item.track.uri}@${playedAt}`;
-      const tags = buildTags(item.track, item.context, resourceCache);
-
-      const result = insert.run(
-        "spotify",
-        sourceId,
-        accountName,
-        "listen:track",
-        playedAt,
-        null,
-        title,
-        content,
-        JSON.stringify(tags),
-        JSON.stringify(item),
-        importBatch,
-        people
-      );
-
-      if (result.changes > 0) {
-        totalImported++;
-      } else {
-        totalSkipped++;
-      }
-
-      if (!latestPlayedAtMs || playedAtMs > latestPlayedAtMs) {
-        latestPlayedAtMs = playedAtMs;
-      }
-    }
-  });
-
-  insertMany(items);
+  const { imported: totalImported, skipped: totalSkipped, latestPlayedAtMs } =
+    insertRecentlyPlayed(db, items, accountName, importBatch, resourceCache);
 
   // Cache track URI → album art URL for image lookups
   // Resolution preference: 300px → 64px → first (keep in sync with web/src/platforms/spotify/art.ts)
