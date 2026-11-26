@@ -1,6 +1,8 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, spyOn } from "bun:test";
 import {
   collectUnknownPlaylistUris,
+  fetchPlaylistName,
+  type SpotifyTokens,
   spotifyTokenExtractor,
   type SpotifyPlayHistoryItem,
 } from "./parser-api";
@@ -38,6 +40,40 @@ describe("spotify token extraction", () => {
 });
 
 describe("spotify-api playlist resolution", () => {
+
+  test("fetchPlaylistName returns the cover from the same response, mosaics included", async () => {
+    const tokens = { access_token: "token", expires_at: Date.now() + 60_000 } as SpotifyTokens;
+    const fetchSpy = spyOn(globalThis, "fetch");
+    try {
+      fetchSpy.mockResolvedValueOnce(Response.json({
+        id: "sized",
+        name: "Sized",
+        images: [
+          { url: "https://example.com/640.jpg", height: 640 },
+          { url: "https://example.com/300.jpg", height: 300 },
+        ],
+      }));
+      expect(await fetchPlaylistName(tokens, "sized")).toEqual({ name: "Sized", imageUrl: "https://example.com/300.jpg" });
+      expect(new URL(String(fetchSpy.mock.calls[0]?.[0])).searchParams.get("fields")).toBe("id,name,images");
+
+      // Spotify's auto-generated four-cover mosaic is a single image with no height.
+      fetchSpy.mockResolvedValueOnce(Response.json({
+        id: "mosaic",
+        name: "Mosaic",
+        images: [{ url: "https://example.com/mosaic.jpg", height: null }],
+      }));
+      expect(await fetchPlaylistName(tokens, "mosaic")).toEqual({ name: "Mosaic", imageUrl: "https://example.com/mosaic.jpg" });
+
+      fetchSpy.mockResolvedValueOnce(Response.json({ id: "bare", name: "Bare", images: null }));
+      expect(await fetchPlaylistName(tokens, "bare")).toEqual({ name: "Bare", imageUrl: null });
+
+      fetchSpy.mockResolvedValueOnce(Response.json({ id: "blank", name: "", images: null }));
+      expect(await fetchPlaylistName(tokens, "blank")).toBeNull();
+      expect(fetchSpy).toHaveBeenCalledTimes(4);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
 
   test("collectUnknownPlaylistUris finds unknown URIs", () => {
     const items: SpotifyPlayHistoryItem[] = [

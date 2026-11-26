@@ -63,6 +63,8 @@ export interface MusicTopListFilter {
 export interface MusicPlayedPlaylist {
   playlistUri: string;
   name: string;
+  /** Cover art cached by the live sync; Spotify's own mosaic for auto-generated covers. */
+  imageUrl: string | null;
   plays: number;
   lastPlayedAt: string;
 }

@@ -3,6 +3,7 @@ import { saveDaySummary } from "../db/app-state";
 import { SYNC_SOURCES } from "../sync/sources";
 import { upsertSyncSourcePatch } from "../sync/config";
 import { parseInterval } from "../config/types";
+import { seedSpotifyResources } from "../platforms/spotify/seed";
 import type { SeedContext, SeedSource } from "./context";
 import { seedMemory } from "./memory";
 import { HOME_DIR } from "./persona";
@@ -134,6 +135,7 @@ export function seedAppState(
     seedProcessedFiles(ctx, db, seeded, imports, now);
     seedDaySummaries(ctx, db);
     seedMcpTokens(ctx, db, now);
+    if (seededNames.has("spotify")) seedSpotifyResources(db);
   })();
   seedMemory(ctx, db);
 }

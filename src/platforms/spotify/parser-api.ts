@@ -97,7 +97,19 @@ interface SpotifySyncState {
 interface SpotifyPlaylistResponse {
   id: string;
   name: string;
-  owner: { display_name: string };
+  images?: { url: string; height: number | null }[] | null;
+}
+
+/**
+ * Cover-art preference: ≈300px, then ≈64px, then the first available.
+ * Auto-generated mosaic covers arrive as a single null-height image, which the
+ * final fallback catches. (Keep in sync with web/src/platforms/spotify/art.ts.)
+ */
+function playlistCoverUrl(images: SpotifyPlaylistResponse["images"]): string | null {
+  return images?.find((img) => img.height === 300)?.url
+    ?? images?.find((img) => img.height === 64)?.url
+    ?? images?.[0]?.url
+    ?? null;
 }
 
 export interface SpotifySyncStats {
@@ -274,14 +286,15 @@ async function fetchUserProfile(tokens: SpotifyTokens): Promise<SpotifyUserProfi
 export async function fetchPlaylistName(
   tokens: SpotifyTokens,
   playlistId: string
-): Promise<string | null> {
+): Promise<{ name: string; imageUrl: string | null } | null> {
   try {
     const data = await spotifyGet<SpotifyPlaylistResponse>(
       tokens,
       `/playlists/${playlistId}`,
-      { fields: "id,name,owner" }
+      { fields: "id,name,images" }
     );
-    return data.name;
+    // A blank name is no name: the caller retries later, and plays keep their tag.
+    return data.name ? { name: data.name, imageUrl: playlistCoverUrl(data.images) } : null;
   } catch (error) {
     if (error instanceof SpotifyApiError) {
       if (error.status === 404 || error.status === 403) {
@@ -320,19 +333,11 @@ export async function fetchPlaylistFollowers(
       name: string;
       followers?: { total?: number } | null;
       owner?: { display_name?: string };
-      images?: { url: string; height: number | null }[] | null;
+      images?: SpotifyPlaylistResponse["images"];
     }>(tokens, `/playlists/${playlistId}`, {
       fields: "id,name,followers.total,owner.display_name,images",
     });
-    // Cover-art preference: ≈300px, then ≈64px, then the first available.
-    // Auto-generated mosaic covers arrive as a single null-height image, which
-    // the final fallback catches. (Keep in sync with web/src/platforms/spotify/art.ts.)
-    const images = data.images;
-    const imageUrl =
-      images?.find((img) => img.height === 300)?.url ??
-      images?.find((img) => img.height === 64)?.url ??
-      images?.[0]?.url ??
-      null;
+    const imageUrl = playlistCoverUrl(data.images);
     return {
       id: data.id,
       name: data.name,
@@ -500,15 +505,15 @@ async function resolvePlaylistNames(
 
     const playlistId = match[1];
     try {
-      const name = await fetchPlaylistName(tokens, playlistId);
+      const playlist = await fetchPlaylistName(tokens, playlistId);
 
-      if (name) {
+      if (playlist) {
         if (options.verbose) {
-          console.log(`[spotify] Resolved playlist: ${name}`);
+          console.log(`[spotify] Resolved playlist: ${playlist.name}`);
         }
         // Update both persistent cache and in-memory map
-        setSpotifyResource(appDb, uri, "playlist", name);
-        cache.set(uri, name);
+        setSpotifyResource(appDb, uri, "playlist", playlist.name, playlist.imageUrl);
+        cache.set(uri, playlist.name);
         if (missingCache[uri]) {
           delete missingCache[uri];
           missingUpdated = true;
