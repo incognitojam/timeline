@@ -16,7 +16,16 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getDb, initDb } from "../../db/schema";
-import { deleteSyncState, getAppStateDb, getSyncState, setSyncState, getAllSpotifyResources, setSpotifyResource } from "../../db/app-state";
+import {
+  deleteSyncState,
+  getAllSpotifyResources,
+  getAppStateDb,
+  getPlaylistsAwaitingImage,
+  getSyncState,
+  setPlaylistImageChecked,
+  setSpotifyResource,
+  setSyncState,
+} from "../../db/app-state";
 import { createTokenManager, type OAuthTokens } from "../../lib/oauth-tokens";
 import {
   createOAuth2Client,
@@ -280,8 +289,8 @@ async function fetchUserProfile(tokens: SpotifyTokens): Promise<SpotifyUserProfi
 }
 
 /**
- * Fetch playlist name from Spotify API.
- * Returns null on 404/403 (deleted/private); throws on rate limit.
+ * Fetch a playlist's name, which can be blank, and cover from Spotify API.
+ * Returns null on 400/404/403 (invalid ID, deleted, private); throws on rate limit.
  */
 export async function fetchPlaylistName(
   tokens: SpotifyTokens,
@@ -293,11 +302,10 @@ export async function fetchPlaylistName(
       `/playlists/${playlistId}`,
       { fields: "id,name,images" }
     );
-    // A blank name is no name: the caller retries later, and plays keep their tag.
-    return data.name ? { name: data.name, imageUrl: playlistCoverUrl(data.images) } : null;
+    return { name: data.name, imageUrl: playlistCoverUrl(data.images) };
   } catch (error) {
     if (error instanceof SpotifyApiError) {
-      if (error.status === 404 || error.status === 403) {
+      if (error.status === 400 || error.status === 404 || error.status === 403) {
         return null;
       }
       if (error.status === 429) {
@@ -486,7 +494,7 @@ function saveMissingPlaylistCache(appDb: Database, cache: MissingPlaylistCache):
  * Resolve playlist names and update cache.
  */
 async function resolvePlaylistNames(
-  tokens: SpotifyTokens,
+  lookUp: PlaylistLookUp,
   uris: string[],
   appDb: Database,
   cache: Map<string, string>,
@@ -505,14 +513,16 @@ async function resolvePlaylistNames(
 
     const playlistId = match[1];
     try {
-      const playlist = await fetchPlaylistName(tokens, playlistId);
+      const playlist = await lookUp(playlistId);
 
-      if (playlist) {
+      // A blank name is no name: retry later, and plays keep their tag.
+      if (playlist?.name) {
         if (options.verbose) {
           console.log(`[spotify] Resolved playlist: ${playlist.name}`);
         }
         // Update both persistent cache and in-memory map
-        setSpotifyResource(appDb, uri, "playlist", playlist.name, playlist.imageUrl);
+        setSpotifyResource(appDb, uri, "playlist", playlist.name);
+        setPlaylistImageChecked(appDb, uri, playlist.imageUrl);
         cache.set(uri, playlist.name);
         if (missingCache[uri]) {
           delete missingCache[uri];
@@ -540,6 +550,85 @@ async function resolvePlaylistNames(
   }
 
   return { resolved, rateLimited, missingUpdated };
+}
+
+type PlaylistLookUp = (playlistId: string) => ReturnType<typeof fetchPlaylistName>;
+
+/** Cover lookups per sync run, so a backlog spreads over several runs. */
+export const PLAYLIST_IMAGE_LOOKUPS_PER_RUN = 10;
+
+/**
+ * Look up covers for playlists named before the sync stored covers, a few per
+ * run and each once: a playlist with no cover, or one Spotify will not return,
+ * is recorded as checked. A rate limit stops the run; other errors leave the
+ * playlist for a later run.
+ */
+export async function lookUpMissingPlaylistImages(
+  appDb: Database,
+  lookUp: PlaylistLookUp,
+  options: { verbose?: boolean } = {},
+): Promise<number> {
+  let checked = 0;
+  for (const uri of getPlaylistsAwaitingImage(appDb, PLAYLIST_IMAGE_LOOKUPS_PER_RUN)) {
+    const playlistId = extractPlaylistId(uri);
+    try {
+      const playlist = playlistId ? await lookUp(playlistId) : null;
+      setPlaylistImageChecked(appDb, uri, playlist?.imageUrl ?? null);
+      checked++;
+    } catch (error) {
+      if (error instanceof SpotifyApiError && error.status === 429) {
+        if (options.verbose) console.log("[spotify] Rate limited looking up playlist covers.");
+        break;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[spotify] Failed to fetch playlist ${playlistId}: ${message}`);
+    }
+  }
+  return checked;
+}
+
+/**
+ * Before plays are inserted: name the playlists they were played from, then
+ * look up covers for playlists named earlier, unless Spotify rate limited the
+ * naming.
+ */
+export async function cachePlaylistDetails(
+  appDb: Database,
+  items: SpotifyPlayHistoryItem[],
+  resourceCache: Map<string, string>,
+  lookUp: PlaylistLookUp,
+  options: { verbose?: boolean } = {},
+): Promise<void> {
+  const missingPlaylistCache = loadMissingPlaylistCache(appDb);
+  const unknownUris = collectUnknownPlaylistUris(items, resourceCache, {
+    missingCache: missingPlaylistCache,
+  });
+  let rateLimited = false;
+  if (unknownUris.length > 0) {
+    if (options.verbose) {
+      console.log(`[spotify] Found ${unknownUris.length} unknown playlist URI(s)`);
+    }
+    const result = await resolvePlaylistNames(
+      lookUp,
+      unknownUris,
+      appDb,
+      resourceCache,
+      missingPlaylistCache,
+      options
+    );
+    rateLimited = result.rateLimited;
+    if (result.missingUpdated) {
+      saveMissingPlaylistCache(appDb, missingPlaylistCache);
+    }
+    if (options.verbose && result.resolved > 0) {
+      console.log(`[spotify] Resolved ${result.resolved} playlist name(s)`);
+    }
+  }
+  if (rateLimited) return;
+  const covers = await lookUpMissingPlaylistImages(appDb, lookUp, options);
+  if (options.verbose && covers > 0) {
+    console.log(`[spotify] Looked up ${covers} playlist cover(s)`);
+  }
 }
 
 /**
@@ -718,36 +807,10 @@ async function syncSpotifyWithDb(
 
   // Load resource cache for playlist name lookups
   const resourceCache = getAllSpotifyResources(appDb);
-  const missingPlaylistCache = loadMissingPlaylistCache(appDb);
   if (options.verbose && resourceCache.size > 0) {
     console.log(`[spotify] Loaded ${resourceCache.size} cached resource(s)`);
   }
-
-  // Resolve unknown playlist URIs before insert
-  if (!options.dryRun) {
-    const unknownUris = collectUnknownPlaylistUris(items, resourceCache, {
-      missingCache: missingPlaylistCache,
-    });
-    if (unknownUris.length > 0) {
-      if (options.verbose) {
-        console.log(`[spotify] Found ${unknownUris.length} unknown playlist URI(s)`);
-      }
-      const { resolved, missingUpdated } = await resolvePlaylistNames(
-        tokens,
-        unknownUris,
-        appDb,
-        resourceCache,
-        missingPlaylistCache,
-        options
-      );
-      if (missingUpdated) {
-        saveMissingPlaylistCache(appDb, missingPlaylistCache);
-      }
-      if (options.verbose && resolved > 0) {
-        console.log(`[spotify] Resolved ${resolved} playlist name(s)`);
-      }
-    }
-  }
+  await cachePlaylistDetails(appDb, items, resourceCache, (id) => fetchPlaylistName(tokens, id), options);
 
   const { imported: totalImported, skipped: totalSkipped, latestPlayedAtMs } =
     insertRecentlyPlayed(db, items, accountName, importBatch, resourceCache);
