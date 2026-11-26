@@ -59,12 +59,27 @@ export interface MusicTopListFilter {
   excludePrivateSessions: boolean;
 }
 
+/** A playlist the live sync recorded plays from. */
+export interface MusicPlayedPlaylist {
+  playlistUri: string;
+  name: string;
+  plays: number;
+  lastPlayedAt: string;
+}
+
+export interface MusicExclusionsResponse extends MusicTopListFilter {
+  /** Played playlists not excluded yet, most played first. */
+  playedPlaylists: MusicPlayedPlaylist[];
+}
+
 /**
  * Exclude what a play was of: its track, its album, or the playlist it was
- * played from. Artists come from the artist list, which names them.
+ * played from. Artists come from the artist list, which names them, and
+ * playlists can also come from the list of played playlists.
  */
 export type MusicExclusionRequest =
   | { kind: "track" | "album" | "playlist"; eventId: number }
+  | { kind: "playlist"; playlistUri: string }
   | { kind: "artist"; artistName: string };
 
 export interface MusicRankingsOverview {

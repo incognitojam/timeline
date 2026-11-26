@@ -80,7 +80,7 @@ const exempt = {
   "/api/memory/notes/:name": "Memory notes are not events, and the page shows what agents get over MCP, which ignores hiding.",
   "/api/memory/notes/:name/versions": "Memory notes are not events, and the page shows what agents get over MCP, which ignores hiding.",
   "/api/media/*": "Direct media access is an explicit resource path.",
-  "/api/music/exclusions": "Returns the top-list exclusions the owner chose, not timeline events.",
+  "/api/music/exclusions": "Returns the top-list exclusions the owner chose and per-playlist play counts, music-specific aggregation like /api/music/rankings.",
   "/api/music/rankings": "Music-specific aggregation is outside this slice.",
   "/api/music/recent": "Music-specific aggregation is outside this slice.",
   "/api/playlists": "Returns playlist follower data, not timeline event content.",
