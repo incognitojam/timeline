@@ -19,6 +19,9 @@ final class OCRWorker: @unchecked Sendable {
     private let queue = DispatchQueue(label: "dev.incognitojam.timeline.ocr")
     private let lock = NSLock()
     private var child: Child?
+    // Workers still running after KILL. One stuck worker gets a replacement;
+    // while two are stuck none is started, so they cannot pile up.
+    private var abandoned: [Process] = []
 
     init(executable: URL, arguments: [String], timeout: TimeInterval) {
         self.executable = executable
@@ -36,8 +39,8 @@ final class OCRWorker: @unchecked Sendable {
     }
 
     // Ends the worker, if one is running, without waiting for it to exit.
-    // KILL fails a request in flight with EOF; its pipes close on the queue
-    // after that request, never under it.
+    // KILL normally fails a request in flight with EOF; its pipes close on the
+    // queue after that request, never under it.
     func stop() {
         let stopped: Child? = lock.withLock {
             defer { child = nil }
@@ -45,7 +48,7 @@ final class OCRWorker: @unchecked Sendable {
         }
         guard let stopped else { return }
         if stopped.process.isRunning { kill(stopped.process.processIdentifier, SIGKILL) }
-        queue.async { Self.end(stopped) }
+        queue.async { self.end(stopped) }
     }
 
     private func request(_ path: String) throws -> [String] {
@@ -77,11 +80,18 @@ final class OCRWorker: @unchecked Sendable {
 
     // The running worker, or a new one if there is none or it has exited.
     private func current() throws -> Child {
-        try lock.withLock {
-            if let child {
-                if child.process.isRunning { return child }
-                Self.end(child)
-                self.child = nil
+        let exited: Child? = lock.withLock {
+            guard let child, !child.process.isRunning else { return nil }
+            self.child = nil
+            return child
+        }
+        // end() takes the lock to record an abandoned worker.
+        if let exited { end(exited) }
+        return try lock.withLock {
+            if let child { return child }
+            abandoned.removeAll { !$0.isRunning }
+            guard abandoned.count < 2 else {
+                throw RecallError("Text recognition is stuck in a worker that cannot be ended, so this capture was skipped. Timeline tries again on the next capture.")
             }
             let started = try spawn()
             child = started
@@ -96,7 +106,7 @@ final class OCRWorker: @unchecked Sendable {
             return true
         }
         // stop() already took it otherwise, and ends it itself.
-        if owned { Self.end(worker) }
+        if owned { end(worker) }
     }
 
     private func spawn() throws -> Child {
@@ -121,15 +131,26 @@ final class OCRWorker: @unchecked Sendable {
     }
 
     // Closing the input ends an idle worker; TERM ends a busy one, and KILL one
-    // that ignores TERM. Waiting reaps it before its pipes are closed.
-    private static func end(_ worker: Child) {
+    // that ignores TERM. A worker stuck where even KILL cannot reach it is
+    // abandoned rather than waited for.
+    private func end(_ worker: Child) {
         try? worker.input.close()
         if worker.process.isRunning { worker.process.terminate() }
-        let deadline = ProcessInfo.processInfo.systemUptime + 2
-        while worker.process.isRunning, ProcessInfo.processInfo.systemUptime < deadline { usleep(20_000) }
-        if worker.process.isRunning { kill(worker.process.processIdentifier, SIGKILL) }
-        worker.process.waitUntilExit()
+        if !Self.exits(worker.process, within: 2) {
+            kill(worker.process.processIdentifier, SIGKILL)
+            if !Self.exits(worker.process, within: 2) {
+                RecallCapture.warn("an OCR worker did not exit after KILL and was abandoned")
+                lock.withLock { abandoned.append(worker.process) }
+            }
+        }
         try? worker.output.close()
+    }
+
+    // Whether the process has terminated within `seconds`.
+    private static func exits(_ process: Process, within seconds: TimeInterval) -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + seconds
+        while process.isRunning, ProcessInfo.processInfo.systemUptime < deadline { usleep(20_000) }
+        return !process.isRunning
     }
 
     private static let stoppedError = RecallError("Text recognition stopped unexpectedly, so this capture was skipped. Timeline restarts it for the next capture.")
