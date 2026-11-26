@@ -34,11 +34,38 @@ export interface MusicRecentPlay {
   albumName: string | null;
   trackUri: string | null;
   imageUrl: string | null;
+  /** Set only when the play's stored data records the playlist it was played from. */
+  playlistUri: string | null;
+  playlistName: string | null;
 }
 
 export interface MusicRecentResponse {
   recent: MusicRecentPlay[];
 }
+
+export const MUSIC_EXCLUSION_KINDS = ["track", "album", "artist", "playlist"] as const;
+export type MusicExclusionKind = (typeof MUSIC_EXCLUSION_KINDS)[number];
+
+/** Something whose plays the top lists leave out. */
+export interface MusicExclusion {
+  id: number;
+  kind: MusicExclusionKind;
+  label: string;
+}
+
+/** What the top lists leave out; the Plays total and span still count everything. */
+export interface MusicTopListFilter {
+  exclusions: MusicExclusion[];
+  excludePrivateSessions: boolean;
+}
+
+/**
+ * Exclude what a play was of: its track, its album, or the playlist it was
+ * played from. Artists come from the artist list, which names them.
+ */
+export type MusicExclusionRequest =
+  | { kind: "track" | "album" | "playlist"; eventId: number }
+  | { kind: "artist"; artistName: string };
 
 export interface MusicRankingsOverview {
   period: MusicPeriod;
@@ -49,4 +76,5 @@ export interface MusicRankingsOverview {
   lastPlayedAt: string | null;
   topTracks: MusicRankedTrack[];
   topArtists: MusicRankedArtist[];
+  filter: MusicTopListFilter;
 }

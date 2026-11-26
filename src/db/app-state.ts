@@ -224,6 +224,20 @@ export function initAppStateDb(db: Database) {
     db.exec(`ALTER TABLE spotify_resources ADD COLUMN image_url TEXT`);
   } catch {}
 
+  // What the Music page's top lists leave out. match_key is what plays are
+  // compared on (see src/platforms/spotify/music.ts); label is for display.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS music_exclusions (
+      -- AUTOINCREMENT so a stale "include again" cannot remove a newer exclusion.
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL CHECK (kind IN ('track', 'album', 'artist', 'playlist')),
+      match_key TEXT NOT NULL,
+      label TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (kind, match_key)
+    )
+  `);
+
   // Jobs queue - durable record of every "do this" request (sync, inbox-process, etc.)
   // Worker polls this table and runs jobs; replaces ephemeral postMessage IPC.
   db.exec(`

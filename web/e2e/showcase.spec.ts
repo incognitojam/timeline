@@ -847,6 +847,7 @@ function buildMusic() {
     // The ranked list scrolls past eight rows; stop there so the shot ends cleanly.
     topTracks: topTracks.slice(0, 8),
     topArtists,
+    filter: { exclusions: [], excludePrivateSessions: false },
   };
 
   const recent: MusicRecentResponse["recent"] = recentPlays.map(([timestamp, track], i) => ({
@@ -857,6 +858,8 @@ function buildMusic() {
     albumName: track.album,
     trackUri: trackUri(track),
     imageUrl: track.art,
+    playlistUri: null,
+    playlistName: null,
   }));
 
   return {

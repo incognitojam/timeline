@@ -1,12 +1,14 @@
 import type {
+  MusicExclusionRequest,
   MusicPeriod,
   MusicRankedArtist,
   MusicRankedTrack,
   MusicRankingsOverview,
   MusicRecentPlay,
+  MusicTopListFilter,
 } from "@platforms/spotify/shared/music";
 import { A } from "@solidjs/router";
-import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
+import { createMemo, createSignal, For, type JSX, Match, Show, Switch } from "solid-js";
 import {
   type SpotifyFriendLatestListen,
   type TrackedPlaylist,
@@ -14,14 +16,15 @@ import {
 import { formatDuration } from "../../lib/format";
 import { creationAnchor, pastYearSaves } from "./playlist-stats";
 import {
+  useExcludeFromTopLists,
   useMusicFriendListens,
   useMusicPlaylists,
   useMusicRankings,
   useMusicRecent,
 } from "../../lib/queries";
-import { buildContactsUrl, buildEventUrl, buildMusicPlaylistUrl } from "../../lib/routes";
+import { buildContactsUrl, buildEventUrl, buildMusicPlaylistUrl, ROUTES } from "../../lib/routes";
 import { staleContentClass } from "../../lib/stale-content";
-import { IconMusicNote } from "../../ui/icons";
+import { IconBlock, IconFilterList, IconMoreHoriz, IconMusicNote } from "../../ui/icons";
 import SegmentedControl, { type SegmentedControlOption } from "../../ui/SegmentedControl";
 import Avatar from "../../components/Avatar";
 import PlaylistArt from "./PlaylistArt";
@@ -338,14 +341,136 @@ function RankedListHeader(props: { label: string; art: boolean }) {
       <span class="min-w-0 flex-1">{props.label}</span>
       <span class="w-16 shrink-0 text-right sm:w-20">Plays</span>
       <span class="hidden w-20 shrink-0 text-right sm:block">Time</span>
+      <span class="w-8 shrink-0" />
     </div>
   );
+}
+
+function isFiltered(filter: MusicTopListFilter): boolean {
+  return filter.exclusions.length > 0 || filter.excludePrivateSessions;
+}
+
+interface ExcludeOption {
+  label: string;
+  request: MusicExclusionRequest;
+}
+
+/**
+ * A listening row with a quiet "Exclude from top lists" action. It opens a
+ * strip under the row naming what can be left out, so excluding is two
+ * deliberate clicks and nothing floats over the scrolling list.
+ */
+function ExcludableRow(props: {
+  options: ExcludeOption[];
+  /** Shown in the strip after the options, e.g. what this play cannot offer. */
+  note?: string;
+  children: JSX.Element;
+}) {
+  const [open, setOpen] = createSignal(false);
+  // Label of what was just excluded. A ranked row leaves the list once the
+  // rankings refetch; a recent play stays, so the strip says what happened.
+  const [excluded, setExcluded] = createSignal<string>();
+  const exclude = useExcludeFromTopLists();
+  // Closing forgets the last attempt, so reopening starts clean and a write
+  // still in flight cannot report into the reopened strip.
+  const close = () => {
+    exclude.reset();
+    setExcluded(undefined);
+    setOpen(false);
+  };
+  return (
+    <li>
+      <div class="relative flex items-center">
+        <div class="min-w-0 flex-1">{props.children}</div>
+        <Show when={props.options.length > 0} fallback={<span class="mr-1 w-8 shrink-0" />}>
+          <button
+            type="button"
+            class="mr-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 motion-reduce:transition-none"
+            classList={{ "bg-accent text-foreground": open() }}
+            aria-expanded={open()}
+            aria-label="Exclude from top lists"
+            title="Exclude from top lists"
+            onClick={() => (open() ? close() : setOpen(true))}
+          >
+            <IconMoreHoriz class="h-4 w-4" aria-hidden />
+          </button>
+        </Show>
+      </div>
+      <Show when={open()}>
+        <div class="flex flex-wrap items-center gap-2 border-t border-border bg-accent/30 px-3 py-2 text-xs">
+          <Show
+            when={excluded()}
+            fallback={
+              <>
+                <span class="text-muted-foreground">Exclude from top lists:</span>
+                <For each={props.options}>
+                  {(option) => (
+                    <button
+                      type="button"
+                      class="inline-flex min-w-0 max-w-full items-center gap-1 rounded-md border border-border bg-card px-2 py-1 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 disabled:opacity-50 motion-reduce:transition-none"
+                      disabled={exclude.isPending}
+                      onClick={() => exclude.mutate(option.request, { onSuccess: () => setExcluded(option.label) })}
+                    >
+                      <IconBlock class="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                      <span class="truncate">{option.label}</span>
+                    </button>
+                  )}
+                </For>
+                <Show when={props.note}>
+                  {(note) => <span class="text-muted-foreground/80">{note()}</span>}
+                </Show>
+                <Show when={exclude.isError}>
+                  <span class="text-red-500">Could not exclude it. Try again.</span>
+                </Show>
+              </>
+            }
+          >
+            {(label) => (
+              <>
+                <IconBlock class="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                <span role="status" class="min-w-0">{label()} left out of top lists.</span>
+                <A href={ROUTES.MUSIC_EXCLUDED} class={TEXT_BUTTON_CLASS}>View exclusions</A>
+              </>
+            )}
+          </Show>
+          <button type="button" class={`ml-auto ${TEXT_BUTTON_CLASS}`} onClick={close}>
+            {excluded() ? "Close" : "Cancel"}
+          </button>
+        </div>
+      </Show>
+    </li>
+  );
+}
+
+function quoted(kind: string, name: string | null): string {
+  return name ? `${kind} “${name}”` : kind;
+}
+
+/** Only what the server can match: a track needs its id, an album its name and artist. */
+function trackOptions(play: {
+  eventId: number;
+  trackName: string;
+  trackUri: string | null;
+  artistName: string | null;
+  albumName: string | null;
+}): ExcludeOption[] {
+  const options: ExcludeOption[] = [];
+  if (play.trackUri) {
+    options.push({ label: quoted("Track", play.trackName), request: { kind: "track", eventId: play.eventId } });
+  }
+  if (play.albumName && play.artistName) {
+    options.push({ label: quoted("Album", play.albumName), request: { kind: "album", eventId: play.eventId } });
+  }
+  return options;
 }
 
 function ListeningStats(props: { overview: MusicRankingsOverview }) {
   return (
     <dl class="flex flex-wrap items-baseline gap-x-5 gap-y-1.5 border-b border-border px-3 py-2.5">
-      <div class="flex items-baseline gap-2">
+      <div
+        class="flex items-baseline gap-2"
+        title={isFiltered(props.overview.filter) ? "Every play in this range, excluded ones included" : undefined}
+      >
         <dt class="text-[11px] uppercase tracking-wider text-muted-foreground">Plays</dt>
         <dd class="font-mono text-sm font-semibold tabular-nums">
           {props.overview.totalPlays.toLocaleString()}
@@ -364,13 +489,38 @@ function ListeningStats(props: { overview: MusicRankingsOverview }) {
           </div>
         )}
       </Show>
+      <div class="flex items-baseline sm:ml-auto">
+        <dt class="sr-only">Top lists</dt>
+        <dd>
+          <A
+            href={ROUTES.MUSIC_EXCLUDED}
+            class="inline-flex items-center gap-1 rounded-sm text-xs hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+            classList={{
+              "text-foreground": isFiltered(props.overview.filter),
+              "text-muted-foreground/70": !isFiltered(props.overview.filter),
+            }}
+          >
+            <Show when={isFiltered(props.overview.filter)} fallback="Exclusions">
+              <IconFilterList class="h-3.5 w-3.5 self-center text-muted-foreground" aria-hidden />
+              Filtered
+              <Show when={props.overview.filter.exclusions.length > 0}>
+                {" · "}
+                {props.overview.filter.exclusions.length.toLocaleString()} excluded
+              </Show>
+              <Show when={props.overview.filter.excludePrivateSessions}>
+                {" · "}no private sessions
+              </Show>
+            </Show>
+          </A>
+        </dd>
+      </div>
     </dl>
   );
 }
 
 function RankedTrackRow(props: { track: MusicRankedTrack; share: number }) {
   return (
-    <li class="relative">
+    <ExcludableRow options={trackOptions(props.track)}>
       <A
         href={buildEventUrl(props.track.eventId)}
         class={LISTENING_ROW_CLASS}
@@ -409,13 +559,18 @@ function RankedTrackRow(props: { track: MusicRankedTrack; share: number }) {
         </span>
       </A>
       <ShareRule percent={props.share} />
-    </li>
+    </ExcludableRow>
   );
 }
 
 function RankedArtistRow(props: { artist: MusicRankedArtist; share: number }) {
   return (
-    <li class="relative">
+    <ExcludableRow
+      options={[{
+        label: quoted("Artist", props.artist.artistName),
+        request: { kind: "artist", artistName: props.artist.artistName },
+      }]}
+    >
       <A
         href={buildEventUrl(props.artist.eventId)}
         class={LISTENING_ROW_CLASS}
@@ -462,13 +617,26 @@ function RankedArtistRow(props: { artist: MusicRankedArtist; share: number }) {
         </span>
       </A>
       <ShareRule percent={props.share} />
-    </li>
+    </ExcludableRow>
   );
 }
 
 function RecentPlayRow(props: { play: MusicRecentPlay; latest: boolean }) {
+  // Only live-synced plays record the playlist they came from.
+  const options = () => props.play.playlistUri
+    ? [
+      ...trackOptions(props.play),
+      {
+        label: quoted("Playlist", props.play.playlistName),
+        request: { kind: "playlist", eventId: props.play.eventId } satisfies MusicExclusionRequest,
+      },
+    ]
+    : trackOptions(props.play);
   return (
-    <li>
+    <ExcludableRow
+      options={options()}
+      note={props.play.playlistUri ? undefined : "No playlist recorded for this play."}
+    >
       <A
         href={buildEventUrl(props.play.eventId)}
         class={LISTENING_ROW_CLASS}
@@ -503,7 +671,7 @@ function RecentPlayRow(props: { play: MusicRecentPlay; latest: boolean }) {
           </time>
         </span>
       </A>
-    </li>
+    </ExcludableRow>
   );
 }
 
@@ -713,7 +881,9 @@ export default function MusicOverview() {
                               each={overview().topTracks}
                               fallback={
                                 <li class="px-4 py-6 text-sm text-muted-foreground">
-                                  No ranked tracks in this range yet.
+                                  {isFiltered(overview().filter)
+                                    ? "Every track in this range is excluded."
+                                    : "No ranked tracks in this range yet."}
                                 </li>
                               }
                             >
@@ -734,7 +904,9 @@ export default function MusicOverview() {
                               each={overview().topArtists}
                               fallback={
                                 <li class="px-4 py-6 text-sm text-muted-foreground">
-                                  No ranked artists in this range yet.
+                                  {isFiltered(overview().filter)
+                                    ? "Every artist in this range is excluded."
+                                    : "No ranked artists in this range yet."}
                                 </li>
                               }
                             >

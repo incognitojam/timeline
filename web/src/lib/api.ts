@@ -1,5 +1,12 @@
 import type { ConversationRangeExportFormat } from "@shared/conversation-export";
-import type { MusicPeriod, MusicRankingsOverview, MusicRecentResponse } from "@platforms/spotify/shared/music";
+import type {
+  MusicExclusion,
+  MusicExclusionRequest,
+  MusicPeriod,
+  MusicRankingsOverview,
+  MusicRecentResponse,
+  MusicTopListFilter,
+} from "@platforms/spotify/shared/music";
 import type { NetworkSettings } from "@shared/network-settings";
 import type { MemoryImportResult, MemoryIndex, MemoryNote, MemoryVersion } from "@shared/memory";
 import type { ReleaseStatus } from "@shared/releases";
@@ -2347,6 +2354,34 @@ export async function fetchMusicRankings(
 ): Promise<MusicRankingsOverview> {
   const res = await apiFetch(`${API_BASE}/api/music/rankings?period=${encodeURIComponent(period)}`, { signal });
   return parseApiJson(res, "Failed to fetch music rankings");
+}
+
+export async function fetchMusicExclusions(signal: AbortSignal): Promise<MusicTopListFilter> {
+  const res = await apiFetch(`${API_BASE}/api/music/exclusions`, { signal });
+  return parseApiJson(res, "Failed to fetch music exclusions");
+}
+
+export async function excludeFromTopLists(request: MusicExclusionRequest): Promise<MusicExclusion> {
+  const res = await apiFetch(`${API_BASE}/api/music/exclusions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  return (await parseApiJson<{ exclusion: MusicExclusion }>(res, "Failed to exclude from top lists")).exclusion;
+}
+
+export async function includeInTopLists(id: number): Promise<void> {
+  const res = await apiFetch(`${API_BASE}/api/music/exclusions/${id}`, { method: "DELETE" });
+  await parseApiJson(res, "Failed to include in top lists");
+}
+
+export async function setExcludePrivateSessions(excluded: boolean): Promise<void> {
+  const res = await apiFetch(`${API_BASE}/api/music/exclusions/private-sessions`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ excluded }),
+  });
+  await parseApiJson(res, "Failed to save the private-session setting");
 }
 
 export async function fetchRecentMusicPlays(signal: AbortSignal): Promise<MusicRecentResponse> {

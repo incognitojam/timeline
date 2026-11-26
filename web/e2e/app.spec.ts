@@ -889,6 +889,7 @@ const apiResponses = {
         eventId: 201,
       },
     ],
+    filter: { exclusions: [], excludePrivateSessions: false },
   },
   "/api/music/recent": {
     recent: [
@@ -900,6 +901,8 @@ const apiResponses = {
         albumName: "Daybreak",
         trackUri: "spotify:track:morning-light",
         imageUrl: null,
+        playlistUri: null,
+        playlistName: null,
       },
       {
         eventId: 202,
@@ -909,6 +912,8 @@ const apiResponses = {
         albumName: "Sample Album",
         trackUri: "spotify:track:open-road",
         imageUrl: null,
+        playlistUri: null,
+        playlistName: null,
       },
     ],
   },

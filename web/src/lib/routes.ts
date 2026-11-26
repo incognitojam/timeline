@@ -10,6 +10,7 @@ export const ROUTES = {
   CODING_CONVERSATIONS: "/coding/conversations",
   MUSIC: "/music",
   MUSIC_PLAYLIST: "/music/playlist/:id",
+  MUSIC_EXCLUDED: "/music/excluded",
   SEARCH: "/search",
   SYNC: "/sync",
   SETTINGS: "/settings",

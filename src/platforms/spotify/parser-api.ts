@@ -43,16 +43,20 @@ export interface SpotifyTokens extends OAuthTokens {
 
 interface SpotifyArtist {
   name: string;
+  uri?: string;
 }
 
 interface SpotifyAlbum {
   name: string;
+  uri?: string;
+  artists?: SpotifyArtist[];
   images?: { url: string; height: number; width: number }[];
 }
 
 interface SpotifyTrack {
   uri: string;
   name: string;
+  duration_ms?: number;
   artists: SpotifyArtist[];
   album?: SpotifyAlbum;
 }

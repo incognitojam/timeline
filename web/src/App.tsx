@@ -18,6 +18,7 @@ import McpSessionsView from "./components/McpSessionsView";
 import MemoryNoteView from "./components/MemoryNoteView";
 import MemoryView from "./components/MemoryView";
 import MusicOverview from "./platforms/spotify/MusicOverview";
+import MusicExclusionsView from "./platforms/spotify/MusicExclusionsView";
 import MusicPlaylistView from "./platforms/spotify/MusicPlaylistView";
 import SearchView from "./components/SearchView";
 import SettingsView from "./components/SettingsView";
@@ -185,6 +186,7 @@ export default function App() {
       <Route path={ROUTES.AI_CHATS} component={suspenseRoute(AiChatsListView, "AI chats")} preload={preloadAiChats} />
       <Route path="/music" component={suspenseRoute(MusicOverview, "music")} />
       <Route path="/music/playlist/:id" component={suspenseRoute(MusicPlaylistView, "playlist")} />
+      <Route path={ROUTES.MUSIC_EXCLUDED} component={suspenseRoute(MusicExclusionsView, "music exclusions")} />
       <Route path="/search" component={suspenseRoute(SearchView, "search")} preload={preloadSearch} />
       <Route path="/sync" component={suspenseRoute(SyncView, "sync")} preload={preloadSync} />
       <Route path={ROUTES.SETTINGS} component={suspenseRoute(SettingsView, "settings")} preload={preloadSettings} />
