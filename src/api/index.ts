@@ -2809,8 +2809,8 @@ if (process.env.NODE_ENV !== "test") {
     console.log("Authentication disabled for development (AUTH_PASSWORD is not set)");
   }
   if (isMcpHttpEnabled()) {
-    console.log("MCP HTTP enabled (MCP_TOKENS is set) - endpoints: /mcp (Bearer), /mcp/<token>");
+    console.log("MCP HTTP enabled - endpoints: /mcp (Bearer), /mcp/<token>");
   } else {
-    console.log("MCP HTTP disabled (set MCP_TOKENS to enable)");
+    console.log("MCP HTTP disabled (create a token with timeline-service mcp-token create)");
   }
 }

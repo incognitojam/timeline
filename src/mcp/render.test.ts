@@ -9,6 +9,7 @@ function session(overrides: Partial<McpSessionRow> = {}): McpSessionRow {
     client_name: "Test Client",
     client_version: "1.0.0",
     token_hash: "abc123def4567890",
+    token_label: null,
     created_at: "2026-07-03 10:00:00",
     last_activity_at: "2026-07-03 10:01:00",
     ...overrides,
@@ -48,7 +49,8 @@ describe("MCP markdown renderer", () => {
     expect(markdown).toContain("# MCP session `session-1`");
     expect(markdown).toContain("- Transport: http");
     expect(markdown).toContain("- Client: Test Client 1.0.0");
-    expect(markdown).toContain("- Token hash: abc123def4567890");
+    expect(markdown).toContain("- Token: MCP_TOKENS");
+    expect(markdown).not.toContain("abc123def4567890");
     expect(markdown).toContain("- Calls: 1");
     expect(markdown).toContain("- Average duration: 12ms");
     expect(markdown).toContain("### 1. `query_events`");

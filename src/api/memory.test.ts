@@ -96,7 +96,7 @@ describe("memory API", () => {
     initDb(timelineDb);
     type Handler = (args: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }>;
     const tools = new Map<string, Handler>();
-    const server = { tool: (name: string, _d: string, _s: unknown, handler: Handler) => tools.set(name, handler) } as unknown as McpServer;
+    const server = { tool: (name: string, _d: string, _s: unknown, _a: unknown, handler: Handler) => tools.set(name, handler) } as unknown as McpServer;
     registerTools(server, wrapDatabase(timelineDb), timelineDb, { appStateDb: appDb });
     const listMemory = async (args: Record<string, unknown>) => {
       const handler = tools.get("list_memory");

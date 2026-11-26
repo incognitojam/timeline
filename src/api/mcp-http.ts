@@ -15,7 +15,6 @@ import { getAppStateDb } from "../db/app-state";
 import type { QueryExecutor } from "../db/pool";
 import { memoryInstructions } from "../mcp/memory";
 import {
-  hashMcpToken,
   type InvalidToolCallRecorder,
   pruneMcpRecords,
   recordInvalidToolCallsFromTransport,
@@ -25,12 +24,14 @@ import {
 } from "../mcp/recording";
 import { registerTools } from "../mcp-tools";
 import { PRODUCT_VERSION } from "../product-version";
-import { validateMcpToken, isMcpEnabled, getMcpBearerToken } from "./mcp-tokens";
+import { getMcpBearerToken, isMcpEnabled, type McpAccess, mcpAccess, mcpAccessForHash, touchMcpToken } from "./mcp-tokens";
 
 interface McpSession {
   transport: WebStandardStreamableHTTPServerTransport;
   server: McpServer;
   createdAt: number;
+  /** SHA-256 of the token that opened the session; only that token may use it. */
+  tokenHash: string;
 }
 
 // Session timeout: 1 hour of inactivity
@@ -116,28 +117,53 @@ export function createMcpHandler(
     for (const [source, times] of failures) {
       if (times[times.length - 1] + failureWindow <= now) failures.delete(source);
     }
-    for (const [sessionId, session] of sessions) {
-      if (now - session.createdAt > SESSION_TIMEOUT_MS) {
-        console.log(`[MCP] Cleaning up stale session: ${sessionId}`);
-        session.transport.close();
-        sessions.delete(sessionId);
-      }
-    }
     try {
+      // Close sessions that timed out or whose token was revoked.
+      for (const [sessionId, session] of sessions) {
+        if (now - session.createdAt > SESSION_TIMEOUT_MS || !mcpAccessForHash(session.tokenHash)) {
+          console.log(`[MCP] Cleaning up stale session: ${sessionId}`);
+          session.transport.close();
+          sessions.delete(sessionId);
+        }
+      }
       pruneMcpRecords();
     } catch (error) {
-      console.error("[MCP] Failed to prune recorded tool calls:", error);
+      console.error("[MCP] Failed to clean up sessions or recorded tool calls:", error);
     }
   }, CLEANUP_INTERVAL_MS);
 
-  function createSession(tokenHash: string): {
+  function createSession(access: McpAccess): {
     transport: WebStandardStreamableHTTPServerTransport;
     server: McpServer;
   } {
     const server = new McpServer(
       { name: "timeline", version: PRODUCT_VERSION },
-      { instructions: memoryInstructions(getAppStateDb()) },
+      { instructions: memoryInstructions(getAppStateDb(), { readOnly: access.readOnly }) },
     );
+    function recordSession(sessionId: string): void {
+      const client = server.server.getClientVersion();
+      upsertMcpSession({
+        id: sessionId,
+        transport: "http",
+        clientName: client?.name.slice(0, 100) ?? null,
+        clientVersion: client?.version.slice(0, 100) ?? null,
+        tokenHash: access.hash.slice(0, 16),
+        tokenLabel: access.label,
+      });
+    }
+    // Once per session, when the client has named itself: record the session
+    // and, for a managed token, its use and the client's name.
+    let initialized = false;
+    server.server.oninitialized = () => {
+      if (initialized) return;
+      initialized = true;
+      try {
+        if (transport.sessionId) recordSession(transport.sessionId);
+        if (access.id !== null) touchMcpToken(access.id, server.server.getClientVersion()?.name.slice(0, 100) ?? null);
+      } catch (error) {
+        console.error("[MCP] Failed to record session or token use:", error);
+      }
+    };
     let invalidRecorder: InvalidToolCallRecorder | undefined;
 
     function persistToolCall(rec: Omit<RecordToolCallInput, "sessionId"> & {
@@ -150,14 +176,7 @@ export function createMcpHandler(
           console.warn("[MCP] Skipping HTTP tool call recording without a session id");
           return;
         }
-        const client = server.server.getClientVersion();
-        upsertMcpSession({
-          id: sessionId,
-          transport: "http",
-          clientName: client?.name ?? null,
-          clientVersion: client?.version ?? null,
-          tokenHash,
-        });
+        recordSession(sessionId);
         recordMcpToolCall({
           sessionId,
           toolName: rec.toolName,
@@ -171,10 +190,12 @@ export function createMcpHandler(
       }
     }
 
-    registerTools(server, readDb, writeDb, {
+    // No writable handle for a read-only session, so not even a cache refresh writes.
+    registerTools(server, readDb, access.readOnly ? undefined : writeDb, {
       publicUrl: options.publicUrl,
       semanticSearch: options.semanticSearch,
       recordToolCall: persistToolCall,
+      readOnly: access.readOnly,
     });
 
     const transport = new WebStandardStreamableHTTPServerTransport({
@@ -185,6 +206,7 @@ export function createMcpHandler(
           transport,
           server,
           createdAt: Date.now(),
+          tokenHash: access.hash,
         });
       },
       onsessionclosed: (sessionId: string | undefined) => {
@@ -216,7 +238,7 @@ export function createMcpHandler(
       if (!isMcpEnabled()) {
         return new Response(JSON.stringify({
           jsonrpc: "2.0",
-          error: { code: -32000, message: "MCP not enabled. Set MCP_TOKENS env var." },
+          error: { code: -32000, message: "MCP not enabled. Create a token with timeline-service mcp-token create." },
           id: null,
         }), {
           status: 503,
@@ -237,7 +259,10 @@ export function createMcpHandler(
         const until = recentFailures[9] + failureWindow;
         if (now < until) return refuse(limited(until, now));
       }
-      if (!validateMcpToken(token)) {
+      // Unknown, revoked, and tailnet-only over Funnel are one answer.
+      let access = mcpAccess(token);
+      if (access?.tailnetOnly && funnel) access = null;
+      if (!access) {
         // Hosted clients probe without credentials before connecting, from
         // shared addresses, so only a presented and wrong token counts.
         if (funnel && token) {
@@ -260,25 +285,32 @@ export function createMcpHandler(
       }
 
       if (funnel) {
-        const key = hashMcpToken(token);
-        const recent = (requests.get(key) ?? []).filter(time => time > now - hour);
+        const recent = (requests.get(access.hash) ?? []).filter(time => time > now - hour);
         if (recent.length >= 600) return refuse(limited(recent[0] + hour, now));
         recent.push(now);
-        requests.set(key, recent);
+        requests.set(access.hash, recent);
+      }
+      if (access.id !== null) {
+        try {
+          touchMcpToken(access.id);
+        } catch (error) {
+          console.error("[MCP] Failed to record token use:", error);
+        }
       }
 
       const sessionId = req.headers.get("mcp-session-id");
 
       if (sessionId) {
         const session = sessions.get(sessionId);
-        if (session) {
+        if (session && session.tokenHash === access.hash) {
           session.createdAt = Date.now();
           return session.transport.handleRequest(req);
         }
 
-        // Session ID was provided but not found (expired or server restarted).
-        // Return 404 so the client knows to re-initialize rather than routing
-        // to a new transport which would confusingly return "Server not initialized".
+        // Session ID was provided but not found (expired, server restarted, or
+        // opened with another token). Return 404 so the client knows to
+        // re-initialize rather than routing to a new transport which would
+        // confusingly return "Server not initialized".
         console.log(`[MCP] Session not found: ${sessionId} (expired or server restarted)`);
         return new Response(JSON.stringify({
           jsonrpc: "2.0",
@@ -290,7 +322,7 @@ export function createMcpHandler(
         });
       }
 
-      const { transport } = createSession(hashMcpToken(token));
+      const { transport } = createSession(access);
       return transport.handleRequest(req);
     },
 

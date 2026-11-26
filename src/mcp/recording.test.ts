@@ -4,7 +4,6 @@ import { initAppStateDb } from "../db/app-state";
 import {
   getMcpSession,
   getMcpSessionStats,
-  hashMcpToken,
   listMcpToolCalls,
   MCP_RECORD_BODY_CAP,
   pruneMcpRecords,
@@ -26,13 +25,6 @@ afterEach(() => {
 });
 
 describe("MCP recording", () => {
-  test("hashMcpToken returns a stable 16-character hex prefix", () => {
-    const hash = hashMcpToken("test-token");
-    expect(hash).toBe(hashMcpToken("test-token"));
-    expect(hash).toHaveLength(16);
-    expect(hash).toMatch(/^[0-9a-f]{16}$/);
-  });
-
   test("truncates stored bodies while preserving true character counts", () => {
     upsertMcpSession({ id: "session-1", transport: "http", tokenHash: "abc123" }, db);
     const resultText = "x".repeat(MCP_RECORD_BODY_CAP + 7);

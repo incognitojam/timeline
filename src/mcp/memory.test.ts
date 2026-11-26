@@ -42,7 +42,7 @@ beforeEach(() => {
   initAppStateDb(appDb);
   tools = new Map();
   const fakeServer = {
-    tool: (name: string, _description: string, _schema: unknown, handler: ToolHandler) => tools.set(name, handler),
+    tool: (name: string, _description: string, _schema: unknown, _annotations: unknown, handler: ToolHandler) => tools.set(name, handler),
   } as unknown as McpServer;
   registerTools(fakeServer, wrapDatabase(timelineDb), timelineDb, { appStateDb: appDb });
 });

@@ -28,6 +28,7 @@ function detailResponse(): McpSessionDetail {
       client_name: "Test Client",
       client_version: "1.0.0",
       token_hash: "abc123def4567890",
+      token_label: null,
       created_at: "2026-07-03 10:00:00",
       last_activity_at: "2026-07-03 10:01:00",
     },

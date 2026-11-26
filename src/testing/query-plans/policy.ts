@@ -21,6 +21,7 @@ export const SMALL_TABLES: Record<string, string> = {
   sync_sources: "One row per registered sync source.",
   app_settings: "One row per application setting.",
   upload_tokens: "One row per operator-issued upload token.",
+  "mcp_tokens": "One row per operator-issued MCP token.",
   scheduler_state: "One row per scheduled source.",
   sync_state: "One row per sync source.",
   memory_notes: "Bounded by MEMORY_LIMITS in src/db/memory-notes.ts: live notes plus kept previous versions.",
