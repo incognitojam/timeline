@@ -224,6 +224,17 @@ export function initAppStateDb(db: Database) {
     db.exec(`ALTER TABLE spotify_resources ADD COLUMN image_url TEXT`);
   } catch {}
 
+  // Migration: when the Spotify sync asked for a playlist's cover, so it asks once
+  try {
+    db.exec(`ALTER TABLE spotify_resources ADD COLUMN image_checked_at TEXT`);
+  } catch {}
+  // Partial: only playlists still waiting for a cover, so it empties as the sync catches up.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_spotify_resources_awaiting_image
+    ON spotify_resources(type)
+    WHERE type = 'playlist' AND image_url IS NULL AND image_checked_at IS NULL
+  `);
+
   // What the Music page's top lists leave out. match_key is what plays are
   // compared on (see src/platforms/spotify/music.ts); label is for display.
   db.exec(`
@@ -545,6 +556,8 @@ export interface SpotifyResource {
   type: string;
   name: string;
   image_url: string | null;
+  /** When the sync asked Spotify for a playlist's cover; null for other resources. */
+  image_checked_at: string | null;
   updated_at: string;
 }
 
@@ -576,6 +589,25 @@ export function setSpotifyResource(
       image_url = COALESCE(excluded.image_url, spotify_resources.image_url),
       updated_at = datetime('now')
   `).run(uri, type, name, imageUrl ?? null);
+}
+
+/** Playlists cached without a cover that the sync has not asked Spotify about yet. */
+export function getPlaylistsAwaitingImage(db: Database, limit: number): string[] {
+  const rows = db.prepare(`
+    SELECT uri FROM spotify_resources
+    WHERE type = 'playlist' AND image_url IS NULL AND image_checked_at IS NULL
+    LIMIT ?
+  `).all(limit) as { uri: string }[];
+  return rows.map((row) => row.uri);
+}
+
+/** Record that the sync asked Spotify for a playlist's cover, keeping the cover if there was one. */
+export function setPlaylistImageChecked(db: Database, uri: string, imageUrl: string | null): void {
+  db.prepare(`
+    UPDATE spotify_resources
+    SET image_url = COALESCE(?, image_url), image_checked_at = datetime('now')
+    WHERE uri = ?
+  `).run(imageUrl, uri);
 }
 
 /**

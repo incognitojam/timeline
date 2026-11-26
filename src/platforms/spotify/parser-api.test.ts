@@ -1,7 +1,13 @@
 import { describe, test, expect, spyOn } from "bun:test";
+import { getSpotifyResource, initAppStateDb, setSpotifyResource } from "../../db/app-state";
+import { Database } from "../../db/sqlite";
 import {
+  cachePlaylistDetails,
   collectUnknownPlaylistUris,
   fetchPlaylistName,
+  lookUpMissingPlaylistImages,
+  PLAYLIST_IMAGE_LOOKUPS_PER_RUN,
+  SpotifyApiError,
   type SpotifyTokens,
   spotifyTokenExtractor,
   type SpotifyPlayHistoryItem,
@@ -68,8 +74,12 @@ describe("spotify-api playlist resolution", () => {
       expect(await fetchPlaylistName(tokens, "bare")).toEqual({ name: "Bare", imageUrl: null });
 
       fetchSpy.mockResolvedValueOnce(Response.json({ id: "blank", name: "", images: null }));
-      expect(await fetchPlaylistName(tokens, "blank")).toBeNull();
-      expect(fetchSpy).toHaveBeenCalledTimes(4);
+      expect(await fetchPlaylistName(tokens, "blank")).toEqual({ name: "", imageUrl: null });
+
+      // An ID Spotify rejects is as final as a deleted playlist.
+      fetchSpy.mockResolvedValueOnce(new Response("Invalid base62 id", { status: 400 }));
+      expect(await fetchPlaylistName(tokens, "x")).toBeNull();
+      expect(fetchSpy).toHaveBeenCalledTimes(5);
     } finally {
       fetchSpy.mockRestore();
     }
@@ -169,5 +179,123 @@ describe("spotify-api playlist resolution", () => {
 
     expect(result).toHaveLength(1);
     expect(result).toContain("spotify:playlist:unknown1");
+  });
+});
+
+describe("spotify-api playlist cover lookups", () => {
+  const playlistUri = (n: number) => `spotify:playlist:named${String(n).padStart(2, "0")}`;
+  function appDbWithNamedPlaylists(count: number): Database {
+    const appDb = new Database(":memory:");
+    initAppStateDb(appDb);
+    for (let n = 0; n < count; n++) setSpotifyResource(appDb, playlistUri(n), "playlist", `Named ${n}`);
+    setSpotifyResource(appDb, "spotify:playlist:covered", "playlist", "Covered", "https://example.com/covered.jpg");
+    setSpotifyResource(appDb, "spotify:track:untouched", "track", "Track");
+    return appDb;
+  }
+
+  test("asks about each named playlist without a cover once, a few per run", async () => {
+    const appDb = appDbWithNamedPlaylists(PLAYLIST_IMAGE_LOOKUPS_PER_RUN + 2);
+    const asked: string[] = [];
+    const lookUp = async (id: string) => {
+      asked.push(id);
+      if (id === "named00") return { name: "", imageUrl: "https://example.com/new.jpg" };
+      if (id === "named01") return null; // private, deleted or Spotify-owned
+      return { name: `Renamed ${id}`, imageUrl: id === "named11" ? "https://example.com/late.jpg" : null };
+    };
+
+    expect(await lookUpMissingPlaylistImages(appDb, lookUp)).toBe(PLAYLIST_IMAGE_LOOKUPS_PER_RUN);
+    expect(asked).toHaveLength(PLAYLIST_IMAGE_LOOKUPS_PER_RUN);
+    expect(getSpotifyResource(appDb, playlistUri(0))).toMatchObject({ name: "Named 0", image_url: "https://example.com/new.jpg" });
+    expect(getSpotifyResource(appDb, playlistUri(1))).toMatchObject({ name: "Named 1", image_url: null });
+
+    // The next run takes the rest; none is asked about twice, and covered playlists never.
+    expect(await lookUpMissingPlaylistImages(appDb, lookUp)).toBe(2);
+    expect(new Set(asked).size).toBe(PLAYLIST_IMAGE_LOOKUPS_PER_RUN + 2);
+    expect(getSpotifyResource(appDb, playlistUri(11))?.image_url).toBe("https://example.com/late.jpg");
+    expect(await lookUpMissingPlaylistImages(appDb, lookUp)).toBe(0);
+    expect(asked).toHaveLength(PLAYLIST_IMAGE_LOOKUPS_PER_RUN + 2);
+  });
+
+  test("stops at a rate limit and retries failed lookups on a later run", async () => {
+    const appDb = appDbWithNamedPlaylists(3);
+    const failing = async (id: string) => {
+      if (id === "named00") throw new Error("socket hang up");
+      if (id === "named01") throw new SpotifyApiError(429, "Spotify rate limited.");
+      return { name: id, imageUrl: null };
+    };
+    expect(await lookUpMissingPlaylistImages(appDb, failing)).toBe(0);
+
+    const asked: string[] = [];
+    expect(await lookUpMissingPlaylistImages(appDb, async (id) => {
+      asked.push(id);
+      return null;
+    })).toBe(3);
+    expect(asked).toEqual(["named00", "named01", "named02"]);
+  });
+
+  test("keeps a cover Spotify returns with a blank name, and the cached name", async () => {
+    const appDb = appDbWithNamedPlaylists(1);
+    const tokens = { access_token: "token", expires_at: Date.now() + 60_000 } as SpotifyTokens;
+    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({
+      id: "named00",
+      name: "",
+      images: [{ url: "https://example.com/blank-name.jpg", height: null }],
+    }));
+    try {
+      expect(await lookUpMissingPlaylistImages(appDb, (id) => fetchPlaylistName(tokens, id))).toBe(1);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+    expect(getSpotifyResource(appDb, playlistUri(0))).toMatchObject({
+      name: "Named 0",
+      image_url: "https://example.com/blank-name.jpg",
+    });
+  });
+
+  test("retires a URI with no playlist ID without asking Spotify", async () => {
+    const appDb = appDbWithNamedPlaylists(0);
+    setSpotifyResource(appDb, "spotify:playlist:not an id!", "playlist", "Odd");
+    const asked: string[] = [];
+    const lookUp = async (id: string) => {
+      asked.push(id);
+      return null;
+    };
+    expect(await lookUpMissingPlaylistImages(appDb, lookUp)).toBe(1);
+    expect(await lookUpMissingPlaylistImages(appDb, lookUp)).toBe(0);
+    expect(asked).toEqual([]);
+  });
+
+  const playFrom = (uri: string): SpotifyPlayHistoryItem => ({
+    track: { uri: "spotify:track:1", name: "Track 1", artists: [{ name: "Artist" }] },
+    played_at: "2024-01-01T00:00:00Z",
+    context: { type: "playlist", uri, href: "" },
+  });
+
+  test("names new playlists before covers, and marks their covers checked", async () => {
+    const appDb = appDbWithNamedPlaylists(1);
+    const asked: string[] = [];
+    await cachePlaylistDetails(appDb, [playFrom("spotify:playlist:fresh")], new Map(), async (id) => {
+      asked.push(id);
+      return { name: `Name ${id}`, imageUrl: null };
+    });
+    expect(asked).toEqual(["fresh", "named00"]);
+    expect(getSpotifyResource(appDb, "spotify:playlist:fresh")?.image_checked_at).not.toBeNull();
+    // Neither is asked about again.
+    await cachePlaylistDetails(appDb, [], new Map(), async (id) => {
+      asked.push(id);
+      return null;
+    });
+    expect(asked).toEqual(["fresh", "named00"]);
+  });
+
+  test("looks up no covers in a run where naming was rate limited", async () => {
+    const appDb = appDbWithNamedPlaylists(1);
+    const asked: string[] = [];
+    await cachePlaylistDetails(appDb, [playFrom("spotify:playlist:fresh")], new Map(), async (id) => {
+      asked.push(id);
+      throw new SpotifyApiError(429, "Spotify rate limited.");
+    });
+    expect(asked).toEqual(["fresh"]);
+    expect(getSpotifyResource(appDb, playlistUri(0))?.image_checked_at).toBeNull();
   });
 });
