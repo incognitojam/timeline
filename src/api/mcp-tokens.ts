@@ -32,7 +32,7 @@ export interface McpTokenRow {
   revoked_at: string | null;
 }
 
-function envTokens(): string[] {
+export function envTokens(): string[] {
   return process.env.MCP_TOKENS?.split(",").map(t => t.trim()).filter(Boolean) ?? [];
 }
 

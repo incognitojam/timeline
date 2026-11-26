@@ -2190,6 +2190,37 @@ export interface McpSessionDetail {
   stats: McpSessionStats;
 }
 
+export interface McpToken {
+  id: number;
+  label: string;
+  read_only: boolean;
+  tailnet_only: boolean;
+  created_at: string;
+  last_used_at: string | null;
+  last_client: string | null;
+  revoked_at: string | null;
+}
+
+export async function fetchMcpTokens(signal: AbortSignal): Promise<{ tokens: McpToken[]; env_token_count: number }> {
+  const res = await apiFetch(`${API_BASE}/api/mcp/tokens`, { signal });
+  return parseApiJson(res, "Failed to load MCP tokens");
+}
+
+/** Create a token; the response is the only time its value is available. */
+export async function createMcpToken(input: { label: string; read_only: boolean; tailnet_only: boolean }): Promise<{ id: number; token: string }> {
+  const res = await apiFetch(`${API_BASE}/api/mcp/tokens`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return parseApiJson(res, "Failed to create MCP token");
+}
+
+export async function revokeMcpToken(id: number): Promise<void> {
+  const res = await apiFetch(`${API_BASE}/api/mcp/tokens/${id}`, { method: "DELETE" });
+  await parseApiJson<{ ok: true }>(res, "Failed to revoke MCP token");
+}
+
 export async function fetchMcpSessions(options: {
   limit?: number;
   offset?: number;

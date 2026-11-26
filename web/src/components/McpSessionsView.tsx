@@ -6,6 +6,7 @@ import { formatAbsoluteTime, timestampToBrowserIso, transportClass } from "../li
 import { useMcpSessions } from "../lib/queries";
 import { MCP_SESSION_LIMIT } from "../lib/query-params";
 import { buildMcpSessionUrl } from "../lib/routes";
+import McpTokensPanel from "./McpTokensPanel";
 
 function clientLabel(session: McpSessionSummary): string {
   const name = session.client_name ?? "Unknown client";
@@ -37,9 +38,13 @@ export default function McpSessionsView() {
         <div class="mb-6">
           <h1 class="font-display text-2xl font-medium">MCP</h1>
           <p class="text-sm text-muted-foreground mt-1">
-            Tool calls grouped by MCP client session.
+            The tokens clients connect with, and their tool calls grouped by session.
           </p>
         </div>
+
+        <McpTokensPanel />
+
+        <h2 class="font-display text-lg font-medium mb-4">Sessions</h2>
 
         <Show when={query.isError}>
           <div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300 mb-4">
