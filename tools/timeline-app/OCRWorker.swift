@@ -2,11 +2,7 @@
 // hangs. One request at a time: the app writes an image path and a newline,
 // and the worker answers with one JSON line, {"lines": [...]} or {"error": ...}.
 import Foundation
-#if canImport(Darwin)
 import Darwin
-#else
-import Glibc
-#endif
 
 final class OCRWorker: @unchecked Sendable {
     private struct Child {
@@ -33,7 +29,8 @@ final class OCRWorker: @unchecked Sendable {
     // Recognised lines of the image at `path`. A worker that misses the
     // timeout, dies or answers garbage is killed; the next call starts another.
     func recognize(path: String) async throws -> [String] {
-        try await withCheckedThrowingContinuation { continuation in
+        try Task.checkCancellation()
+        return try await withCheckedThrowingContinuation { continuation in
             queue.async { continuation.resume(with: Result { try self.request(path) }) }
         }
     }
@@ -110,16 +107,9 @@ final class OCRWorker: @unchecked Sendable {
         let output = Pipe()
         process.standardInput = input
         process.standardOutput = output
-        // The app's other children must not inherit the worker's pipes, or
-        // the worker would not see EOF when the app exits.
-        var configured = [input.fileHandleForWriting.fileDescriptor, output.fileHandleForReading.fileDescriptor]
-            .allSatisfy { fcntl($0, F_SETFD, FD_CLOEXEC) == 0 }
-        #if canImport(Darwin)
         // A worker that exits between requests makes the write fail with
         // EPIPE instead of killing the app with SIGPIPE.
-        configured = configured && fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) == 0
-        #endif
-        guard configured else {
+        guard fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) == 0 else {
             throw RecallError("Text recognition could not start (error \(errno)), so this capture was skipped. Timeline tries again on the next capture.")
         }
         do {
@@ -135,8 +125,8 @@ final class OCRWorker: @unchecked Sendable {
     private static func end(_ worker: Child) {
         try? worker.input.close()
         if worker.process.isRunning { worker.process.terminate() }
-        let deadline = Date().addingTimeInterval(2)
-        while worker.process.isRunning, Date() < deadline { usleep(20_000) }
+        let deadline = ProcessInfo.processInfo.systemUptime + 2
+        while worker.process.isRunning, ProcessInfo.processInfo.systemUptime < deadline { usleep(20_000) }
         if worker.process.isRunning { kill(worker.process.processIdentifier, SIGKILL) }
         worker.process.waitUntilExit()
         try? worker.output.close()
@@ -148,11 +138,12 @@ final class OCRWorker: @unchecked Sendable {
 
     // One newline-terminated reply, without the newline.
     private static func readReply(_ fd: Int32, timeout: TimeInterval) throws -> Data {
-        let deadline = Date().addingTimeInterval(timeout)
+        // Uptime, so a clock change cannot move the deadline.
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
         var reply = Data()
         var chunk = [UInt8](repeating: 0, count: 64 * 1024)
         while true {
-            let remaining = deadline.timeIntervalSinceNow
+            let remaining = deadline - ProcessInfo.processInfo.systemUptime
             guard remaining > 0 else {
                 throw RecallError("Text recognition did not finish within \(Int(timeout)) seconds, so this capture was skipped. Timeline restarts text recognition for the next capture.")
             }
@@ -180,14 +171,13 @@ final class OCRWorker: @unchecked Sendable {
         var unblocked = sigset_t()
         sigemptyset(&unblocked)
         pthread_sigmask(SIG_SETMASK, &unblocked, nil)
+        // Replies get stdout to themselves; anything else printed goes to stderr.
+        let replies = FileHandle(fileDescriptor: dup(STDOUT_FILENO))
+        dup2(STDERR_FILENO, STDOUT_FILENO)
         let parent = getppid()
-        #if canImport(Darwin)
         let parentExit = DispatchSource.makeProcessSource(identifier: parent, eventMask: .exit, queue: .global())
         parentExit.setEventHandler { _exit(0) }
         parentExit.resume()
-        #else
-        let parentExit: Void = ()
-        #endif
         if parent == 1 || getppid() != parent { _exit(0) }
         let queue = DispatchQueue(label: "dev.incognitojam.timeline.ocr-worker")
         withExtendedLifetime(parentExit) {
@@ -195,7 +185,7 @@ final class OCRWorker: @unchecked Sendable {
                 queue.async {
                     let reply: [String: Any] = recognize(path).map { ["lines": $0] } ?? ["error": "unreadable image"]
                     guard let data = try? JSONSerialization.data(withJSONObject: reply),
-                          (try? FileHandle.standardOutput.write(contentsOf: data + Data("\n".utf8))) != nil else { _exit(1) }
+                          (try? replies.write(contentsOf: data + Data("\n".utf8))) != nil else { _exit(1) }
                 }
             }
         }
