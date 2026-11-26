@@ -76,7 +76,7 @@ test("OAuth discovery probes over Funnel get a 404", async () => {
   }
 });
 
-test("refused MCP requests are logged without the token, header values or source", async () => {
+test("refused MCP requests are logged without the token, the Authorization value, the path or the source", async () => {
   const lines: string[] = [];
   const spy = spyOn(console, "log").mockImplementation((line: unknown) => { lines.push(String(line)); });
   try {
@@ -90,11 +90,12 @@ test("refused MCP requests are logged without the token, header values or source
     });
     await app.request("/mcp/wrong-path-secret", { headers: { ...FUNNEL, "X-Forwarded-For": "192.0.2.30" } });
     await app.request("/.well-known/oauth-protected-resource", { headers: FUNNEL });
+    await app.request("/some-secret-path?token=query-secret", { headers: FUNNEL });
   } finally {
     spy.mockRestore();
   }
   const refused = lines.filter(line => line.includes('"mcp.refused"')).map(line => JSON.parse(line));
-  expect(refused).toHaveLength(3);
+  expect(refused).toHaveLength(4);
   expect(refused[0]).toMatchObject({
     method: "POST", path: "mcp", status: 401, funnel: true, authorization: "bearer",
     userAgent: `Example-Client/1.0 ${"x".repeat(80)}`.slice(0, 80), mcpProtocolVersion: "2025-06-18",
@@ -103,6 +104,25 @@ test("refused MCP requests are logged without the token, header values or source
   expect(refused[1]).toMatchObject({ method: "GET", path: "mcp-path-token", status: 401, authorization: "none" });
   expect(refused[1].source).toBe(refused[0].source);
   expect(refused[2]).toMatchObject({ path: "well-known", status: 404, source: null });
+  expect(refused[3]).toMatchObject({ path: "other", status: 403 });
   const text = lines.join("\n");
-  for (const secret of ["wrong-secret-value", "wrong-path-secret", "192.0.2.30"]) expect(text).not.toContain(secret);
+  for (const secret of ["wrong-secret-value", "wrong-path-secret", "192.0.2.30", "some-secret-path", "query-secret"]) expect(text).not.toContain(secret);
+});
+
+test("refused-request logging is capped per minute and reports what it dropped", async () => {
+  const lines: string[] = [];
+  const spy = spyOn(console, "log").mockImplementation((line: unknown) => { lines.push(String(line)); });
+  const now = spyOn(Date, "now");
+  try {
+    now.mockReturnValue(Date.UTC(2030, 0, 1, 0, 0, 0));
+    for (let i = 0; i < 70; i++) await app.request("/flood", { headers: FUNNEL });
+    now.mockReturnValue(Date.UTC(2030, 0, 1, 0, 1, 0));
+    await app.request("/flood", { headers: FUNNEL });
+  } finally {
+    now.mockRestore();
+    spy.mockRestore();
+  }
+  const events = lines.filter(line => line.includes('"mcp.refused')).map(line => JSON.parse(line));
+  expect(events.filter(e => e.event === "mcp.refused")).toHaveLength(61);
+  expect(events.filter(e => e.event === "mcp.refused.suppressed")).toEqual([expect.objectContaining({ count: 10 })]);
 });

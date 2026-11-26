@@ -39,12 +39,31 @@ export const FUNNEL_HEADER = "Tailscale-Funnel-Request";
 const SESSION_TIMEOUT_MS = 60 * 60 * 1000;
 
 const sourceSalt = randomBytes(16);
+const REFUSED_LOG_PER_MINUTE = 60;
+let refusedLogMinute = 0;
+let refusedLogged = 0;
+let refusedSuppressed = 0;
 
 /**
  * Log an MCP request refused before it reached a session, to diagnose clients
- * that cannot connect. Never the token, header values, full source or body.
+ * that cannot connect. Never the token, the Authorization value, the full
+ * source or the body. At most 60 lines a minute, so the internet cannot fill
+ * the disk; the next minute's first refusal reports how many were dropped.
  */
 export function logRefusedMcpRequest(req: Request, status: number, path: "mcp" | "mcp-path-token" | "well-known" | "other") {
+  const minute = Math.floor(Date.now() / 60_000);
+  if (minute !== refusedLogMinute) {
+    if (refusedSuppressed) {
+      console.log(JSON.stringify({ timestamp: new Date().toISOString(), event: "mcp.refused.suppressed", count: refusedSuppressed }));
+    }
+    refusedLogMinute = minute;
+    refusedLogged = 0;
+    refusedSuppressed = 0;
+  }
+  if (++refusedLogged > REFUSED_LOG_PER_MINUTE) {
+    refusedSuppressed++;
+    return;
+  }
   const authorization = req.headers.get("Authorization");
   const source = req.headers.get("X-Forwarded-For");
   console.log(JSON.stringify({
