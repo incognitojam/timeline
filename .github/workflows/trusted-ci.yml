@@ -46,6 +46,7 @@ jobs:
         run: (cd tools/timeline-app && ./build.sh)
       - run: brew install webp
       - name: Smoke-test the Timeline app bundle
+        timeout-minutes: 15
         run: (cd tools/timeline-app && ./smoke.sh --native-only)
 
   source-service:

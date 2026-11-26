@@ -125,6 +125,7 @@ jobs:
         env:
           TIMELINE_CODESIGN_IDENTITY: '-'
           VITE_MAPTILER_API_KEY: 'ci-test'
+        timeout-minutes: 20
         run: ./build.sh && ./smoke.sh --native-only
 
   source-service:

@@ -121,15 +121,25 @@ final class OCRWorker: @unchecked Sendable {
     }
 
     // Closing the input ends an idle worker; TERM ends a busy one, and KILL one
-    // that ignores TERM. Waiting reaps it before its pipes are closed.
+    // that ignores TERM. A worker stuck where even KILL cannot reach it is
+    // abandoned rather than waited for, so recall carries on with a new one.
     private static func end(_ worker: Child) {
         try? worker.input.close()
         if worker.process.isRunning { worker.process.terminate() }
-        let deadline = ProcessInfo.processInfo.systemUptime + 2
-        while worker.process.isRunning, ProcessInfo.processInfo.systemUptime < deadline { usleep(20_000) }
-        if worker.process.isRunning { kill(worker.process.processIdentifier, SIGKILL) }
-        worker.process.waitUntilExit()
+        if !exits(worker.process, within: 2) {
+            kill(worker.process.processIdentifier, SIGKILL)
+            if !exits(worker.process, within: 2) {
+                RecallCapture.warn("an OCR worker did not exit after KILL and was abandoned")
+            }
+        }
         try? worker.output.close()
+    }
+
+    // Foundation reaps the process before isRunning turns false.
+    private static func exits(_ process: Process, within seconds: TimeInterval) -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + seconds
+        while process.isRunning, ProcessInfo.processInfo.systemUptime < deadline { usleep(20_000) }
+        return !process.isRunning
     }
 
     private static let stoppedError = RecallError("Text recognition stopped unexpectedly, so this capture was skipped. Timeline restarts it for the next capture.")

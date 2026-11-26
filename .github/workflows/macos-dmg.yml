@@ -99,6 +99,8 @@ jobs:
           VITE_MAPTILER_API_KEY: ${{ secrets.VITE_MAPTILER_API_KEY }}
         run: TIMELINE_BUILD_NUMBER="$(../../scripts/print-build-number.sh)" ./build.sh
       - name: Sign, notarize, and package DMG
+        # Two notarizations of up to 30 minutes each, and the smoke test.
+        timeout-minutes: 75
         working-directory: tools/timeline-app
         env:
           APPLE_SIGNING_CERTIFICATE_BASE64: ${{ secrets.APPLE_SIGNING_CERTIFICATE_BASE64 }}
