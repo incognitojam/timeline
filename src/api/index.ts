@@ -26,6 +26,7 @@ import { getTrackedPlaylists, getPlaylistObservations, getPlaylistMeta } from ".
 import {
   addExclusion,
   getMusicRankings,
+  getPlayedPlaylists,
   getRecentMusicPlays,
   getTopListFilter,
   isMusicPeriod,
@@ -34,7 +35,7 @@ import {
   resolveExclusion,
   setExcludePrivateSessions,
 } from "../platforms/spotify/music";
-import type { MusicExclusionRequest } from "../platforms/spotify/shared/music";
+import type { MusicExclusionRequest, MusicExclusionsResponse } from "../platforms/spotify/shared/music";
 import { streamJournalQuestions, streamJournalReflection } from "../journal/questions";
 import { clampLimit, clampOffset } from "./query-params";
 import { statusRoutes } from "./status";
@@ -948,9 +949,12 @@ app.get("/api/music/rankings", (c) => {
 
 function parseExclusionRequest(body: unknown): MusicExclusionRequest | null {
   if (!body || typeof body !== "object") return null;
-  const { kind, eventId, artistName } = body as Record<string, unknown>;
+  const { kind, eventId, artistName, playlistUri } = body as Record<string, unknown>;
   if (kind === "artist") {
     return typeof artistName === "string" && artistName.trim() ? { kind, artistName } : null;
+  }
+  if (kind === "playlist" && playlistUri !== undefined) {
+    return typeof playlistUri === "string" && playlistUri.trim() ? { kind, playlistUri } : null;
   }
   if ((kind === "track" || kind === "album" || kind === "playlist") && Number.isSafeInteger(eventId)) {
     return { kind, eventId: eventId as number };
@@ -958,16 +962,31 @@ function parseExclusionRequest(body: unknown): MusicExclusionRequest | null {
   return null;
 }
 
-app.get("/api/music/exclusions", (c) => c.json(publicTopListFilter(getTopListFilter(getAppStateDb()))));
+app.get("/api/music/exclusions", (c) => {
+  const appDb = getAppStateDb();
+  const filter = getTopListFilter(appDb);
+  const excluded = new Set(filter.exclusions.filter((e) => e.kind === "playlist").map((e) => e.matchKey));
+  const playedPlaylists = getPlayedPlaylists(db, (uri) => getSpotifyResource(appDb, uri)?.name ?? null);
+  return c.json({
+    ...publicTopListFilter(filter),
+    playedPlaylists: playedPlaylists.filter((playlist) => !excluded.has(playlist.playlistUri)),
+  } satisfies MusicExclusionsResponse);
+});
 
 app.post("/api/music/exclusions", async (c) => {
   const request = parseExclusionRequest(await c.req.json().catch(() => null));
   if (!request) {
-    return c.json({ error: "Expected { kind: track|album|playlist, eventId } or { kind: artist, artistName }" }, 400);
+    return c.json({
+      error: "Expected { kind: track|album|playlist, eventId }, { kind: playlist, playlistUri } or { kind: artist, artistName }",
+    }, 400);
   }
   const appDb = getAppStateDb();
   const exclusion = resolveExclusion(db, request, (uri) => getSpotifyResource(appDb, uri)?.name ?? null);
-  if (!exclusion) return c.json({ error: `That play does not record its ${request.kind}` }, 404);
+  if (!exclusion) {
+    return c.json({
+      error: "playlistUri" in request ? "No plays recorded from that playlist" : `That play does not record its ${request.kind}`,
+    }, 404);
+  }
   return c.json({ exclusion: addExclusion(appDb, exclusion) }, 201);
 });
 

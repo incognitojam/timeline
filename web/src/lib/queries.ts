@@ -1190,7 +1190,7 @@ export function useMusicExclusions() {
 }
 
 /** Exclusions filter every range's top lists, so a change refetches them all. */
-function useMusicTopListMutation<T>(mutationFn: (variables: T) => Promise<unknown>) {
+function useMusicTopListMutation<T, R>(mutationFn: (variables: T) => Promise<R>) {
   const queryClient = useQueryClient();
   return createMutation(() => ({
     mutationFn,

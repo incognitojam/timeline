@@ -37,7 +37,14 @@ function renderPlaylist(client: QueryClient) {
   ));
 }
 
-/** A stateful stand-in for the music API: one ranked track, and exclusions that writes change. */
+const EXAMPLE_PLAYLIST = {
+  playlistUri: "spotify:playlist:example-mix", name: "Example Mix", plays: 3, lastPlayedAt: "2026-03-01T00:00:00Z",
+};
+
+/**
+ * A stateful stand-in for the music API: one ranked track, one played playlist,
+ * and exclusions that writes change.
+ */
 function musicExclusionsApi(initial: { id: number; kind: string; label: string }[] = []) {
   let exclusions = initial;
   let excludePrivateSessions = false;
@@ -50,13 +57,19 @@ function musicExclusionsApi(initial: { id: number; kind: string; label: string }
       if (init.method === "DELETE") exclusions = exclusions.filter((e) => `/api/music/exclusions/${e.id}` !== url.pathname);
       if (init.method === "PUT") excludePrivateSessions = JSON.parse(String(init.body)).excluded;
       if (init.method === "POST") {
-        const exclusion = { id: 8, kind: "track", label: "Example Track · Example Artist" };
+        const exclusion = JSON.parse(String(init.body)).kind === "playlist"
+          ? { id: 9, kind: "playlist", label: EXAMPLE_PLAYLIST.name }
+          : { id: 8, kind: "track", label: "Example Track · Example Artist" };
         exclusions = [...exclusions, exclusion];
         return Response.json({ exclusion }, { status: 201 });
       }
       return Response.json({ ok: true });
     }
-    if (url.pathname === "/api/music/exclusions") return Response.json(filter());
+    if (url.pathname === "/api/music/exclusions") {
+      // The server leaves excluded playlists out of the played list.
+      const playedPlaylists = exclusions.some((e) => e.kind === "playlist") ? [] : [EXAMPLE_PLAYLIST];
+      return Response.json({ ...filter(), playedPlaylists });
+    }
     if (url.pathname === "/api/music/rankings") {
       return Response.json({
         period: url.searchParams.get("period"),
@@ -263,6 +276,60 @@ describe("music route query cache", () => {
       "DELETE /api/music/exclusions/7",
       'PUT /api/music/exclusions/private-sessions {"excluded":true}',
     ]);
+  });
+
+  it("excludes a played playlist and lists it as excluded until included again", async () => {
+    const fetchMock = musicExclusionsApi();
+    vi.stubGlobal("fetch", fetchMock.fetch);
+    const history = createMemoryHistory();
+    history.set({ value: "/music/excluded", replace: true });
+    const screen = render(() => (
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter history={history}>
+          <Route path="/music/excluded" component={MusicExclusionsView} />
+        </MemoryRouter>
+      </QueryClientProvider>
+    ));
+
+    const played = await screen.findByRole("region", { name: "Playlists you've played from" });
+    expect(played).toHaveTextContent("Example Mix3 plays · last played");
+    expect(played).toHaveTextContent("Only playlists the live sync saw you play from are listed.");
+    screen.getByRole("button", { name: "Exclude Example Mix" }).click();
+
+    await vi.waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Example Mix left out of top lists."));
+    expect(played).toHaveTextContent("Every playlist you've played from is excluded.");
+    const excluded = screen.getByRole("region", { name: /^Excluded/ });
+    expect(excluded).toHaveTextContent("PlaylistExample Mix");
+
+    screen.getByRole("button", { name: "Include again" }).click();
+    expect(await screen.findByRole("button", { name: "Exclude Example Mix" })).toBeInTheDocument();
+    expect(screen.getByRole("status").textContent).toBe("");
+    expect(fetchMock.writes).toEqual([
+      `POST /api/music/exclusions {"kind":"playlist","playlistUri":"${EXAMPLE_PLAYLIST.playlistUri}"}`,
+      "DELETE /api/music/exclusions/9",
+    ]);
+  });
+
+  it("says so when excluding a played playlist fails", async () => {
+    const api = musicExclusionsApi();
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request, init?: RequestInit) => init?.method === "POST"
+      ? Promise.resolve(Response.json({ error: "Database is locked" }, { status: 500 }))
+      : api.fetch(input, init)));
+    const history = createMemoryHistory();
+    history.set({ value: "/music/excluded", replace: true });
+    const screen = render(() => (
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter history={history}>
+          <Route path="/music/excluded" component={MusicExclusionsView} />
+        </MemoryRouter>
+      </QueryClientProvider>
+    ));
+
+    (await screen.findByRole("button", { name: "Exclude Example Mix" })).click();
+    await vi.waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("Could not exclude that playlist. Try again.");
+    });
+    expect(screen.getByRole("button", { name: "Exclude Example Mix" })).not.toBeDisabled();
   });
 
   it("reuses playlist detail when the route remounts", async () => {

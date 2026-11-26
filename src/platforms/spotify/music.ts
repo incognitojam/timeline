@@ -4,6 +4,7 @@ import {
   type MusicExclusion,
   type MusicExclusionKind,
   type MusicExclusionRequest,
+  type MusicPlayedPlaylist,
   type MusicPeriod,
   type MusicRankingsOverview,
   type MusicRankedArtist,
@@ -216,9 +217,64 @@ export function setExcludePrivateSessions(appDb: Database, excluded: boolean): v
 }
 
 /**
+ * Playlists the live sync recorded plays from, most played first, or only the
+ * one given. Each is named by its cached current name, else its latest play's
+ * tag, else its id.
+ */
+export function getPlayedPlaylists(
+  db: Database,
+  cachedName: (uri: string) => string | null,
+  onlyUri: string | null = null,
+): MusicPlayedPlaylist[] {
+  // One row per playlist and tagged name, oldest first, so a later name replaces an earlier one.
+  // julianday orders mixed-precision timestamps as instants; with MAX, the bare
+  // e.timestamp comes from the same (latest) row and keeps its original form.
+  const groups = db.prepare(`
+    SELECT
+      ${PLAYLIST_URI_SQL} AS playlistUri,
+      ${PLAYLIST_NAME_SQL} AS tagName,
+      COUNT(*) AS plays,
+      MAX(julianday(e.timestamp)) AS lastPlayedDay,
+      e.timestamp AS lastPlayedAt
+    FROM events e
+    WHERE e.source = 'spotify'
+      AND e.type = 'listen:track'
+      AND e.timestamp IS NOT NULL
+      AND playlistUri IS NOT NULL
+      AND (?1 IS NULL OR playlistUri = ?1)
+    GROUP BY playlistUri, tagName
+    ORDER BY lastPlayedDay
+  `).all(onlyUri) as {
+    playlistUri: string;
+    tagName: string | null;
+    plays: number;
+    lastPlayedDay: number;
+    lastPlayedAt: string;
+  }[];
+  const playlists = new Map<string, Omit<(typeof groups)[number], "playlistUri">>();
+  for (const group of groups) {
+    const playlist = playlists.get(group.playlistUri);
+    playlists.set(group.playlistUri, {
+      ...group,
+      plays: group.plays + (playlist?.plays ?? 0),
+      tagName: group.tagName ?? playlist?.tagName ?? null,
+    });
+  }
+  return Array.from(playlists, ([playlistUri, playlist]) => ({ playlistUri, ...playlist }))
+    .sort((a, b) => b.plays - a.plays || b.lastPlayedDay - a.lastPlayedDay)
+    .map((playlist) => ({
+      playlistUri: playlist.playlistUri,
+      name: cachedName(playlist.playlistUri) ?? playlist.tagName
+        ?? playlist.playlistUri.slice(playlist.playlistUri.lastIndexOf(":") + 1),
+      plays: playlist.plays,
+      lastPlayedAt: playlist.lastPlayedAt,
+    }));
+}
+
+/**
  * Resolve what a request excludes to the key plays are matched on, reading the
- * play it names from timeline.db. Null when that play does not record it — a
- * playlist, for one, is only known for live-synced plays.
+ * plays it names from timeline.db. Null when no play records it — a playlist,
+ * for one, is only known for live-synced plays.
  */
 export function resolveExclusion(
   db: Database,
@@ -228,6 +284,11 @@ export function resolveExclusion(
   if (request.kind === "artist") {
     return { kind: "artist", matchKey: request.artistName, label: request.artistName };
   }
+  const playlist = (uri: string) => {
+    const [played] = getPlayedPlaylists(db, playlistNames, uri);
+    return played ? { kind: "playlist" as const, matchKey: played.playlistUri, label: played.name } : null;
+  };
+  if ("playlistUri" in request) return playlist(request.playlistUri);
   const play = db.prepare(`
     SELECT
       e.title AS trackName,
@@ -236,8 +297,7 @@ export function resolveExclusion(
       ${ALBUM_NAME_SQL} AS albumName,
       ${ALBUM_ARTIST_SQL} AS albumArtist,
       ${ALBUM_KEY_SQL} AS albumKey,
-      ${PLAYLIST_URI_SQL} AS playlistUri,
-      ${PLAYLIST_NAME_SQL} AS playlistName
+      ${PLAYLIST_URI_SQL} AS playlistUri
     FROM events e
     WHERE e.id = ? AND e.source = 'spotify' AND e.type = 'listen:track'
   `).get(request.eventId) as {
@@ -248,7 +308,6 @@ export function resolveExclusion(
     albumArtist: string | null;
     albumKey: string | null;
     playlistUri: string | null;
-    playlistName: string | null;
   } | null;
   if (!play) return null;
   const byline = (name: string | null, artist: string | null) =>
@@ -264,13 +323,7 @@ export function resolveExclusion(
       ? { kind: "album", matchKey: play.albumKey, label: byline(play.albumName, play.albumArtist) }
       : null;
   }
-  return play.playlistUri
-    ? {
-      kind: "playlist",
-      matchKey: play.playlistUri,
-      label: play.playlistName ?? playlistNames(play.playlistUri) ?? play.playlistUri,
-    }
-    : null;
+  return play.playlistUri ? playlist(play.playlistUri) : null;
 }
 
 export function addExclusion(

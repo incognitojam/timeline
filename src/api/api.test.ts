@@ -31,7 +31,12 @@ import type { Database } from "../db/sqlite";
 import { findUnprocessedFiles, hashFile, markFileProcessed } from "../inbox/tracker";
 import { seed } from "../testing/seed";
 import type { AttachmentsStats } from "../shared/attachments";
-import type { MusicExclusionRequest, MusicRankingsOverview } from "../platforms/spotify/shared/music";
+import type {
+  MusicExclusionRequest,
+  MusicExclusionsResponse,
+  MusicPlayedPlaylist,
+  MusicRankingsOverview,
+} from "../platforms/spotify/shared/music";
 import {
   LocalMediaStore,
   type RemoteBlobStore,
@@ -1444,6 +1449,10 @@ describe("API Smoke Tests", () => {
         return { status: res.status, json: await res.json() };
       };
       const include = (id: number) => app.request(`/api/music/exclusions/${id}`, { method: "DELETE" });
+      const filterOnly = async () => {
+        const { playedPlaylists: _, ...filter } = await (await app.request("/api/music/exclusions")).json() as MusicExclusionsResponse;
+        return filter;
+      };
       const privateSessions = (excluded: boolean) => app.request("/api/music/exclusions/private-sessions", {
         method: "PUT",
         body: JSON.stringify({ excluded }),
@@ -1477,7 +1486,7 @@ describe("API Smoke Tests", () => {
         expect(after.totalPlays).toBe(before.totalPlays);
         expect(after.filter.exclusions).toEqual([created.json.exclusion]);
         // Only the public fields: the key plays are matched on stays on the server.
-        expect(await (await app.request("/api/music/exclusions")).json()).toStrictEqual({
+        expect(await filterOnly()).toStrictEqual({
           exclusions: [{ id: created.json.exclusion.id, kind: body.kind, label }],
           excludePrivateSessions: false,
         });
@@ -1489,10 +1498,66 @@ describe("API Smoke Tests", () => {
       const withoutPrivate = await listed();
       expect(withoutPrivate.totalPlays).toBe(before.totalPlays);
       expect(withoutPrivate.filter.excludePrivateSessions).toBe(true);
-      expect(await (await app.request("/api/music/exclusions")).json()).toEqual({ exclusions: [], excludePrivateSessions: true });
+      expect(await filterOnly()).toEqual({ exclusions: [], excludePrivateSessions: true });
       expect(withoutPrivate.names).toEqual(before.names.filter((name) => !["Excl Artist Two", "Private Track"].includes(name)));
       expect((await privateSessions(false)).status).toBe(200);
       expect((await listed()).names).toEqual(before.names);
+    });
+
+    test("played playlists are listed until excluded, named by cache, then latest tag, then id", async () => {
+      const db = getDb();
+      const insert = db.prepare(`
+        INSERT INTO events (source, source_id, source_account, type, timestamp, title, tags, raw_data)
+        VALUES ('spotify', ?, 'listener', 'listen:track', ?, 'Picker Track', ?, ?)
+        RETURNING id
+      `);
+      const play = (uri: string, timestamp: string, tags: string[]) => (insert.get(
+        `spotify:track:picker@${uri}@${timestamp}`,
+        timestamp,
+        JSON.stringify(tags),
+        JSON.stringify({ context: { type: "playlist", uri }, track: { uri: "spotify:track:picker" } }),
+      ) as { id: number }).id;
+      play("spotify:playlist:picker-renamed", "2097-01-01T10:00:00Z", ["playlist:Old Name"]);
+      play("spotify:playlist:picker-renamed", "2097-01-02T10:00:00Z", ["playlist:New Name"]);
+      play("spotify:playlist:picker-renamed", "2097-01-03T10:00:00Z", []);
+      const cachedPlay = play("spotify:playlist:picker-cached", "2097-01-04T10:00:00Z", ["playlist:Tagged Name"]);
+      play("spotify:playlist:picker-cached", "2097-01-05T10:00:00Z", ["playlist:Tagged Name"]);
+      play("spotify:playlist:picker-unnamed", "2097-01-06T10:00:00Z", []);
+      // Spotify reports some plays to the millisecond: the later of these is the .500 one.
+      play("spotify:playlist:picker-precision", "2097-01-07T10:00:00.500Z", ["playlist:Later Name"]);
+      play("spotify:playlist:picker-precision", "2097-01-07T10:00:00Z", ["playlist:Earlier Name"]);
+      db.close();
+      setSpotifyResource(getAppStateDb(), "spotify:playlist:picker-cached", "playlist", "Cached Name");
+
+      const listed = async () => {
+        const json = await (await app.request("/api/music/exclusions")).json() as MusicExclusionsResponse;
+        return json.playedPlaylists.filter((playlist) => playlist.playlistUri.includes(":picker-"));
+      };
+      const exclude = (body: object) => app.request("/api/music/exclusions", { method: "POST", body: JSON.stringify(body) });
+
+      const all: MusicPlayedPlaylist[] = [
+        { playlistUri: "spotify:playlist:picker-renamed", name: "New Name", plays: 3, lastPlayedAt: "2097-01-03T10:00:00Z" },
+        { playlistUri: "spotify:playlist:picker-precision", name: "Later Name", plays: 2, lastPlayedAt: "2097-01-07T10:00:00.500Z" },
+        { playlistUri: "spotify:playlist:picker-cached", name: "Cached Name", plays: 2, lastPlayedAt: "2097-01-05T10:00:00Z" },
+        { playlistUri: "spotify:playlist:picker-unnamed", name: "picker-unnamed", plays: 1, lastPlayedAt: "2097-01-06T10:00:00Z" },
+      ];
+      expect(await listed()).toEqual(all);
+
+      expect((await exclude({ kind: "playlist", playlistUri: "spotify:playlist:never-played" })).status).toBe(404);
+      expect((await exclude({ kind: "playlist", playlistUri: " " })).status).toBe(400);
+      const created = await exclude({ kind: "playlist", playlistUri: "spotify:playlist:picker-renamed" });
+      expect(created.status).toBe(201);
+      const { exclusion } = await created.json();
+      expect(exclusion.label).toBe("New Name");
+      expect(await listed()).toEqual(all.slice(1));
+      expect((await app.request(`/api/music/exclusions/${exclusion.id}`, { method: "DELETE" })).status).toBe(200);
+      expect(await listed()).toEqual(all);
+
+      // Excluding from a play names the playlist the same way.
+      const fromPlay = await exclude({ kind: "playlist", eventId: cachedPlay });
+      const { exclusion: fromPlayExclusion } = await fromPlay.json();
+      expect(fromPlayExclusion.label).toBe("Cached Name");
+      expect((await app.request(`/api/music/exclusions/${fromPlayExclusion.id}`, { method: "DELETE" })).status).toBe(200);
     });
 
     test("GET /api/music/rankings rejects unknown periods", async () => {

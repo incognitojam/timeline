@@ -2,10 +2,10 @@ import type { ConversationRangeExportFormat } from "@shared/conversation-export"
 import type {
   MusicExclusion,
   MusicExclusionRequest,
+  MusicExclusionsResponse,
   MusicPeriod,
   MusicRankingsOverview,
   MusicRecentResponse,
-  MusicTopListFilter,
 } from "@platforms/spotify/shared/music";
 import type { NetworkSettings } from "@shared/network-settings";
 import type { MemoryImportResult, MemoryIndex, MemoryNote, MemoryVersion } from "@shared/memory";
@@ -2356,7 +2356,7 @@ export async function fetchMusicRankings(
   return parseApiJson(res, "Failed to fetch music rankings");
 }
 
-export async function fetchMusicExclusions(signal: AbortSignal): Promise<MusicTopListFilter> {
+export async function fetchMusicExclusions(signal: AbortSignal): Promise<MusicExclusionsResponse> {
   const res = await apiFetch(`${API_BASE}/api/music/exclusions`, { signal });
   return parseApiJson(res, "Failed to fetch music exclusions");
 }
