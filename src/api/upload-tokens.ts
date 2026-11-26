@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
 import { sep } from "node:path";
 import { parseArgs } from "node:util";
@@ -6,10 +6,7 @@ import { resolveSourcePath } from "../config";
 import type { ServiceConfig } from "../config/types";
 import { getAppStateDb } from "../db/app-state";
 import { isTokenEligibleParser } from "../inbox/process";
-
-export function uploadTokenHash(secret: string): string {
-  return createHash("sha256").update(secret).digest("hex");
-}
+import { tokenSha256 } from "./mcp-tokens";
 
 export async function tokenSourceEligible(config: ServiceConfig, name: string): Promise<boolean> {
   const sources = config.inbox.sources;
@@ -68,7 +65,7 @@ export async function runUploadTokenCommand(config: ServiceConfig, args: string[
   const secret = "tlu_" + randomBytes(32).toString("base64url");
   const inserted = db.run(`INSERT INTO upload_tokens(label, sources, tailnet_login, token_sha256) VALUES (?,?,?,?)
     ON CONFLICT(label) WHERE revoked_at IS NULL DO NOTHING`,
-    [label, JSON.stringify([...new Set(sources)]), login, uploadTokenHash(secret)]);
+    [label, JSON.stringify([...new Set(sources)]), login, tokenSha256(secret)]);
   if (!inserted.changes) throw new Error(`An active upload token already has label: ${label}`);
   console.log(secret);
 }

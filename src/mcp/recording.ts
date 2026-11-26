@@ -9,7 +9,6 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { createHash } from "node:crypto";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage, RequestId } from "@modelcontextprotocol/sdk/types.js";
 import {
@@ -17,6 +16,7 @@ import {
   isJSONRPCRequest,
   isJSONRPCResultResponse,
 } from "@modelcontextprotocol/sdk/types.js";
+import { tokenSha256 } from "../api/mcp-tokens";
 import { getAppStateDb } from "../db/app-state";
 
 export const MCP_RECORD_BODY_CAP = 64 * 1024;
@@ -130,7 +130,7 @@ function stringifyArgs(args: unknown): string | null {
 }
 
 export function hashMcpToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex").slice(0, 16);
+  return tokenSha256(token).slice(0, 16);
 }
 
 export function upsertMcpSession(

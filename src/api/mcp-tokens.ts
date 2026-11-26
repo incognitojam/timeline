@@ -7,6 +7,13 @@
  * Future: Store tokens in app-state.db with generation, revocation, labels.
  */
 
+import { createHash } from "node:crypto";
+
+/** Hex SHA-256 of a bearer token, the form tokens are stored and compared in. */
+export function tokenSha256(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
 /**
  * Check if MCP access is enabled (at least one token configured).
  */
