@@ -1,11 +1,15 @@
 import type { Database } from "bun:sqlite";
 import {
   MUSIC_PERIODS,
+  type MusicExclusion,
+  type MusicExclusionKind,
+  type MusicExclusionRequest,
   type MusicPeriod,
   type MusicRankingsOverview,
   type MusicRankedArtist,
   type MusicRankedTrack,
   type MusicRecentPlay,
+  type MusicTopListFilter,
 } from "./shared/music";
 
 type TrackAggregateRow = Omit<MusicRankedTrack, "rank">;
@@ -45,6 +49,40 @@ const IMAGE_URL_SQL = `COALESCE(
 const ALBUM_NAME_SQL = `COALESCE(
   json_extract(e.raw_data, '$.track.album.name'),
   json_extract(e.raw_data, '$.master_metadata_album_album_name')
+)`;
+
+const ALBUM_ARTIST_SQL = `COALESCE(
+  json_extract(e.raw_data, '$.track.album.artists[0].name'),
+  json_extract(e.raw_data, '$.track.artists[0].name'),
+  json_extract(e.raw_data, '$.master_metadata_album_artist_name'),
+  (
+    SELECT substr(artist.value, length('artist:') + 1)
+    FROM json_each(CASE WHEN json_valid(e.tags) THEN e.tags ELSE '[]' END) artist
+    WHERE artist.value LIKE 'artist:%'
+    LIMIT 1
+  )
+)`;
+
+/**
+ * An album is its name and its first artist: export history records no album
+ * id, so an id would only ever match live-synced plays.
+ */
+const ALBUM_KEY_SQL = `${ALBUM_NAME_SQL} || char(31) || ${ALBUM_ARTIST_SQL}`;
+
+const TAGS_SQL = `json_each(CASE WHEN json_valid(e.tags) THEN e.tags ELSE '[]' END)`;
+
+/** Only live-synced plays keep Spotify's play context; export history has none. */
+const PLAYLIST_URI_SQL = `CASE
+  WHEN json_extract(e.raw_data, '$.context.type') = 'playlist'
+  THEN json_extract(e.raw_data, '$.context.uri')
+END`;
+
+/** The sync tags a play with its playlist's name when it could look the name up. */
+const PLAYLIST_NAME_SQL = `(
+  SELECT substr(playlist.value, length('playlist:') + 1)
+  FROM ${TAGS_SQL} playlist
+  WHERE playlist.value LIKE 'playlist:%'
+  LIMIT 1
 )`;
 
 /**
@@ -141,15 +179,164 @@ export function getMusicPeriodStart(period: MusicPeriod, now = new Date()): stri
   return start.toISOString();
 }
 
+interface StoredExclusion extends MusicExclusion {
+  matchKey: string;
+}
+
+/** The top-list filter as stored in app-state.db, with the keys plays are matched on. */
+export interface StoredTopListFilter {
+  exclusions: StoredExclusion[];
+  excludePrivateSessions: boolean;
+}
+
+const EXCLUDE_PRIVATE_SESSIONS_KEY = "music_exclude_private_sessions";
+
+export function getTopListFilter(appDb: Database): StoredTopListFilter {
+  const exclusions = appDb.prepare(`
+    SELECT id, kind, label, match_key AS matchKey FROM music_exclusions ORDER BY id
+  `).all() as StoredExclusion[];
+  const setting = appDb.prepare("SELECT value FROM app_settings WHERE key = ?")
+    .get(EXCLUDE_PRIVATE_SESSIONS_KEY) as { value: string } | null;
+  return { exclusions, excludePrivateSessions: setting !== null && JSON.parse(setting.value) === true };
+}
+
+/** The filter without its match keys, as the API returns it. */
+export function publicTopListFilter(filter: StoredTopListFilter): MusicTopListFilter {
+  return {
+    exclusions: filter.exclusions.map(({ id, kind, label }) => ({ id, kind, label })),
+    excludePrivateSessions: filter.excludePrivateSessions,
+  };
+}
+
+export function setExcludePrivateSessions(appDb: Database, excluded: boolean): void {
+  appDb.prepare(`
+    INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
+  `).run(EXCLUDE_PRIVATE_SESSIONS_KEY, JSON.stringify(excluded));
+}
+
+/**
+ * Resolve what a request excludes to the key plays are matched on, reading the
+ * play it names from timeline.db. Null when that play does not record it — a
+ * playlist, for one, is only known for live-synced plays.
+ */
+export function resolveExclusion(
+  db: Database,
+  request: MusicExclusionRequest,
+  playlistNames: (uri: string) => string | null,
+): { kind: MusicExclusionKind; matchKey: string; label: string } | null {
+  if (request.kind === "artist") {
+    return { kind: "artist", matchKey: request.artistName, label: request.artistName };
+  }
+  const play = db.prepare(`
+    SELECT
+      e.title AS trackName,
+      ${ARTIST_NAMES_SQL} AS artistName,
+      ${TRACK_URI_SQL} AS trackUri,
+      ${ALBUM_NAME_SQL} AS albumName,
+      ${ALBUM_ARTIST_SQL} AS albumArtist,
+      ${ALBUM_KEY_SQL} AS albumKey,
+      ${PLAYLIST_URI_SQL} AS playlistUri,
+      ${PLAYLIST_NAME_SQL} AS playlistName
+    FROM events e
+    WHERE e.id = ? AND e.source = 'spotify' AND e.type = 'listen:track'
+  `).get(request.eventId) as {
+    trackName: string | null;
+    artistName: string | null;
+    trackUri: string | null;
+    albumName: string | null;
+    albumArtist: string | null;
+    albumKey: string | null;
+    playlistUri: string | null;
+    playlistName: string | null;
+  } | null;
+  if (!play) return null;
+  const byline = (name: string | null, artist: string | null) =>
+    [name ?? "Unknown", artist].filter(Boolean).join(" · ");
+
+  if (request.kind === "track") {
+    return play.trackUri
+      ? { kind: "track", matchKey: play.trackUri, label: byline(play.trackName, play.artistName) }
+      : null;
+  }
+  if (request.kind === "album") {
+    return play.albumKey
+      ? { kind: "album", matchKey: play.albumKey, label: byline(play.albumName, play.albumArtist) }
+      : null;
+  }
+  return play.playlistUri
+    ? {
+      kind: "playlist",
+      matchKey: play.playlistUri,
+      label: play.playlistName ?? playlistNames(play.playlistUri) ?? play.playlistUri,
+    }
+    : null;
+}
+
+export function addExclusion(
+  appDb: Database,
+  exclusion: { kind: MusicExclusionKind; matchKey: string; label: string },
+): MusicExclusion {
+  return appDb.prepare(`
+    INSERT INTO music_exclusions (kind, match_key, label) VALUES (?, ?, ?)
+    ON CONFLICT (kind, match_key) DO UPDATE SET label = excluded.label
+    RETURNING id, kind, label
+  `).get(exclusion.kind, exclusion.matchKey, exclusion.label) as MusicExclusion;
+}
+
+export function removeExclusion(appDb: Database, id: number): boolean {
+  return appDb.prepare("DELETE FROM music_exclusions WHERE id = ?").run(id).changes > 0;
+}
+
+/**
+ * WHERE clauses that leave excluded plays out of the top lists. Each list of
+ * keys is one JSON parameter, so the clause text only varies with which kinds
+ * are in use, and SQLite evaluates each `IN` subquery once per statement.
+ */
+function topListFilterSql(filter: StoredTopListFilter): { sql: string; params: string[] } {
+  const keys = (kind: MusicExclusionKind) => filter.exclusions
+    .filter((exclusion) => exclusion.kind === kind)
+    .map((exclusion) => exclusion.matchKey);
+  const clauses: string[] = [];
+  const params: string[] = [];
+  const notIn = (kind: MusicExclusionKind, expressions: string[]) => {
+    const list = keys(kind);
+    if (list.length === 0) return;
+    for (const expression of expressions) {
+      clauses.push(expression);
+      params.push(JSON.stringify(list));
+    }
+  };
+
+  // COALESCE: a play that lacks the value is not excluded by it (NULL NOT IN is NULL).
+  notIn("track", [`COALESCE(${TRACK_URI_SQL}, '') NOT IN (SELECT value FROM json_each(?))`]);
+  notIn("album", [`COALESCE(${ALBUM_KEY_SQL}, '') NOT IN (SELECT value FROM json_each(?))`]);
+  notIn("playlist", [`COALESCE(${PLAYLIST_URI_SQL}, '') NOT IN (SELECT value FROM json_each(?))`]);
+  // Artists by name, as the artist list ranks them: export history has no artist ids.
+  notIn("artist", [
+    `NOT EXISTS (SELECT 1 FROM ${TAGS_SQL} tag WHERE tag.value IN (SELECT 'artist:' || value FROM json_each(?)))`,
+    `COALESCE(json_extract(e.raw_data, '$.master_metadata_album_artist_name'), '') NOT IN (SELECT value FROM json_each(?))`,
+  ]);
+  if (filter.excludePrivateSessions) {
+    clauses.push(`NOT EXISTS (SELECT 1 FROM ${TAGS_SQL} tag WHERE tag.value = 'incognito')`);
+  }
+  return { sql: clauses.map((clause) => `AND ${clause}`).join("\n"), params };
+}
+
 export function getMusicRankings(
   db: Database,
   period: MusicPeriod,
-  options: { now?: Date; limit?: number } = {},
+  options: { now?: Date; limit?: number; filter?: StoredTopListFilter } = {},
 ): MusicRankingsOverview {
   const periodStart = getMusicPeriodStart(period, options.now);
   const limit = Math.min(Math.max(options.limit ?? 25, 1), 100);
   const cutoffSql = periodStart === null ? "" : "AND e.timestamp >= ?";
   const cutoffParams = periodStart === null ? [] : [periodStart];
+  const filter = options.filter ?? { exclusions: [], excludePrivateSessions: false };
+  const excluded = topListFilterSql(filter);
+  // The summary keeps counting every play; only the ranked lists are filtered.
+  const listedSql = `${cutoffSql}\n${excluded.sql}`;
+  const listedParams = [...cutoffParams, ...excluded.params];
 
   const summary = db.prepare(`
     SELECT
@@ -180,7 +367,7 @@ export function getMusicRankings(
         AND e.type = 'listen:track'
         AND e.timestamp IS NOT NULL
         AND e.title IS NOT NULL
-        ${cutoffSql}
+        ${listedSql}
     ), keyed AS (
       SELECT *, COALESCE(trackUri, trackName || char(31) || COALESCE(artistName, '')) AS trackKey
       FROM listens
@@ -204,7 +391,7 @@ export function getMusicRankings(
     GROUP BY trackKey
     ORDER BY playCount DESC, listeningMs DESC, lastPlayedAt DESC
     LIMIT ?
-  `).all(...cutoffParams, limit) as TrackAggregateRow[];
+  `).all(...listedParams, limit) as TrackAggregateRow[];
 
   const artistRows = db.prepare(`
     WITH tagged_artist_listens AS (
@@ -222,7 +409,7 @@ export function getMusicRankings(
         AND e.type = 'listen:track'
         AND e.timestamp IS NOT NULL
         AND artist.value LIKE 'artist:%'
-        ${cutoffSql}
+        ${listedSql}
     ), export_artist_listens AS (
       SELECT
         e.id AS eventId,
@@ -242,7 +429,7 @@ export function getMusicRankings(
           FROM json_each(CASE WHEN json_valid(e.tags) THEN e.tags ELSE '[]' END) artist
           WHERE artist.value LIKE 'artist:%'
         )
-        ${cutoffSql}
+        ${listedSql}
     ), artist_listens AS (
       SELECT * FROM tagged_artist_listens
       UNION ALL
@@ -266,7 +453,7 @@ export function getMusicRankings(
     GROUP BY artistName
     ORDER BY playCount DESC, listeningMs DESC, lastPlayedAt DESC
     LIMIT ?
-  `).all(...cutoffParams, ...cutoffParams, limit) as ArtistAggregateRow[];
+  `).all(...listedParams, ...listedParams, limit) as ArtistAggregateRow[];
 
   return {
     period,
@@ -274,6 +461,7 @@ export function getMusicRankings(
     ...summary,
     topTracks: trackRows.map((row, index) => ({ ...row, rank: index + 1 })),
     topArtists: artistRows.map((row, index) => ({ ...row, rank: index + 1 })),
+    filter: publicTopListFilter(filter),
   };
 }
 
@@ -287,7 +475,9 @@ export function getRecentMusicPlays(db: Database, requestedLimit = 10): MusicRec
       ${ARTIST_NAMES_SQL} AS artistName,
       ${ALBUM_NAME_SQL} AS albumName,
       ${TRACK_URI_SQL} AS trackUri,
-      ${IMAGE_URL_SQL} AS imageUrl
+      ${IMAGE_URL_SQL} AS imageUrl,
+      ${PLAYLIST_URI_SQL} AS playlistUri,
+      ${PLAYLIST_NAME_SQL} AS playlistName
     FROM events e
     WHERE e.source = 'spotify'
       AND e.type = 'listen:track'

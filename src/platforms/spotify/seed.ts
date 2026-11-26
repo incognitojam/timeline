@@ -1,10 +1,28 @@
 import { importSpotifyData } from "./parser";
+import { insertRecentlyPlayed, type SpotifyPlayHistoryItem } from "./parser-api";
 import type { SeedContext, SeedDay, SeedSource } from "../../seed/context";
-import type { Rng } from "../../seed/rng";
-import { CATALOGUE, type CatalogueTrack, spotifyId } from "./seed-data";
+import { Rng } from "../../seed/rng";
+import { albumArt, CATALOGUE, type CatalogueTrack, spotifyId } from "./seed-data";
 
 /** Spotify account name (the importer's source_account). */
 const ACCOUNT = "alexrivera";
+
+/**
+ * The export was requested this many days before the anchor; the live sync has
+ * recorded plays since. Only those live-synced plays know their playlist.
+ */
+const LIVE_SYNC_DAYS = 14;
+
+/** Alex's own playlists, played on shuffle. */
+const PLAYLISTS = ["Morning Commute", "Deep Work", "Sunday Kitchen"].map((name) => ({
+  name,
+  uri: `spotify:playlist:${spotifyId(`playlist:alex:${name}`)}`,
+}));
+
+interface PlayContext {
+  type: "album" | "artist" | "playlist";
+  uri: string;
+}
 
 /** How much Alex likes each artist; anything unlisted is a friend's taste. */
 const AFFINITY: Readonly<Record<string, number>> = {
@@ -178,6 +196,10 @@ function exportTs(ms: number): string {
 
 class Listener {
   readonly entries: StreamingEntry[] = [];
+  /** What each music entry was played from, as the live sync would see it. */
+  readonly contexts = new Map<StreamingEntry, PlayContext>();
+  /** Separate stream so private sessions and playlists leave the rest of the history unchanged. */
+  private readonly sessions = new Rng("spotify:sessions");
   private readonly showEpisode = new Map<string, number>();
   private book = 0;
   private chapter = 0;
@@ -214,6 +236,12 @@ class Listener {
     while (queue.length < count) queue = queue.concat(Array.from({ length: count - queue.length }, () => rng.weighted(pool)));
 
     const offline = platform === "ios" && rng.chance(0.08);
+    const incognito = this.sessions.chance(0.04);
+    const playlist = this.sessions.pick(PLAYLISTS);
+    const contextOf = (track: CatalogueTrack): PlayContext =>
+      mode === "album" ? { type: "album", uri: track.albumUri }
+        : mode === "artist" ? { type: "artist", uri: track.artistUri }
+          : { type: "playlist", uri: playlist.uri };
     let t = startMs;
     let reasonStart = rng.pick(["clickrow", "playbtn", "appload", "clickrow"]);
     for (const track of queue.slice(0, count)) {
@@ -232,7 +260,9 @@ class Listener {
       entry.skipped = skip || blip;
       entry.offline = offline;
       entry.offline_timestamp = offline ? Math.floor((t - ms) / 1000) : null;
+      entry.incognito_mode = incognito;
       this.entries.push(entry);
+      this.contexts.set(entry, contextOf(track));
       reasonStart = entry.reason_end;
     }
     // A session sometimes ends mid-track.
@@ -248,7 +278,9 @@ class Listener {
       entry.reason_start = reasonStart;
       entry.reason_end = rng.pick(["endplay", "logout", "remote"]);
       entry.shuffle = mode === "shuffle";
+      entry.incognito_mode = incognito;
       this.entries.push(entry);
+      this.contexts.set(entry, contextOf(track));
     }
     return t;
   }
@@ -330,9 +362,25 @@ export const spotifySeed: SeedSource = {
     const listener = new Listener(rng);
     for (const day of ctx.days) playDay(ctx, rng, listener, day);
 
+    // Recent music comes from the live sync instead of the export. Spotify
+    // reports only plays past 30 seconds, and none from a private session.
+    const liveSince = ctx.localDate(ctx.recentDays(LIVE_SYNC_DAYS)[0]?.date ?? ctx.anchorDate, 0, 0).getTime();
+    const tracksByUri = new Map(CATALOGUE.map((track) => [track.uri, track]));
+    const exported: StreamingEntry[] = [];
+    const live: SpotifyPlayHistoryItem[] = [];
+    for (const entry of listener.entries) {
+      const track = entry.spotify_track_uri ? tracksByUri.get(entry.spotify_track_uri) : undefined;
+      const context = listener.contexts.get(entry);
+      if (!track || !context || Date.parse(entry.ts) < liveSince) {
+        exported.push(entry);
+      } else if (entry.ms_played >= 30_000 && !entry.incognito_mode) {
+        live.push(livePlay(entry, track, context));
+      }
+    }
+
     // The export splits history into numbered files of roughly a year each.
     const byYear = new Map<string, StreamingEntry[]>();
-    for (const entry of listener.entries) {
+    for (const entry of exported) {
       const year = entry.ts.slice(0, 4);
       const list = byYear.get(year);
       if (list) list.push(entry);
@@ -347,5 +395,27 @@ export const spotifySeed: SeedSource = {
       );
     }
     await importSpotifyData(ctx.db, ctx.stage("spotify"), ACCOUNT);
+    insertRecentlyPlayed(ctx.db, live, ACCOUNT, `spotify-api-${ACCOUNT}-seed`, new Map(PLAYLISTS.map((p) => [p.uri, p.name])));
   },
 };
+
+/** A Web API recently-played item, with the fields the sync stores. */
+function livePlay(entry: StreamingEntry, track: CatalogueTrack, context: PlayContext): SpotifyPlayHistoryItem {
+  const artist = { name: track.artist, uri: track.artistUri };
+  return {
+    played_at: new Date(Date.parse(entry.ts)).toISOString(),
+    context: { ...context, href: "" },
+    track: {
+      uri: track.uri,
+      name: track.track,
+      duration_ms: track.durationMs,
+      artists: [artist],
+      album: {
+        name: track.album,
+        uri: track.albumUri,
+        artists: [artist],
+        images: [{ url: albumArt(`${track.artist}/${track.album}`), height: 300, width: 300 }],
+      },
+    },
+  };
+}

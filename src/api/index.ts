@@ -20,9 +20,21 @@ import {
   getTrackImageUrls,
   getPlaylistImageUrl,
   getCachedJournalSession,
+  getSpotifyResource,
 } from "../db/app-state";
 import { getTrackedPlaylists, getPlaylistObservations, getPlaylistMeta } from "../platforms/spotify/playlist-follows";
-import { getMusicRankings, getRecentMusicPlays, isMusicPeriod } from "../platforms/spotify/music";
+import {
+  addExclusion,
+  getMusicRankings,
+  getRecentMusicPlays,
+  getTopListFilter,
+  isMusicPeriod,
+  publicTopListFilter,
+  removeExclusion,
+  resolveExclusion,
+  setExcludePrivateSessions,
+} from "../platforms/spotify/music";
+import type { MusicExclusionRequest } from "../platforms/spotify/shared/music";
 import { streamJournalQuestions, streamJournalReflection } from "../journal/questions";
 import { clampLimit, clampOffset } from "./query-params";
 import { statusRoutes } from "./status";
@@ -897,12 +909,15 @@ app.get("/api/music/recent", (c) => {
   const limitParam = parseIntStrict(c.req.query("limit") ?? "10");
   const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 50) : 10;
   const recent = getRecentMusicPlays(db, limit);
+  const appDb = getAppStateDb();
   const uris = recent.map((play) => play.trackUri).filter((uri): uri is string => uri !== null);
-  const cachedImages = getTrackImageUrls(getAppStateDb(), uris);
+  const cachedImages = getTrackImageUrls(appDb, uris);
   return c.json({
     recent: recent.map((play) => ({
       ...play,
       imageUrl: play.imageUrl ?? (play.trackUri ? cachedImages.get(play.trackUri) ?? null : null),
+      playlistName: play.playlistName
+        ?? (play.playlistUri ? getSpotifyResource(appDb, play.playlistUri)?.name ?? null : null),
     })),
   });
 });
@@ -913,7 +928,7 @@ app.get("/api/music/rankings", (c) => {
     return c.json({ error: "Invalid music period. Expected 4w, 6m, 12m, or all." }, 400);
   }
 
-  const overview = getMusicRankings(db, periodParam);
+  const overview = getMusicRankings(db, periodParam, { filter: getTopListFilter(getAppStateDb()) });
   const uris = Array.from(new Set([
     ...overview.topTracks.map((track) => track.trackUri),
     ...overview.topArtists.map((artist) => artist.latestTrackUri),
@@ -929,6 +944,46 @@ app.get("/api/music/rankings", (c) => {
     topTracks: overview.topTracks.map((track) => withCachedImage(track, track.trackUri)),
     topArtists: overview.topArtists.map((artist) => withCachedImage(artist, artist.latestTrackUri)),
   });
+});
+
+function parseExclusionRequest(body: unknown): MusicExclusionRequest | null {
+  if (!body || typeof body !== "object") return null;
+  const { kind, eventId, artistName } = body as Record<string, unknown>;
+  if (kind === "artist") {
+    return typeof artistName === "string" && artistName.trim() ? { kind, artistName } : null;
+  }
+  if ((kind === "track" || kind === "album" || kind === "playlist") && Number.isSafeInteger(eventId)) {
+    return { kind, eventId: eventId as number };
+  }
+  return null;
+}
+
+app.get("/api/music/exclusions", (c) => c.json(publicTopListFilter(getTopListFilter(getAppStateDb()))));
+
+app.post("/api/music/exclusions", async (c) => {
+  const request = parseExclusionRequest(await c.req.json().catch(() => null));
+  if (!request) {
+    return c.json({ error: "Expected { kind: track|album|playlist, eventId } or { kind: artist, artistName }" }, 400);
+  }
+  const appDb = getAppStateDb();
+  const exclusion = resolveExclusion(db, request, (uri) => getSpotifyResource(appDb, uri)?.name ?? null);
+  if (!exclusion) return c.json({ error: `That play does not record its ${request.kind}` }, 404);
+  return c.json({ exclusion: addExclusion(appDb, exclusion) }, 201);
+});
+
+app.delete("/api/music/exclusions/:id", (c) => {
+  const id = parseIntStrict(c.req.param("id"));
+  if (!Number.isSafeInteger(id) || !removeExclusion(getAppStateDb(), id)) {
+    return c.json({ error: "Exclusion not found" }, 404);
+  }
+  return c.json({ ok: true });
+});
+
+app.put("/api/music/exclusions/private-sessions", async (c) => {
+  const body = await c.req.json().catch(() => null) as { excluded?: unknown } | null;
+  if (typeof body?.excluded !== "boolean") return c.json({ error: "excluded must be a boolean" }, 400);
+  setExcludePrivateSessions(getAppStateDb(), body.excluded);
+  return c.json({ excludePrivateSessions: body.excluded });
 });
 
 interface LatestFriendListenRow {

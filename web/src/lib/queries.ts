@@ -1,5 +1,5 @@
 import type { HealthWindow } from "@shared/health-periods";
-import type { MusicPeriod } from "@platforms/spotify/shared/music";
+import type { MusicExclusionRequest, MusicPeriod } from "@platforms/spotify/shared/music";
 import type { NetworkSettings } from "@shared/network-settings";
 import {
   createInfiniteQuery,
@@ -84,6 +84,8 @@ import {
   fetchLatestFriendListens,
   fetchLinkSuggestions,
   fetchMapEventsForDay,
+  excludeFromTopLists,
+  fetchMusicExclusions,
   fetchMusicRankings,
   fetchMcpSession,
   fetchMcpSessions,
@@ -91,6 +93,8 @@ import {
   revokeMcpToken,
   fetchPlaylistDetail,
   fetchRecentMusicPlays,
+  includeInTopLists,
+  setExcludePrivateSessions,
   fetchSearch,
   fetchSemanticSearch,
   fetchServiceStatus,
@@ -205,7 +209,9 @@ export const queryKeys = {
   attachmentDescriptionHistory: () => ["attachments", "description-history"] as const,
   attachmentDetail: (id: number) => ["attachments", "detail", id] as const,
   musicPlaylists: () => ["music", "playlists"] as const,
+  musicRankingsAll: () => ["music", "rankings"] as const,
   musicRankings: (period: MusicPeriod) => ["music", "rankings", period] as const,
+  musicExclusions: () => ["music", "exclusions"] as const,
   musicRecent: () => ["music", "recent"] as const,
   musicFriendListens: () => ["music", "friends", "latest"] as const,
   musicPlaylist: (playlistId: string) => ["music", "playlist", playlistId] as const,
@@ -541,6 +547,12 @@ export const queryOptions = {
       queryKey: queryKeys.musicRankings(period),
       queryFn: ({ signal }) => fetchMusicRankings(period, signal),
       retry: false,
+    }),
+
+  musicExclusions: () =>
+    defineQueryOptions({
+      queryKey: queryKeys.musicExclusions(),
+      queryFn: ({ signal }) => fetchMusicExclusions(signal),
     }),
 
   musicRecent: () =>
@@ -1171,6 +1183,34 @@ export function useMusicPlaylists() {
 
 export function useMusicRankings(period: () => MusicPeriod) {
   return createQuery(() => queryOptions.musicRankings(period()));
+}
+
+export function useMusicExclusions() {
+  return createQuery(() => queryOptions.musicExclusions());
+}
+
+/** Exclusions filter every range's top lists, so a change refetches them all. */
+function useMusicTopListMutation<T>(mutationFn: (variables: T) => Promise<unknown>) {
+  const queryClient = useQueryClient();
+  return createMutation(() => ({
+    mutationFn,
+    onSuccess: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.musicExclusions() }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.musicRankingsAll() }),
+    ]),
+  }));
+}
+
+export function useExcludeFromTopLists() {
+  return useMusicTopListMutation((request: MusicExclusionRequest) => excludeFromTopLists(request));
+}
+
+export function useIncludeInTopLists() {
+  return useMusicTopListMutation((id: number) => includeInTopLists(id));
+}
+
+export function useExcludePrivateSessions() {
+  return useMusicTopListMutation((excluded: boolean) => setExcludePrivateSessions(excluded));
 }
 
 export function useMusicRecent() {

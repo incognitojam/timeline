@@ -31,6 +31,7 @@ import type { Database } from "../db/sqlite";
 import { findUnprocessedFiles, hashFile, markFileProcessed } from "../inbox/tracker";
 import { seed } from "../testing/seed";
 import type { AttachmentsStats } from "../shared/attachments";
+import type { MusicExclusionRequest, MusicRankingsOverview } from "../platforms/spotify/shared/music";
 import {
   LocalMediaStore,
   type RemoteBlobStore,
@@ -1400,6 +1401,98 @@ describe("API Smoke Tests", () => {
       // number rather than going NULL when a play contributes nothing.
       expect(typeof json.listeningMs).toBe("number");
       expect(json.listeningMs).toBeGreaterThan(0);
+    });
+
+    test("music exclusions leave plays out of the top lists but not the Plays total", async () => {
+      const db = getDb();
+      // Five plays each, so these rank inside the top 25 whatever else the shared test database holds.
+      const insert = db.prepare(`
+        INSERT INTO events (source, source_id, source_account, type, timestamp, duration_ms, title, tags, raw_data)
+        VALUES ('spotify', ?, 'listener', 'listen:track', ?, 180000, ?, ?, ?)
+        RETURNING id
+      `);
+      const plays = (title: string, tags: string[], rawData: object) => Array.from({ length: 5 }, (_, day) =>
+        (insert.get(`spotify:track:${title}@${day}`, `2096-05-0${day + 1}T10:00:00Z`, title, JSON.stringify(tags), JSON.stringify(rawData)) as { id: number }).id,
+      )[0] as number;
+      const exported = (title: string, artist: string, album: string, tags: string[]) => plays(title, tags, {
+        spotify_track_uri: `spotify:track:${title}`,
+        master_metadata_album_artist_name: artist,
+        master_metadata_album_album_name: album,
+      });
+      const fromPlaylist = plays("Mix Track", ["api", "artist:Excl Artist One", "album:Excl Album", "playlist:Excl Mix"], {
+        context: { type: "playlist", uri: "spotify:playlist:excl-mix" },
+        track: { uri: "spotify:track:mix", name: "Mix Track", artists: [{ name: "Excl Artist One" }], album: { name: "Excl Album" } },
+      });
+      const albumTrack = exported("Album Track", "Excl Artist One", "Excl Album", ["artist:Excl Artist One", "album:Excl Album"]);
+      exported("Private Track", "Excl Artist Two", "Private Album", ["incognito"]);
+      const soloTrack = exported("Solo Track", "Excl Artist Three", "Solo Album", []);
+      db.close();
+
+      const listed = async () => {
+        const json = await (await app.request("/api/music/rankings?period=all")).json() as MusicRankingsOverview;
+        return {
+          totalPlays: json.totalPlays,
+          filter: json.filter,
+          names: [
+            ...json.topTracks.map((track) => track.trackName),
+            ...json.topArtists.map((artist) => artist.artistName),
+          ].filter((name) => /Track$|^Excl Artist/.test(name)).sort(),
+        };
+      };
+      const exclude = async (body: object) => {
+        const res = await app.request("/api/music/exclusions", { method: "POST", body: JSON.stringify(body) });
+        return { status: res.status, json: await res.json() };
+      };
+      const include = (id: number) => app.request(`/api/music/exclusions/${id}`, { method: "DELETE" });
+      const privateSessions = (excluded: boolean) => app.request("/api/music/exclusions/private-sessions", {
+        method: "PUT",
+        body: JSON.stringify({ excluded }),
+      });
+
+      const before = await listed();
+      expect(before.names).toEqual([
+        "Album Track", "Excl Artist One", "Excl Artist Three", "Excl Artist Two", "Mix Track", "Private Track", "Solo Track",
+      ]);
+      expect(before.filter).toEqual({ exclusions: [], excludePrivateSessions: false });
+
+      expect((await exclude({ kind: "playlist", eventId: albumTrack })).status).toBe(404);
+      expect((await exclude({ kind: "artist" })).status).toBe(400);
+
+      const cases: [MusicExclusionRequest, string, string[]][] = [
+        [{ kind: "playlist", eventId: fromPlaylist }, "Excl Mix", ["Mix Track"]],
+        // Matches the export play of the same album as well as the live-synced one.
+        [{ kind: "album", eventId: albumTrack }, "Excl Album · Excl Artist One", ["Album Track", "Excl Artist One", "Mix Track"]],
+        [{ kind: "track", eventId: soloTrack }, "Solo Track · Excl Artist Three", ["Excl Artist Three", "Solo Track"]],
+        [{ kind: "artist", artistName: "Excl Artist One" }, "Excl Artist One", ["Album Track", "Excl Artist One", "Mix Track"]],
+      ];
+      let lastId = 0;
+      for (const [body, label, gone] of cases) {
+        const created = await exclude(body);
+        expect(created.status).toBe(201);
+        // Ids are never reused, so a stale "include again" cannot remove a newer exclusion.
+        expect(created.json.exclusion.id).toBeGreaterThan(lastId);
+        lastId = created.json.exclusion.id;
+        expect(created.json.exclusion.label).toBe(label);
+        const after = await listed();
+        expect(after.totalPlays).toBe(before.totalPlays);
+        expect(after.filter.exclusions).toEqual([created.json.exclusion]);
+        // Only the public fields: the key plays are matched on stays on the server.
+        expect(await (await app.request("/api/music/exclusions")).json()).toStrictEqual({
+          exclusions: [{ id: created.json.exclusion.id, kind: body.kind, label }],
+          excludePrivateSessions: false,
+        });
+        expect(after.names).toEqual(before.names.filter((name) => !gone.includes(name)));
+        expect((await include(created.json.exclusion.id)).status).toBe(200);
+      }
+
+      expect((await privateSessions(true)).status).toBe(200);
+      const withoutPrivate = await listed();
+      expect(withoutPrivate.totalPlays).toBe(before.totalPlays);
+      expect(withoutPrivate.filter.excludePrivateSessions).toBe(true);
+      expect(await (await app.request("/api/music/exclusions")).json()).toEqual({ exclusions: [], excludePrivateSessions: true });
+      expect(withoutPrivate.names).toEqual(before.names.filter((name) => !["Excl Artist Two", "Private Track"].includes(name)));
+      expect((await privateSessions(false)).status).toBe(200);
+      expect((await listed()).names).toEqual(before.names);
     });
 
     test("GET /api/music/rankings rejects unknown periods", async () => {
