@@ -19,7 +19,7 @@ struct AgentLauncher {
             .resolvingSymlinksInPath().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Resources")
         let script: URL
-        let logs = timelineLogsDirectory()
+        let logs = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/timeline")
         let stdoutName: String
         let stderrName: String
         switch CommandLine.arguments[1] {

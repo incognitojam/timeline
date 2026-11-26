@@ -400,6 +400,9 @@ final class ServiceAgentController: ObservableObject {
         for attempt in 1...10 {
             do {
                 try agent.register()
+                if config == serviceLaunchAgentConfig {
+                    NotificationCenter.default.post(name: .timelineServiceAgentRegistered, object: nil)
+                }
                 return
             } catch {
                 lastError = error
