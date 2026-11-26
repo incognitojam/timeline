@@ -225,7 +225,7 @@ async function main(): Promise<void> {
   if (!dryRun && !values.name) {
     try {
       const tokens = await getValidSpotifyTokens({ headless: true });
-      const fetched = await fetchPlaylistName(tokens, playlistId);
+      const fetched = (await fetchPlaylistName(tokens, playlistId))?.name;
       if (fetched) {
         const updated = fillMissingPlaylistName(db, playlistId, fetched);
         console.log(`Resolved playlist name "${fetched}" (applied to ${updated} row(s)).`);

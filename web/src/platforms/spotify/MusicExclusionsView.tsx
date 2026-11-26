@@ -10,6 +10,7 @@ import {
 } from "../../lib/queries";
 import { ROUTES } from "../../lib/routes";
 import { IconMoreHoriz } from "../../ui/icons";
+import PlaylistArt from "./PlaylistArt";
 
 const EXCLUSION_KIND_LABELS: Record<MusicExclusionKind, string> = {
   track: "Track",
@@ -144,6 +145,7 @@ function PlayedPlaylists(props: { exclusions: MusicExclusionsResponse }) {
           <For each={props.exclusions.playedPlaylists}>
             {(playlist) => (
               <li class="flex items-center gap-3 px-4 py-2.5 text-sm">
+                <PlaylistArt src={playlist.imageUrl} name={playlist.name} class="h-10 w-10 shrink-0" />
                 <span class="min-w-0 flex-1">
                   <span class="block truncate">{playlist.name}</span>
                   <span class="block text-xs text-muted-foreground">

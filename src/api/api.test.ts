@@ -1504,7 +1504,7 @@ describe("API Smoke Tests", () => {
       expect((await listed()).names).toEqual(before.names);
     });
 
-    test("played playlists are listed until excluded, named by cache, then latest tag, then id", async () => {
+    test("played playlists are listed until excluded, named by cache, then latest tag, then id, with any cached cover", async () => {
       const db = getDb();
       const insert = db.prepare(`
         INSERT INTO events (source, source_id, source_account, type, timestamp, title, tags, raw_data)
@@ -1527,7 +1527,7 @@ describe("API Smoke Tests", () => {
       play("spotify:playlist:picker-precision", "2097-01-07T10:00:00.500Z", ["playlist:Later Name"]);
       play("spotify:playlist:picker-precision", "2097-01-07T10:00:00Z", ["playlist:Earlier Name"]);
       db.close();
-      setSpotifyResource(getAppStateDb(), "spotify:playlist:picker-cached", "playlist", "Cached Name");
+      setSpotifyResource(getAppStateDb(), "spotify:playlist:picker-cached", "playlist", "Cached Name", "https://example.com/cover.jpg");
 
       const listed = async () => {
         const json = await (await app.request("/api/music/exclusions")).json() as MusicExclusionsResponse;
@@ -1536,10 +1536,10 @@ describe("API Smoke Tests", () => {
       const exclude = (body: object) => app.request("/api/music/exclusions", { method: "POST", body: JSON.stringify(body) });
 
       const all: MusicPlayedPlaylist[] = [
-        { playlistUri: "spotify:playlist:picker-renamed", name: "New Name", plays: 3, lastPlayedAt: "2097-01-03T10:00:00Z" },
-        { playlistUri: "spotify:playlist:picker-precision", name: "Later Name", plays: 2, lastPlayedAt: "2097-01-07T10:00:00.500Z" },
-        { playlistUri: "spotify:playlist:picker-cached", name: "Cached Name", plays: 2, lastPlayedAt: "2097-01-05T10:00:00Z" },
-        { playlistUri: "spotify:playlist:picker-unnamed", name: "picker-unnamed", plays: 1, lastPlayedAt: "2097-01-06T10:00:00Z" },
+        { playlistUri: "spotify:playlist:picker-renamed", name: "New Name", imageUrl: null, plays: 3, lastPlayedAt: "2097-01-03T10:00:00Z" },
+        { playlistUri: "spotify:playlist:picker-precision", name: "Later Name", imageUrl: null, plays: 2, lastPlayedAt: "2097-01-07T10:00:00.500Z" },
+        { playlistUri: "spotify:playlist:picker-cached", name: "Cached Name", imageUrl: "https://example.com/cover.jpg", plays: 2, lastPlayedAt: "2097-01-05T10:00:00Z" },
+        { playlistUri: "spotify:playlist:picker-unnamed", name: "picker-unnamed", imageUrl: null, plays: 1, lastPlayedAt: "2097-01-06T10:00:00Z" },
       ];
       expect(await listed()).toEqual(all);
 

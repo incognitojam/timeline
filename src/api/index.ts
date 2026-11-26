@@ -966,7 +966,7 @@ app.get("/api/music/exclusions", (c) => {
   const appDb = getAppStateDb();
   const filter = getTopListFilter(appDb);
   const excluded = new Set(filter.exclusions.filter((e) => e.kind === "playlist").map((e) => e.matchKey));
-  const playedPlaylists = getPlayedPlaylists(db, (uri) => getSpotifyResource(appDb, uri)?.name ?? null);
+  const playedPlaylists = getPlayedPlaylists(db, (uri) => getSpotifyResource(appDb, uri));
   return c.json({
     ...publicTopListFilter(filter),
     playedPlaylists: playedPlaylists.filter((playlist) => !excluded.has(playlist.playlistUri)),
@@ -981,7 +981,7 @@ app.post("/api/music/exclusions", async (c) => {
     }, 400);
   }
   const appDb = getAppStateDb();
-  const exclusion = resolveExclusion(db, request, (uri) => getSpotifyResource(appDb, uri)?.name ?? null);
+  const exclusion = resolveExclusion(db, request, (uri) => getSpotifyResource(appDb, uri));
   if (!exclusion) {
     return c.json({
       error: "playlistUri" in request ? "No plays recorded from that playlist" : `That play does not record its ${request.kind}`,

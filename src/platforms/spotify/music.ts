@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { SpotifyResource } from "../../db/app-state";
 import {
   MUSIC_PERIODS,
   type MusicExclusion,
@@ -219,11 +220,11 @@ export function setExcludePrivateSessions(appDb: Database, excluded: boolean): v
 /**
  * Playlists the live sync recorded plays from, most played first, or only the
  * one given. Each is named by its cached current name, else its latest play's
- * tag, else its id.
+ * tag, else its id, and shows its cached cover when there is one.
  */
 export function getPlayedPlaylists(
   db: Database,
-  cachedName: (uri: string) => string | null,
+  cached: (uri: string) => Pick<SpotifyResource, "name" | "image_url"> | null,
   onlyUri: string | null = null,
 ): MusicPlayedPlaylist[] {
   // One row per playlist and tagged name, oldest first, so a later name replaces an earlier one.
@@ -262,13 +263,17 @@ export function getPlayedPlaylists(
   }
   return Array.from(playlists, ([playlistUri, playlist]) => ({ playlistUri, ...playlist }))
     .sort((a, b) => b.plays - a.plays || b.lastPlayedDay - a.lastPlayedDay)
-    .map((playlist) => ({
-      playlistUri: playlist.playlistUri,
-      name: cachedName(playlist.playlistUri) ?? playlist.tagName
-        ?? playlist.playlistUri.slice(playlist.playlistUri.lastIndexOf(":") + 1),
-      plays: playlist.plays,
-      lastPlayedAt: playlist.lastPlayedAt,
-    }));
+    .map((playlist) => {
+      const resource = cached(playlist.playlistUri);
+      return {
+        playlistUri: playlist.playlistUri,
+        name: resource?.name ?? playlist.tagName
+          ?? playlist.playlistUri.slice(playlist.playlistUri.lastIndexOf(":") + 1),
+        imageUrl: resource?.image_url ?? null,
+        plays: playlist.plays,
+        lastPlayedAt: playlist.lastPlayedAt,
+      };
+    });
 }
 
 /**
@@ -279,13 +284,13 @@ export function getPlayedPlaylists(
 export function resolveExclusion(
   db: Database,
   request: MusicExclusionRequest,
-  playlistNames: (uri: string) => string | null,
+  playlistResources: (uri: string) => Pick<SpotifyResource, "name" | "image_url"> | null,
 ): { kind: MusicExclusionKind; matchKey: string; label: string } | null {
   if (request.kind === "artist") {
     return { kind: "artist", matchKey: request.artistName, label: request.artistName };
   }
   const playlist = (uri: string) => {
-    const [played] = getPlayedPlaylists(db, playlistNames, uri);
+    const [played] = getPlayedPlaylists(db, playlistResources, uri);
     return played ? { kind: "playlist" as const, matchKey: played.playlistUri, label: played.name } : null;
   };
   if ("playlistUri" in request) return playlist(request.playlistUri);

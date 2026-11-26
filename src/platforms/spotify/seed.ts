@@ -1,3 +1,5 @@
+import type { Database } from "bun:sqlite";
+import { setSpotifyResource } from "../../db/app-state";
 import { importSpotifyData } from "./parser";
 import { insertRecentlyPlayed, type SpotifyPlayHistoryItem } from "./parser-api";
 import type { SeedContext, SeedDay, SeedSource } from "../../seed/context";
@@ -13,11 +15,22 @@ const ACCOUNT = "alexrivera";
  */
 const LIVE_SYNC_DAYS = 14;
 
-/** Alex's own playlists, played on shuffle. */
+/**
+ * Alex's own playlists, played on shuffle. Sunday Kitchen has no cover, as a
+ * playlist cached before the sync stored covers would.
+ */
 const PLAYLISTS = ["Morning Commute", "Deep Work", "Sunday Kitchen"].map((name) => ({
   name,
   uri: `spotify:playlist:${spotifyId(`playlist:alex:${name}`)}`,
+  imageUrl: name === "Sunday Kitchen" ? null : albumArt(`playlist:${name}`),
 }));
+
+/** The names and covers the live sync caches in app-state.db when it looks a playlist up. */
+export function seedSpotifyResources(appDb: Database): void {
+  for (const playlist of PLAYLISTS) {
+    setSpotifyResource(appDb, playlist.uri, "playlist", playlist.name, playlist.imageUrl);
+  }
+}
 
 interface PlayContext {
   type: "album" | "artist" | "playlist";

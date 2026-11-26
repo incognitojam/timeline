@@ -38,7 +38,7 @@ function renderPlaylist(client: QueryClient) {
 }
 
 const EXAMPLE_PLAYLIST = {
-  playlistUri: "spotify:playlist:example-mix", name: "Example Mix", plays: 3, lastPlayedAt: "2026-03-01T00:00:00Z",
+  playlistUri: "spotify:playlist:example-mix", name: "Example Mix", imageUrl: "https://example.com/mix.jpg", plays: 3, lastPlayedAt: "2026-03-01T00:00:00Z",
 };
 
 /**
@@ -293,6 +293,7 @@ describe("music route query cache", () => {
 
     const played = await screen.findByRole("region", { name: "Playlists you've played from" });
     expect(played).toHaveTextContent("Example Mix3 plays · last played");
+    expect(screen.getByRole("img", { name: "Example Mix cover art" })).toHaveAttribute("src", EXAMPLE_PLAYLIST.imageUrl);
     expect(played).toHaveTextContent("Only playlists the live sync saw you play from are listed.");
     screen.getByRole("button", { name: "Exclude Example Mix" }).click();
 
