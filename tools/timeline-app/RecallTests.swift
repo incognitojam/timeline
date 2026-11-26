@@ -277,10 +277,11 @@ struct RecallTests {
         let lastReply = try await worker.recognize(path: "/synthetic/last.png")
         precondition(lastReply.isEmpty)
         guard let idler = try spawned().last else { throw RecallError("No worker started.") }
-        let idlerGone = try await gone(idler)
-        precondition(idlerGone)
-        try await Task.sleep(nanoseconds: 200_000_000)
+        try await Task.sleep(nanoseconds: 500_000_000)
         try await answered()
+        // The app reaps an exited worker itself, when the next request finds it.
+        let idlerGone = try await gone(idler)
+        precondition(idlerGone, "An exited worker must be reaped")
         print("OCR: stop() ends an idle worker")
         // stop() ends the worker; the next request starts another.
         guard let stopped = try spawned().last else { throw RecallError("No worker started.") }
