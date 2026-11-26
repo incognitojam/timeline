@@ -29,7 +29,7 @@ test -f "$APP/Contents/Frameworks/Sparkle.framework/Sparkle"
 test -f "$RESOURCES/Sparkle-LICENSE"
 otool -L "$APP/Contents/MacOS/Timeline" | grep -q '@rpath/Sparkle.framework'
 
-swiftc -target "$(uname -m)-apple-macos14.0" -parse-as-library RecallTests.swift RecallCapture.swift RecallPipeline.swift RecallMigration.swift RecallLog.swift RecallAgeMenu.swift Subprocess.swift -o "$TMP/recall-tests"
+swiftc -target "$(uname -m)-apple-macos14.0" -parse-as-library RecallTests.swift RecallCapture.swift RecallOCR.swift OCRWorker.swift RecallPipeline.swift RecallMigration.swift RecallLog.swift RecallAgeMenu.swift Subprocess.swift -o "$TMP/recall-tests"
 "$TMP/recall-tests" "$TMP" "$(command -v cwebp)"
 
 plutil -lint "$INFO_PLIST" >/dev/null

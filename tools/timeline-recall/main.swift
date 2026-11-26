@@ -5,6 +5,7 @@ import Darwin
 @main
 struct RecallCLI {
     static func main() async {
+        if CommandLine.arguments.dropFirst().first == RecallOCR.workerFlag { RecallOCR.runWorker() }
         do {
             guard CommandLine.arguments.count >= 3 else {
                 throw RecallError("usage: timeline-recall <output-dir> <stamp> [exclude-file]")

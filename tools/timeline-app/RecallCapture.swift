@@ -1,7 +1,7 @@
-// Shared capture and OCR implementation. The app calls this in-process; the CLI is a diagnostic tool.
+// Shared capture implementation. The app calls this in-process; the CLI is a diagnostic tool.
+// Text recognition runs in an OCR worker process (RecallOCR.swift).
 import Foundation
 import AppKit
-import Vision
 import ImageIO
 import UniformTypeIdentifiers
 import ScreenCaptureKit
@@ -106,14 +106,21 @@ enum RecallCapture {
                 }
                 try Task.checkCancellation()
                 let image = capture.image
-                let (text, lineCount) = try ocr(image)
-                try Task.checkCancellation()
-                guard writePNG(image, to: "\(outputDir)/\(stem).png") else {
+                let png = "\(outputDir)/\(stem).png"
+                guard writePNG(image, to: png) else {
                     throw RecallError("PNG encode failed for \(stem)")
                 }
+                let lines: [String]
+                do {
+                    lines = try await RecallOCR.shared.recognize(path: png)
+                } catch {
+                    try Task.checkCancellation()  // Pausing stops the worker mid-recognition.
+                    throw error
+                }
+                try Task.checkCancellation()
                 payload["image"] = true
-                payload["ocr_text"] = text
-                payload["ocr_line_count"] = lineCount
+                payload["ocr_text"] = lines.joined(separator: "\n")
+                payload["ocr_line_count"] = lines.count
                 payload["width"] = image.width
                 payload["height"] = image.height
                 payload["point_pixel_scale"] = capture.pixelScale
@@ -178,44 +185,6 @@ enum RecallCapture {
             return nil
         }
         return (image, pixelScale)
-    }
-
-    // Vision can block indefinitely inside text recognition, and capture ticks
-    // never overlap, so one stuck request would stop all later captures. The
-    // first recognition by a newly built ad-hoc binary took about 33 seconds.
-    static let ocrTimeout: TimeInterval = 120
-
-    static func ocr(_ image: CGImage) throws -> (text: String, lines: Int) {
-        let req = VNRecognizeTextRequest()
-        req.recognitionLevel = .accurate
-        req.usesLanguageCorrection = true
-        let lines = try withTimeout(ocrTimeout, onTimeout: req.cancel) { () -> [String] in
-            do {
-                try VNImageRequestHandler(cgImage: image, options: [:]).perform([req])
-                return (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
-            } catch {
-                warn("OCR failed for a window: \(error.localizedDescription)")
-                return []
-            }
-        }
-        return (lines.joined(separator: "\n"), lines.count)
-    }
-
-    // Runs blocking work on another thread and stops waiting after `seconds`.
-    // Work that never returns keeps its thread; the caller still moves on.
-    static func withTimeout<T>(_ seconds: TimeInterval, onTimeout: @escaping () -> Void = {},
-                               _ work: @escaping () -> T) throws -> T {
-        var result: T?
-        let done = DispatchSemaphore(value: 0)
-        DispatchQueue.global(qos: .utility).async {
-            result = work()
-            done.signal()
-        }
-        guard done.wait(timeout: .now() + seconds) == .success, let value = result else {
-            onTimeout()
-            throw RecallError("Text recognition did not finish within \(Int(seconds)) seconds, so this capture was skipped. Restart Timeline if this repeats.")
-        }
-        return value
     }
 
     static func writePNG(_ image: CGImage, to path: String) -> Bool {
