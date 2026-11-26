@@ -182,7 +182,9 @@ struct TimelineApp: App {
         switch remoteAccess.publicAccessFailure {
         case .funnelNotEnabled(let enableURL):
             Button("Could not make public: \(PublicAccessFailure.funnelNotEnabledText)", action: openLogs)
-            Button(PublicAccessFailure.enableFunnelHint, action: openLogs)
+            Button(PublicAccessFailure.enableFunnelHint) {
+                if let enableURL { _ = NSWorkspace.shared.open(enableURL) } else { openLogs() }
+            }
             if let enableURL {
                 Button(PublicAccessFailure.enableFunnelLabel) { _ = NSWorkspace.shared.open(enableURL) }
             }
@@ -251,7 +253,15 @@ struct TimelineApp: App {
 
     // Click actions for status lines: each only opens something or copies.
     private func openLogs() {
-        NSWorkspace.shared.open(timelineLogsDirectory())
+        // The agents create it on first run, which may not have happened yet.
+        let logs = timelineLogsDirectory()
+        do {
+            try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        } catch {
+            writeError("Could not create \(logs.path): \(error)\n")
+            return
+        }
+        NSWorkspace.shared.open(logs)
     }
 
     private func openRecallPage() {
