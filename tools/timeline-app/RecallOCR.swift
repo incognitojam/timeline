@@ -31,7 +31,9 @@ enum RecallOCR {
             try VNImageRequestHandler(cgImage: image, options: [:]).perform([req])
             return (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
         } catch {
-            RecallCapture.warn("OCR failed for a window: \(error.localizedDescription)")
+            // Only the error's domain and code: a description could quote the screen.
+            let failure = error as NSError
+            RecallCapture.warn("OCR failed for a window: \(failure.domain) \(failure.code)")
             return []
         }
     }

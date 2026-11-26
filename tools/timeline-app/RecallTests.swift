@@ -280,6 +280,22 @@ struct RecallTests {
         try await answered()
         worker.stop()
 
+        // stop() during a request fails it promptly, as pausing mid-recognition
+        // does, and the next request starts a fresh worker.
+        let patient = OCRWorker(executable: script, arguments: [], timeout: 60)
+        let hung = Task { try await patient.recognize(path: "/synthetic/hang.png") }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let stopping = Date()
+        patient.stop()
+        do {
+            _ = try await hung.value
+            preconditionFailure("A stopped worker must fail its request")
+        } catch {}
+        precondition(Date().timeIntervalSince(stopping) < 10, "stop() must not wait for the timeout")
+        let resumed = try await patient.recognize(path: "/synthetic/ok.png")
+        precondition(resumed == ["one", "two"])
+        patient.stop()
+
         let missing = OCRWorker(executable: root.appendingPathComponent("absent-worker"), arguments: [], timeout: 1)
         do {
             _ = try await missing.recognize(path: "/synthetic/ok.png")
