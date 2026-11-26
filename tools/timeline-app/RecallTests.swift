@@ -1,10 +1,12 @@
 import Foundation
 import CoreGraphics
 import AppKit
+import CoreText
 
 @main
 struct RecallTests {
     static func main() async throws {
+        if CommandLine.arguments.dropFirst().first == RecallOCR.workerFlag { RecallOCR.runWorker() }
         guard CommandLine.arguments.count >= 2 else { throw RecallError("Pass a scratch directory.") }
         ageTests()
         menuTests()
@@ -28,16 +30,7 @@ struct RecallTests {
             preconditionFailure("An unreadable exclusion file must fail closed")
         } catch {}
 
-        let blocked = DispatchSemaphore(value: 0)
-        var timedOut = false
-        do {
-            _ = try RecallCapture.withTimeout(0.05, onTimeout: { timedOut = true }) { blocked.wait() }
-            preconditionFailure("Work that never returns must time out")
-        } catch {}
-        precondition(timedOut)
-        blocked.signal()
-        let answer = try RecallCapture.withTimeout(5) { 42 }
-        precondition(answer == 42)
+        try await ocrWorkerTests(root: root)
 
         let work = root.appendingPathComponent("work")
         try fm.createDirectory(at: work, withIntermediateDirectories: true)
@@ -173,7 +166,142 @@ struct RecallTests {
         precondition(streak.recordFailure())
 
         try migrationTests(home: home)
-        print("OK: Recall OCR timeout, failure streak, publication, cancellation, retention, and migration.")
+        print("OK: Recall failure streak, publication, cancellation, retention, and migration.")
+    }
+
+    // The OCR worker protocol, against this test binary in worker mode (real
+    // Vision) and a stand-in shell worker that hangs, ignores TERM or dies.
+    static func ocrWorkerTests(root: URL) async throws {
+        let fm = FileManager.default
+        guard let me = Bundle.main.executableURL else { throw RecallError("No test executable path.") }
+        guard let context = CGContext(data: nil, width: 900, height: 160, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            throw RecallError("Could not create a text image.")
+        }
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 900, height: 160))
+        let text = NSAttributedString(string: "Synthetic recall text", attributes: [
+            .font: NSFont.systemFont(ofSize: 64), .foregroundColor: NSColor.black,
+        ])
+        context.textPosition = CGPoint(x: 24, y: 52)
+        CTLineDraw(CTLineCreateWithAttributedString(text), context)
+        guard let textImage = context.makeImage() else { throw RecallError("Could not render a text image.") }
+        let textPNG = root.appendingPathComponent("ocr-text.png")
+        precondition(RecallCapture.writePNG(textImage, to: textPNG.path))
+
+        let real = OCRWorker(executable: me, arguments: [RecallOCR.workerFlag], timeout: 300)
+        let lines = try await real.recognize(path: textPNG.path)
+        precondition(lines == RecallOCR.recognize(textImage), "The worker must match in-process recognition")
+        precondition(lines.joined(separator: " ").contains("recall"), "Vision must read the synthetic text")
+        do {
+            _ = try await real.recognize(path: root.appendingPathComponent("absent.png").path)
+            preconditionFailure("An unreadable image must fail")
+        } catch {}
+        let again = try await real.recognize(path: textPNG.path)
+        precondition(again == lines, "The worker survives a bad image")
+        precondition(fm.fileExists(atPath: textPNG.path), "The worker must not remove the image")
+        real.stop()
+
+        // Worker mode exits when its input closes, even with no request.
+        let idle = Process()
+        idle.executableURL = me
+        idle.arguments = [RecallOCR.workerFlag]
+        let idleInput = Pipe()
+        idle.standardInput = idleInput
+        try idle.run()
+        try idleInput.fileHandleForWriting.close()
+        let idleDeadline = Date().addingTimeInterval(10)
+        while idle.isRunning && Date() < idleDeadline { try await Task.sleep(nanoseconds: 20_000_000) }
+        precondition(!idle.isRunning && idle.terminationStatus == 0, "Worker mode must exit on EOF")
+
+        let pids = root.appendingPathComponent("ocr-pids")
+        let script = root.appendingPathComponent("ocr-worker.sh")
+        try """
+        #!/bin/sh
+        echo $$ >> '\(pids.path)'
+        while IFS= read -r path; do
+          case "$path" in
+            *hang*) exec sleep 600 ;;
+            *stubborn*) trap '' TERM; while :; do sleep 1; done ;;
+            *die*) exit 3 ;;
+            *garble*) echo 'not json' ;;
+            *last*) echo '{"lines":[]}'; exit 0 ;;
+            *) echo '{"lines":["one","two"]}' ;;
+          esac
+        done
+        """.write(to: script, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+        let worker = OCRWorker(executable: script, arguments: [], timeout: 1)
+        func spawned() throws -> [pid_t] {
+            try String(contentsOf: pids, encoding: .utf8).split(separator: "\n").compactMap { pid_t($0) }
+        }
+        func gone(_ pid: pid_t) async throws -> Bool {
+            let deadline = Date().addingTimeInterval(5)
+            while kill(pid, 0) == 0 && Date() < deadline { try await Task.sleep(nanoseconds: 20_000_000) }
+            return kill(pid, 0) != 0 && errno == ESRCH
+        }
+        func answered() async throws {
+            let lines = try await worker.recognize(path: "/synthetic/ok.png")
+            precondition(lines == ["one", "two"])
+        }
+        try await answered()
+        try await answered()
+        let first = try spawned()
+        precondition(first.count == 1, "The worker stays alive between requests")
+        for failure in ["hang", "stubborn", "die", "garble"] {
+            let before = try spawned()
+            let started = Date()
+            do {
+                _ = try await worker.recognize(path: "/synthetic/\(failure).png")
+                preconditionFailure("A \(failure) worker must fail the request")
+            } catch {}
+            precondition(Date().timeIntervalSince(started) < 10, "A \(failure) worker must be killed promptly")
+            guard let last = before.last else { throw RecallError("No worker started.") }
+            let reaped = try await gone(last)
+            precondition(reaped, "A \(failure) worker must be reaped")
+            try await answered()
+            let after = try spawned()
+            precondition(after.count == before.count + 1, "A fresh worker replaces a \(failure) one")
+        }
+        // A worker that exits between requests is replaced on the next one.
+        let lastReply = try await worker.recognize(path: "/synthetic/last.png")
+        precondition(lastReply.isEmpty)
+        guard let idler = try spawned().last else { throw RecallError("No worker started.") }
+        let idlerGone = try await gone(idler)
+        precondition(idlerGone)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        try await answered()
+        // stop() ends the worker; the next request starts another.
+        guard let stopped = try spawned().last else { throw RecallError("No worker started.") }
+        worker.stop()
+        let stoppedGone = try await gone(stopped)
+        precondition(stoppedGone, "stop() must end the worker")
+        try await answered()
+        worker.stop()
+
+        // stop() during a request fails it promptly, as pausing mid-recognition
+        // does, and the next request starts a fresh worker.
+        let patient = OCRWorker(executable: script, arguments: [], timeout: 60)
+        let hung = Task { try await patient.recognize(path: "/synthetic/hang.png") }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let stopping = Date()
+        patient.stop()
+        do {
+            _ = try await hung.value
+            preconditionFailure("A stopped worker must fail its request")
+        } catch {}
+        precondition(Date().timeIntervalSince(stopping) < 10, "stop() must not wait for the timeout")
+        let resumed = try await patient.recognize(path: "/synthetic/ok.png")
+        precondition(resumed == ["one", "two"])
+        patient.stop()
+
+        let missing = OCRWorker(executable: root.appendingPathComponent("absent-worker"), arguments: [], timeout: 1)
+        do {
+            _ = try await missing.recognize(path: "/synthetic/ok.png")
+            preconditionFailure("A worker that cannot start must fail the request")
+        } catch {}
+        print("OK: OCR worker matches in-process Vision, exits on EOF, and is replaced after hanging, ignoring TERM, dying, garbling or exiting.")
     }
 
     static func fullscreenVideoTests() {

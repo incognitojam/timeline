@@ -64,8 +64,9 @@ in [Recall setup](../../docs/user/recall-setup.md).
 
 - **Record Screen** requests Screen Recording permission for Timeline and toggles
   the existing pause flag. The menu opens the permission settings when needed.
-- Capture and OCR run off the UI thread. Pausing or sleeping cancels the active
-  tick, and ticks never overlap.
+- Capture runs off the UI thread, and text recognition runs in an OCR worker
+  process (see [Recall setup](../../docs/user/recall-setup.md#recording-controls)).
+  Pausing or sleeping cancels the active tick, and ticks never overlap.
 - The menu icon and last-capture age reflect capture health. Permission, migration,
   and capture failures appear in the menu.
 - The app unregisters the previous Recall job before recording. An inert bundled
@@ -97,8 +98,9 @@ After a build, `./smoke.sh` validates the plists/signature, copies the app to a
 temporary directory, and boots the copied packaged service with a minimal
 `PATH` and no checkout-relative working directory.
 
-The smoke checks exercise Recall publication, cancellation, retention, and legacy
-agent retirement with synthetic data, without requesting screen access. Real WebP
+The smoke checks exercise Recall publication, cancellation, retention, the OCR
+worker and legacy agent retirement with synthetic data, without requesting screen
+access. Real WebP
 encoding requires `cwebp`; install it with `brew install webp` before running them.
 
 The recall health logic lives in `RecallLog.swift`, and the service config

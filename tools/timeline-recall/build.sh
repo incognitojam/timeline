@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 
 IDENTITY="Timeline Recall Signing"
 
-swiftc -target "$(uname -m)-apple-macos14.0" -O -parse-as-library main.swift ../timeline-app/RecallCapture.swift -o timeline-recall
+swiftc -target "$(uname -m)-apple-macos14.0" -O -parse-as-library main.swift ../timeline-app/RecallCapture.swift ../timeline-app/RecallOCR.swift ../timeline-app/OCRWorker.swift -o timeline-recall
 
 # Sign with a stable identity so the Screen Recording (TCC) grant survives
 # rebuilds. An ad-hoc signature is keyed by the cdhash, which changes on every

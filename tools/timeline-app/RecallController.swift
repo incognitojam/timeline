@@ -85,7 +85,10 @@ final class RecallController: ObservableObject {
             notifyOutage("Screen Recording permission was turned off. Allow Timeline to record from its menu.")
         }
         checkStuckCapture()
-        if isPaused || needsPermission { captureTask?.cancel() }
+        if isPaused || needsPermission {
+            captureTask?.cancel()
+            RecallOCR.shared.stop()
+        }
         guard ServiceAgentController.isRunningFromInstalledLocation() else {
             issue = "Recall: run the installed app to record"
             return
@@ -242,7 +245,10 @@ final class RecallController: ObservableObject {
         guard paused != isPaused else { return }
         isPaused = paused
         recordingSince = paused ? nil : Date()
-        if paused { captureTask?.cancel() }
+        if paused {
+            captureTask?.cancel()
+            RecallOCR.shared.stop()
+        }
     }
 
     // Full reconcile incl. re-reading capture.log; driven by the poll timer.

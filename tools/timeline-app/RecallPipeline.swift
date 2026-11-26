@@ -4,7 +4,7 @@ import Darwin
 struct RecallPipeline {
     static let interval: TimeInterval = 30
     // A tick still running after this long is reported as stuck. It exceeds
-    // RecallCapture.ocrTimeout so a stuck recognition reports its own error first.
+    // RecallOCR.timeout so a stuck recognition reports its own error first.
     static let stuckAfter: TimeInterval = 5 * 60
     let home: URL
 

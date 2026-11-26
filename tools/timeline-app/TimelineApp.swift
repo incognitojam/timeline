@@ -3,7 +3,17 @@ import SwiftUI
 import AppKit
 import ServiceManagement
 
+// The same executable runs as the app or, started by the app, as its OCR
+// worker, before any app state, UI, updater or service agent is created.
 @main
+enum TimelineMain {
+    @MainActor
+    static func main() {
+        if CommandLine.arguments.dropFirst().first == RecallOCR.workerFlag { RecallOCR.runWorker() }
+        TimelineApp.main()
+    }
+}
+
 struct TimelineApp: App {
     @StateObject private var recall = RecallController()
     @StateObject private var loginItems = LoginItemController()
