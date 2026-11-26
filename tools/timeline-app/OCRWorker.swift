@@ -115,8 +115,8 @@ final class OCRWorker: @unchecked Sendable {
         // end() takes the lock to record an abandoned worker.
         if let exited { end(exited) }
         return try lock.withLock {
-            if let child { return child }
             abandoned.removeAll { !$0.isRunning }
+            if let child { return child }
             guard abandoned.count < 2 else {
                 throw RecallError("Text recognition is stuck in a worker that cannot be ended, so this capture was skipped. Timeline tries again on the next capture.")
             }
@@ -146,22 +146,28 @@ final class OCRWorker: @unchecked Sendable {
         guard fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) == 0 else {
             throw Self.cannotStart(errno)
         }
-        var actions = posix_spawn_file_actions_t()
-        posix_spawn_file_actions_init(&actions)
+        var actions: posix_spawn_file_actions_t? = nil
+        var code = posix_spawn_file_actions_init(&actions)
+        guard code == 0 else { throw Self.cannotStart(code) }
         defer { posix_spawn_file_actions_destroy(&actions) }
-        posix_spawn_file_actions_adddup2(&actions, input.fileHandleForReading.fileDescriptor, STDIN_FILENO)
-        posix_spawn_file_actions_adddup2(&actions, output.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
-        posix_spawn_file_actions_addinherit_np(&actions, STDERR_FILENO)
-        var attributes = posix_spawnattr_t()
-        posix_spawnattr_init(&attributes)
+        var attributes: posix_spawnattr_t? = nil
+        code = posix_spawnattr_init(&attributes)
+        guard code == 0 else { throw Self.cannotStart(code) }
         defer { posix_spawnattr_destroy(&attributes) }
-        // The worker gets only stdin, stdout and stderr, none of the app's other descriptors.
-        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT))
-        let argv = ([executable.path] + arguments).map { strdup($0) } + [nil]
-        let envp = ProcessInfo.processInfo.environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
+        let setup = [
+            posix_spawn_file_actions_adddup2(&actions, input.fileHandleForReading.fileDescriptor, STDIN_FILENO),
+            posix_spawn_file_actions_adddup2(&actions, output.fileHandleForWriting.fileDescriptor, STDOUT_FILENO),
+            posix_spawn_file_actions_addinherit_np(&actions, STDERR_FILENO),
+            // The worker gets only stdin, stdout and stderr, none of the app's other descriptors.
+            posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT)),
+        ]
+        if let failed = setup.first(where: { $0 != 0 }) { throw Self.cannotStart(failed) }
+        let argv = ([executable.path] + arguments).map { strdup($0) }
+        let envp = ProcessInfo.processInfo.environment.map { strdup("\($0.key)=\($0.value)") }
         defer { (argv + envp).forEach { free($0) } }
+        guard !(argv + envp).contains(nil) else { throw Self.cannotStart(ENOMEM) }
         var pid: pid_t = 0
-        let status = posix_spawn(&pid, executable.path, &actions, &attributes, argv, envp)
+        let status = posix_spawn(&pid, executable.path, &actions, &attributes, argv + [nil], envp + [nil])
         try? input.fileHandleForReading.close()
         try? output.fileHandleForWriting.close()
         guard status == 0 else { throw Self.cannotStart(status) }
