@@ -48,7 +48,7 @@ import { createMemoryRoutes } from "./memory";
 import { generateStatusMarkdown, renderMarkdownToHtml } from "./status-md";
 import { uploadAuth } from "./upload-auth";
 import { authMiddleware, authRoutes, isAuthEnabled, assertApiAuthConfigured } from "./auth";
-import { createMcpHandler, FUNNEL_HEADER } from "./mcp-http";
+import { createMcpHandler, FUNNEL_HEADER, logRefusedMcpRequest } from "./mcp-http";
 import { configureBunSqliteForSqliteVec } from "../embeddings/sqlite-vec";
 import { notConfiguredMessage } from "../embeddings/config";
 import { getEmbeddingsDbPath } from "../embeddings/db";
@@ -343,7 +343,12 @@ mcpHttp.all("/mcp/:token", cors(), async (c) => {
 mcpHttp.all("/mcp", cors(), async (c) => handleMcpRequest(c.req.raw));
 mcpHttp.all("/mcp/", cors(), async (c) => handleMcpRequest(c.req.raw));
 
-mcpHttp.notFound(c => c.text("Forbidden", 403));
+// Over Funnel, OAuth discovery probes get a 404 ("no OAuth here"); everything else non-MCP is forbidden.
+mcpHttp.notFound(c => {
+  const wellKnown = c.req.path.startsWith("/.well-known/");
+  logRefusedMcpRequest(c.req.raw, wellKnown ? 404 : 403, wellKnown ? "well-known" : "other");
+  return wellKnown ? c.text("Not Found", 404) : c.text("Forbidden", 403);
+});
 
 // Public traffic terminates in the MCP-only router, including unmatched paths.
 app.use("*", async (c, next) => c.req.raw.headers.has(FUNNEL_HEADER)
