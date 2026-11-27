@@ -5,7 +5,7 @@ import sys
 import tempfile
 import unittest
 
-from edge_build import Refusal, check_appcast, edge_version, feed_build, offered_build, prune_plan, publish_action
+from edge_build import BUILD_DMG, Refusal, check_appcast, edge_version, feed_build, offered_build, prune_plan, publish_action
 
 
 SCRIPT = Path(__file__).with_name("edge_build.py")
@@ -18,6 +18,10 @@ def dmg(build, version="0.21.1"):
 
 def build_assets(*builds):
     return [name for build in builds for name in (dmg(build), dmg(build) + ".sha256")]
+
+
+def removed_builds(plan):
+    return sorted(int(match[1]) for name in plan if (match := BUILD_DMG.fullmatch(name)))
 
 
 def release(names, **overrides):
@@ -124,10 +128,33 @@ class PrunePlanTests(unittest.TestCase):
             with self.subTest(name), self.assertRaises(Refusal):
                 prune_plan(value, TAG, current.get(name, 1346))
 
-    def test_refuses_more_deletions_than_a_normal_build(self):
-        names = ["appcast.xml", *build_assets(*range(1300, 1311))]
-        with self.assertRaises(Refusal):
-            prune_plan(release(names), TAG, 1310)
+    def test_removes_a_backlog_of_images_oldest_first_over_several_runs(self):
+        # As after keeping fewer builds, for example when reverting to an older retention rule.
+        builds = list(range(1300, 1320))
+        runs = 0
+        while True:
+            plan = prune_plan(release(["appcast.xml", *build_assets(*builds)]), TAG, 1319)
+            if not plan:
+                break
+            removed = sorted(int(name.split("edge.")[1].split("-")[0]) for name in plan if name.endswith(".dmg"))
+            self.assertEqual(removed, builds[:len(removed)])
+            self.assertLessEqual(len(removed), 5)
+            builds = [build for build in builds if build not in removed]
+            runs += 1
+        self.assertEqual((builds, runs), (list(range(1315, 1320)), 3))
+
+    def test_removes_a_backlog_of_patches_oldest_first_and_their_images_meanwhile(self):
+        # More patches to the oldest expired build than one run removes.
+        orphans = [f"Timeline1340-{old}.delta" for old in range(1280, 1340)]
+        newer = [f"Timeline1341-{old}.delta" for old in range(1331, 1341)]
+        current = [f"Timeline1346-{old}.delta" for old in range(1336, 1346)]
+        names = ["appcast.xml", *orphans, *newer, *current, *build_assets(*range(1340, 1347))]
+        plan = prune_plan(release(names), TAG, 1346)
+        self.assertEqual([name for name in plan if name.endswith(".delta")], orphans[:50])
+        self.assertEqual(removed_builds(plan), [1340, 1341])
+        # The next run accepts the patches whose image is gone and removes them.
+        names = [name for name in names if name not in plan]
+        self.assertEqual(prune_plan(release(names), TAG, 1346), orphans[50:] + newer)
 
 
 def feed(build):
