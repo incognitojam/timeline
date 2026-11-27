@@ -337,6 +337,18 @@ export function initAppStateDb(db: Database) {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_calls_session ON mcp_tool_calls(session_id, created_at DESC)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_calls_created ON mcp_tool_calls(created_at)`);
 
+  // get_updates checkpoints (src/mcp/updates.ts): where each named catch-up
+  // last finished, a JSON list of where its last few moves started, and when
+  // a call last used it.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mcp_checkpoints (
+      name TEXT PRIMARY KEY,
+      position INTEGER NOT NULL,
+      moves TEXT NOT NULL,
+      used_at TEXT NOT NULL
+    )
+  `);
+
   // Retrieval eval: labelled test cases for scoring search quality. A case has
   // query phrasings (each scored separately) and graded expectations — either
   // specific events, time/conversation ranges, or "none" (negative control).

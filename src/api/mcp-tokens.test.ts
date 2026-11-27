@@ -3,6 +3,7 @@ process.env.NODE_ENV = "test";
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { Database } from "../db/sqlite";
 import { getAppStateDb, initAppStateDb } from "../db/app-state";
+import { getDb } from "../db/schema";
 import { app } from "./index";
 
 const HEADERS = { "Content-Type": "application/json", Accept: "application/json, text/event-stream" };
@@ -66,7 +67,7 @@ afterAll(() => {
   for (const spy of spies) spy.mockRestore();
   if (previousEnv === undefined) delete process.env.MCP_TOKENS;
   else process.env.MCP_TOKENS = previousEnv;
-  getAppStateDb().exec("DELETE FROM mcp_tokens; DELETE FROM mcp_sessions; DELETE FROM memory_notes");
+  getAppStateDb().exec("DELETE FROM mcp_tokens; DELETE FROM mcp_sessions; DELETE FROM memory_notes; DELETE FROM mcp_checkpoints");
 });
 
 function create(label: string, ...flags: string[]) {
@@ -149,6 +150,21 @@ describe("managed MCP tokens", () => {
     expect(save.result.isError).toBe(true);
     expect(save.result.content[0].text).toContain("save_memory_note disabled");
     expect(getAppStateDb().query("SELECT COUNT(*) AS n FROM memory_notes").get()).toEqual({ n: 0 });
+  });
+
+  test("a read-only token creates and moves a checkpoint, the one thing it writes", async () => {
+    const session = await open(create("bookmarker", "--read-only"));
+    const catchUp = async () => data(await (await session.call("tools/call", { name: "get_updates", arguments: { checkpoint: "reader" } })).text()).result.content[0].text as string;
+    const position = () => (getAppStateDb().query("SELECT position FROM mcp_checkpoints WHERE name = 'reader'").get() as { position: number } | null)?.position;
+    expect(await catchUp()).toContain('Next check: checkpoint="reader"');
+    const first = position();
+    expect(first).toBeDefined();
+    const added = Number(getDb().prepare(`
+      INSERT INTO events (source, source_id, type, timestamp, content, people, raw_data, conversation_id)
+      VALUES ('discord', 'bookmark-1', 'message:dm', ?, 'are we still on?', '["discord:alice"]', '{}', 'dm-alice')
+    `).run(new Date().toISOString()).lastInsertRowid);
+    expect(await catchUp()).toContain(`Checkpoint "reader" is now at id:${added}.`);
+    expect(position()).toBe(added);
   });
 
   test("every tool declares whether it writes, and a full token is offered the writing ones", async () => {
