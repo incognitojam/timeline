@@ -52,7 +52,7 @@ jobs:
         with:
           python-version: "3.15"
       # Edge builds are built from main as it stands, so their version exists only on the runner.
-      - name: Stamp the edge version
+      - name: Stamp the edge version and update check interval
         if: inputs.edge-version != ''
         env:
           EDGE_VERSION: ${{ inputs.edge-version }}
@@ -64,8 +64,13 @@ jobs:
           fi
           jq --arg version "$EDGE_VERSION" '.version = $version' package.json > "$RUNNER_TEMP/package.json"
           mv "$RUNNER_TEMP/package.json" package.json
-          # Keep the runner-only stamp out of version.json's dirty flag.
-          git update-index --skip-worktree package.json
+          # Edge Macs check hourly, Sparkle's shortest interval, so they fall
+          # fewer builds behind than once a day; stable keeps Sparkle's default.
+          plist=tools/timeline-app/Info.plist
+          plutil -replace SUScheduledCheckInterval -integer 3600 "$plist"
+          test "$(plutil -extract SUScheduledCheckInterval raw "$plist")" = 3600
+          # Keep the runner-only stamps out of version.json's dirty flag.
+          git update-index --skip-worktree package.json "$plist"
       - name: Verify release source
         env:
           RELEASE_TAG: ${{ inputs.tag }}
@@ -97,7 +102,12 @@ jobs:
         env:
           TIMELINE_CODESIGN_IDENTITY: '-'
           VITE_MAPTILER_API_KEY: ${{ secrets.VITE_MAPTILER_API_KEY }}
-        run: TIMELINE_BUILD_NUMBER="$(../../scripts/print-build-number.sh)" ./build.sh
+          EDGE_VERSION: ${{ inputs.edge-version }}
+        run: |
+          TIMELINE_BUILD_NUMBER="$(../../scripts/print-build-number.sh)" ./build.sh
+          if [ -n "$EDGE_VERSION" ]; then
+            test "$(plutil -extract SUScheduledCheckInterval raw Timeline.app/Contents/Info.plist)" = 3600
+          fi
       - name: Sign, notarize, and package DMG
         # Two notarizations of up to 30 minutes each, stapler retries, and the smoke test.
         timeout-minutes: 120
