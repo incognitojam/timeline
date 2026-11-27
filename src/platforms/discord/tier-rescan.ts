@@ -39,7 +39,7 @@ import { reconcileDiscordMessage, tombstoneDiscordMessage } from "./message-reco
 //
 // Reaction *authors* (who reacted, vs the emoji + count the message fetch
 // returns) are now captured at first sync, gated on message age (see
-// INITIAL_AUTHOR_CAPTURE_MAX_AGE_MS in the sync source). `refreshAuthorsOnChange`
+// INITIAL_AUTHOR_CAPTURE_MAX_AGE_MS in message-store.ts). `refreshAuthorsOnChange`
 // marks the tiers that refetch authors when the count changed — including a
 // message gaining its first reactions after the initial sync. The 1h/6h/24h
 // tiers refresh; 7d stays counts-only (except the don't-clobber refresh below),

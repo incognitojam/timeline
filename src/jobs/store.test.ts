@@ -177,12 +177,12 @@ describe("jobs/store", () => {
     const future = enqueueJob({ kind: "sync", source: "vision", notBefore: new Date(Date.now() + 60_000) }, db);
     const base = { workerId: "test-worker", leaseMs: 60_000 };
 
-    expect(claimNextJob({ ...base, excludeSyncSource: "vision" }, db)?.id).toBe(inbox.jobId);
-    expect(claimNextJob({ ...base, excludeSyncSource: "vision" }, db)?.id).toBe(sourceLess.jobId);
+    expect(claimNextJob({ ...base, excludeSyncSources: ["vision"] }, db)?.id).toBe(inbox.jobId);
+    expect(claimNextJob({ ...base, excludeSyncSources: ["vision"] }, db)?.id).toBe(sourceLess.jobId);
     expect(claimNextJob({ ...base, syncSource: "vision" }, db)?.id).toBe(description.jobId);
     expect(claimNextJob({ ...base, syncSource: "vision" }, db)).toBeNull();
-    expect(claimNextJob({ ...base, excludeSyncSource: "vision" }, db)?.id).toBe(ordinary.jobId);
-    expect(claimNextJob({ ...base, excludeSyncSource: "vision" }, db)).toBeNull();
+    expect(claimNextJob({ ...base, excludeSyncSources: ["vision"] }, db)?.id).toBe(ordinary.jobId);
+    expect(claimNextJob({ ...base, excludeSyncSources: ["vision"] }, db)).toBeNull();
     expect(getJob(future.jobId, db)?.status).toBe("queued");
   });
 

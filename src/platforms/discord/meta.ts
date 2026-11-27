@@ -29,6 +29,11 @@ export const discordMeta = {
         "message:guild:sticker",
       ],
     },
+    {
+      // A sync source only: its events are stored under `discord`.
+      id: "discord-dms",
+      label: "Discord DMs",
+    },
   ],
   identityPlatforms: ["discord"],
 } as const satisfies PlatformMeta;

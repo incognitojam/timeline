@@ -13,11 +13,8 @@
  */
 
 import { getAppStateDb, getSyncState, setSyncState } from "../../db/app-state";
-import { type UpsertIdentityOptions, upsertIdentities } from "../../db/identities";
-import { onImportComplete } from "../../db/import-hooks";
 import { getDb, initDb } from "../../db/schema";
 import type { SyncOptions, SyncResult, SyncSource } from "../../sync/types";
-import { downloadAndStoreAttachments } from "./attachment-downloader";
 import {
   type DiscordAttachmentRetryResult,
   retryDiscordAttachments,
@@ -33,25 +30,20 @@ import {
   type DiscordClientStats,
   getChannelTypeName,
   isThreadType,
-  type NormalizedMessage,
   snowflakeToDate,
   THREAD_CHANNEL_TYPES,
 } from "./client";
 import { downloadPendingEmojis, upsertEmojiRefs } from "./emoji-downloader";
-import { extractEmojiRefs } from "./emoji-extractor";
 import {
   buildChannelContext,
   type ChannelContext,
-  convertMessage,
-  getMessageAttachments,
 } from "./event-converter";
 import { upsertGuildEmojis } from "./guild-emojis";
 import { upsertGuild } from "./guilds";
-import { reconcileDiscordMessage } from "./message-reconciliation";
+import { createMessageStore, finishMessageStore } from "./message-store";
 import { captureExpiredPollVoters, type PollVoterCaptureStats } from "./poll-voters";
 import { fetchSessionContext, groupIntoSessions } from "./sparse";
 import {
-  buildEmojiCountMap,
   type RescanStats,
   rescanReactionTiers,
   TIERS,
@@ -104,16 +96,6 @@ interface DiscordOptimizationStats {
 const ACTIVE_THREAD_SEARCH_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const ACTIVE_THREAD_SEARCH_DUE_AGE_MS = ACTIVE_THREAD_SEARCH_MAX_AGE_MS / 2;
 const FORBIDDEN_CHANNEL_RETRY_MS = 24 * 60 * 60 * 1000;
-
-// Reaction authors (who reacted, not just the emoji + count the message fetch
-// returns) are captured at first sync only for messages younger than this gate.
-// Rationale: messages older than the 24h tier never enter a reaction rescan
-// (their band has already aged past every tier), so a first backfill of a
-// historical channel would otherwise fire an author fetch per old reacted
-// message — thousands of requests for reactions long since settled. Gating on
-// age keeps initial author capture to the freshly-posted band, which is also
-// where late-deleted reactions would otherwise cost us the author list.
-const INITIAL_AUTHOR_CAPTURE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 // Guild metadata (name/icon via fetchGuild) and the guild emoji inventory
 // change rarely; refresh them daily instead of on every sync. Custom emoji
@@ -273,6 +255,21 @@ function isCachedIn(
   if (isFreshTimestamp(cache[id], nowMs, ttlMs)) return true;
   delete cache[id];
   return false;
+}
+
+/** True when a channel's `last_message_id` shows nothing past its stored cursor. */
+export function hasNoNewMessages(
+  state: DiscordApiSyncState,
+  channelId: string,
+  lastMessageId?: string | null,
+): boolean {
+  if (lastMessageId === undefined) return false; // no data available, must sync
+  if (lastMessageId === null) return true;       // channel has no messages at all
+  const cursor = state.channelCursors[channelId];
+  if (!cursor) return false;
+  // BigInt compare: string comparison breaks across the 18→19 digit rollover
+  // (Discord snowflakes grew in length around July 2022).
+  return BigInt(lastMessageId) <= BigInt(cursor);
 }
 
 export function isForbiddenChannelCached(
@@ -777,10 +774,8 @@ export const discordSyncSource: SyncSource = {
     initDb(db);
 
     const importBatch = `discord-api-${userId}-${Date.now()}`;
-    let totalAdded = 0;
-    let incidentalMessageEdits = 0;
-    let incidentalTombstonesCleared = 0;
-    let totalAttachments = { stored: 0, failed: 0 };
+    const store = createMessageStore({ db, client, userId, importBatch, state, signal, verbose: options.verbose });
+    const totalAttachments = store.totals.attachments;
     let attachmentRecovery: DiscordAttachmentRetryResult = {
       attempted: 0,
       stored: 0,
@@ -794,25 +789,11 @@ export const discordSyncSource: SyncSource = {
     let pollVoterStats = emptyPollVoterCaptureStats();
     let incidentalMetricsFolded = false;
     const optimizationStats = emptyOptimizationStats();
-    const allIdentities: UpsertIdentityOptions[] = [];
     const foldIncidentalMetrics = () => {
       if (incidentalMetricsFolded) return;
-      rescanStats.messagesEdited += incidentalMessageEdits;
-      rescanStats.tombstonesCleared += incidentalTombstonesCleared;
+      rescanStats.messagesEdited += store.totals.edited;
+      rescanStats.tombstonesCleared += store.totals.tombstonesCleared;
       incidentalMetricsFolded = true;
-    };
-
-    // Flush accumulated identities to DB and clear the buffer.
-    // Safe to call multiple times — upsertIdentities uses ON CONFLICT UPDATE.
-    const flushIdentities = () => {
-      if (allIdentities.length === 0) return;
-      const uniqueIdentities = new Map<string, UpsertIdentityOptions>();
-      for (const id of allIdentities) {
-        uniqueIdentities.set(id.platformId, id);
-      }
-      upsertIdentities(db, [...uniqueIdentities.values()]);
-      log(options.verbose, `Flushed ${uniqueIdentities.size} identities`);
-      allIdentities.length = 0;
     };
 
     // Returns false when the inventory was unavailable, so callers can retry
@@ -842,7 +823,7 @@ export const discordSyncSource: SyncSource = {
     // Only a run where both fetches succeed is cached, so either failure
     // retries next sync instead of waiting out the TTL.
     // (`state` is guarded rather than narrowed — closures don't keep the
-    // post-init narrowing; see processBatch.)
+    // post-init narrowing.)
     const refreshGuildMeta = async (
       guildId: string,
       guildConfig: GuildConfig,
@@ -865,149 +846,8 @@ export const discordSyncSource: SyncSource = {
 
     try {
 
-      const insert = db.prepare(`
-        INSERT OR IGNORE INTO events (
-          source, source_id, source_account, type, timestamp,
-          title, content, people, tags, raw_data, import_batch, conversation_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-
-      const insertObservation = db.prepare(
-        `INSERT OR REPLACE INTO discord_reaction_observations
-           (event_id, tier, observed_at, age_ms, total_count, emoji_counts)
-         VALUES (?, ?, ?, ?, ?, json(?))`,
-      );
-
-      // Same shape as tier-rescan's updateReactions: writes the reactions
-      // array (now carrying `users`) back into raw_data.$.reactions.
-      const updateReactions = db.prepare(
-        "UPDATE events SET raw_data = json_set(raw_data, '$.reactions', json(?)) WHERE source = 'discord' AND source_id = ? AND source_account = ?",
-      );
-
-      // Helper: process a batch of messages for a channel
-      const processBatch = async (
-        messages: NormalizedMessage[],
-        channelCtx: ChannelContext
-      ) => {
-        for (const msg of messages) {
-          if (signal?.aborted) return;
-
-          const { event, identities } = convertMessage(msg, channelCtx, userId, importBatch);
-          allIdentities.push(...identities);
-
-          const result = insert.run(
-            event.source,
-            event.sourceId,
-            event.sourceAccount,
-            event.type,
-            event.timestamp,
-            event.title,
-            event.content,
-            JSON.stringify(event.people),
-            event.tags,
-            JSON.stringify(event.rawData),
-            event.importBatch,
-            event.conversationId
-          );
-
-          if (result.changes > 0) {
-            totalAdded++;
-            const eventId = Number(result.lastInsertRowid);
-
-            // Record initial reaction observation if the message had any
-            // reactions at first sync. Provides a baseline for measuring drift
-            // captured by later tier re-fetches. The observation records counts
-            // only — author capture below is separate.
-            if (msg.reactions.length > 0) {
-              const nowMs = Date.now();
-              const ageMs = nowMs - Date.parse(msg.timestamp);
-              const totalCount = msg.reactions.reduce((s, r) => s + r.count, 0);
-              insertObservation.run(
-                eventId,
-                "initial",
-                new Date(nowMs).toISOString(),
-                ageMs,
-                totalCount,
-                JSON.stringify(buildEmojiCountMap(msg.reactions)),
-              );
-
-              // Capture *who* reacted at first sync for freshly-posted messages
-              // (the message fetch returns only emoji + count). Gated on age so
-              // a historical backfill doesn't fire an author fetch per old
-              // reacted message — see INITIAL_AUTHOR_CAPTURE_MAX_AGE_MS. Runs
-              // after the INSERT OR IGNORE so a duplicate (no-op) message —
-              // e.g. a sparse-context overlap — never wastes an author fetch.
-              if (
-                !signal?.aborted &&
-                ageMs < INITIAL_AUTHOR_CAPTURE_MAX_AGE_MS
-              ) {
-                // Isolate hard failures like the attachment path does: author
-                // enrichment is best-effort, and one bad fetch must not abort
-                // the rest of the sync run. The counts are already stored; a
-                // count change at the 1h/6h/24h tiers re-attempts the capture.
-                try {
-                  const enriched = await client.fetchAllReactionUsers(
-                    channelCtx.id,
-                    msg.id,
-                    msg.reactions,
-                  );
-                  updateReactions.run(JSON.stringify(enriched), msg.id, userId);
-                } catch (err) {
-                  if (err instanceof DOMException && err.name === "AbortError") throw err;
-                  console.warn(
-                    `[discord] initial author capture failed for ${msg.id}: ${err instanceof Error ? err.message : String(err)}`,
-                  );
-                }
-              }
-            }
-
-            // Discord forwards keep the original files inside message_snapshots,
-            // while the forwarding wrapper's attachment array stays empty.
-            const messageAttachments = getMessageAttachments(msg);
-            if (messageAttachments.length > 0) {
-              const attResult = await downloadAndStoreAttachments(
-                db,
-                eventId,
-                channelCtx.id,
-                messageAttachments,
-                signal
-              );
-              totalAttachments.stored += attResult.stored;
-              totalAttachments.failed += attResult.failed;
-            }
-
-            // Cheap: record any custom-emoji refs as 'pending' rows so we can
-            // download them in a single deduped pass at the end of the sync.
-            const emojiRefs = extractEmojiRefs(event.rawData);
-            if (emojiRefs.length > 0) upsertEmojiRefs(db, emojiRefs);
-          } else {
-            // Sparse context and overlapping discovery paths often re-fetch an
-            // already indexed message. Reconcile those observations for free.
-            const reconciled = reconcileDiscordMessage(db, msg, userId);
-            if (reconciled.edited) incidentalMessageEdits++;
-            if (reconciled.tombstoneCleared) incidentalTombstonesCleared++;
-          }
-
-          // Update cursor
-          if (state) {
-            const existing = state.channelCursors[channelCtx.id];
-            if (!existing || BigInt(msg.id) > BigInt(existing)) {
-              state.channelCursors[channelCtx.id] = msg.id;
-            }
-          }
-        }
-      };
-
-      // Helper: check if a channel can be skipped (no new messages since last sync)
-      const canSkipChannel = (channelId: string, lastMessageId?: string | null): boolean => {
-        if (lastMessageId === undefined) return false; // no data available, must sync
-        if (lastMessageId === null) return true;       // channel has no messages at all
-        const cursor = state.channelCursors[channelId];
-        if (!cursor) return false;
-        // BigInt compare: string comparison breaks across the 18→19 digit rollover
-        // (Discord snowflakes grew in length around July 2022).
-        return BigInt(lastMessageId) <= BigInt(cursor);
-      };
+      const canSkipChannel = (channelId: string, lastMessageId?: string | null): boolean =>
+        hasNoNewMessages(state, channelId, lastMessageId);
 
       // Helper: sync a single channel (full mode)
       const syncChannel = async (channelCtx: ChannelContext) => {
@@ -1025,7 +865,7 @@ export const discordSyncSource: SyncSource = {
           },
         })) {
           if (signal?.aborted) return;
-          await processBatch(batch, channelCtx);
+          await store.storeBatch(batch, channelCtx);
           batchCount++;
         }
 
@@ -1104,7 +944,7 @@ export const discordSyncSource: SyncSource = {
       // Update known DM channel IDs
       state.knownDMChannelIds = [...knownDMIds];
 
-      flushIdentities();
+      store.flushIdentities();
       finishDmsPhase();
 
       // ========== Phase 2: Full Guilds ==========
@@ -1236,7 +1076,7 @@ export const discordSyncSource: SyncSource = {
           }
 
           log(options.verbose, `  ${guildName}: ${guildSynced} synced, ${guildSkipped} skipped (no new messages)`);
-          flushIdentities();
+          store.flushIdentities();
           continue;
         }
 
@@ -1441,7 +1281,7 @@ export const discordSyncSource: SyncSource = {
 
         log(options.verbose, `  ${guildName}: ${guildSynced} synced, ${guildSkipped} skipped (no new messages)`);
 
-        flushIdentities();
+        store.flushIdentities();
       }
       finishFullGuildsPhase();
 
@@ -1470,7 +1310,7 @@ export const discordSyncSource: SyncSource = {
           `Active-thread search: ${Math.min(budget, due.length)}/${due.length} due parent(s) searched ` +
             `(budget ${budget}), ${synced} thread(s) synced`,
         );
-        flushIdentities();
+        store.flushIdentities();
       }
       finishActiveThreadSearchPhase();
 
@@ -1530,7 +1370,7 @@ export const discordSyncSource: SyncSource = {
           const sessions = groupIntoSessions(userMessages);
           for await (const batch of fetchSessionContext(client, channelId, sessions)) {
             if (signal?.aborted) break;
-            await processBatch(batch, ctx);
+            await store.storeBatch(batch, ctx);
           }
         }
 
@@ -1540,7 +1380,7 @@ export const discordSyncSource: SyncSource = {
           state.guildSparseCursors[guildId] = finalNewestId;
         }
 
-        flushIdentities();
+        store.flushIdentities();
       }
       finishSparseGuildsPhase();
 
@@ -1649,9 +1489,9 @@ export const discordSyncSource: SyncSource = {
       finishAttachmentRecoveryPhase();
 
       // ========== Finalize ==========
-      finalize(db, appDb, state, flushIdentities, totalAdded, importBatch);
+      finishMessageStore(db, store, () => setSyncState(appDb, "discord-api", state));
 
-      log(options.verbose, `Done: +${totalAdded} events, ${totalAttachments.stored} attachments stored, ${totalAttachments.failed} failed`);
+      log(options.verbose, `Done: +${store.totals.added} events, ${totalAttachments.stored} attachments stored, ${totalAttachments.failed} failed`);
       const clientStats = client.getStats();
       log(
         options.verbose,
@@ -1664,7 +1504,7 @@ export const discordSyncSource: SyncSource = {
       return {
         source: "discord",
         success: true,
-        eventsAdded: totalAdded,
+        eventsAdded: store.totals.added,
         eventsUpdated: discordEventsUpdated(rescanStats, callDetailStats, pollVoterStats),
         durationMs: Date.now() - startTime,
         metadata: buildDiscordSyncMetadata({
@@ -1684,7 +1524,7 @@ export const discordSyncSource: SyncSource = {
       foldIncidentalMetrics();
       // Always finalize (upsert identities, save state, close db) even on error
       try {
-        finalize(db, appDb, state, flushIdentities, totalAdded, importBatch);
+        finishMessageStore(db, store, () => setSyncState(appDb, "discord-api", state));
       } catch (finalizeErr) {
         console.error("[discord] Error during finalization:", finalizeErr);
       }
@@ -1694,7 +1534,7 @@ export const discordSyncSource: SyncSource = {
         return {
           source: "discord",
           success: true,
-          eventsAdded: totalAdded,
+          eventsAdded: store.totals.added,
           eventsUpdated: discordEventsUpdated(rescanStats, callDetailStats, pollVoterStats),
           durationMs: Date.now() - startTime,
           metadata: {
@@ -1717,7 +1557,7 @@ export const discordSyncSource: SyncSource = {
       return {
         source: "discord",
         success: false,
-        eventsAdded: totalAdded,
+        eventsAdded: store.totals.added,
         eventsUpdated: discordEventsUpdated(rescanStats, callDetailStats, pollVoterStats),
         error: error instanceof Error ? error.message : String(error),
         durationMs: Date.now() - startTime,
@@ -1736,31 +1576,6 @@ export const discordSyncSource: SyncSource = {
     }
   },
 };
-
-/**
- * Finalize sync: upsert identities, trigger import hooks, save state, close DB.
- * Called on both success and error paths to ensure cleanup.
- */
-function finalize(
-  db: import("bun:sqlite").Database,
-  appDb: import("bun:sqlite").Database,
-  state: DiscordApiSyncState,
-  flushIdentities: () => void,
-  totalAdded: number,
-  importBatch: string,
-): void {
-  flushIdentities();
-
-  // Trigger import hooks
-  if (totalAdded > 0) {
-    onImportComplete(db);
-  }
-
-  // Save sync state
-  setSyncState(appDb, "discord-api", state);
-
-  db.close();
-}
 
 /**
  * Migrate reaction-rescan cursors to the unified tier-keyed map.

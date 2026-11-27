@@ -16,9 +16,11 @@ export interface SyncResult {
   source: string;
   success: boolean;
   /**
-   * True when a guard deliberately deferred the run (e.g. on a blocked network).
-   * `success` stays true — a deferral is healthy, not a failure — so this is a
-   * distinct outcome rather than `success: false`.
+   * True when a guard deliberately deferred the run (e.g. on a blocked network),
+   * or the source itself found nothing to do; it then says why in
+   * `metadata.skipReason`, and its sync_log row folds like a guard's (see
+   * recordSkippedSync). `success` stays true — a deferral is healthy, not a
+   * failure — so this is a distinct outcome rather than `success: false`.
    */
   skipped?: boolean;
   eventsAdded: number;

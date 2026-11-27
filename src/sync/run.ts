@@ -7,7 +7,7 @@
 import type { Database } from "bun:sqlite";
 import type { LocalWorkGate } from "../jobs/local-work";
 import type { SyncConfig } from "./config";
-import { completeSyncLog, formatSyncResult, recordSkippedSync, startSyncLog } from "./log";
+import { completeSyncLog, discardSyncLog, formatSyncResult, recordSkippedSync, startSyncLog } from "./log";
 import type { SyncResult, SyncSource } from "./types";
 
 export interface SyncRunInput {
@@ -72,7 +72,14 @@ export async function runSyncSource(input: SyncRunInput): Promise<SyncRunOutcome
     localWork: input.localWork,
     intervalMs: input.intervalMs,
   });
-  completeSyncLog(appDb, logId, result);
+  // A run that found nothing to do records like a guard skip, so a source
+  // polled every few minutes collapses into one row an hour.
+  if (result.skipped) {
+    discardSyncLog(appDb, logId);
+    recordSkippedSync(appDb, jobId, result, input.scheduled);
+  } else {
+    completeSyncLog(appDb, logId, result);
+  }
   report(result);
   return { result, ran: true };
 }

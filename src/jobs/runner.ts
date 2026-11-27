@@ -44,8 +44,11 @@ export interface RunnerOptions {
   reclaimEveryMs?: number;
   verbose?: boolean;
   handlers: Partial<Record<JobKind, JobHandler>>;
-  /** This source coordinates its own local phases using the handler's guard. */
-  overlapSyncSource?: string;
+  /**
+   * Each of these sources runs on a claim loop of its own, beside the serial
+   * one, and coordinates its own local phases using the handler's guard.
+   */
+  overlapSyncSources?: readonly string[];
 }
 
 /** Resolved runner settings (defaults applied), shared by the loop and reclaim fibers. */
@@ -56,8 +59,15 @@ export interface RunnerConfig {
   leaseMs: number;
   reclaimEveryMs: number;
   verbose: boolean;
-  overlapSyncSource?: string;
+  overlapSyncSources: readonly string[];
 }
+
+/**
+ * One gate per overlapping source. Its loop already runs one job at a time;
+ * the gate also outlives a stop, so after a restart a handler that ignored the
+ * abort still holds its source until it settles.
+ */
+export type LaneWork = ReadonlyMap<string, LocalWorkGate>;
 
 /** A job handler threw. Carries the job id for logging and the original error. */
 class HandlerError extends Data.TaggedError("HandlerError")<{
@@ -87,7 +97,7 @@ function messageOf(cause: unknown): string {
  *   row `running` and is failed by that same startup sweep, so crash and
  *   graceful-stop stay distinct outcomes.
  */
-const dispatch = (job: Job, config: RunnerConfig, localWork: LocalWorkGate, inferenceWork: LocalWorkGate) =>
+const dispatch = (job: Job, config: RunnerConfig, localWork: LocalWorkGate, laneWork: LaneWork) =>
   Effect.gen(function* () {
     const store = yield* JobStore;
     const handlers = yield* Handlers;
@@ -105,11 +115,11 @@ const dispatch = (job: Job, config: RunnerConfig, localWork: LocalWorkGate, infe
 
     const result = yield* Effect.tryPromise({
       try: (signal) => {
-        const overlaps = job.kind === "sync" && job.source === config.overlapSyncSource;
-        const gate = overlaps ? inferenceWork : localWork;
-        // Serial handlers already own local work. Only the overlapping source
+        const lane = job.kind === "sync" && job.source !== null ? laneWork.get(job.source) : undefined;
+        const gate = lane ?? localWork;
+        // Serial handlers already own local work. Only an overlapping source
         // receives a guard to acquire for its individual phases.
-        return gate.run(() => handler(job, signal, overlaps ? localWork : undefined), signal);
+        return gate.run(() => handler(job, signal, lane ? localWork : undefined), signal);
       },
       catch: (cause) => new HandlerError({ jobId: job.id, cause }),
     }).pipe(
@@ -144,14 +154,14 @@ const dispatch = (job: Job, config: RunnerConfig, localWork: LocalWorkGate, infe
 const claimAndRun = (
   config: RunnerConfig,
   localWork: LocalWorkGate,
-  inferenceWork: LocalWorkGate,
-  filter: Pick<ClaimOptions, "syncSource" | "excludeSyncSource">,
+  laneWork: LaneWork,
+  filter: Pick<ClaimOptions, "syncSource" | "excludeSyncSources">,
 ) =>
   Effect.gen(function* () {
     const store = yield* JobStore;
     const job = yield* store.claimNext({ workerId: config.workerId, leaseMs: config.leaseMs, ...filter });
     if (!job) return false;
-    yield* dispatch(job, config, localWork, inferenceWork);
+    yield* dispatch(job, config, localWork, laneWork);
     return true;
   }).pipe(
     // `dispatch` already records its own failures, so only a claim error reaches
@@ -167,10 +177,10 @@ const claimAndRun = (
 export const makeWorkLoop = (
   config: RunnerConfig,
   localWork = new LocalWorkGate(),
-  inferenceWork = new LocalWorkGate(),
-  filter: Pick<ClaimOptions, "syncSource" | "excludeSyncSource"> = {},
+  laneWork: LaneWork = new Map(),
+  filter: Pick<ClaimOptions, "syncSource" | "excludeSyncSources"> = {},
 ) =>
-  claimAndRun(config, localWork, inferenceWork, filter).pipe(
+  claimAndRun(config, localWork, laneWork, filter).pipe(
     Effect.flatMap((claimed) =>
       Effect.sleep(Duration.millis(claimed ? config.pollActiveMs : config.pollIdleMs))
     ),
@@ -194,20 +204,20 @@ export const makeReclaimLoop = (config: RunnerConfig) =>
   );
 
 /**
- * Ordinary work stays serial. An opted-in sync source gets one separate claim
- * loop and must guard its local phases; each loop awaits its whole dispatch.
+ * Ordinary work stays serial. Each opted-in sync source gets a claim loop of
+ * its own and must guard its local phases; each loop awaits its whole dispatch.
  */
 const makeRunnerProgram = (
   config: RunnerConfig,
   localWork: LocalWorkGate,
-  inferenceWork: LocalWorkGate,
+  laneWork: LaneWork,
 ): Effect.Effect<void, never, JobStore | Handlers> =>
   Effect.gen(function* () {
     yield* Effect.forkChild(makeReclaimLoop(config));
-    if (config.overlapSyncSource !== undefined) {
-      yield* Effect.forkChild(makeWorkLoop(config, localWork, inferenceWork, { syncSource: config.overlapSyncSource }));
+    for (const source of config.overlapSyncSources) {
+      yield* Effect.forkChild(makeWorkLoop(config, localWork, laneWork, { syncSource: source }));
     }
-    return yield* makeWorkLoop(config, localWork, inferenceWork, { excludeSyncSource: config.overlapSyncSource });
+    return yield* makeWorkLoop(config, localWork, laneWork, { excludeSyncSources: config.overlapSyncSources });
   });
 
 type RunnerRuntime = ManagedRuntime.ManagedRuntime<JobStore | Handlers, never>;
@@ -216,7 +226,7 @@ export class JobRunner {
   private readonly config: RunnerConfig;
   private readonly handlers: Partial<Record<JobKind, JobHandler>>;
   private readonly localWork = new LocalWorkGate();
-  private readonly inferenceWork = new LocalWorkGate();
+  private readonly laneWork: LaneWork;
 
   private running = false;
   private runtime: RunnerRuntime | null = null;
@@ -230,8 +240,9 @@ export class JobRunner {
       leaseMs: options.leaseMs ?? DEFAULT_JOB_LEASE_MS,
       reclaimEveryMs: options.reclaimEveryMs ?? 30_000,
       verbose: options.verbose ?? false,
-      overlapSyncSource: options.overlapSyncSource,
+      overlapSyncSources: options.overlapSyncSources ?? [],
     };
+    this.laneWork = new Map(this.config.overlapSyncSources.map((source) => [source, new LocalWorkGate()]));
     this.handlers = options.handlers;
   }
 
@@ -241,7 +252,7 @@ export class JobRunner {
     this.runtime = ManagedRuntime.make(
       Layer.merge(JobStoreLive, Layer.succeed(Handlers, this.handlers))
     );
-    this.fiber = this.runtime.runFork(makeRunnerProgram(this.config, this.localWork, this.inferenceWork));
+    this.fiber = this.runtime.runFork(makeRunnerProgram(this.config, this.localWork, this.laneWork));
   }
 
   async stop(timeoutMs = 30_000): Promise<void> {

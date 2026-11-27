@@ -55,6 +55,34 @@ describe("jobs/runner", () => {
     expect(job?.result).toEqual({ events: 7 });
   });
 
+  test("each overlapping source runs on its own lane, beside the serial one and each other", async () => {
+    const blocked = Promise.withResolvers<void>();
+    const serial = enqueueJob({ kind: "sync", source: "runner-test-serial" });
+    const slowLane = enqueueJob({ kind: "sync", source: "runner-test-slow-lane" });
+    const fastLane = enqueueJob({ kind: "sync", source: "runner-test-fast-lane" });
+
+    const runner = new JobRunner({
+      pollIdleMs: 10,
+      pollActiveMs: 5,
+      overlapSyncSources: ["runner-test-slow-lane", "runner-test-fast-lane"],
+      handlers: {
+        sync: async (job) => {
+          if (job.source !== "runner-test-fast-lane") await blocked.promise;
+        },
+      },
+    });
+
+    runner.start();
+    try {
+      await waitFor(() => getJob(fastLane.jobId)?.status === "succeeded");
+      expect(getJob(serial.jobId)?.status).toBe("running");
+      expect(getJob(slowLane.jobId)?.status).toBe("running");
+    } finally {
+      blocked.resolve();
+      await runner.stop(1000);
+    }
+  });
+
   test("handler exception marks the job failed", async () => {
     const { jobId } = enqueueJob({
       kind: "sync",

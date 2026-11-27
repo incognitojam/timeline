@@ -31,6 +31,7 @@ import { JobRunner, type JobHandler } from "../jobs/runner";
 import type { Job, JobKind } from "../jobs/types";
 import { syncJobResult } from "./job-result";
 import { attachmentDescriptionsSyncSource } from "../sync/sources/attachment-descriptions";
+import { discordDmsSyncSource } from "../platforms/discord/dm-pass";
 import { lowerThreadToBackground } from "../lib/background-priority";
 
 interface WorkerMessage {
@@ -124,7 +125,7 @@ async function startComponents(config: ServiceConfig, verbose: boolean): Promise
       runner = new JobRunner({
         verbose,
         handlers: buildHandlers(scheduler, watcher),
-        overlapSyncSource: attachmentDescriptionsSyncSource.name,
+        overlapSyncSources: [attachmentDescriptionsSyncSource.name, discordDmsSyncSource.name],
       });
       runner.start();
       console.log("[Worker] Job runner started");

@@ -37,6 +37,7 @@ function platformDirs(root: string): string[] {
 /** Current registry values, so a reorder or a lost source shows up as a reviewed change here. */
 const EXPECTED_SYNC_ORDER = [
   "discord",
+  "discord-dms",
   "google-messages",
   "monzo",
   "trakt",
@@ -153,6 +154,7 @@ const EXPECTED_SOURCES = [
   ["codex", "Codex", "#74c69d"],
   ["conductor", "Conductor", "#a4847f"],
   ["discord", "Discord", "#5865F2"],
+  ["discord-dms", "Discord DMs", "#5865F2"],
   ["embeddings", "Embeddings", "#2dd4bf"],
   ["facebook", "Facebook", "#1877F2"],
   ["fitbit", "Fitbit", "#00B0B9"],

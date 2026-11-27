@@ -21,6 +21,7 @@ const config = (overrides: Partial<RunnerConfig> = {}): RunnerConfig => ({
   leaseMs: 60_000,
   reclaimEveryMs: 30_000,
   verbose: false,
+  overlapSyncSources: [],
   ...overrides,
 });
 
