@@ -266,14 +266,16 @@ function parseEntry(file: MemoryFile): Parsed {
   return { path: file.path, updatedAt: file.updated_at, project, folder: folder as Parsed["folder"], file: name, index, frontmatter };
 }
 
+type ProjectKey = { key: string; title: string } | { problem: string };
+
 /** Each project folder's key, the slug of the title in its index.md, or why the project cannot be imported. */
-function projectKeys(files: Parsed[]): Map<string, { key: string } | { problem: string }> {
-  const projects = new Map<string, { key: string } | { problem: string }>();
+function projectKeys(files: Parsed[]): Map<string, ProjectKey> {
+  const projects = new Map<string, ProjectKey>();
   for (const folder of new Set(files.flatMap((file) => (file.project ? [file.project] : [])))) {
     const index = files.find((file) => file.project === folder && file.index);
     try {
       if (!index) throw new Error(`Project ${folder} has no index.md giving its title.`);
-      projects.set(folder, { key: projectScope(index.frontmatter.name) });
+      projects.set(folder, { key: projectScope(index.frontmatter.name), title: index.frontmatter.name });
     } catch (error) {
       projects.set(folder, { problem: (error as Error).message });
     }
@@ -287,10 +289,11 @@ function projectKeys(files: Parsed[]): Map<string, { key: string } | { problem: 
 }
 
 /**
- * Map an export's memory files to notes, contact links left to the caller.
- * A file that cannot be imported is listed as a problem with the reason.
+ * Map an export's memory files to notes, contact links left to the caller,
+ * with the title of each project by its key. A file that cannot be imported
+ * is listed as a problem with the reason.
  */
-export function mapClaudeMemory(upload: MemoryUpload): { notes: ClaudeMemoryNote[]; problems: Problem[] } {
+export function mapClaudeMemory(upload: MemoryUpload): { notes: ClaudeMemoryNote[]; projects: Record<string, string>; problems: Problem[] } {
   const problems: Problem[] = [...upload.problems];
   const files: Parsed[] = [];
   const paths = upload.files.map((file) => file.path);
@@ -306,6 +309,7 @@ export function mapClaudeMemory(upload: MemoryUpload): { notes: ClaudeMemoryNote
     }
   }
   const projects = projectKeys(files);
+  const titles = Object.fromEntries([...projects.values()].flatMap((project) => ("key" in project ? [[project.key, project.title]] : [])));
 
   const notes: ClaudeMemoryNote[] = [];
   for (const file of files) {
@@ -326,5 +330,5 @@ export function mapClaudeMemory(upload: MemoryUpload): { notes: ClaudeMemoryNote
     const kind = file.folder ? FOLDER_KINDS[file.folder] : file.project ? "project" : "you";
     notes.push({ ...note, name: file.file, kind, title: titleFromSlug(file.file), details: file.frontmatter.body, aliases: file.frontmatter.aliases });
   }
-  return { notes, problems };
+  return { notes, projects: titles, problems };
 }

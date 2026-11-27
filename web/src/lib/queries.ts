@@ -2,6 +2,7 @@ import type { MemoryNote } from "@shared/memory";
 import type { HealthWindow } from "@shared/health-periods";
 import type { MusicExclusionRequest, MusicPeriod } from "@platforms/spotify/shared/music";
 import type { NetworkSettings } from "@shared/network-settings";
+import type { MemoryImportLinks } from "@shared/memory";
 import {
   createInfiniteQuery,
   createMutation,
@@ -1424,7 +1425,7 @@ export function usePreviewClaudeMemoryImport() {
 }
 
 export function useClaudeMemoryImport() {
-  return useMemoryMutation((v: { file: File; planId: string }) => importClaudeMemory(v.file, v.planId));
+  return useMemoryMutation((v: { file: File; planId: string; links: MemoryImportLinks }) => importClaudeMemory(v.file, v));
 }
 
 export function useSetProjectUsesAccountMemory() {

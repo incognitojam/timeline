@@ -1,21 +1,26 @@
 import type { MemoryIndex, MemoryKind, MemoryNote } from "@shared/memory";
 import { buildMemoryNoteUrl } from "./routes";
 
-/** Account notes on the index, in page order. Account notes can't be of kind "project". */
-export const ACCOUNT_GROUPS: ReadonlyArray<{ kind: MemoryKind; label: string }> = [
-  { kind: "you", label: "You" },
-  { kind: "topic", label: "Topics" },
-  { kind: "area", label: "Areas" },
-  { kind: "person", label: "People" },
-];
-
-export const KIND_LABELS: Record<MemoryKind, string> = {
-  you: "You",
-  topic: "Topic",
-  area: "Area",
-  person: "Person",
-  project: "Project",
+/**
+ * How each kind of note is named: `label` for one note's kind, `heading` for a
+ * group of them, `one`/`many` in a count, and `hint` where the name alone
+ * does not say what the notes are.
+ */
+export const KINDS: Record<MemoryKind, { label: string; heading: string; one: string; many: string; hint?: string }> = {
+  you: { label: "You", heading: "You", one: "note about you", many: "notes about you" },
+  project: { label: "Project", heading: "Project", one: "note about the project", many: "notes about the project" },
+  topic: { label: "Topic", heading: "Topics", one: "topic", many: "topics", hint: "subjects that come up in conversations" },
+  area: { label: "Area", heading: "Areas", one: "area of your life", many: "areas of your life", hint: "ongoing parts of life, such as home or work" },
+  person: { label: "Person", heading: "People", one: "person", many: "people" },
 };
+
+/** Kinds in page order. */
+export const KIND_ORDER: readonly MemoryKind[] = ["you", "project", "topic", "area", "person"];
+
+export const countKind = (kind: MemoryKind, count: number) => `${count} ${count === 1 ? KINDS[kind].one : KINDS[kind].many}`;
+
+/** Account notes on the index, in page order. Account notes can't be of kind "project". */
+export const ACCOUNT_GROUPS = KIND_ORDER.filter((kind) => kind !== "project").map((kind) => ({ kind, label: KINDS[kind].heading }));
 
 export function scopeLabel(project: string): string {
   return project ? `Project ${project}` : "Account";

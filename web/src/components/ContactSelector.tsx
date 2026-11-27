@@ -1,4 +1,4 @@
-import { createSignal, For, Show } from "solid-js";
+import { createSignal, createUniqueId, For, onMount, Show } from "solid-js";
 import { useContacts } from "../lib/queries";
 import type { ContactWithStats } from "../lib/types";
 import { IconClose } from "../ui/icons";
@@ -7,13 +7,29 @@ interface Props {
   selectedContactIds: number[];
   onChange: (contactIds: number[]) => void;
   placeholder?: string;
+  /** Offer hidden contacts too, marked as such. */
+  includeHidden?: boolean;
+  /** Names the search field for screen readers. */
+  label?: string;
+  autofocus?: boolean;
 }
 
 export default function ContactSelector(props: Props) {
   const [search, setSearch] = createSignal("");
   const [isOpen, setIsOpen] = createSignal(false);
+  // The highlighted suggestion, moved with the arrow keys and chosen with Enter
+  // once the user has typed or moved it, so Enter in a form still submits.
+  const [active, setActive] = createSignal(0);
+  const [picking, setPicking] = createSignal(false);
+  const inputId = createUniqueId();
+  const listId = createUniqueId();
+  let input: HTMLInputElement | undefined;
+  onMount(() => {
+    // Inside <Show>, the field is in the document only after this runs.
+    if (props.autofocus) queueMicrotask(() => input?.focus());
+  });
 
-  const contactsQuery = useContacts();
+  const contactsQuery = useContacts(() => ({ includeHidden: props.includeHidden ?? false }));
   const allContacts = () => contactsQuery.data ?? [];
 
   const selectedContacts = () => {
@@ -33,7 +49,13 @@ export default function ContactSelector(props: Props) {
   function handleSelect(contact: ContactWithStats) {
     props.onChange([...props.selectedContactIds, contact.id]);
     setSearch("");
+    setActive(0);
+    setPicking(false);
   }
+
+  const shown = () => filteredContacts().slice(0, 20);
+  const optionId = (index: number) => `${listId}-${index}`;
+  const listOpen = () => isOpen() && shown().length > 0;
 
   function handleRemove(contactId: number) {
     props.onChange(props.selectedContactIds.filter(id => id !== contactId));
@@ -45,8 +67,24 @@ export default function ContactSelector(props: Props) {
       const newIds = props.selectedContactIds.slice(0, -1);
       props.onChange(newIds);
     }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      setIsOpen(true);
+      const last = shown().length - 1;
+      setActive((index) => Math.max(0, Math.min(last, index + (e.key === "ArrowDown" ? 1 : -1))));
+      setPicking(true);
+      document.getElementById(optionId(active()))?.scrollIntoView({ block: "nearest" });
+    }
+    if (e.key === "Enter" && listOpen() && picking()) {
+      const contact = shown()[active()];
+      if (contact) {
+        e.preventDefault();
+        handleSelect(contact);
+      }
+    }
     // Close dropdown on escape
-    if (e.key === "Escape") {
+    if (e.key === "Escape" && listOpen()) {
+      e.stopPropagation();
       setIsOpen(false);
     }
   }
@@ -62,7 +100,6 @@ export default function ContactSelector(props: Props) {
         onClick={() => {
           setIsOpen(true);
           // Focus the input
-          const input = document.getElementById("contact-search-input");
           input?.focus();
         }}
       >
@@ -76,6 +113,7 @@ export default function ContactSelector(props: Props) {
               <button
                 type="button"
                 class="hover:text-primary/70"
+                aria-label={`Remove ${contact.display_name}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   handleRemove(contact.id);
@@ -87,13 +125,22 @@ export default function ContactSelector(props: Props) {
           )}
         </For>
         <input
-          id="contact-search-input"
+          ref={input}
+          id={inputId}
           type="text"
+          role="combobox"
+          aria-label={props.label ?? "Search contacts"}
+          aria-autocomplete="list"
+          aria-expanded={listOpen()}
+          aria-controls={listOpen() ? listId : undefined}
+          aria-activedescendant={listOpen() ? optionId(active()) : undefined}
           class="flex-1 min-w-[100px] bg-transparent outline-none text-sm"
           placeholder={props.selectedContactIds.length === 0 ? (props.placeholder || "Search contacts...") : ""}
           value={search()}
           onInput={(e) => {
             setSearch(e.currentTarget.value);
+            setActive(0);
+            setPicking(true);
             setIsOpen(true);
           }}
           onFocus={() => setIsOpen(true)}
@@ -106,20 +153,28 @@ export default function ContactSelector(props: Props) {
       </div>
 
       {/* Dropdown */}
-      <Show when={isOpen() && filteredContacts().length > 0}>
-        <div class="absolute z-50 w-full mt-1 max-h-48 overflow-auto rounded border border-border bg-background shadow-lg">
-          <For each={filteredContacts().slice(0, 20)}>
-            {(contact) => (
+      <Show when={listOpen()}>
+        <div id={listId} role="listbox" class="absolute z-50 w-full mt-1 max-h-48 overflow-auto rounded border border-border bg-background shadow-lg">
+          <For each={shown()}>
+            {(contact, index) => (
               <button
                 type="button"
+                id={optionId(index())}
+                role="option"
+                tabindex="-1"
+                aria-selected={index() === active()}
                 class="w-full text-left px-3 py-2 hover:bg-accent text-sm"
+                classList={{ "bg-accent": index() === active() }}
                 onMouseDown={(e) => {
                   // Prevent blur from firing before click
                   e.preventDefault();
                 }}
                 onClick={() => handleSelect(contact)}
               >
-                <div class="font-medium">{contact.display_name}</div>
+                <div class="font-medium">
+                  {contact.display_name}
+                  <Show when={contact.hidden}><span class="ml-2 text-xs font-normal text-muted-foreground">Hidden</span></Show>
+                </div>
                 <Show when={contact.notes}>
                   <div class="text-xs text-muted-foreground truncate">{contact.notes}</div>
                 </Show>

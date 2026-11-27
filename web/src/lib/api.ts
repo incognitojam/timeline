@@ -8,7 +8,7 @@ import type {
   MusicRecentResponse,
 } from "@platforms/spotify/shared/music";
 import type { NetworkSettings } from "@shared/network-settings";
-import type { MemoryImportResult, MemoryIndex, MemoryNote, MemoryVersion } from "@shared/memory";
+import type { MemoryImportLinks, MemoryImportResult, MemoryIndex, MemoryNote, MemoryVersion } from "@shared/memory";
 import type { ReleaseStatus } from "@shared/releases";
 import type { SourceFreshness } from "@shared/source-freshness";
 import type { TimelineServiceStatus, VersionInfo } from "@shared/version";
@@ -2503,8 +2503,10 @@ export async function restoreMemoryVersion(id: number): Promise<MemoryNote> {
 }
 
 /** Preview an import of claude.ai's claude-memory-<date>.zip or memories-000.zip (or its JSON), or with a preview's planId, run it. */
-export async function importClaudeMemory(file: File, planId?: string): Promise<MemoryImportResult> {
-  const res = await apiFetch(`${API_BASE}/api/memory/import${planId ? `?plan=${encodeURIComponent(planId)}` : ""}`, {
+/** A preview of importing `file`, or with the preview's plan and the contact chosen for each person it listed, the import. */
+export async function importClaudeMemory(file: File, plan?: { planId: string; links: MemoryImportLinks }): Promise<MemoryImportResult> {
+  const query = plan ? `?plan=${encodeURIComponent(plan.planId)}&links=${encodeURIComponent(JSON.stringify(plan.links))}` : "";
+  const res = await apiFetch(`${API_BASE}/api/memory/import${query}`, {
     method: "POST",
     headers: { "Content-Type": "application/octet-stream" },
     body: file,

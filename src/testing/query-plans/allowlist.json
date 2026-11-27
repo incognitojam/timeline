@@ -428,7 +428,7 @@
     },
     {
       "database": "timeline",
-      "sql": "SELECT id , display_name FROM contacts WHERE display_name COLLATE NOCASE IN ( SELECT value FROM json_each ( ? ) )",
+      "sql": "SELECT id , display_name AS name , hidden FROM contacts WHERE display_name COLLATE NOCASE IN ( SELECT value FROM json_each ( ? ) )",
       "reason": "Importing claude.ai memory matches each person note's names to contacts ignoring case, once per person note in an upload; contacts is small and has no case-insensitive name index.",
       "findings": [
         "contacts:table-scan"
