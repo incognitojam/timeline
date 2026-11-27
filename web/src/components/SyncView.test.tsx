@@ -1,4 +1,4 @@
-import { fireEvent, render, waitFor } from "@solidjs/testing-library";
+import { fireEvent, render, waitFor, within } from "@solidjs/testing-library";
 import type { ParentProps } from "solid-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SourceFreshness } from "@shared/source-freshness";
@@ -10,6 +10,7 @@ const testState = vi.hoisted(() => ({
   inboxSources: [] as InboxSourceInfo[],
   statusQuery: {} as unknown,
   syncSources: [] as SyncSourceInfo[],
+  syncSourcesQuery: null as unknown,
   triggerSync: vi.fn(),
   waitForJob: vi.fn(),
 }));
@@ -31,7 +32,7 @@ vi.mock("../lib/queries", () => ({
   useServiceStatus: () => testState.statusQuery,
   useSyncHistory: () => loadedQuery({ entries: testState.historyEntries, count: testState.historyEntries.length }),
   useInboxSources: () => loadedQuery({ basePath: "/tmp/inbox", archivePath: null, sources: testState.inboxSources }),
-  useSyncSources: () => loadedQuery({ sources: testState.syncSources }),
+  useSyncSources: () => testState.syncSourcesQuery ?? loadedQuery({ sources: testState.syncSources }),
   useTriggerSyncSource: () => ({ mutateAsync: testState.triggerSync }),
   useUploadInboxFile: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
@@ -307,6 +308,51 @@ describe("SyncView source actions", () => {
     const option = getByRole("option", { name: "Google Takeout" });
 
     expect(option).toHaveValue("google-takeout");
+  });
+});
+
+describe("SyncView sources not set up", () => {
+  beforeEach(() => {
+    testState.syncSourcesQuery = null;
+    testState.historyEntries = [];
+    testState.inboxSources = [];
+  });
+
+  it("lists registered sources without settings apart from the configured ones", () => {
+    testState.syncSources = [
+      syncSource(),
+      syncSource({
+        name: "discord-dms",
+        description: "Sync new Discord DMs between full syncs",
+        configured: false,
+        enabled: false,
+      }),
+    ];
+    const { getByRole, getByText } = renderWith(source());
+
+    const notSetUp = getByRole("list", { name: /Not set up/ });
+    const link = within(notSetUp).getByRole("link", { name: /Discord DMs/ });
+    expect(link).toHaveAttribute("href", "/sync/discord-dms");
+    expect(link).toHaveTextContent("Sync new Discord DMs between full syncs");
+    expect(within(notSetUp).queryByText("Backup")).not.toBeInTheDocument();
+    expect(within(notSetUp).queryByText("No runs yet")).not.toBeInTheDocument();
+    expect(getByText("configured")).toHaveTextContent("1 configured");
+  });
+
+  it("offers a retry when the source list fails to load", () => {
+    testState.syncSourcesQuery = { ...loadedQuery(undefined), isError: true };
+    const { getByRole, getByText } = renderWith(source());
+
+    expect(getByText(/Couldn't load the sources that are not set up/)).toBeInTheDocument();
+    fireEvent.click(getByRole("button", { name: "Retry" }));
+    expect((testState.syncSourcesQuery as { refetch: () => void }).refetch).toHaveBeenCalled();
+  });
+
+  it("omits the section when every source has settings", () => {
+    testState.syncSources = [syncSource()];
+    const { queryByRole } = renderWith(source());
+
+    expect(queryByRole("list", { name: /Not set up/ })).not.toBeInTheDocument();
   });
 });
 

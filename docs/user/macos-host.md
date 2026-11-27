@@ -76,8 +76,10 @@ true` (and `inbox.watch_enabled = true` if using inboxes), then restart:
 `launchctl kickstart -k gui/$(id -u)/dev.incognitojam.timeline-service`.
 
 After first startup, sync-source settings live in `app-state.db` and are edited
-from the web UI. `config.toml` `[sync.*]` sections left behind are ignored and
-logged as a warning until removed.
+from the web UI's Sync page. Sources with no saved settings, such as ones added
+by an update, are listed under **Not set up** there; turning one on from its
+page saves its settings and moves it to the main list. `config.toml` `[sync.*]`
+sections left behind are ignored and logged as a warning until removed.
 
 ## Secrets
 
