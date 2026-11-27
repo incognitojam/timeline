@@ -998,6 +998,68 @@ describe("query_events — reply size", () => {
   });
 });
 
+describe("query_events — wrong filters", () => {
+  beforeEach(setup);
+  afterEach(teardown);
+
+  test("an unknown source or type is an error listing the valid ones", async () => {
+    const handlers = captureHandlers(db);
+    const text = async (name: string, args: Record<string, unknown>) => {
+      const result = await handlers.get(name)!(args);
+      expect(result.isError).toBe(true);
+      return result.content[0].text;
+    };
+    const source = await text("query_events", { source: "spotfy" });
+    expect(source).toStartWith('Error: Unknown source "spotfy". Sources: ');
+    expect(source).toContain(" spotify,");
+
+    expect(await text("query_events", { source: "spotify", type: "listen:trak" }))
+      .toStartWith('Error: Unknown type "listen:trak" for spotify. Its types: listen:track, ');
+    expect(await text("query_events", { source: "spotify", type: "message:dm" })).toContain(" Declared by: discord, ");
+    expect(await text("query_events", { type: "lisen" })).toBe('Error: Unknown type "lisen": no source declares it. Pass a source to list its types.');
+    expect(await text("get_context", { timestamp: "2026-07-01T10:00:00Z", exclude_source: "discord,claude-cod" }))
+      .toStartWith('Error: Unknown source "claude-cod" in exclude_source. Sources: ');
+
+    // Prefixes, declared wildcards and legacy types are known.
+    for (const args of [{ type: "listen" }, { source: "facebook", type: "reaction:like" }, { source: "discord,spotify", type: "message,listen:track" }, { source: "call-recordings", type: "recording:incoming" }]) {
+      expect((await handlers.get("query_events")!(args)).isError).toBeUndefined();
+    }
+
+    const long = await handlers.get("get_updates")!({ since: "id:0", sources: ["x".repeat(41_000)] });
+    expect(long.isError).toBe(true);
+    expect(long.content[0].text.length).toBeLessThan(1000);
+  });
+
+  test("a date in the wrong format is an error giving the format", async () => {
+    const handlers = captureHandlers(db);
+    const result = await handlers.get("query_events")!({ date: "14/11/2026" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe('Error: date "14/11/2026" is not a date as YYYY-MM-DD, e.g. 2026-11-14.');
+
+    const impossible = await handlers.get("query_events")!({ start_date: "2026-11-31" });
+    expect(impossible.isError).toBe(true);
+    expect(impossible.content[0].text).toContain("is not a date as YYYY-MM-DD or an ISO 8601 time");
+  });
+
+  test("bounds with an offset, source lists on a date and declared wildcard types match what they say", async () => {
+    insertEvent({ source: "spotify", type: "listen:track", timestamp: "2026-11-14T08:30:00.000Z", title: "Song" });
+    insertEvent({ source: "discord", type: "message:dm", timestamp: "2026-11-14T08:40:00.000Z", content: "hi" });
+    const handlers = captureHandlers(db);
+    const ids = async (args: Record<string, unknown>) =>
+      (await handlers.get("query_events")!(args)).content[0].text.match(/#\d+/g)?.length ?? 0;
+    expect(await ids({ start_date: "2026-11-14T09:00:00+01:00", end_date: "2026-11-14T09:35:00+01:00" })).toBe(1);
+    expect(await ids({ date: "2026-11-14", source: "discord,spotify" })).toBe(2);
+    expect(await ids({ date: "2026-11-14", type: "listen:*" })).toBe(1);
+  });
+
+  test("an empty result restates the filters applied", async () => {
+    insertEvent({ source: "spotify", type: "listen:track", timestamp: "2026-07-01T10:00:00.000Z", title: "A song" });
+    const result = await captureHandlers(db).get("query_events")!({ source: "spotify", type: "listen", date: "2026-07-02" });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toBe('No events match source: "spotify", type: "listen", date: "2026-07-02".');
+  });
+});
+
 describe("query_events — group_by_conversation", () => {
   beforeEach(setup);
   afterEach(teardown);
