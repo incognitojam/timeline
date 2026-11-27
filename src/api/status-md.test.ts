@@ -82,6 +82,19 @@ describe("/status.md sync history", () => {
     expect(text).toContain("| test-deferred-source | 3 | - | 3 |");
   });
 
+  it("shows a run that found nothing new as no changes and leaves it out of the deferred count", async () => {
+    insertRun({
+      source: "test-deferred-source",
+      skipped: 1,
+      eventsAdded: 0,
+      metadata: { skipReason: "No new DM messages", requests: 1 },
+    });
+
+    const text = await (await app.request("/status.md")).text();
+    expect(text).toContain("| test-deferred-source | no changes: No new DM messages |");
+    expect(text).toContain("| test-deferred-source | 1 | 100% | - |");
+  });
+
   it("shows per-target details of a remote agents pull", async () => {
     insertRun({
       source: "remote-agents",

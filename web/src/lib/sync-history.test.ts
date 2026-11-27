@@ -84,6 +84,21 @@ describe("sync history metadata", () => {
     });
   });
 
+  it("labels repeated passes that ran and found nothing new as no changes, not deferred", () => {
+    const entry = historyEntry('{"skipReason":"No new DM messages","requests":1}');
+    entry.skipped = 1;
+    entry.repeat_count = 29;
+    entry.started_at = "2026-07-10 10:02:00";
+    entry.finished_at = "2026-07-10 10:58:00";
+
+    const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    expect(historyStatusLabel(entry)).toEqual({
+      label: `No changes, checked 29 times, ${clock("2026-07-10T10:02:00Z")} to ${clock("2026-07-10T10:58:00Z")}`,
+      className: "text-muted-foreground",
+      title: "No new DM messages",
+    });
+  });
+
   it("leaves the title off a deferred run without a reason", () => {
     const entry = historyEntry(null);
     entry.skipped = 1;

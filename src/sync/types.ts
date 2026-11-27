@@ -16,11 +16,13 @@ export interface SyncResult {
   source: string;
   success: boolean;
   /**
-   * True when a guard deliberately deferred the run (e.g. on a blocked network),
-   * or the source itself found nothing to do; it then says why in
-   * `metadata.skipReason`, and its sync_log row folds like a guard's (see
-   * recordSkippedSync). `success` stays true — a deferral is healthy, not a
-   * failure — so this is a distinct outcome rather than `success: false`.
+   * True when a guard or the source deferred the run (e.g. on a blocked
+   * network), or the source ran and found nothing new; it says why in
+   * `metadata.skipReason`, and its sync_log row folds hourly (see
+   * recordSkippedSync). A run that found nothing new also records its
+   * `metadata.requests`, which tells the two apart (see foundNothingNew).
+   * `success` stays true — neither is a failure — so this is a distinct
+   * outcome rather than `success: false`.
    */
   skipped?: boolean;
   eventsAdded: number;
@@ -97,7 +99,7 @@ export interface SyncLogEntry {
   started_at: string;
   finished_at: string | null;
   success: number; // SQLite boolean
-  skipped: number; // SQLite boolean — guard deferral (distinct from success/failure)
+  skipped: number; // SQLite boolean — see SyncResult.skipped
   /** Scheduled skips this row stands for (see recordSkippedSync); NULL counts as one run. */
   repeat_count: number | null;
   events_added: number;

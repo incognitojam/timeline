@@ -11,6 +11,7 @@ import { getAppStateDb } from "../db/app-state";
 import { openReadonlyTimelineDb } from "../db/readonly";
 import { listJobs } from "../jobs/store";
 import { getRecentSyncLogs } from "../sync/log";
+import { FOUND_NOTHING_NEW_SQL, foundNothingNew } from "../shared/sync-outcome";
 import {
   describeQuiet,
   QUIET_RULE_SUMMARY,
@@ -128,8 +129,8 @@ function sanitizeForTable(text: string): string {
   return sanitized;
 }
 
-/** Why a run was deferred: a guard's or source's skipReason, else canSync's message. */
-function deferredReason(entry: { error: string | null; metadata: string | null }): string | null {
+/** Why a run was skipped: a guard's or source's skipReason, else canSync's message. */
+function skipReason(entry: { error: string | null; metadata: string | null }): string | null {
   if (entry.metadata) {
     try {
       const meta = JSON.parse(entry.metadata) as { skipReason?: unknown };
@@ -335,8 +336,8 @@ async function gatherStatusData() {
       `SELECT
          source,
          SUM(COALESCE(repeat_count, 1)) as syncs,
-         SUM(CASE WHEN success = 1 AND skipped = 0 THEN 1 ELSE 0 END) as successes,
-         SUM(CASE WHEN skipped = 1 THEN COALESCE(repeat_count, 1) ELSE 0 END) as deferred,
+         SUM(CASE WHEN success = 1 AND (skipped = 0 OR ${FOUND_NOTHING_NEW_SQL}) THEN COALESCE(repeat_count, 1) ELSE 0 END) as successes,
+         SUM(CASE WHEN skipped = 1 AND NOT ${FOUND_NOTHING_NEW_SQL} THEN COALESCE(repeat_count, 1) ELSE 0 END) as deferred,
          SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failures,
          COALESCE(SUM(events_added), 0) as events_added,
          AVG(CASE WHEN skipped = 0 THEN duration_ms ELSE NULL END) as avg_duration
@@ -380,7 +381,7 @@ async function gatherStatusData() {
          SUM(COALESCE(repeat_count, 1)) as syncs,
          COALESCE(SUM(events_added), 0) as events_added,
          SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failures,
-         SUM(CASE WHEN skipped = 1 THEN COALESCE(repeat_count, 1) ELSE 0 END) as deferred
+         SUM(CASE WHEN skipped = 1 AND NOT ${FOUND_NOTHING_NEW_SQL} THEN COALESCE(repeat_count, 1) ELSE 0 END) as deferred
        FROM sync_log
        WHERE started_at > datetime('now', '-24 hours')
        GROUP BY strftime('%Y-%m-%dT%H:00:00Z', started_at)
@@ -420,7 +421,7 @@ async function gatherStatusData() {
          SUM(COALESCE(repeat_count, 1)) as syncs,
          COALESCE(SUM(events_added), 0) as events_added,
          SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failures,
-         SUM(CASE WHEN skipped = 1 THEN COALESCE(repeat_count, 1) ELSE 0 END) as deferred
+         SUM(CASE WHEN skipped = 1 AND NOT ${FOUND_NOTHING_NEW_SQL} THEN COALESCE(repeat_count, 1) ELSE 0 END) as deferred
        FROM sync_log
        WHERE started_at > datetime('now', '-30 days')
        GROUP BY strftime('%Y-%m-%d', started_at)
@@ -720,7 +721,7 @@ export async function generateStatusMarkdown(options: StatusMarkdownOptions = {}
   if (data.syncHistory.length > 0) {
     // Group consecutive failures with same source and error
     type HistoryRow =
-      | { type: "deferred"; entry: (typeof data.syncHistory)[0] }
+      | { type: "skipped"; entry: (typeof data.syncHistory)[0] }
       | { type: "success"; entry: (typeof data.syncHistory)[0] }
       | { type: "running"; entry: (typeof data.syncHistory)[0] }
       | { type: "failure"; source: string; error: string | null; firstTime: string; count: number };
@@ -728,7 +729,7 @@ export async function generateStatusMarkdown(options: StatusMarkdownOptions = {}
 
     for (const e of data.syncHistory) {
       if (e.skipped === 1) {
-        rows.push({ type: "deferred", entry: e });
+        rows.push({ type: "skipped", entry: e });
       } else if (e.success === 1) {
         rows.push({ type: "success", entry: e });
       } else if (e.finished_at === null) {
@@ -748,13 +749,14 @@ export async function generateStatusMarkdown(options: StatusMarkdownOptions = {}
     lines.push("| Time | Source | Result |");
     lines.push("|------|--------|--------|");
     for (const row of rows) {
-      if (row.type === "deferred") {
+      if (row.type === "skipped") {
         const e = row.entry;
-        const reason = authenticated ? deferredReason(e) : null;
+        const reason = authenticated ? skipReason(e) : null;
         const repeats = e.repeat_count !== null && e.repeat_count > 1
           ? ` ${e.repeat_count} times, ${formatShortDateTime(e.started_at).slice(-5)} to ${formatShortDateTime(e.finished_at ?? e.started_at).slice(-5)}`
           : "";
-        const result = `deferred${repeats}${reason ? `: ${sanitizeForTable(reason)}` : ""}`;
+        const outcome = foundNothingNew(e.skipped, e.metadata) ? `no changes${repeats && `, checked${repeats}`}` : `deferred${repeats}`;
+        const result = `${outcome}${reason ? `: ${sanitizeForTable(reason)}` : ""}`;
         lines.push(`| ${formatShortDateTime(e.started_at)} | ${e.source} | ${result} |`);
       } else if (row.type === "success") {
         const e = row.entry;
