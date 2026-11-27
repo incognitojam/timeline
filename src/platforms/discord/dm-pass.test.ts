@@ -7,7 +7,7 @@ import { claimNextJob, completeJob, enqueueJob } from "../../jobs/store";
 import { runSourceOnce } from "../../sync/once";
 import { runSyncSource } from "../../sync/run";
 import { CHANNEL_TYPE, setDiscordClientSleepForTests } from "./client";
-import { discordDmsSyncSource } from "./dm-pass";
+import { discordDmsSyncSource, lastDmPassAt } from "./dm-pass";
 import type { DiscordApiSyncState } from "./sync";
 
 beforeAll(() => setDiscordClientSleepForTests(async () => {}));
@@ -105,6 +105,7 @@ beforeEach(() => {
   const appDb = getAppStateDb();
   deleteSyncState(appDb, "discord-api");
   deleteSyncState(appDb, "discord-dms");
+  deleteSyncState(appDb, "discord-dms-passed");
   appDb.prepare("DELETE FROM sync_log WHERE source = 'discord-dms'").run();
   appDb.prepare("DELETE FROM jobs WHERE source IN ('discord', 'discord-dms')").run();
   const db = getDb();
@@ -130,6 +131,7 @@ describe("Discord DM pass", () => {
     expect(messageFetches(calls)).toEqual([`/api/v10/channels/${BUSY}/messages`]);
     expect(storedIds()).toEqual([id(3), id(4)]);
     expect(cursors()).toEqual({ [QUIET]: id(1), [BUSY]: id(4) });
+    expect(lastDmPassAt(getAppStateDb())).not.toBeNull();
 
     calls.length = 0;
     const idle = await runSourceOnce("discord-dms");
@@ -180,6 +182,17 @@ describe("Discord DM pass", () => {
     expect(run.result).toMatchObject({ success: false, error: `Failed to fetch the message before ${id(10)}: 403` });
     expect(storedIds()).toEqual([]);
     expect(cursors()?.[BUSY]).toBe(id(2));
+  });
+
+  test("a pass cancelled while storing leaves DMs unmarked as fresh", async () => {
+    const controller = new AbortController();
+    fakeDiscord({ [BUSY]: [id(2), id(3)] }, { onMessages: () => controller.abort() });
+
+    await runSourceOnce("discord-dms", {
+      signal: controller.signal, state: { "discord-api": discordState({ [BUSY]: id(2) }) },
+    });
+
+    expect(lastDmPassAt(getAppStateDb())).toBeNull();
   });
 
   test("backs off after a 429 even when the retry succeeded, and resumes once the back-off ends", async () => {
