@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 #
 # Prepare a clone or agent worktree for development:
-#   - copy the gitignored files listed in .worktreeinclude from the main clone
 #   - link the shared imports directory
 #   - activate the tracked Git hooks
 #   - install the pinned toolchain with mise and require the pinned Bun
@@ -36,20 +35,6 @@ fi
 echo "    core.hooksPath = .githooks"
 
 if [ "$is_worktree" = true ]; then
-  step "Copying gitignored files from $main_worktree"
-  while IFS= read -r entry; do
-    case "$entry" in '' | '#'*) continue ;; esac
-    if [ -e "$entry" ]; then
-      echo "    kept existing $entry"
-    elif [ -e "$main_worktree/$entry" ]; then
-      mkdir -p "$(dirname "$entry")"
-      cp "$main_worktree/$entry" "$entry"
-      echo "    copied $entry"
-    else
-      warn "$entry is listed in .worktreeinclude but missing from $main_worktree"
-    fi
-  done < .worktreeinclude
-
   step "Linking ./imports"
   if [ -d imports ] && [ ! -L imports ]; then
     warn "./imports is a real directory — leaving it alone"

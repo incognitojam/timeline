@@ -1,6 +1,6 @@
 import type { Map as MapLibreMap } from "maplibre-gl";
 import * as maplibregl from "maplibre-gl";
-import { createEffect, createSignal, For, on, onCleanup } from "solid-js";
+import { createEffect, createSignal, For, on, onCleanup, Show } from "solid-js";
 import { render } from "solid-js/web";
 import { sourceLabel } from "@shared/sources";
 import type { MapEvent } from "../../lib/api";
@@ -11,7 +11,7 @@ import { staleContentClass } from "../../lib/stale-content";
 import { createColorSchemeSignal } from "../../lib/theme";
 import { IconClose } from "../../ui/icons";
 import Map from "../map/Map";
-import { getMapStyleUrl, getMarkerColor } from "../map/mapStyles";
+import { getMapStyle, getMarkerColor, HAS_MAP_TILES } from "../map/mapStyles";
 import SourceIcon from "../SourceIcon";
 
 interface Props {
@@ -47,7 +47,7 @@ export default function MapPane(props: Props) {
 
   // Track color scheme for map style
   const colorScheme = createColorSchemeSignal();
-  const mapStyle = () => getMapStyleUrl(colorScheme());
+  const mapStyle = () => getMapStyle(colorScheme());
 
   // Persist filter changes
   createEffect(on(enabledTypes, (types) => {
@@ -209,12 +209,17 @@ export default function MapPane(props: Props) {
       </div>
 
       {/* Map container */}
-      <div class={`flex-1 min-h-0 ${staleContentClass(mapEventsAreStale())}`} aria-busy={mapEventsAreStale()}>
+      <div class={`relative flex-1 min-h-0 ${staleContentClass(mapEventsAreStale())}`} aria-busy={mapEventsAreStale()}>
         <Map
           class="w-full h-full"
           style={mapStyle()}
           onMapReady={setMap}
         />
+        <Show when={!HAS_MAP_TILES}>
+          <p class="absolute top-2 left-2 right-2 text-xs text-muted-foreground bg-card/90 border border-border rounded-sm px-2 py-1 pointer-events-none">
+            No map tiles: VITE_MAPTILER_API_KEY isn't set. Markers only.
+          </p>
+        </Show>
       </div>
     </div>
   );
