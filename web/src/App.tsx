@@ -189,7 +189,7 @@ const preloadMcpSession: RoutePreloadFunc = ({ params }) => {
 
 export default function App() {
   return (
-    <Router root={Layout}>
+    <Router root={Layout} scrollRestoration>
       <Route path="/" component={TimelineView} preload={preloadTimeline} />
       <Route path="/contacts" component={ContactsView} preload={preloadContacts} />
       <Route path="/conversations" component={suspenseRoute(ConversationsListView, "conversations")} preload={preloadConversations} />

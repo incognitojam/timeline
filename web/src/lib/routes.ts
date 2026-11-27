@@ -29,6 +29,14 @@ export const ROUTES = {
   EVENT: "/event/:id",
 } as const;
 
+/**
+ * Routes whose page scrolls the window rather than a box of its own, so the
+ * router restores its place on Back and Forward. The shell grows with these
+ * pages; every other route keeps a locked one-screen shell. A page listed here
+ * must not set its own height or overflow.
+ */
+export const DOCUMENT_SCROLL_ROUTES: readonly string[] = [ROUTES.MEMORY, ROUTES.MEMORY_PROJECT, ROUTES.MEMORY_NOTE];
+
 export type NavigationIcon =
   | "timeline"
   | "people"

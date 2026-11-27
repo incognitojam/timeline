@@ -1,7 +1,7 @@
 import { A, useParams } from "@solidjs/router";
 import { createEffect, For, Show } from "solid-js";
 import { projectNotesInOrder } from "../lib/memory";
-import { useRestoredScroll } from "../lib/page-scroll";
+import { backToPrevious } from "../lib/back-link";
 import { useMemoryIndex, useSetProjectUsesAccountMemory } from "../lib/queries";
 import { APP_NAME, ROUTES } from "../lib/routes";
 import { IconChevronLeft } from "../ui/icons";
@@ -13,7 +13,6 @@ export default function MemoryProjectView() {
   const key = () => params.key ?? "";
   const query = useMemoryIndex();
   const setUse = useSetProjectUsesAccountMemory();
-  const scrollRef = useRestoredScroll();
   const project = () => query.data?.projects.find((p) => p.key === key());
   const switchId = () => `memory-account-${key()}`;
 
@@ -22,9 +21,9 @@ export default function MemoryProjectView() {
   });
 
   return (
-    <div ref={scrollRef} class="h-full overflow-auto">
+    <div>
       <div class="mx-auto max-w-4xl px-4 pt-6 pb-12">
-        <A href={ROUTES.MEMORY} class="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+        <A href={ROUTES.MEMORY} onClick={backToPrevious} class="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
           <IconChevronLeft class="h-4 w-4" aria-hidden /> Memory
         </A>
         <h1 class="mb-6 font-display text-2xl font-medium break-words">{key()}</h1>

@@ -1,6 +1,7 @@
 import { MEMORY_KINDS, type MemoryKind, type MemoryNote, type MemoryVersion } from "@shared/memory";
 import { A, useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import { createEffect, createSignal, For, Show, Suspense } from "solid-js";
+import { backToPrevious } from "../lib/back-link";
 import { formatMemoryDate, KINDS, linkMemoryNotes, scopeLabel } from "../lib/memory";
 import {
   useContact,
@@ -11,7 +12,6 @@ import {
   useRestoreMemoryVersion,
   useUpdateMemoryNote,
 } from "../lib/queries";
-import { useRestoredScroll } from "../lib/page-scroll";
 import { normalizeRouteParam } from "../lib/route-params";
 import { APP_NAME, buildContactsUrl, buildMemoryProjectUrl, ROUTES } from "../lib/routes";
 import Dialog from "../ui/Dialog";
@@ -159,7 +159,6 @@ function NotePage(props: { project: string; name: string }) {
   const remove = useDeleteMemoryNote();
   const [editing, setEditing] = createSignal(false);
   const [confirming, setConfirming] = createSignal(false);
-  const scrollRef = useRestoredScroll();
   // The project's page for a project's note, else Memory.
   const parentUrl = () => props.project ? buildMemoryProjectUrl(props.project) : ROUTES.MEMORY;
   // Placeholder data is the index's copy: shown, but not edited or deleted.
@@ -180,17 +179,17 @@ function NotePage(props: { project: string; name: string }) {
   }
 
   return (
-    <div ref={scrollRef} class="h-full overflow-auto">
+    <div>
       <div class="mx-auto max-w-3xl px-4 pt-6 pb-12">
         <nav aria-label="Breadcrumb" class="mb-4 flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
-          <A href={ROUTES.MEMORY} class="inline-flex items-center gap-1 hover:text-foreground">
+          <A href={ROUTES.MEMORY} onClick={backToPrevious} class="inline-flex items-center gap-1 hover:text-foreground">
             <IconChevronLeft class="h-4 w-4" aria-hidden /> Memory
           </A>
           <Show when={props.project}>
             {(project) => (
               <>
                 <IconChevronRight class="h-4 w-4" aria-hidden />
-                <A href={buildMemoryProjectUrl(project())} class="hover:text-foreground">{project()}</A>
+                <A href={buildMemoryProjectUrl(project())} onClick={backToPrevious} class="hover:text-foreground">{project()}</A>
               </>
             )}
           </Show>

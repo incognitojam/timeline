@@ -1,6 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { once } from "node:events";
 import { createServer, type ServerResponse } from "node:http";
+import type { MemoryIndex, MemoryNote } from "@shared/memory";
 import type { TimelineEvent } from "../src/lib/types";
 
 const TEST_DATE = "2025-01-15";
@@ -835,4 +836,104 @@ test("renders the journal pane with source context and a Markdown reflection", a
   expect(unexpectedRequests).toEqual([]);
 
   await expect(journal).toHaveScreenshot("journal-pane.png");
+});
+
+function memoryNote(project: string, index: number): MemoryNote {
+  return {
+    id: index + (project ? 1000 : 1),
+    project,
+    name: `note-${index}`,
+    kind: project ? "project" : "topic",
+    title: `Example note ${index}`,
+    summary: "A synthetic note for browser tests.",
+    details: "",
+    contact_id: null,
+    created_at: "2025-01-01T09:00:00.000Z",
+    updated_at: "2025-01-02T09:00:00.000Z",
+  };
+}
+
+test("Memory scrolls the window and returns to where it was left", async ({ page }) => {
+  const memory: MemoryIndex = {
+    account: Array.from({ length: 40 }, (_, index) => memoryNote("", index + 1)),
+    projects: [{ key: "example-project", useAccountMemory: true, notes: [memoryNote("example-project", 1)] }],
+    deleted: [],
+  };
+  const unexpectedRequests = await installApiMock(page, async (route, url) => {
+    if (await fulfillTimelineReads(route, url, [])) return true;
+    if (route.request().method() === "GET" && url.pathname === "/api/memory") {
+      await route.fulfill({ json: memory });
+      return true;
+    }
+    if (route.request().method() === "GET" && url.pathname === "/api/memory/notes/note-1/versions") {
+      await route.fulfill({ json: { versions: [] } });
+      return true;
+    }
+    if (route.request().method() === "GET" && url.pathname === "/api/memory/notes/note-1") {
+      const note = memory.account[0];
+      await route.fulfill({ json: { note: { ...note, details: Array.from({ length: 60 }, (_, i) => `Paragraph ${i + 1} of a long synthetic note.`).join("\n\n") } } });
+      return true;
+    }
+    // The navigation's Timeline link opens today rather than TEST_DATE.
+    if (route.request().method() === "GET" && /^\/api\/day\/[^/]+\/health$/.test(url.pathname)) {
+      await route.fulfill({ json: { healthMetrics: {}, outOfRangeCount: 0, totalMetricCount: 0 } });
+      return true;
+    }
+    return false;
+  });
+  await page.setViewportSize({ width: 1280, height: 500 });
+  const scrollY = () => page.evaluate(() => Math.round(window.scrollY));
+  const documentScroll = () => page.evaluate(() => document.documentElement.hasAttribute("data-document-scroll"));
+
+  await page.goto(`/?date=${TEST_DATE}`);
+  await expect(page.getByRole("main")).toBeVisible();
+  expect(await documentScroll()).toBe(false);
+
+  // A page left without scrolling comes back at the top.
+  await page.goto("/memory");
+  await page.getByRole("main").getByRole("link", { name: /Example note 1\b/ }).click();
+  await expect(page.getByRole("heading", { name: "Example note 1", exact: true })).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, 800));
+  await expect.poll(scrollY).toBe(800);
+  await page.goBack();
+  await expect(page.getByRole("heading", { name: "Memory", exact: true })).toBeVisible();
+  await expect.poll(scrollY).toBe(0);
+
+  const projectLink = page.getByRole("main").getByRole("link", { name: /example-project/ });
+  await projectLink.scrollIntoViewIfNeeded();
+  const left = await scrollY();
+  expect(left).toBeGreaterThan(500);
+  expect(await documentScroll()).toBe(true);
+
+  await projectLink.click();
+  await expect(page.getByRole("heading", { name: "example-project" })).toBeVisible();
+  expect(await scrollY()).toBe(0);
+  await page.goBack();
+  await expect.poll(scrollY).toBe(left);
+
+  // The page's own back link returns through history rather than adding an entry.
+  await projectLink.click();
+  await expect(page.getByRole("heading", { name: "example-project" })).toBeVisible();
+  const entries = await page.evaluate(() => history.length);
+  await page.getByRole("main").getByRole("link", { name: "Memory", exact: true }).click();
+  await expect.poll(scrollY).toBe(left);
+  expect(await page.evaluate(() => history.length)).toBe(entries);
+
+  // Still so after reloading the project.
+  await projectLink.click();
+  await expect(page.getByRole("heading", { name: "example-project" })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "example-project" })).toBeVisible();
+  await page.getByRole("main").getByRole("link", { name: "Memory", exact: true }).click();
+  await expect.poll(scrollY).toBe(left);
+  expect(await page.evaluate(() => history.length)).toBe(entries);
+
+  // Other pages keep the one-screen shell, and Back still finds Memory's place.
+  await page.getByRole("complementary", { name: "App navigation" }).getByRole("link", { name: "Timeline", exact: true }).click();
+  await expect.poll(documentScroll).toBe(false);
+  expect(await scrollY()).toBe(0);
+  expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBe(500);
+  await page.goBack();
+  await expect.poll(scrollY).toBe(left);
+  expect(unexpectedRequests).toEqual([]);
 });
