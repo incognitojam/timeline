@@ -45,6 +45,25 @@ function addSourceExclusion(
   params.push(...excludeSources);
 }
 
+/** Comma-separated sources, and types matched as prefixes. */
+function addSourceAndTypeFilters(
+  conditions: string[],
+  params: (string | number)[],
+  source: string | undefined,
+  type: string | undefined,
+): void {
+  const sources = source?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
+  if (sources.length > 0) {
+    conditions.push(sources.length === 1 ? "e.source = ?" : `e.source IN (${sources.map(() => "?").join(", ")})`);
+    params.push(...sources);
+  }
+  const types = type?.split(",").map((t) => t.trim()).filter(Boolean) ?? [];
+  if (types.length > 0) {
+    conditions.push(types.length === 1 ? "e.type LIKE ?" : `(${types.map(() => "e.type LIKE ?").join(" OR ")})`);
+    params.push(...types.map((t) => `${t}%`));
+  }
+}
+
 const HIDDEN_CLAUSE_TTL_MS = 30_000;
 
 /**
@@ -364,29 +383,7 @@ function searchConditions(
     addTextSearch(conditions, params, query);
   }
 
-  if (source) {
-    // Handle comma-separated sources
-    const sources = source.split(',').map(s => s.trim()).filter(Boolean);
-    if (sources.length === 1) {
-      conditions.push(`e.source = ?`);
-      params.push(sources[0]);
-    } else if (sources.length > 1) {
-      conditions.push(`e.source IN (${sources.map(() => '?').join(', ')})`);
-      params.push(...sources);
-    }
-  }
-
-  if (type) {
-    // Handle comma-separated types
-    const types = type.split(',').map(t => t.trim()).filter(Boolean);
-    if (types.length === 1) {
-      conditions.push(`e.type LIKE ?`);
-      params.push(types[0] + '%');
-    } else if (types.length > 1) {
-      conditions.push(`(${types.map(() => 'e.type LIKE ?').join(' OR ')})`);
-      params.push(...types.map(t => t + '%'));
-    }
-  }
+  addSourceAndTypeFilters(conditions, params, source, type);
 
   addSourceExclusion(conditions, params, excludeSources);
 
@@ -532,15 +529,7 @@ export async function getEvents(
     }
   }
 
-  if (source) {
-    conditions.push(`source = ?`);
-    params.push(source);
-  }
-
-  if (type) {
-    conditions.push(`type LIKE ?`);
-    params.push(type + '%');
-  }
+  addSourceAndTypeFilters(conditions, params, source, type);
 
   addSourceExclusion(conditions, params, excludeSources);
 
@@ -743,29 +732,7 @@ export async function getRecentEvents(
   const conditions: string[] = ["e.timestamp IS NOT NULL"];
   const params: (string | number)[] = [];
 
-  if (source) {
-    // Handle comma-separated sources
-    const sources = source.split(',').map(s => s.trim()).filter(Boolean);
-    if (sources.length === 1) {
-      conditions.push(`e.source = ?`);
-      params.push(sources[0]);
-    } else if (sources.length > 1) {
-      conditions.push(`e.source IN (${sources.map(() => '?').join(', ')})`);
-      params.push(...sources);
-    }
-  }
-
-  if (type) {
-    // Handle comma-separated types
-    const types = type.split(',').map(t => t.trim()).filter(Boolean);
-    if (types.length === 1) {
-      conditions.push(`e.type LIKE ?`);
-      params.push(types[0] + '%');
-    } else if (types.length > 1) {
-      conditions.push(`(${types.map(() => 'e.type LIKE ?').join(' OR ')})`);
-      params.push(...types.map(t => t + '%'));
-    }
-  }
+  addSourceAndTypeFilters(conditions, params, source, type);
 
   addSourceExclusion(conditions, params, excludeSources);
 

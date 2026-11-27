@@ -81,6 +81,7 @@ import {
   searchMcpToolCalls,
 } from "./mcp/recording";
 import { memoryInstructions, renderMemoryIndex, renderMemoryNote } from "./mcp/memory";
+import { badDate, filterError, typeFilter, unknownSource, unknownType, utcBound } from "./mcp/filters";
 import { renderSchemaOverview } from "./mcp/schema";
 import {
   HIDDEN_CONTACT_NAME,
@@ -207,6 +208,7 @@ async function eventReply(
   options: PageOptions,
   fullContent: boolean,
   prefix: string,
+  none = "No events found.",
 ): Promise<CallToolResult> {
   const full = pageOf(fetched, limit, order, options);
   const pageOfSize = (n: number) => n === full.events.length
@@ -215,7 +217,8 @@ async function eventReply(
   const render = async (n: number) => {
     const page = pageOfSize(n);
     const end = n < full.events.length ? `\n${page.header}` : "";
-    return prefix + page.header + (await formatEvents(db, page.events, fullContent)) + end;
+    const events = page.events.length === 0 && !page.header ? none : await formatEvents(db, page.events, fullContent);
+    return prefix + page.header + events + end;
   };
   const text = await fitReply(full.events.length, render);
   return { content: [{ type: "text" as const, text }] };
@@ -495,7 +498,7 @@ async function groupedQueryEvents(
   params: {
     query?: string; source?: string; type?: string; contact?: string; location?: string; latitude?: number;
     longitude?: number; cursor?: string; startDate?: string; endDate?: string; limit: number;
-    excludeSources?: string[]; notice: string;
+    excludeSources?: string[]; notice: string; none: string;
   },
 ): Promise<CallToolResult> {
   const { query, source, type, contact, startDate, endDate, excludeSources, limit } = params;
@@ -518,7 +521,7 @@ async function groupedQueryEvents(
   } else {
     groups = await searchTimelineGroups(db, filters, limit);
   }
-  if (groups.length === 0) return { content: [{ type: "text" as const, text: `${prefix}No events found.` }] };
+  if (groups.length === 0) return { content: [{ type: "text" as const, text: `${prefix}${params.none}` }] };
 
   const { groups: groupCount, total_hits: totalHits } = groups[0];
   const shown = groupCount > groups.length ? ` Showing the ${groups.length} with most hits; raise limit for the rest.` : "";
@@ -664,7 +667,7 @@ export async function resolveContact(
 
   if (!contactObj) {
     return {
-      error: [{ type: "text" as const, text: `Contact "${contact}" not found.` }],
+      error: [{ type: "text" as const, text: `Contact "${contact}" not found. Try list_contacts(search: …) with part of the name.` }],
     };
   }
   return { contact: contactObj };
@@ -975,16 +978,35 @@ Examples:
     },
     READS,
     async (params, extra) => instrumentToolCall("query_events", params, extra, async () => {
-      const { query, source, type, contact, date, start_date, end_date, location, latitude, longitude, radius_km, cursor, full_content } = params;
+      const { query, source, contact, date, location, latitude, longitude, radius_km, cursor, full_content } = params;
       const limit = params.limit ?? 50;
       const cursorError = invalidCursor(cursor);
       if (cursorError) return cursorError;
+      const inputError = filterError(
+        unknownSource(source),
+        unknownSource(params.exclude_source, "exclude_source"),
+        unknownType(params.type, source),
+        badDate(date, "date", "day"),
+        badDate(params.start_date, "start_date", "time"),
+        badDate(params.end_date, "end_date", "time"),
+      );
+      if (inputError) return inputError;
+      const type = typeFilter(params.type);
+      const start_date = utcBound(params.start_date);
+      const end_date = utcBound(params.end_date);
+      const applied = Object.entries({
+        query, source, type: params.type, contact, date, start_date: params.start_date, end_date: params.end_date,
+        location, latitude, longitude, exclude_source: params.exclude_source,
+      })
+        .filter(([, value]) => value !== undefined)
+        .map(([name, value]) => `${name}: ${JSON.stringify(value)}`);
+      const none = applied.length > 0 ? `No events match ${applied.join(", ")}.` : "No events found.";
       // One more than asked for tells whether more exist without counting them all.
       const fetchLimit = limit + 1;
       const order: PageOrder = rangeOrder(date, start_date, end_date);
       const { excludeSources, notice } = excludedSources(params.exclude_source, Boolean(query && !source && !contact));
       const respond = (fetched: TimelineEvent[], pageOrder: PageOrder, pageOptions: PageOptions = {}, prefix = "") =>
-        eventReply(db, fetched, limit, pageOrder, pageOptions, full_content, prefix + notice);
+        eventReply(db, fetched, limit, pageOrder, pageOptions, full_content, prefix + notice, none);
 
       // `date` narrows to that single day; like getEvents, it wins over start/end.
       // searchTimeline/searchByContact expand a bare YYYY-MM-DD endDate to end of day.
@@ -992,7 +1014,7 @@ Examples:
       const rangeEnd = date ?? end_date;
 
       if (params.group_by_conversation) {
-        return groupedQueryEvents(db, { ...params, limit, startDate: rangeStart, endDate: rangeEnd, excludeSources, notice });
+        return groupedQueryEvents(db, { ...params, limit, startDate: rangeStart, endDate: rangeEnd, excludeSources, notice, none });
       }
 
       // Strategy 1: Contact-based search
@@ -1074,11 +1096,15 @@ Examples:
     },
     READS,
     async (params, extra) => instrumentToolCall("export_conversation", params, extra, async () => {
-      const { conversation_id, event_id, start_date, end_date, cursor } = params;
+      const { conversation_id, event_id, cursor } = params;
       const limit = params.limit ?? MCP_EXPORT_LIMIT;
       // A cursor pages back from the newest; one with no timestamp names no place to page from.
       const before = cursor === undefined ? undefined : parseCursor(cursor);
       if (before === null) return badCursor(cursor ?? "");
+      const dateError = filterError(badDate(params.start_date, "start_date", "time"), badDate(params.end_date, "end_date", "time"));
+      if (dateError) return dateError;
+      const start_date = utcBound(params.start_date);
+      const end_date = utcBound(params.end_date);
 
       if ((conversation_id === undefined) === (event_id === undefined)) {
         return {
@@ -1206,6 +1232,12 @@ Examples:
       const limit = params.limit ?? 50;
       const cursorError = invalidCursor(cursor);
       if (cursorError) return cursorError;
+      const inputError = filterError(
+        unknownSource(source),
+        unknownSource(exclude_source, "exclude_source"),
+        badDate(timestamp, "timestamp", "time"),
+      );
+      if (inputError) return inputError;
       let conversation: { source: string; sourceAccount: string; conversationId: string } | undefined;
       if (params.same_conversation) {
         const anchor = event_id === undefined
@@ -1250,7 +1282,13 @@ Examples:
     },
     READS,
     async (params, extra) => instrumentToolCall("get_schema", params, extra, async () => {
-      const { source, type } = params;
+      const source = params.source?.trim();
+      const inputError = filterError(
+        source?.includes(",") ? "get_schema takes one source." : unknownSource(source),
+        unknownType(params.type, source),
+      );
+      if (inputError) return inputError;
+      const type = typeFilter(params.type);
       // Source specified → raw_data JSON schema
       if (source) {
         const schema = await getRawDataSchema(db, { source, type, excludeHidden: true });
@@ -1610,7 +1648,7 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
     return note?.contact_id != null && (await hiddenContactIds(db)).has(note.contact_id);
   };
   const noNote = (project: string, name: string) =>
-    memoryError(`No note named "${name}" in ${project ? `project ${project}` : "the account"}.`);
+    memoryError(`No note named "${name}" in ${project ? `project ${project}` : "the account"}; list_memory lists them.`);
   const projectParam = z.string().optional().describe("Repository name; omit for account notes");
   const nameParam = z.string().max(MEMORY_LIMITS.name).describe("Lowercase slug, unique in its scope");
 
@@ -1728,6 +1766,11 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
     GET_UPDATES_DESCRIPTION,
     GET_UPDATES_SCHEMA,
     READS,
-    async (params, extra) => instrumentToolCall("get_updates", params, extra, () => runGetUpdates(db, params)),
+    async (params, extra) => instrumentToolCall("get_updates", params, extra, () =>
+      filterError(
+        unknownSource(params.sources, "sources"),
+        // A date such as 2026-11-31 would otherwise roll over to December.
+        /^\d{4}-\d{2}-\d{2}/.test(params.since.trim()) ? badDate(params.since.trim(), "since", "time") : null,
+      ) ?? runGetUpdates(db, params)),
   );
 }
