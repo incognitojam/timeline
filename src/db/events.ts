@@ -340,12 +340,11 @@ export interface SummaryStats {
   conversations?: { name: string; count: number }[];
 }
 
-/**
- * Full-text search across events
- */
-export async function searchTimeline(db: QueryExecutor, options: SearchOptions): Promise<TimelineEvent[]> {
-  const { query, source, type, startDate, endDate, chat, limit = 50, cursor, includeHiddenContacts = false, sort, excludeSources } = options;
-
+/** searchTimeline's filters (not its cursor) as `e.` conditions and their params. */
+function searchConditions(
+  options: Pick<SearchOptions, "query" | "source" | "type" | "startDate" | "endDate" | "chat" | "excludeSources">,
+): { conditions: string[]; params: (string | number)[] } {
+  const { query, source, type, startDate, endDate, chat, excludeSources } = options;
   const conditions: string[] = [];
   const params: (string | number)[] = [];
 
@@ -399,6 +398,73 @@ export async function searchTimeline(db: QueryExecutor, options: SearchOptions):
     conditions.push(`e.title LIKE ? AND (e.type LIKE '%message%' OR e.source = 'phone')`);
     params.push(`%${chat}%`);
   }
+
+  return { conditions, params };
+}
+
+export interface EventGroup {
+  source: string;
+  /** Null for a group of events outside any conversation, which are grouped by type. */
+  conversation_id: string | null;
+  type: string;
+  /** The title of the group's newest hit: for a conversation, its name. */
+  title: string | null;
+  hits: number;
+  first: string | null;
+  last: string | null;
+  /** The group's newest hit. */
+  example_id: number;
+  /** Groups and hits across every group, not only those returned. */
+  groups: number;
+  total_hits: number;
+}
+
+/**
+ * Group the events matching `where` by conversation, or by source and type
+ * (across accounts) for events outside one: most hits first, up to `limit` groups.
+ */
+export async function groupEvents(
+  db: QueryExecutor,
+  where: string,
+  params: (string | number)[],
+  limit: number,
+): Promise<EventGroup[]> {
+  const groups = await db.query<Omit<EventGroup, "title">>(`
+    SELECT e.source, e.conversation_id, e.type,
+      count(*) AS hits, min(e.timestamp) AS first, max(e.timestamp) AS last,
+      CAST(substr(max(coalesce(e.timestamp, '') || printf(' %019d', e.id)), -19) AS INTEGER) AS example_id,
+      count(*) OVER () AS groups, sum(count(*)) OVER () AS total_hits
+    FROM events e
+    WHERE ${where}
+    GROUP BY e.source, e.conversation_id IS NULL, coalesce(e.conversation_id, e.type), iif(e.conversation_id IS NULL, NULL, e.source_account)
+    ORDER BY hits DESC, last DESC
+    LIMIT ?
+  `, ...params, limit);
+  if (groups.length === 0) return [];
+  const titles = new Map((await db.query<{ id: number; title: string | null }>(
+    `SELECT id, title FROM events WHERE id IN (${groups.map(() => "?").join(", ")})`,
+    ...groups.map((g) => g.example_id),
+  )).map((row) => [row.id, row.title]));
+  return groups.map((g) => ({ ...g, title: titles.get(g.example_id) ?? null }));
+}
+
+/** searchTimeline's matches (ignoring limit, cursor and sort), grouped by groupEvents. */
+export async function searchTimelineGroups(
+  db: QueryExecutor,
+  options: SearchOptions,
+  limit: number,
+): Promise<EventGroup[]> {
+  const { conditions, params } = searchConditions(options);
+  const hiddenClause = options.includeHiddenContacts ? "" : await buildHiddenEventClause(db, "e");
+  return groupEvents(db, `1=1 ${conditions.map((c) => `AND ${c}`).join(" ")} ${hiddenClause}`, params, limit);
+}
+
+/**
+ * Full-text search across events
+ */
+export async function searchTimeline(db: QueryExecutor, options: SearchOptions): Promise<TimelineEvent[]> {
+  const { startDate, endDate, limit = 50, cursor, includeHiddenContacts = false, sort } = options;
+  const { conditions, params } = searchConditions(options);
 
   // Use explicit sort if provided, otherwise: ASC for date range (chronological), DESC otherwise (recent first)
   const sortOrder = sort === 'asc' ? "ASC" : sort === 'desc' ? "DESC" : (startDate || endDate) ? "ASC" : "DESC";

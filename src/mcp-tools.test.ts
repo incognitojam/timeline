@@ -352,6 +352,18 @@ describe("MCP transcript export tools", () => {
 
   });
 
+  test("an event-id export keeps to that event's source when another source shares the conversation id", async () => {
+    const id = insertTranscriptEvent({ conversationId: "shared-1", timestamp: "2026-05-06T08:09:53.525Z", content: "from discord" });
+    db.prepare(`
+      INSERT INTO events (source, source_id, source_account, type, timestamp, title, content, people, raw_data, conversation_id)
+      VALUES ('phone', 'p1', 'me', 'sms:received', '2026-05-06T08:10:00.000Z', 'Alice', 'from phone', '["phone:+15550100"]', '{}', 'shared-1')
+    `).run();
+
+    const text = (await captureHandlers(db).get("export_conversation")!({ event_id: id })).content[0].text;
+    expect(text).toContain("from discord");
+    expect(text).not.toContain("from phone");
+  });
+
   function insertWindowEvents(conversationId: string): number[] {
     return Array.from({ length: 7 }, (_, index) => insertTranscriptEvent({
       conversationId,
@@ -726,7 +738,9 @@ describe("MCP tool handlers — identity-aware contact lookup workflow", () => {
             },
           });
           const result = await handlers.get("semantic_search")({ query: "coffee", limit: 1, full_content: false });
+          const grouped = await handlers.get("semantic_search")({ query: "coffee", limit: 1, group_by_conversation: true });
           await vectorPool.closeAndWait();
+          if (!grouped.content[0].text.includes("[facebook/post] 1 hit, 2026-05-06, closest #42")) throw new Error(grouped.content[0].text);
           const text = result.content[0].text;
           if (!text.includes("1 event(s) most similar")) throw new Error(text);
           if (!text.includes("[facebook/post]") || !/ #42 /.test(text)) throw new Error(text);
@@ -908,6 +922,33 @@ describe("query_events — cut-off notice", () => {
     expect(second).not.toContain("Next page");
     expect(second).toContain("hello on the 03");
     expect(second).not.toContain("hello on the 02");
+  });
+});
+
+describe("query_events — group_by_conversation", () => {
+  beforeEach(setup);
+  afterEach(teardown);
+
+  test("lists every conversation the hits fall in, most hits first", async () => {
+    const insertHit = (conversationId: string, title: string, timestamp: string) => db.prepare(`
+      INSERT INTO events (source, source_id, source_account, type, timestamp, title, content, people, raw_data, conversation_id)
+      VALUES ('discord', ?, 'test', 'message:group', ?, ?, 'pizza tonight?', '["discord:111"]', '{}', ?)
+    `).run(`${conversationId}-${timestamp}`, timestamp, title, conversationId);
+    insertHit("c1", "Game night", "2026-07-01T10:00:00.000Z");
+    insertHit("c1", "Game night", "2026-07-03T10:00:00.000Z");
+    insertHit("c2", "Climbing", "2026-07-02T10:00:00.000Z");
+    db.prepare(`INSERT INTO events (source, source_id, type, timestamp, title, raw_data) VALUES ('google-search', 's1', 'search', '2026-07-02T11:00:00.000Z', 'pizza near me', '{}')`).run();
+
+    const handlers = captureHandlers(db);
+    const all = (await handlers.get("query_events")!({ query: "pizza", group_by_conversation: true })).content[0].text;
+    expect(all.split("\n").slice(1)).toEqual([
+      "[discord] Game night: 2 hits, 2026-07-01 to 2026-07-03, newest #2",
+      "[google-search/search] 1 hit, 2026-07-02, newest #4",
+      "[discord] Climbing: 1 hit, 2026-07-02, newest #3",
+    ]);
+
+    const top = (await handlers.get("query_events")!({ query: "pizza", group_by_conversation: true, limit: 1 })).content[0].text;
+    expect(top).toContain("4 hits in 3 groups, most hits first. Showing the 1 with most hits; raise limit for the rest.");
   });
 });
 
