@@ -10,7 +10,7 @@ export interface ServerConfig {
   host: string;
   /** Port to listen on (default: 3001) */
   port: number;
-  /** Public URL the timeline web app is reachable at, e.g. "https://timeline.example.ts.net". Used to embed clickable event links in MCP tool descriptions. */
+  /** Public URL the timeline web app is reachable at, e.g. "https://timeline.example.ts.net". Named in the MCP server instructions so agents can link to events. */
   public_url?: string;
 }
 

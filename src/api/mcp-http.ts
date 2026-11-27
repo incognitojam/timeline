@@ -13,7 +13,6 @@ import type { RequestId } from "@modelcontextprotocol/sdk/types.js";
 import type { SemanticSearch } from "../embeddings/search";
 import { getAppStateDb } from "../db/app-state";
 import type { QueryExecutor } from "../db/pool";
-import { memoryInstructions } from "../mcp/memory";
 import {
   type InvalidToolCallRecorder,
   pruneMcpRecords,
@@ -22,7 +21,7 @@ import {
   upsertMcpSession,
   type RecordToolCallInput,
 } from "../mcp/recording";
-import { registerTools } from "../mcp-tools";
+import { mcpInstructions, registerTools } from "../mcp-tools";
 import { PRODUCT_VERSION } from "../product-version";
 import { getMcpBearerToken, isMcpEnabled, type McpAccess, mcpAccess, mcpAccessForHash, touchMcpToken } from "./mcp-tokens";
 
@@ -89,7 +88,7 @@ const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
  *
  * @param readDb - Pool or executor for readonly queries
  * @param writeDb - Writable database handle for mutation tools (e.g. Trakt correction)
- * @param options.publicUrl - Public URL of the timeline web app, spliced into tool descriptions so agents can return clickable /event/<id> links.
+ * @param options.publicUrl - Public URL of the timeline web app, named in the server instructions so agents can return clickable /event/<id> links.
  * @param options.semanticSearch - Embedding model and index for the semantic_search tool.
  */
 export function createMcpHandler(
@@ -138,7 +137,7 @@ export function createMcpHandler(
   } {
     const server = new McpServer(
       { name: "timeline", version: PRODUCT_VERSION },
-      { instructions: memoryInstructions(getAppStateDb(), { readOnly: access.readOnly }) },
+      { instructions: mcpInstructions(getAppStateDb(), { publicUrl: options.publicUrl, readOnly: access.readOnly }) },
     );
     function recordSession(sessionId: string): void {
       const client = server.server.getClientVersion();
@@ -192,7 +191,6 @@ export function createMcpHandler(
 
     // No writable handle for a read-only session, so not even a cache refresh writes.
     registerTools(server, readDb, access.readOnly ? undefined : writeDb, {
-      publicUrl: options.publicUrl,
       semanticSearch: options.semanticSearch,
       recordToolCall: persistToolCall,
       readOnly: access.readOnly,

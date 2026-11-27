@@ -79,7 +79,8 @@ import {
   normalizeMcpToolCallSince,
   searchMcpToolCalls,
 } from "./mcp/recording";
-import { renderMemoryIndex, renderMemoryNote } from "./mcp/memory";
+import { memoryInstructions, renderMemoryIndex, renderMemoryNote } from "./mcp/memory";
+import { renderSchemaOverview } from "./mcp/schema";
 import { GET_UPDATES_DESCRIPTION, GET_UPDATES_SCHEMA, runGetUpdates } from "./mcp/updates";
 import { getDiscordComponentsText } from "./platforms/discord/shared/components";
 import { isConversationEventType } from "./shared/grouping";
@@ -544,40 +545,17 @@ export async function resolveContact(
 }
 
 /**
- * Format source stats into a grouped source catalog string.
+ * The instructions an MCP server returns at initialise: what the event ids in
+ * tool output are for, then the shared memory.
  */
-function formatSourceCatalog(sources: { source: string; type: string; count: number }[]): string {
-  const grouped: Record<string, { types: Record<string, number>; total: number }> = {};
-  for (const s of sources) {
-    if (!grouped[s.source]) {
-      grouped[s.source] = { types: {}, total: 0 };
-    }
-    grouped[s.source].types[s.type] = s.count;
-    grouped[s.source].total += s.count;
-  }
+export function mcpInstructions(appStateDb: Database, options: { publicUrl?: string; readOnly?: boolean } = {}): string {
+  const url = options.publicUrl?.replace(/\/$/, "");
+  const open = url
+    ? `${url}/event/<id> opens it in the timeline, scrolled to and highlighting the event (for a chat message, with its conversation open).`
+    : "<your-host>/event/<id> opens it in the timeline web app.";
+  return `Timeline tools list events with \`#<id>\`, the stable timeline event id (events.id in run_sql). Pass it to get_context or export_conversation as event_id. ${open}
 
-  return Object.entries(grouped)
-    .sort((a, b) => b[1].total - a[1].total)
-    .map(([source, data]) => {
-      const types = Object.entries(data.types)
-        .map(([t, c]) => `${t}: ${c}`)
-        .join(", ");
-      return `  ${source} (${data.total}): ${types}`;
-    })
-    .join("\n");
-}
-
-/**
- * Build the trailing paragraph appended to every formatted-events tool's
- * description, telling the agent that each line begins with `#<id>` and how
- * to turn that id into a clickable timeline-web-app URL when configured.
- */
-function eventIdHint(publicUrl?: string): string {
-  const url = publicUrl?.replace(/\/$/, "");
-  const linkLine = url
-    ? `Open in browser at ${url}/event/<id> — the timeline scrolls to and highlights the event (for chat messages the conversation pane also auto-opens).`
-    : "Open in the timeline web app at <your-host>/event/<id>.";
-  return `Each event line carries \`#<id>\` (the stable timeline event id). ${linkLine} Pass an \`<id>\` to \`get_context\` via \`event_id\` to see surrounding events.`;
+${memoryInstructions(appStateDb, { readOnly: options.readOnly })}`;
 }
 
 /**
@@ -620,8 +598,6 @@ function splitSources(value: string | undefined): string[] | undefined {
 }
 
 export interface RegisterToolsOptions {
-  /** Public URL of the timeline web app (e.g. "https://timeline.example.ts.net"). Spliced into tool descriptions when set. */
-  publicUrl?: string;
   /** Optional recorder used by transports to persist MCP tool call metadata. */
   recordToolCall?: (rec: ToolCallRecord) => void;
   /** Optional app-state database for MCP session history tools. Resolved lazily when omitted. */
@@ -659,7 +635,6 @@ export function registerTools(
   writeDb?: Database,
   options: RegisterToolsOptions = {},
 ): void {
-  const idHint = eventIdHint(options.publicUrl);
   const recordToolCall = options.recordToolCall;
   const getMcpHistoryDb = (): Database => options.appStateDb ?? getAppStateDb();
   const getCallerSessionId = (extra?: ToolCallExtra): string | undefined =>
@@ -852,8 +827,6 @@ Filters are composable: session_id scopes to one session, tool_name scopes to on
     `Search and filter timeline events. All parameters are optional and composable.
 
 Returns formatted event list, newest first by default (oldest first when date range is specified).
-
-${idHint}
 
 Examples:
 - Text search: query_events(query: "hiking")
@@ -1089,9 +1062,7 @@ Examples:
   // ========================================================================
   tool(
     "get_context",
-    `Get events surrounding a specific event or timestamp to understand context.
-
-${idHint}`,
+    `Get events surrounding a specific event or timestamp to understand context.`,
     {
       event_id: z.number().optional().describe("Event ID to center the context around"),
       timestamp: z.string().optional().describe("Timestamp to center around (ISO 8601)"),
@@ -1226,7 +1197,7 @@ ${idHint}`,
   // ========================================================================
   tool(
     "get_schema",
-    `Get database schema information. Without params, returns full schema (tables, columns, indexes) and source catalog. With source param, returns raw_data JSON paths for use with json_extract() in SQL.`,
+    `How to query the database with run_sql: tables, columns, conventions, worked queries and the sources. With source, that source's types and the raw_data JSON paths for json_extract().`,
     {
       source: z.string().optional().describe("Source to inspect raw_data JSON structure (spotify, discord, monzo, etc.)"),
       type: z.string().optional().describe("Optional type filter when inspecting raw_data"),
@@ -1247,8 +1218,13 @@ ${idHint}`,
           };
         }
 
+        const types = await db.query<{ type: string; n: number }>(
+          "SELECT type, count(*) AS n FROM events WHERE source = ? GROUP BY type ORDER BY n DESC",
+          source,
+        );
         const lines = [
           `Source: ${source}${type ? ` (type: ${type})` : ""}`,
+          `Types: ${types.map((t) => `${t.type} ${t.n}`).join(", ")}`,
           `Samples analyzed: ${schema.sampleCount}`,
           "",
           "JSON paths (use with json_extract):",
@@ -1263,51 +1239,17 @@ ${idHint}`,
         };
       }
 
-      // No params → full schema overview + source catalog
+      // No params → what a model needs to write SQL, and the sources.
       // MCP is an agent data-access seam and remains intentionally unfiltered.
       const sources = await listSources(db, { includeHiddenContacts: true });
-
-      const lines = [
-        "Timeline Database Schema",
-        "",
-        "events — All timeline data from all sources",
-        "  source (text)         — Data source (spotify, discord, reddit, facebook, etc.)",
-        "  type (text)           — Event type (listen:track, message:dm, post, etc.)",
-        "  timestamp (text)      — ISO 8601 timestamp",
-        "  end_timestamp (text)  — End time for duration events",
-        "  duration_ms (integer) — Duration in milliseconds",
-        "  title (text)          — Event title (song name, chat name, post title)",
-        "  content (text)        — Event body (message text, post content)",
-        "  people (text)         — JSON array of people [\"platform:id\", ...]",
-        "  tags (text)           — JSON array of tags",
-        "  location_name (text)  — Human-readable location name",
-        "  latitude (real)       — Latitude coordinate",
-        "  longitude (real)      — Longitude coordinate",
-        "  source_account (text) — Which account (for multi-account sources)",
-        "  raw_data (text)       — Original JSON from source (large — use json_extract())",
-        "",
-        "Full-text search: events_fts (searches title, content, location_name)",
-        "",
-        "contacts — People linked across platforms",
-        "  id, display_name, notes, hidden, date_of_birth, is_self",
-        "",
-        "identities — Platform-specific identities linked to contacts",
-        "  contact_id, platform, platform_id, display_name, username",
-        "  (platform_id is searchable directly via list_contacts/get_contact_info — pass a bare Discord snowflake or a `platform:id` string and the lookup will follow it to the linked contact)",
-        "",
-        "event_people — Index of the people an event is filed under (for contact queries)",
-        "  event_id, person, source, timestamp, is_sender",
-        "  (a group message — in a conversation listing more than two people — is filed under its sender only; read group membership from events.people)",
-        "",
-        "contact_memories — AI-stored facts about contacts",
-        "  contact_id, content, created_at",
-        "",
-        "Available sources:",
-        formatSourceCatalog(sources),
-      ];
-
+      // One index seek per source (idx_events_source_timestamp), not a scan.
+      const latest = new Map<string, string | null>();
+      for (const source of new Set(sources.map((s) => s.source))) {
+        const row = await db.get<{ latest: string | null }>("SELECT max(timestamp) AS latest FROM events WHERE source = ?", source);
+        latest.set(source, row?.latest ?? null);
+      }
       return {
-        content: [{ type: "text" as const, text: lines.join("\n") }],
+        content: [{ type: "text" as const, text: renderSchemaOverview(sources, latest) }],
       };
     })
   );
@@ -1319,8 +1261,6 @@ ${idHint}`,
     "run_sql",
     `Execute SELECT queries for complex analysis beyond what specialized tools provide.
 Returns TSV format, max 150 rows. Call get_schema for full table/column details.
-
-${idHint}
 
 Tips:
 - Always specify columns explicitly (never SELECT *)
@@ -1545,9 +1485,7 @@ Tips:
     "semantic_search",
     `Search timeline events by *meaning* using vector embeddings, complementing query_events (which does keyword/FTS matching). Reach for this on conceptual queries where the exact words may not appear in the events — e.g. "times I felt burned out", "planning a trip abroad", "conversations about moving house". Results are ranked by similarity, closest first.
 
-Requires embeddings to be configured and an index to be built (see docs/user/embeddings.md). When embeddings aren't configured this returns a short setup message instead of results. Indexed conversation windows follow the events, each with an #id for export_conversation.
-
-${idHint}`,
+Requires embeddings to be configured and an index to be built (see docs/user/embeddings.md). When embeddings aren't configured this returns a short setup message instead of results. Indexed conversation windows follow the events, each with an #id for export_conversation.`,
     {
       query: z.string().trim().min(1).describe("Natural-language query, matched by meaning against indexed event content"),
       limit: z.number().int().min(1).max(50).optional().default(10).describe("Max events to return (1-50, default 10)"),
