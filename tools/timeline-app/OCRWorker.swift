@@ -5,10 +5,37 @@ import Foundation
 import Darwin
 
 final class OCRWorker: @unchecked Sendable {
-    private struct Child {
-        let process: Process
+    // A worker the app spawned and reaps itself. Until it is reaped its process
+    // ID stays reserved, even after it exits, so a signal reaches only it.
+    private final class Child: @unchecked Sendable {
+        let pid: pid_t
         let input: FileHandle
         let output: FileHandle
+        private let lock = NSLock()
+        private var reaped = false
+
+        init(pid: pid_t, input: FileHandle, output: FileHandle) {
+            self.pid = pid
+            self.input = input
+            self.output = output
+        }
+
+        // Reaps the worker if it has exited.
+        var isRunning: Bool {
+            lock.withLock {
+                if !reaped {
+                    var status: Int32 = 0
+                    var result: pid_t
+                    repeat { result = waitpid(pid, &status, WNOHANG) } while result == -1 && errno == EINTR
+                    reaped = result != 0
+                }
+                return !reaped
+            }
+        }
+
+        func signal(_ signal: Int32) {
+            lock.withLock { if !reaped { kill(pid, signal) } }
+        }
     }
 
     let executable: URL
@@ -21,7 +48,7 @@ final class OCRWorker: @unchecked Sendable {
     private var child: Child?
     // Workers still running after KILL. One stuck worker gets a replacement;
     // while two are stuck none is started, so they cannot pile up.
-    private var abandoned: [Process] = []
+    private var abandoned: [Child] = []
 
     init(executable: URL, arguments: [String], timeout: TimeInterval) {
         self.executable = executable
@@ -47,7 +74,7 @@ final class OCRWorker: @unchecked Sendable {
             return child
         }
         guard let stopped else { return }
-        if stopped.process.isRunning { kill(stopped.process.processIdentifier, SIGKILL) }
+        stopped.signal(SIGKILL)
         queue.async { self.end(stopped) }
     }
 
@@ -81,15 +108,15 @@ final class OCRWorker: @unchecked Sendable {
     // The running worker, or a new one if there is none or it has exited.
     private func current() throws -> Child {
         let exited: Child? = lock.withLock {
-            guard let child, !child.process.isRunning else { return nil }
+            guard let child, !child.isRunning else { return nil }
             self.child = nil
             return child
         }
         // end() takes the lock to record an abandoned worker.
         if let exited { end(exited) }
         return try lock.withLock {
-            if let child { return child }
             abandoned.removeAll { !$0.isRunning }
+            if let child { return child }
             guard abandoned.count < 2 else {
                 throw RecallError("Text recognition is stuck in a worker that cannot be ended, so this capture was skipped. Timeline tries again on the next capture.")
             }
@@ -101,7 +128,7 @@ final class OCRWorker: @unchecked Sendable {
 
     private func discard(_ worker: Child) {
         let owned = lock.withLock {
-            guard child?.process === worker.process else { return false }
+            guard child === worker else { return false }
             child = nil
             return true
         }
@@ -109,25 +136,46 @@ final class OCRWorker: @unchecked Sendable {
         if owned { end(worker) }
     }
 
+    // posix_spawn, not Process: Process reaps the worker on its own, after
+    // which its process ID can be reused before a signal is sent.
     private func spawn() throws -> Child {
-        let process = Process()
-        process.executableURL = executable
-        process.arguments = arguments
         let input = Pipe()
         let output = Pipe()
-        process.standardInput = input
-        process.standardOutput = output
         // A worker that exits between requests makes the write fail with
         // EPIPE instead of killing the app with SIGPIPE.
         guard fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) == 0 else {
-            throw RecallError("Text recognition could not start (error \(errno)), so this capture was skipped. Timeline tries again on the next capture.")
+            throw Self.cannotStart(errno)
         }
-        do {
-            try process.run()
-        } catch {
-            throw RecallError("Text recognition could not start (error \((error as NSError).code)), so this capture was skipped. Timeline tries again on the next capture.")
-        }
-        return Child(process: process, input: input.fileHandleForWriting, output: output.fileHandleForReading)
+        var actions: posix_spawn_file_actions_t? = nil
+        var code = posix_spawn_file_actions_init(&actions)
+        guard code == 0 else { throw Self.cannotStart(code) }
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        var attributes: posix_spawnattr_t? = nil
+        code = posix_spawnattr_init(&attributes)
+        guard code == 0 else { throw Self.cannotStart(code) }
+        defer { posix_spawnattr_destroy(&attributes) }
+        let setup = [
+            posix_spawn_file_actions_adddup2(&actions, input.fileHandleForReading.fileDescriptor, STDIN_FILENO),
+            posix_spawn_file_actions_adddup2(&actions, output.fileHandleForWriting.fileDescriptor, STDOUT_FILENO),
+            posix_spawn_file_actions_addinherit_np(&actions, STDERR_FILENO),
+            // The worker gets only stdin, stdout and stderr, none of the app's other descriptors.
+            posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT)),
+        ]
+        if let failed = setup.first(where: { $0 != 0 }) { throw Self.cannotStart(failed) }
+        let argv = ([executable.path] + arguments).map { strdup($0) }
+        let envp = ProcessInfo.processInfo.environment.map { strdup("\($0.key)=\($0.value)") }
+        defer { (argv + envp).forEach { free($0) } }
+        guard !(argv + envp).contains(nil) else { throw Self.cannotStart(ENOMEM) }
+        var pid: pid_t = 0
+        let status = posix_spawn(&pid, executable.path, &actions, &attributes, argv + [nil], envp + [nil])
+        try? input.fileHandleForReading.close()
+        try? output.fileHandleForWriting.close()
+        guard status == 0 else { throw Self.cannotStart(status) }
+        return Child(pid: pid, input: input.fileHandleForWriting, output: output.fileHandleForReading)
+    }
+
+    private static func cannotStart(_ code: Int32) -> RecallError {
+        RecallError("Text recognition could not start (error \(code)), so this capture was skipped. Timeline tries again on the next capture.")
     }
 
     // Closing the input ends an idle worker; TERM ends a busy one, and KILL one
@@ -135,22 +183,22 @@ final class OCRWorker: @unchecked Sendable {
     // abandoned rather than waited for.
     private func end(_ worker: Child) {
         try? worker.input.close()
-        if worker.process.isRunning { worker.process.terminate() }
-        if !Self.exits(worker.process, within: 2) {
-            kill(worker.process.processIdentifier, SIGKILL)
-            if !Self.exits(worker.process, within: 2) {
+        worker.signal(SIGTERM)
+        if !Self.exits(worker, within: 2) {
+            worker.signal(SIGKILL)
+            if !Self.exits(worker, within: 2) {
                 RecallCapture.warn("an OCR worker did not exit after KILL and was abandoned")
-                lock.withLock { abandoned.append(worker.process) }
+                lock.withLock { abandoned.append(worker) }
             }
         }
         try? worker.output.close()
     }
 
     // Whether the process has terminated within `seconds`.
-    private static func exits(_ process: Process, within seconds: TimeInterval) -> Bool {
+    private static func exits(_ worker: Child, within seconds: TimeInterval) -> Bool {
         let deadline = ProcessInfo.processInfo.systemUptime + seconds
-        while process.isRunning, ProcessInfo.processInfo.systemUptime < deadline { usleep(20_000) }
-        return !process.isRunning
+        while worker.isRunning, ProcessInfo.processInfo.systemUptime < deadline { usleep(20_000) }
+        return !worker.isRunning
     }
 
     private static let stoppedError = RecallError("Text recognition stopped unexpectedly, so this capture was skipped. Timeline restarts it for the next capture.")

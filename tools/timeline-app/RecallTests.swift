@@ -277,10 +277,19 @@ struct RecallTests {
         let lastReply = try await worker.recognize(path: "/synthetic/last.png")
         precondition(lastReply.isEmpty)
         guard let idler = try spawned().last else { throw RecallError("No worker started.") }
-        let idlerGone = try await gone(idler)
-        precondition(idlerGone)
-        try await Task.sleep(nanoseconds: 200_000_000)
+        // The app reaps an exited worker itself, when the next request finds it,
+        // so until then it waits as a zombie with its process ID reserved.
+        func zombie() -> Bool {
+            var info = siginfo_t()
+            return waitid(P_PID, id_t(idler), &info, WEXITED | WNOWAIT | WNOHANG) == 0 && info.si_pid == idler
+        }
+        var info = siginfo_t()
+        let zombieDeadline = Date().addingTimeInterval(5)
+        while !zombie() && Date() < zombieDeadline { try await Task.sleep(nanoseconds: 20_000_000) }
+        precondition(zombie(), "An exited worker must wait to be reaped by the app")
         try await answered()
+        precondition(waitid(P_PID, id_t(idler), &info, WEXITED | WNOWAIT | WNOHANG) == -1 && errno == ECHILD,
+                     "The next request must reap an exited worker")
         print("OCR: stop() ends an idle worker")
         // stop() ends the worker; the next request starts another.
         guard let stopped = try spawned().last else { throw RecallError("No worker started.") }
