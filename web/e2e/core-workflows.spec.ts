@@ -624,6 +624,10 @@ test("scrolls a long conversation, jumps to latest, and downloads an export", as
       await route.fulfill({ json: { sources: ["discord"] } });
       return true;
     }
+    if (request.method() === "GET" && url.pathname === "/api/sync/sources") {
+      await route.fulfill({ json: { sources: [] } });
+      return true;
+    }
     if (request.method() === "GET" && url.pathname === "/api/conversation") {
       const cursor = url.searchParams.get("cursor");
       const pageEvents = cursor === "older-page"

@@ -947,6 +947,8 @@ function baseResponses(): Record<string, unknown> {
     "/api/health/biomarkers": { biomarkers: [] as BiomarkerData[] },
     "/api/playlists": music.playlists,
     "/api/music/friends/latest": music.friends,
+    // No sync sources, so the conversation shot shows no Refresh button.
+    "/api/sync/sources": { sources: [] },
     "/api/music/rankings": music.rankings,
     "/api/music/recent": music.recent,
     "/api/search": buildSearchResults(),
