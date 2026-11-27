@@ -31,6 +31,16 @@ body,
   overflow: hidden;
 }
 
+/* Set by useDocumentScroll (lib/document-scroll.ts): the window scrolls. */
+html[data-document-scroll],
+html[data-document-scroll] body,
+html[data-document-scroll] #app {
+  height: auto;
+  overflow: visible;
+}
+
+@custom-variant document-scroll (html[data-document-scroll] &);
+
 .mobile-navigation-bar {
   padding-bottom: env(safe-area-inset-bottom);
 }

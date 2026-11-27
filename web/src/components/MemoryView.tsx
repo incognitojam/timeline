@@ -2,7 +2,6 @@ import type { MemoryNote, MemoryProject } from "@shared/memory";
 import { A } from "@solidjs/router";
 import { createSignal, For, Show } from "solid-js";
 import { ACCOUNT_GROUPS, formatMemoryDate, scopeLabel } from "../lib/memory";
-import { useRestoredScroll } from "../lib/page-scroll";
 import { useMemoryIndex, useRestoreMemoryVersion } from "../lib/queries";
 import { buildMemoryNoteUrl, buildMemoryProjectUrl } from "../lib/routes";
 import { IconChevronRight, IconPsychology } from "../ui/icons";
@@ -51,7 +50,6 @@ function ProjectRow(props: { project: MemoryProject }) {
 export default function MemoryView() {
   const query = useMemoryIndex();
   const restore = useRestoreMemoryVersion();
-  const scrollRef = useRestoredScroll();
   const [importing, setImporting] = createSignal(false);
   const isEmpty = () => {
     const data = query.data;
@@ -59,7 +57,7 @@ export default function MemoryView() {
   };
 
   return (
-    <div ref={scrollRef} class="h-full overflow-auto">
+    <div>
       <div class="mx-auto max-w-4xl px-4 pt-6 pb-12">
         <header class="mb-8 flex flex-wrap items-start gap-3">
           <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm bg-secondary text-secondary-foreground">

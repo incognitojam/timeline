@@ -3,6 +3,7 @@ import { createEffect, createMemo, createResource, createSignal, onCleanup, onMo
 import { type AuthStatus, fetchAuthStatus, fetchStats, login, logout } from "../lib/api";
 import { queryKeys } from "../lib/queries";
 import { createFetchingCount } from "../lib/query-client";
+import { useDocumentScroll } from "../lib/document-scroll";
 import { APP_NAME, navigationItemForPath, ROUTES, safeDecode } from "../lib/routes";
 import { resolveTimelineDate } from "../lib/timelineDate";
 import Navigation from "./Navigation";
@@ -178,6 +179,7 @@ export default function Layout(props: ParentProps) {
     const status = authStatus();
     return !authLoading() && status !== null && (!status.authEnabled || status.authenticated);
   };
+  useDocumentScroll(showApp);
 
   return (
     <>
@@ -249,7 +251,7 @@ export default function Layout(props: ParentProps) {
 
       {/* Main app */}
       <Show when={showApp()}>
-        <div class="flex h-dvh min-h-0 flex-col bg-background text-foreground min-[600px]:flex-row">
+        <div class="flex h-dvh min-h-0 flex-col document-scroll:h-auto document-scroll:min-h-dvh bg-background text-foreground min-[600px]:flex-row">
           <a
             href="#main-content"
             class="skip-link fixed left-3 top-3 z-[60] -translate-y-24 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-lg transition-transform focus:translate-y-0 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background"
@@ -272,7 +274,7 @@ export default function Layout(props: ParentProps) {
           <main
             id="main-content"
             tabindex="-1"
-            class="min-h-0 min-w-0 flex-1 overflow-hidden focus:outline-none"
+            class="min-h-0 min-w-0 flex-1 overflow-hidden document-scroll:overflow-visible focus:outline-none"
           >
             {props.children}
           </main>

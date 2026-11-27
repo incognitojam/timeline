@@ -190,7 +190,7 @@ function DesktopNavigation(props: NavigationProps) {
   return (
     <aside
       aria-label="App navigation"
-      class="hidden h-full w-[5.5rem] shrink-0 flex-col border-r border-border bg-card min-[600px]:flex 2xl:w-60"
+      class="hidden h-full w-[5.5rem] shrink-0 document-scroll:sticky document-scroll:top-0 document-scroll:h-dvh flex-col border-r border-border bg-card min-[600px]:flex 2xl:w-60"
     >
       <TimelineBrand statsSummary={props.statsSummary} />
 
@@ -243,7 +243,7 @@ function MobileNavigation(props: NavigationProps) {
     <KDialog.Root open={moreOpen()} onOpenChange={setMoreOpen}>
       <nav
         aria-label="Primary"
-        class="mobile-navigation-bar order-last w-full shrink-0 border-t border-border bg-card min-[600px]:hidden"
+        class="mobile-navigation-bar order-last w-full shrink-0 document-scroll:sticky document-scroll:bottom-0 document-scroll:z-40 border-t border-border bg-card min-[600px]:hidden"
       >
         <div class="flex min-h-20 items-stretch">
           <For each={MOBILE_NAV_ITEMS}>
