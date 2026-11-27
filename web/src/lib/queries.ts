@@ -93,6 +93,7 @@ import {
   fetchMcpTokens,
   revokeMcpToken,
   fetchPlaylistDetail,
+  type PlaylistDetail,
   fetchRecentMusicPlays,
   includeInTopLists,
   setExcludePrivateSessions,
@@ -1234,8 +1235,34 @@ export function useMusicFriendListens() {
   return createQuery(() => queryOptions.musicFriendListens());
 }
 
+/**
+ * One playlist's history. While it loads, the tracked-playlists list in the
+ * cache stands in as placeholder data, so the header (name, artwork, creation
+ * date) shows at once. The placeholder has no observations: callers show
+ * history only once `isPlaceholderData` is false. Placeholder rather than
+ * initial data because the list row is not a detail response: it is never
+ * cached under the detail key and never delays the detail fetch.
+ */
 export function useMusicPlaylist(playlistId: () => string | undefined) {
-  return createQuery(() => queryOptions.musicPlaylist(playlistId()));
+  const queryClient = useQueryClient();
+  return createQuery(() => {
+    const id = playlistId();
+    return {
+      ...queryOptions.musicPlaylist(id),
+      placeholderData: (): PlaylistDetail | undefined => {
+        const listed = queryClient
+          .getQueryData(queryOptions.musicPlaylists().queryKey)
+          ?.playlists.find((playlist) => playlist.playlistId === id);
+        return listed && {
+          playlistId: listed.playlistId,
+          name: listed.name,
+          imageUrl: listed.imageUrl,
+          createdDate: listed.createdDate,
+          observations: [],
+        };
+      },
+    };
+  });
 }
 
 export function useHealthStats<TWindow extends HealthWindow>(window: () => TWindow) {

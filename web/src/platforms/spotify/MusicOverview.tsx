@@ -28,6 +28,7 @@ import { IconBlock, IconFilterList, IconMoreHoriz, IconMusicNote } from "../../u
 import SegmentedControl, { type SegmentedControlOption } from "../../ui/SegmentedControl";
 import Avatar from "../../components/Avatar";
 import PlaylistArt from "./PlaylistArt";
+import { sharedElementName, useSharedElementLink } from "../../lib/view-transition";
 import Sparkline from "../../components/Sparkline";
 
 function formatDate(dateStr: string | null): string {
@@ -39,7 +40,7 @@ function formatDate(dateStr: string | null): string {
   });
 }
 
-function PlaylistRow(props: { playlist: TrackedPlaylist }) {
+function PlaylistRow(props: { playlist: TrackedPlaylist; onNavigate: (event: MouseEvent & { currentTarget: HTMLAnchorElement }) => void }) {
   // A single-reading playlist has nothing for the sparkline to draw (it needs
   // two points), so prepend the artificial 0-saves creation anchor to show a
   // ramp from creation rather than a bare dot. Multi-reading series already
@@ -60,12 +61,14 @@ function PlaylistRow(props: { playlist: TrackedPlaylist }) {
   return (
     <A
       href={buildMusicPlaylistUrl(props.playlist.playlistId)}
+      onClick={props.onNavigate}
       class="flex items-center gap-3 px-3 py-2.5 hover:bg-accent/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
     >
       <PlaylistArt
         src={props.playlist.imageUrl}
         name={props.playlist.name}
         class="h-10 w-10 shrink-0"
+        transitionName={sharedElementName(props.playlist.playlistId, "playlist-art")}
       />
 
       <div class="flex-1 min-w-0">
@@ -717,6 +720,7 @@ export default function MusicOverview() {
   const rankingsQuery = useMusicRankings(period);
   const recentQuery = useMusicRecent();
   const playlistsQuery = useMusicPlaylists();
+  const sharedLink = useSharedElementLink();
   const friendsQuery = useMusicFriendListens();
 
   const playlists = () =>
@@ -1043,7 +1047,7 @@ export default function MusicOverview() {
               <Match when={playlists().length > 0}>
                 <div class="rounded-xl bg-card divide-y divide-border overflow-y-auto max-h-[28rem]">
                   <For each={playlists()}>
-                    {(playlist) => <PlaylistRow playlist={playlist} />}
+                    {(playlist) => <PlaylistRow playlist={playlist} onNavigate={sharedLink(playlist.playlistId)} />}
                   </For>
                 </div>
               </Match>
