@@ -178,8 +178,9 @@ struct TimelineApp: App {
             case .unconfirmed(let reason):
                 Text("Remote Access: public until \(end), not confirmed reachable")
                 Text("Last check: \(reason)")
+                Button("Check Again", systemImage: "arrow.clockwise") { remoteAccess.checkReachabilityAgain() }
             case .checking, nil:
-                Text("Remote Access: public until \(end), starting…")
+                Text("Remote Access: public until \(end), checking…")
                 Text("Checking that it answers from the internet…")
             }
         case .unconfirmed:

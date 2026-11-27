@@ -159,9 +159,9 @@ final class RemoteAccessController: ObservableObject {
     // only qualifies .publicAccess; what is exposed is still decided by the
     // config. nil whenever the state is not .publicAccess.
     @Published private(set) var reachability: PublicReachability?
-    // The share the running checks belong to (its end), so a share that ends
-    // and comes back is checked again from the start.
-    private var reachabilityShare: Date?
+    // The share the running checks belong to (its name and end), so a share
+    // that ends and comes back is checked again from the start.
+    private var reachabilityShare: String?
     private var reachabilityChecks: Task<Void, Never>?
     // Latched at logIn() and cleared only when the backend reaches Running (or
     // the feature is turned off / the login never started). While latched the
@@ -506,6 +506,12 @@ final class RemoteAccessController: ObservableObject {
         trackReachability()
     }
 
+    // Checks again from the start, when the owner asks after a run failed.
+    func checkReachabilityAgain() {
+        reachabilityShare = nil
+        trackReachability()
+    }
+
     // Starts a short run of checks each time public access comes on, then
     // stops: at the first answer, or after the last check with why not.
     private func trackReachability() {
@@ -513,12 +519,13 @@ final class RemoteAccessController: ObservableObject {
             reachabilityChecks?.cancel()
             reachabilityChecks = nil
             reachabilityShare = nil
-            reachability = nil
+            if reachability != nil { reachability = nil }
             return
         }
-        guard reachabilityShare != until else { return }
+        let share = "\(dnsName) \(until.timeIntervalSince1970)"
+        guard reachabilityShare != share else { return }
         reachabilityChecks?.cancel()
-        reachabilityShare = until
+        reachabilityShare = share
         reachability = .checking
         reachabilityChecks = Task { @MainActor [weak self] in
             var elapsed: TimeInterval = 0
@@ -526,18 +533,18 @@ final class RemoteAccessController: ObservableObject {
             for time in PublicReachability.checkTimes {
                 try? await Task.sleep(nanoseconds: UInt64((time - elapsed) * 1_000_000_000))
                 elapsed = time
-                guard !Task.isCancelled, self?.reachabilityShare == until else { return }
+                guard !Task.isCancelled, self?.reachabilityShare == share else { return }
                 let failure = await Task.detached(priority: .utility) {
                     Self.checkReachable(dnsName: dnsName)
                 }.value
-                guard !Task.isCancelled, let self, self.reachabilityShare == until else { return }
+                guard !Task.isCancelled, let self, self.reachabilityShare == share else { return }
                 guard let failure else {
                     self.reachability = .reachable
                     return
                 }
                 reason = failure
             }
-            guard !Task.isCancelled, let self, self.reachabilityShare == until else { return }
+            guard !Task.isCancelled, let self, self.reachabilityShare == share else { return }
             writeError("Timeline remote access: public address did not answer from the internet: \(reason)\n")
             self.reachability = .unconfirmed(reason: reason)
         }
@@ -685,15 +692,21 @@ final class RemoteAccessController: ObservableObject {
 
     // Checks from the Mac that the public address answers from the internet
     // (see PublicReachability); nil if it does, else why not. What leaves the
-    // Mac: a query for ts.net's name servers to the Mac's resolver; the node
-    // name, without recursion, to those servers (and to any server they
-    // delegate the tailnet's zone to); and one HTTPS GET of /mcp with no
-    // credentials to the address they give, a Funnel relay.
+    // Mac: to the Mac's resolver, queries for ts.net's name servers, their
+    // addresses, and any alias target; the node name, without recursion, to
+    // those servers (and to any server they delegate a zone under ts.net
+    // to); and one HTTPS GET of /mcp with no credentials to the address they
+    // give, a Funnel relay.
     nonisolated private static func checkReachable(dnsName: String) -> String? {
         let name = dnsName.lowercased()
         guard PublicReachability.isCheckable(name) else { return "its name is not under ts.net." }
+        // No ~/.digrc or ~/.curlrc, which could turn on recursion or skip
+        // certificate checks.
+        let noUserConfig = ["HOME": "/var/empty"]
         func dig(_ args: [String]) -> String? {
-            guard let result = runCommand("/usr/bin/dig", ["+time=3", "+tries=1"] + args, captureStderr: false, timeout: 10),
+            guard let result = runCommand(
+                "/usr/bin/dig", ["+time=3", "+tries=1", "+nosearch"] + args,
+                environmentOverrides: noUserConfig, captureStderr: false, timeout: 10),
                   result.succeeded else { return nil }
             return result.output
         }
@@ -731,10 +744,10 @@ final class RemoteAccessController: ObservableObject {
             // TLS (verified as usual) and Host, so the request goes out to
             // the relay and not across the tailnet.
             code = runCommand("/usr/bin/curl", [
-                "--silent", "--output", "/dev/null", "--write-out", "%{http_code}",
+                "-q", "--silent", "--output", "/dev/null", "--write-out", "%{http_code}",
                 "--max-time", "10", "--noproxy", "*", "--proto", "=https",
                 "--resolve", "\(name):443:\(address)", "https://\(name)/mcp",
-            ], captureStderr: false, timeout: 20)?.output ?? ""
+            ], environmentOverrides: noUserConfig, captureStderr: false, timeout: 20)?.output ?? ""
             if PublicReachability.isAnswered(httpCode: code) { return nil }
         }
         let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)

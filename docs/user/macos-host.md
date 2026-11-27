@@ -256,16 +256,19 @@ Funnel being on does not make the address answer from the internet straight
 away: Tailscale's public DNS record for the node can take up to 10 minutes to
 appear, and a client that looked the name up before then may keep the "no such
 name" answer for up to 5 more minutes. So after Funnel comes on, including after
-an update resumes it, the menu shows "public until … , starting…" while the app
+an update resumes it, the menu shows "public until …, checking…" while the app
 checks from its own end, a few times over 15 minutes and then not again. It asks
 the `ts.net` name servers (Tailscale's DNS provider) for the node's public
-address directly, never a shared resolver, then requests `/mcp` with no
-credentials from that address. Only a Funnel relay answers there for the node's
-name, so an answer proves the path a hosted client takes; each check adds an
-`mcp.refused` line (401, over Funnel, User-Agent `curl`) to `service.log`. The
-menu then shows "public until …" and **Copy URL**. If no check gets an answer,
-it shows "not confirmed reachable" and the last reason, and the node stays
-public until it ends as usual. Add a connector only once the menu says
+address directly, so the node's name never goes to a shared resolver, then
+requests `/mcp` with no credentials from that address. Only a Funnel relay
+answers there for the node's name, so an answer proves the path a hosted client
+takes; the answering check adds one `mcp.refused` line (401, over Funnel,
+User-Agent `curl/…`) to `service.log`. The menu then shows "public until …" and
+**Copy URL**. If no check gets an answer, it shows "not confirmed reachable",
+the last reason and **Check Again**, and the node stays public until it ends as
+usual. "answered HTTP 503" means no MCP token exists yet. A network that
+answers DNS queries itself instead of passing them on can make every check
+report that the record is not there. Add a connector once the menu says
 "public until …" alone.
 
 If the alert and the menu say Funnel is not allowed for this device, the

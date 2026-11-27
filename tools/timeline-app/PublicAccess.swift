@@ -61,9 +61,9 @@ enum PublicAccess {
 // Whether the public address answers from the internet. Funnel being on in
 // the serve config does not mean it does: Tailscale's public DNS record for
 // the node can take minutes to appear. The app checks from its own end by
-// asking ts.net's authoritative name servers (never a shared recursive
-// resolver, whose negative cache would then hold "no such name" for other
-// clients) for the node's public address, then making an HTTPS request with
+// asking ts.net's authoritative name servers for the node's public address
+// (the node name never goes to a shared recursive resolver, whose negative
+// cache would then hold "no such name" for other clients), then making an HTTPS request with
 // no credentials to that address. Only a Funnel relay answers there for the
 // node's name, with a certificate only the node holds, so an answer proves
 // the path a hosted client takes. These helpers are the pure parts.
@@ -118,7 +118,7 @@ enum PublicReachability: Equatable {
                 if isPublicIPv4(value) { addresses.append(value) }
             case "CNAME" where owner == name && isHostName(value):
                 alias = value
-            case "NS" where name.hasSuffix("." + owner) && owner != "ts.net" && isHostName(value):
+            case "NS" where name.hasSuffix("." + owner) && owner.hasSuffix(".ts.net") && isHostName(value):
                 servers.append(value)
             default:
                 break
@@ -138,8 +138,8 @@ enum PublicReachability: Equatable {
     }
 
     // curl's `%{http_code}`: any answer below 500 came from the service
-    // (MCP without a token is 401), while 5xx means tailscaled answered but
-    // the service did not.
+    // (MCP without a token is 401). 5xx means the service is not answering
+    // MCP: tailscaled could not reach it, or no MCP token exists (503).
     static func isAnswered(httpCode: String) -> Bool {
         guard let code = Int(httpCode.trimmingCharacters(in: .whitespacesAndNewlines)) else { return false }
         return (200..<500).contains(code)
@@ -150,7 +150,7 @@ enum PublicReachability: Equatable {
         guard parts.count == 4 else { return false }
         var octets: [Int] = []
         for part in parts {
-            guard (1...3).contains(part.count), part.allSatisfy(\.isASCII), let value = Int(part),
+            guard (1...3).contains(part.count), part.allSatisfy({ ("0"..."9").contains($0) }), let value = Int(part),
                   (0...255).contains(value) else { return false }
             octets.append(value)
         }
