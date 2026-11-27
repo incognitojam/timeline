@@ -114,14 +114,22 @@ jobs:
           if [ "$DRY_RUN" = true ]; then
             # Preview removal against the release as it would look after this build's upload.
             dmg="Timeline-$version-macos-arm64.dmg"
-            jq --arg dmg "$dmg" '.assets = (.assets + [{name: "appcast.xml"}, {name: $dmg}, {name: ($dmg + ".sha256")}] | unique_by(.name))' \
+            # Publishing re-uploads this build's files, so they replace any from an earlier attempt.
+            jq --arg dmg "$dmg" '(now | todate) as $now
+              | .assets = ([.assets[] | select(.name != $dmg and .name != ($dmg + ".sha256"))]
+                  + [{name: $dmg, created_at: $now}, {name: ($dmg + ".sha256"), created_at: $now}])
+              | if any(.assets[]; .name == "appcast.xml") then . else .assets += [{name: "appcast.xml"}] end' \
               "$release" > "$RUNNER_TEMP/release-after.json"
-            if ! remove="$(python3 -B scripts/ci/edge_build.py prune-plan "$RUNNER_TEMP/release-after.json" --tag "$FEED_TAG" --current "$build" 2>&1)"; then
-              remove="nothing; the removal step would refuse: $remove"
+            if ! plan="$(python3 -B scripts/ci/edge_build.py retention "$RUNNER_TEMP/release-after.json" --tag "$FEED_TAG" --current "$build" 2>&1)"; then
+              plan="The removal step would refuse and remove nothing: $plan"
             fi
             {
               echo
-              echo "Would remove after uploading: ${remove:-nothing}"
+              echo "What the release would keep and remove after uploading:"
+              echo
+              echo '```'
+              echo "$plan"
+              echo '```'
               echo
               echo "**Dry run:** nothing was signed, uploaded or deleted."
             } | tee -a "$GITHUB_STEP_SUMMARY"

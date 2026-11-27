@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 
-from edge_build import BUILD_DMG, KEEP_BUILDS, STABLE_VERSION, check_appcast
+from edge_build import BUILD_DMG, MAX_PATCH_SOURCES, STABLE_VERSION, Refusal, check_appcast, kept_builds
 
 
 def read(*args):
@@ -16,7 +16,7 @@ def read(*args):
 
 
 def sources(tag, current):
-    """The edge DMGs retained after upload and the last stable DMG."""
+    """The edge DMGs the rolling release keeps, newest first, and the last stable DMG."""
     repo = os.environ["GH_REPO"]
     if tag.startswith("v"):
         if not STABLE_VERSION.fullmatch(tag[1:]):
@@ -32,12 +32,16 @@ def sources(tag, current):
         stable = "v" + ".".join(map(str, previous))
     else:
         release = json.loads(read("gh", "api", f"repos/{os.environ['GH_REPO']}/releases/tags/{tag}"))
+        # Judged without this build, so the list is the same before and after its DMG is uploaded.
+        older = [asset for asset in release["assets"]
+                 if not (match := BUILD_DMG.fullmatch(asset["name"].removesuffix(".sha256"))) or int(match[1]) < current]
+        kept = kept_builds({**release, "assets": older}, tag)
         edges = []
         for asset in release["assets"]:
             match = BUILD_DMG.fullmatch(asset["name"])
-            if match and asset["state"] == "uploaded" and int(match[1]) < current:
+            if match and asset["state"] == "uploaded" and int(match[1]) < current and int(match[1]) in kept:
                 edges.append((int(match[1]), tag, asset["name"]))
-        yield from sorted(edges, reverse=True)[:KEEP_BUILDS - 1]
+        yield from sorted(edges, reverse=True)[:MAX_PATCH_SOURCES]
         stable = read("gh", "api", f"repos/{os.environ['GH_REPO']}/releases/latest", "--jq", ".tag_name")
     if stable.startswith("v") and STABLE_VERSION.fullmatch(stable[1:]):
         build = int(read("scripts/print-build-number.sh", stable))
@@ -59,7 +63,7 @@ def generate(output, stage, version, build):
                 print(f"::warning::Skipping delta from {old}: download failed")
                 continue
             candidates[old] = name
-    except (ValueError, subprocess.CalledProcessError) as error:
+    except (Refusal, ValueError, subprocess.CalledProcessError) as error:
         print(f"::warning::Incomplete delta source list: {error}")
     if not candidates:
         return

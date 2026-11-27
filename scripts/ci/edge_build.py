@@ -8,6 +8,7 @@ Refusal, so the caller deletes nothing) on anything it does not fully recognise.
 """
 
 import argparse
+from datetime import datetime, timedelta
 import json
 import os
 import re
@@ -24,6 +25,13 @@ DELTA = re.compile(r"Timeline([1-9][0-9]*)-([1-9][0-9]*)\.delta")
 CHECKSUM = ".sha256"
 FEED_FILE = "appcast.xml"
 KEEP_BUILDS = 5
+# Besides the newest builds, keep each build uploaded less than RECENT before
+# the current one that stayed the newest for at least LONG_LIVED: Macs check
+# hourly, so a Mac that was off for a few days is most likely on one of those.
+LONG_LIVED = timedelta(hours=4)
+RECENT = timedelta(days=3)
+# Patch sources per build, newest first, bounding the macOS time they take.
+MAX_PATCH_SOURCES = 20
 # A normal build removes one DMG and its checksum and the previous build's
 # patches. A backlog, after a missed cleanup or fewer kept builds, is removed
 # oldest first over several runs rather than refused.
@@ -174,14 +182,67 @@ def publish_action(release: object, release_tag: str, feed: str | None, build: i
     return "upload"
 
 
+def _uploaded(release: object, name: str) -> datetime:
+    """When the asset `name`, which `_asset_names` found on `release`, was uploaded."""
+    asset = next(asset for asset in release["assets"] if asset["name"] == name)
+    try:
+        uploaded = datetime.fromisoformat(asset["created_at"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise Refusal(f"{name} has no upload time") from error
+    if uploaded.tzinfo is None:
+        raise Refusal(f"{name}'s upload time has no time zone")
+    return uploaded
+
+
+def retention(release: object, release_tag: str, current: int) -> tuple[list[str], list[str]]:
+    """Return what `prune_plan` deletes, and a line per edge build saying whether the rule keeps it and why."""
+    doomed = prune_plan(release, release_tag, current)
+    reasons = _reasons(release, _dmg_builds(_asset_names(release, release_tag)))
+    return doomed, [f"{build}: {reason}" for build, (_, reason) in sorted(reasons.items(), reverse=True)]
+
+
+def _reasons(release: object, builds: dict[str, int]) -> dict[int, tuple[str, str]]:
+    """Map each build to its DMG and the reason it is kept or expired, by the retention rule.
+
+    How long a build stayed the newest is measured to the next newer DMG still
+    on the release. That is exact when the build first leaves the newest
+    builds, and later only ever longer, so the decision then stands.
+    """
+    newest_first = sorted(((build, dmg) for dmg, build in builds.items()), reverse=True)
+    uploaded = {build: _uploaded(release, dmg) for build, dmg in newest_first}
+    now = uploaded[newest_first[0][0]] if newest_first else None
+    reasons = {}
+    for index, (build, dmg) in enumerate(newest_first):
+        if index < KEEP_BUILDS:
+            reasons[build] = (dmg, f"keep: one of the newest {KEEP_BUILDS}")
+            continue
+        stood, age = uploaded[newest_first[index - 1][0]] - uploaded[build], now - uploaded[build]
+        if stood < timedelta(0):
+            raise Refusal(f"build {build} was uploaded after the newer build {newest_first[index - 1][0]}")
+        hours, days = stood / timedelta(hours=1), age / timedelta(days=1)
+        if age >= RECENT:
+            reasons[build] = (dmg, f"expire: uploaded {days:.1f} days before the current build, {RECENT.days} or more")
+        elif stood < LONG_LIVED:
+            reasons[build] = (dmg, f"expire: newest for {hours:.1f} h, under {LONG_LIVED / timedelta(hours=1):g} h")
+        else:
+            reasons[build] = (dmg, f"keep: newest for {hours:.1f} h, uploaded {days:.1f} days before the current build")
+    return reasons
+
+
+def kept_builds(release: object, release_tag: str) -> list[int]:
+    """The edge builds on `release` that the retention rule keeps, newest first."""
+    reasons = _reasons(release, _dmg_builds(_asset_names(release, release_tag)))
+    return [build for build, (_, reason) in sorted(reasons.items(), reverse=True) if reason.startswith("keep")]
+
+
 def prune_plan(release: object, release_tag: str, current: int) -> list[str]:
     """Return the asset names to delete from the rolling release, oldest build first.
 
     `release` is the GitHub release object for `release_tag`, read after the
     feed was switched to build `current`. It must be that published
     prerelease and hold the feed plus edge DMGs, each with its checksum, the
-    newest being `current`. The newest `KEEP_BUILDS` DMGs and their checksums
-    stay, as do the patches to `current`, the only ones the feed offers. At
+    newest being `current`. The DMGs the retention rule keeps and their
+    checksums stay, as do the patches to `current`, the only ones the feed offers. At
     most `MAX_EXPIRED_BUILDS` DMGs and `MAX_SUPERSEDED_PATCHES` patches go per
     run, oldest first.
     """
@@ -204,9 +265,8 @@ def prune_plan(release: object, release_tag: str, current: int) -> list[str]:
             raise Refusal(f"{dmg} has no checksum")
     if max(builds.values(), default=None) != current:
         raise Refusal(f"the newest DMG on {release_tag} is not build {current}")
-    kept = sorted(builds.values(), reverse=True)[:KEEP_BUILDS]
     doomed = [name for _, _, name in sorted(old_patches)[:MAX_SUPERSEDED_PATCHES]]
-    expired = sorted((build, dmg) for dmg, build in builds.items() if build not in kept)
+    expired = sorted((build, dmg) for build, (dmg, reason) in _reasons(release, builds).items() if reason.startswith("expire"))
     for _, dmg in expired[:MAX_EXPIRED_BUILDS]:
         doomed += [dmg, dmg + CHECKSUM]
     return doomed
@@ -244,6 +304,10 @@ def main(argv: list[str]) -> int:
     prune_command.add_argument("release", help=release_help)
     prune_command.add_argument("--tag", required=True, help="the rolling release's tag")
     prune_command.add_argument("--current", required=True, type=int, help="the build the feed now offers")
+    retention_command = commands.add_parser("retention", help="print each edge build with whether it stays and why, then what prune-plan deletes")
+    retention_command.add_argument("release", help=release_help)
+    retention_command.add_argument("--tag", required=True, help="the rolling release's tag")
+    retention_command.add_argument("--current", required=True, type=int, help="the build the feed offers after this build")
     args = parser.parse_args(argv)
     try:
         if args.command == "version":
@@ -258,6 +322,12 @@ def main(argv: list[str]) -> int:
                 print(offered_build(release, args.tag, _read(args.feed) if args.feed else None))
             elif args.command == "publish-action":
                 print(publish_action(release, args.tag, _read(args.feed) if args.feed else None, args.build))
+            elif args.command == "retention":
+                doomed, decisions = retention(release, args.tag, args.current)
+                for line in decisions:
+                    print(line)
+                for name in doomed:
+                    print(f"remove {name}")
             else:
                 for name in prune_plan(release, args.tag, args.current):
                     print(name)

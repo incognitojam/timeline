@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import subprocess
@@ -5,7 +6,7 @@ import sys
 import tempfile
 import unittest
 
-from edge_build import BUILD_DMG, Refusal, check_appcast, edge_version, feed_build, offered_build, prune_plan, publish_action
+from edge_build import BUILD_DMG, Refusal, check_appcast, edge_version, feed_build, offered_build, prune_plan, publish_action, kept_builds, retention
 
 
 SCRIPT = Path(__file__).with_name("edge_build.py")
@@ -20,12 +21,23 @@ def build_assets(*builds):
     return [name for build in builds for name in (dmg(build), dmg(build) + ".sha256")]
 
 
+START = datetime(2026, 11, 20, 9, tzinfo=timezone.utc)
+
+
+def release(names, times=None, **overrides):
+    """The rolling release; build N's files were uploaded at `times[N]`, by default 10 minutes after build N-1's."""
+    def asset(name):
+        match = BUILD_DMG.fullmatch(name.removesuffix(".sha256"))
+        if not match:
+            return {"name": name, "created_at": START.isoformat()}
+        build = int(match[1])
+        uploaded = (times or {}).get(build, START + timedelta(minutes=10 * (build - 1000)))
+        return {"name": name, "created_at": uploaded.isoformat().replace("+00:00", "Z")}
+    return {"tag_name": TAG, "prerelease": True, "draft": False, "assets": [asset(name) for name in names], **overrides}
+
+
 def removed_builds(plan):
     return sorted(int(match[1]) for name in plan if (match := BUILD_DMG.fullmatch(name)))
-
-
-def release(names, **overrides):
-    return {"tag_name": TAG, "prerelease": True, "draft": False, "assets": [{"name": name} for name in names], **overrides}
 
 
 class EdgeVersionTests(unittest.TestCase):
@@ -155,6 +167,83 @@ class PrunePlanTests(unittest.TestCase):
         # The next run accepts the patches whose image is gone and removes them.
         names = [name for name in names if name not in plan]
         self.assertEqual(prune_plan(release(names), TAG, 1346), orphans[50:] + newer)
+
+
+class RetentionTests(unittest.TestCase):
+    def plan(self, times, current=None):
+        current = current or max(times)
+        return removed_builds(prune_plan(release(["appcast.xml", *build_assets(*times)], times), TAG, current))
+
+    def test_a_burst_of_short_lived_builds_keeps_only_the_newest_five(self):
+        times = {build: START + timedelta(minutes=12 * index) for index, build in enumerate(range(1400, 1410))}
+        self.assertEqual(self.plan(times), [1400, 1401, 1402, 1403, 1404])
+
+    def test_keeps_a_build_that_stayed_newest_for_four_hours(self):
+        times = {1400: START, 1401: START + timedelta(hours=4), **{b: START + timedelta(hours=4, minutes=10 * (b - 1401)) for b in range(1402, 1407)}}
+        self.assertEqual(self.plan(times), [1401])
+        times[1401] = START + timedelta(hours=3, minutes=59)
+        self.assertEqual(self.plan(times), [1400, 1401])
+
+    def test_a_quiet_weekend_keeps_fridays_last_build(self):
+        friday = START + timedelta(days=1)
+        times = {b: friday + timedelta(minutes=10 * (b - 1340)) for b in range(1340, 1346)}
+        monday = friday + timedelta(days=2, hours=12)
+        times |= {b: monday + timedelta(minutes=10 * (b - 1346)) for b in range(1346, 1351)}
+        self.assertEqual(self.plan(times), [1340, 1341, 1342, 1343, 1344])
+        doomed, lines = retention(release(["appcast.xml", *build_assets(*times)], times), TAG, 1350)
+        self.assertIn("1345: keep: newest for 59.2 h, uploaded 2.5 days before the current build", lines)
+        self.assertIn("1344: expire: newest for 0.2 h, under 4 h", lines)
+
+    def test_a_long_lived_build_expires_three_days_after_its_upload(self):
+        for age, removed in ((timedelta(days=2, hours=23), [1400]), (timedelta(days=3), [1400, 1401])):
+            times = {1400: START, 1401: START + timedelta(hours=1), 1402: START + timedelta(hours=9)}
+            times |= {b: times[1401] + age - timedelta(minutes=10 * (1406 - b)) for b in range(1403, 1407)}
+            with self.subTest(age=age):
+                self.assertEqual(self.plan(times), removed)
+
+    def test_repeated_cleanup_still_expires_a_long_lived_build(self):
+        # A build stands over a weekend, then one arrives every 3 hours and each run cleans up.
+        times = {1400: START, 1401: START + timedelta(hours=64)}
+        names = ["appcast.xml", *build_assets(1400, 1401)]
+        for build in range(1402, 1470):
+            times[build] = times[build - 1] + timedelta(hours=3)
+            names += build_assets(build)
+            plan = prune_plan(release(names, times), TAG, build)
+            names = [name for name in names if name not in plan]
+            if dmg(1400) not in names:
+                # The first run after it left the newest five, and over three days after its upload.
+                self.assertEqual(times[build] - START, timedelta(hours=64 + 4 * 3))
+                return
+        self.fail("build 1400 was never removed")
+
+    def test_patch_sources_are_the_kept_builds(self):
+        times = {b: START + timedelta(minutes=10 * (b - 1400)) for b in range(1400, 1408)}
+        times[1401] = START + timedelta(minutes=5)
+        times |= {b: times[1401] + timedelta(hours=5, minutes=10 * (b - 1402)) for b in range(1402, 1408)}
+        self.assertEqual(kept_builds(release(["appcast.xml", *build_assets(*times)], times), TAG), [1407, 1406, 1405, 1404, 1403, 1401])
+
+    def test_first_run_after_the_change_with_only_five_dmgs(self):
+        stood_long = {1430: START, **{b: START + timedelta(hours=6, minutes=10 * (b - 1431)) for b in range(1431, 1436)}}
+        self.assertEqual(self.plan(stood_long), [])
+        stood_short = {1430: START, **{b: START + timedelta(minutes=30 + 10 * (b - 1431)) for b in range(1431, 1436)}}
+        self.assertEqual(self.plan(stood_short), [1430])
+
+    def test_refuses_doubtful_upload_times(self):
+        times = {b: START + timedelta(minutes=10 * (b - 1400)) for b in range(1400, 1407)}
+        out_of_order = {**times, 1401: times[1402] + timedelta(minutes=1)}
+        with self.assertRaises(Refusal):
+            self.plan(out_of_order)
+        names = ["appcast.xml", *build_assets(*times)]
+        broken = release(names, times)
+        next(asset for asset in broken["assets"] if asset["name"] == dmg(1400))["created_at"] = "yesterday"
+        with self.assertRaises(Refusal):
+            prune_plan(broken, TAG, 1406)
+        next(asset for asset in broken["assets"] if asset["name"] == dmg(1400))["created_at"] = "2026-11-20T09:00:00"
+        with self.assertRaises(Refusal):
+            prune_plan(broken, TAG, 1406)
+        del next(asset for asset in broken["assets"] if asset["name"] == dmg(1400))["created_at"]
+        with self.assertRaises(Refusal):
+            prune_plan(broken, TAG, 1406)
 
 
 def feed(build):
@@ -297,6 +386,18 @@ class CommandLineTests(unittest.TestCase):
             path.write_text(json.dumps(release(["appcast.xml", *build_assets(*range(1340, 1346))])))
             result = self.run_script("prune-plan", str(path), "--tag", TAG, "--current", "1345")
             self.assertEqual((result.returncode, result.stdout), (0, f"{dmg(1340)}\n{dmg(1340)}.sha256\n"))
+
+    def test_retention_prints_each_build_and_what_it_removes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "release.json")
+            path.write_text(json.dumps(release(["appcast.xml", *build_assets(*range(1340, 1346))])))
+            result = self.run_script("retention", str(path), "--tag", TAG, "--current", "1345")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.splitlines(), [
+                *[f"{build}: keep: one of the newest 5" for build in range(1345, 1340, -1)],
+                "1340: expire: newest for 0.2 h, under 4 h",
+                f"remove {dmg(1340)}", f"remove {dmg(1340)}.sha256",
+            ])
 
     def test_version_command(self):
         self.assertEqual(self.run_script("version", "0.21.0", "1347").stdout, "0.21.1-edge.1347\n")
