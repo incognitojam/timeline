@@ -43,6 +43,14 @@ export function buildRangeExportFilename(range: ConversationRangeExportResponse[
   return `${base}.txt`;
 }
 
+// Fence one backtick longer than any backtick run in the text, so the block
+// cannot be closed early.
+export function fenceTranscript(text: string): string {
+  const longestRun = (text.match(/`+/g) ?? []).reduce((longest, run) => Math.max(longest, run.length), 0);
+  const fence = "`".repeat(Math.max(3, longestRun + 1));
+  return `${fence}\n${text}\n${fence}`;
+}
+
 function downloadTextFile(filename: string, text: string): void {
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -174,25 +182,25 @@ export function ConversationRangeExportControls(props: ConversationRangeExportCo
     }
   };
 
-  const copyRangeExport = async () => {
-    const text = await runExport();
-    if (!text) return;
+  const copyTranscript = async (text: string) => {
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(fenceTranscript(text));
     } catch (error) {
       setError(error instanceof Error ? `Failed to copy range export: ${error.message}` : "Failed to copy range export");
     }
+  };
+
+  const copyRangeExport = async () => {
+    const text = await runExport();
+    if (!text) return;
+    await copyTranscript(text);
   };
 
   const copyPreviewExport = async () => {
     if (preview.isFetching || previewError()) return;
     const result = previewResult();
     if (!result) return;
-    try {
-      await navigator.clipboard.writeText(result.text);
-    } catch (error) {
-      setError(error instanceof Error ? `Failed to copy range export: ${error.message}` : "Failed to copy range export");
-    }
+    await copyTranscript(result.text);
   };
 
   const downloadPreviewExport = () => {
