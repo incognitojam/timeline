@@ -5,6 +5,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import MusicExclusionsView from "./MusicExclusionsView";
 import MusicOverview from "./MusicOverview";
 import MusicPlaylistView from "./MusicPlaylistView";
+import { queryKeys } from "../../lib/queries";
+
+vi.mock("../../ui/echarts", () => ({ EChartsAutoSize: () => null }));
 
 vi.mock("../../lib/echarts-theme", () => ({
   useChartTheme: () => ({
@@ -354,4 +357,84 @@ describe("music route query cache", () => {
     expect(await revisit.findByText("Example Playlist")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("shows a listed playlist's header at once and its history once the detail arrives", async () => {
+    let respond: (response: Response) => void = () => {};
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => { respond = resolve; }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(queryKeys.musicPlaylists(), {
+      playlists: [{
+        playlistId: "playlist-a", name: "Example Playlist", imageUrl: "https://example.com/a.jpg",
+        latestCount: 12, latestDate: "2026-03-01", firstDate: "2026-01-01", createdDate: null,
+        observations: 2, series: [{ date: "2026-01-01", count: 10 }, { date: "2026-03-01", count: 12 }],
+      }],
+    });
+
+    const screen = renderPlaylist(client);
+    expect(screen.getByRole("heading", { name: "Example Playlist" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Example Playlist cover art" })).toHaveAttribute("src", "https://example.com/a.jpg");
+    expect(document.title).toBe("Example Playlist · Music · Timeline");
+    // The list row has no history: show it loading, never as empty.
+    expect(screen.queryByText(/No saved-count history yet/)).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    respond(Response.json({
+      playlistId: "playlist-a", name: "Example Playlist", imageUrl: "https://example.com/a.jpg", createdDate: null,
+      observations: [{ date: "2026-01-01", count: 10, origin: "api" }, { date: "2026-03-01", count: 12, origin: "api" }],
+    }));
+    expect(await screen.findByText("Current saves")).toBeInTheDocument();
+    expect(client.getQueryData(queryKeys.musicPlaylist("playlist-a"))).toMatchObject({ observations: [{ count: 10 }, { count: 12 }] });
+  });
+
+  it("replaces a listed playlist's loading history with the error when the detail fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("boom", { status: 500 }))));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(queryKeys.musicPlaylists(), { playlists: [listedPlaylist("playlist-a", "Example Playlist")] });
+
+    const screen = renderPlaylist(client);
+    expect(screen.getByRole("heading", { name: "Example Playlist" })).toBeInTheDocument();
+    expect(await screen.findByText("Failed to load playlist history.")).toBeInTheDocument();
+    expect(document.querySelector("[aria-busy=true]")).toBeNull();
+  });
+
+  it("keeps the current playlist's header when an earlier playlist's detail arrives late", async () => {
+    const pending = new Map<string, (response: Response) => void>();
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => new Promise<Response>((resolve) => {
+      pending.set(new URL(String(input), "http://example.com").pathname, resolve);
+    })));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(queryKeys.musicPlaylists(), {
+      playlists: [listedPlaylist("playlist-a", "First Playlist"), listedPlaylist("playlist-b", "Second Playlist")],
+    });
+    const history = createMemoryHistory();
+    history.set({ value: "/music/playlist/playlist-a", replace: true });
+    const screen = render(() => (
+      <QueryClientProvider client={client}>
+        <MemoryRouter history={history}>
+          <Route path="/music/playlist/:id" component={MusicPlaylistView} />
+        </MemoryRouter>
+      </QueryClientProvider>
+    ));
+    expect(screen.getByRole("heading", { name: "First Playlist" })).toBeInTheDocument();
+
+    history.set({ value: "/music/playlist/playlist-b" });
+    expect(await screen.findByRole("heading", { name: "Second Playlist" })).toBeInTheDocument();
+    pending.get("/api/playlists/playlist-a")?.(Response.json({
+      playlistId: "playlist-a", name: "First Playlist", imageUrl: null, createdDate: null,
+      observations: [{ date: "2026-01-01", count: 10, origin: "api" }],
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByRole("heading", { name: "Second Playlist" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Second Playlist cover art" })).toHaveAttribute("src", "https://example.com/playlist-b.jpg");
+    expect(document.title).toBe("Second Playlist · Music · Timeline");
+  });
 });
+
+function listedPlaylist(playlistId: string, name: string) {
+  return {
+    playlistId, name, imageUrl: `https://example.com/${playlistId}.jpg`,
+    latestCount: 12, latestDate: "2026-03-01", firstDate: "2026-01-01", createdDate: null,
+    observations: 2, series: [{ date: "2026-01-01", count: 10 }, { date: "2026-03-01", count: 12 }],
+  };
+}

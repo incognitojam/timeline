@@ -162,6 +162,10 @@ const preloadAttachments: RoutePreloadFunc = () => {
   ]);
 };
 
+const preloadMusicPlaylist: RoutePreloadFunc = ({ params }) => {
+  return queryClient.prefetchQuery(queryOptions.musicPlaylist(params.id));
+};
+
 const preloadMcpSessions: RoutePreloadFunc = () => {
   return queryClient.prefetchQuery(queryOptions.mcpSessions({ limit: MCP_SESSION_LIMIT, offset: 0 }));
 };
@@ -185,7 +189,7 @@ export default function App() {
       <Route path={ROUTES.CODING_CONVERSATIONS} component={suspenseRoute(CodingConversationsListView, "coding agent sessions")} preload={preloadCodingConversations} />
       <Route path={ROUTES.AI_CHATS} component={suspenseRoute(AiChatsListView, "AI chats")} preload={preloadAiChats} />
       <Route path="/music" component={suspenseRoute(MusicOverview, "music")} />
-      <Route path="/music/playlist/:id" component={suspenseRoute(MusicPlaylistView, "playlist")} />
+      <Route path="/music/playlist/:id" component={suspenseRoute(MusicPlaylistView, "playlist")} preload={preloadMusicPlaylist} />
       <Route path={ROUTES.MUSIC_EXCLUDED} component={suspenseRoute(MusicExclusionsView, "music exclusions")} />
       <Route path="/search" component={suspenseRoute(SearchView, "search")} preload={preloadSearch} />
       <Route path="/sync" component={suspenseRoute(SyncView, "sync")} preload={preloadSync} />

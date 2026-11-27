@@ -1,13 +1,15 @@
 import { A, useParams } from "@solidjs/router";
 import type { EChartsOption } from "echarts";
 import { EChartsAutoSize } from "../../ui/echarts";
-import { createMemo, For, Match, Show, Switch } from "solid-js";
+import { createEffect, createMemo, For, Match, Show, Switch } from "solid-js";
 import type { PlaylistObservationPoint } from "../../lib/api";
 import { useChartTheme } from "../../lib/echarts-theme";
 import { avgPerYear, creationAnchor, pastYearSaves } from "./playlist-stats";
 import { useMusicPlaylist } from "../../lib/queries";
 import { IconHistory, IconOpenInNew } from "../../ui/icons";
 import PlaylistArt from "./PlaylistArt";
+import { APP_NAME } from "../../lib/routes";
+import { sharedElementName, useSharedElementLink } from "../../lib/view-transition";
 
 function formatDate(dateStr: string): string {
   return new Date(`${dateStr}T00:00:00`).toLocaleDateString(undefined, {
@@ -75,11 +77,24 @@ export default function MusicPlaylistView() {
   const chart = useChartTheme();
   const params = useParams();
   const playlistQuery = useMusicPlaylist(() => params.id);
+  const sharedLink = useSharedElementLink();
+  // The route pattern always supplies it.
+  const playlistId = () => {
+    if (!params.id) throw new Error("Missing playlist id");
+    return params.id;
+  };
+  // Placeholder data (the tracked-playlists list row) carries the header only.
   const playlist = () => playlistQuery.isPending ? undefined : playlistQuery.data;
+  const historyLoading = () => playlistQuery.isPending || playlistQuery.isPlaceholderData;
 
   const observations = () => playlist()?.observations ?? [];
 
   const title = () => playlist()?.name ?? params.id;
+
+  createEffect(() => {
+    const name = playlist()?.name;
+    document.title = name ? `${name} · Music · ${APP_NAME}` : `Music · ${APP_NAME}`;
+  });
 
   const imageUrl = () => playlist()?.imageUrl ?? null;
 
@@ -169,9 +184,15 @@ export default function MusicPlaylistView() {
       <div class="max-w-3xl mx-auto p-4 sm:p-6 space-y-6">
         <div class="flex items-start justify-between gap-4">
           <div class="flex items-start gap-3 min-w-0">
-            <PlaylistArt src={imageUrl()} name={playlist()?.name} class="h-16 w-16 shrink-0" />
+            <PlaylistArt
+              src={imageUrl()}
+              name={playlist()?.name}
+              class="h-16 w-16 shrink-0"
+              transitionName={sharedElementName(playlistId(), "playlist-art")}
+              eager
+            />
             <div class="min-w-0">
-              <A href="/music" class="text-xs text-muted-foreground hover:text-foreground">
+              <A href="/music" onClick={sharedLink(playlistId())} class="text-xs text-muted-foreground hover:text-foreground">
                 ← Music
               </A>
               <h1 class="font-display text-2xl font-medium break-words mt-1">{title()}</h1>
@@ -189,8 +210,15 @@ export default function MusicPlaylistView() {
         </div>
 
         <Switch>
-          <Match when={playlistQuery.isPending}>
-            <div class="h-64 rounded-lg bg-card animate-pulse" />
+          <Match when={historyLoading()}>
+            <div class="space-y-6" aria-busy="true">
+              <div class="grid grid-cols-3 gap-3">
+                <For each={[0, 1, 2]}>
+                  {() => <div class="h-[4.25rem] rounded-lg bg-card animate-pulse" />}
+                </For>
+              </div>
+              <div class="h-64 rounded-lg bg-card animate-pulse" />
+            </div>
           </Match>
 
           <Match when={playlistQuery.isLoadingError}>
