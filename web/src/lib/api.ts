@@ -592,7 +592,14 @@ export async function fetchContacts(options: {
   return data.contacts;
 }
 
-export async function fetchContact(id: number, signal: AbortSignal): Promise<{ contact: Contact; identities: ContactIdentity[]; avatarUrl: string | null; memories: ContactMemory[] } | null> {
+export async function fetchContact(id: number, signal: AbortSignal): Promise<{
+  contact: Contact;
+  identities: ContactIdentity[];
+  avatarUrl: string | null;
+  memories: ContactMemory[];
+  /** Live memory notes linked to the contact. */
+  memoryNoteCount: number;
+} | null> {
   const res = await apiFetch(`${API_BASE}/api/contacts/${id}`, { signal });
   const data = await res.json();
   if (data.error) return null;
@@ -628,8 +635,29 @@ export async function updateContact(
   return data.contact;
 }
 
-export async function deleteContact(id: number): Promise<void> {
-  await apiFetch(`${API_BASE}/api/contacts/${id}`, { method: "DELETE" });
+/** What the owner chose for a contact's linked memory notes, with the count and visibility they were shown. */
+export interface ContactNotesChoice {
+  notes: "keep" | "delete";
+  count: number;
+  hidden: boolean;
+}
+
+/**
+ * Delete a contact; null when deleted. A contact with linked memory notes is
+ * deleted only with a choice whose count and visibility are still current;
+ * otherwise the current ones come back, to choose again.
+ */
+export async function deleteContact(id: number, choice?: ContactNotesChoice): Promise<{ memoryNoteCount: number; hidden: boolean } | null> {
+  const params = choice ? `?${new URLSearchParams({ notes: choice.notes, count: String(choice.count), hidden: String(choice.hidden) })}` : "";
+  const res = await apiFetch(`${API_BASE}/api/contacts/${id}${params}`, { method: "DELETE" });
+  if (res.status === 409) {
+    const data = await res.json() as { memoryNoteCount?: unknown; hidden?: unknown };
+    if (typeof data.memoryNoteCount === "number" && typeof data.hidden === "boolean") {
+      return { memoryNoteCount: data.memoryNoteCount, hidden: data.hidden };
+    }
+  }
+  await parseApiJson(res, "Failed to delete contact");
+  return null;
 }
 
 export async function createContactMemory(contactId: number, content: string): Promise<ContactMemory> {

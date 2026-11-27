@@ -79,9 +79,11 @@ export function updateContact(
  * Manual cascade since PRAGMA foreign_keys is not enabled on the main DB.
  */
 export function deleteContact(db: Database, id: number): void {
-  db.prepare("DELETE FROM contact_memories WHERE contact_id = ?").run(id);
-  db.prepare("UPDATE identities SET contact_id = NULL WHERE contact_id = ?").run(id);
-  db.prepare("DELETE FROM contacts WHERE id = ?").run(id);
+  db.transaction(() => {
+    db.prepare("DELETE FROM contact_memories WHERE contact_id = ?").run(id);
+    db.prepare("UPDATE identities SET contact_id = NULL WHERE contact_id = ?").run(id);
+    db.prepare("DELETE FROM contacts WHERE id = ?").run(id);
+  })();
 }
 
 /**

@@ -1,4 +1,4 @@
-import { fireEvent, render, waitFor } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Contact, ContactWithStats, UnlinkedIdentity } from "../lib/types";
 import ContactsView from "./ContactsView";
@@ -77,7 +77,7 @@ vi.mock("../lib/queries", () => ({
   useLinkSuggestions: () => testState.linkSuggestionsQuery,
   useCreateContact: () => ({ mutateAsync: testState.createContact, isPending: false }),
   useUpdateContact: () => ({ mutateAsync: testState.updateContact, isPending: testState.updateContactPending }),
-  useDeleteContact: () => ({ mutateAsync: testState.deleteContact, isPending: false }),
+  useDeleteContact: () => ({ mutateAsync: testState.deleteContact, reset: vi.fn(), error: null, isPending: false }),
   useCreateContactMemory: () => ({ mutateAsync: testState.createMemory, isPending: false }),
   useDeleteContactMemory: () => ({ mutateAsync: testState.deleteMemory, isPending: false }),
   useLinkIdentity: () => ({ mutateAsync: testState.linkIdentity, isPending: false }),
@@ -122,12 +122,13 @@ function makeContactListItem(contact: Contact): ContactWithStats {
   };
 }
 
-function contactDetail(contact: Contact) {
+function contactDetail(contact: Contact, memoryNoteCount = 0) {
   return {
     contact,
     identities: [],
     memories: [],
     avatarUrl: null,
+    memoryNoteCount,
   };
 }
 
@@ -166,9 +167,64 @@ describe("ContactsView", () => {
     fireEvent.click(getByRole("button", { name: "Delete" }));
 
     await waitFor(() => {
-      expect(testState.deleteContact).toHaveBeenCalledWith(1);
+      expect(testState.deleteContact).toHaveBeenCalledWith({ id: 1 });
       expect(queryByRole("button", { name: "Delete" })).toBeNull();
     });
+  });
+
+  it("asks what happens to a hidden contact's linked notes, keeping them by default", async () => {
+    testState.contactQuery = loadedQuery(contactDetail({ ...makeContact(1, "Alice Example"), hidden: 1 }, 2));
+    const { getByRole } = render(() => <ContactsView />);
+
+    fireEvent.click(getByRole("button", { name: "Delete" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("2 memory notes are linked to this contact.");
+    expect(dialog).toHaveTextContent("agents will be able to read these notes");
+    expect(screen.getByRole("radio", { name: /Keep the notes, unlinked/ })).toBeChecked();
+    expect(confirm).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Delete contact"));
+    await waitFor(() => expect(testState.deleteContact).toHaveBeenCalledWith({ id: 1, choice: { notes: "keep", count: 2, hidden: true } }));
+  });
+
+  it("deletes the linked notes when chosen, without the hidden warning for a visible contact", async () => {
+    testState.contactQuery = loadedQuery(contactDetail(makeContact(1, "Alice Example"), 1));
+    const { getByRole } = render(() => <ContactsView />);
+
+    fireEvent.click(getByRole("button", { name: "Delete" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("1 memory note is linked to this contact.");
+    expect(dialog).not.toHaveTextContent("agents will be able to read");
+    fireEvent.click(screen.getByRole("radio", { name: /Delete the note too/ }));
+    fireEvent.click(screen.getByText("Delete contact"));
+    await waitFor(() => expect(testState.deleteContact).toHaveBeenCalledWith({ id: 1, choice: { notes: "delete", count: 1, hidden: false } }));
+  });
+
+  it("asks about notes linked since the contact loaded, when the delete is refused for them", async () => {
+    testState.deleteContact.mockResolvedValueOnce({ memoryNoteCount: 1, hidden: false });
+    const { getByRole } = render(() => <ContactsView />);
+
+    fireEvent.click(getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(screen.getByRole("dialog")).toHaveTextContent("1 memory note is linked to this contact."));
+    expect(testState.deleteContact).toHaveBeenCalledWith({ id: 1 });
+  });
+
+  it("asks again, with the warning, when the contact was hidden since the dialog opened", async () => {
+    testState.contactQuery = loadedQuery(contactDetail(makeContact(1, "Alice Example"), 1));
+    testState.deleteContact.mockResolvedValueOnce({ memoryNoteCount: 1, hidden: true });
+    const { getByRole } = render(() => <ContactsView />);
+
+    fireEvent.click(getByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).not.toHaveTextContent("agents will be able to read");
+    fireEvent.click(screen.getByText("Delete contact"));
+
+    await waitFor(() => expect(dialog).toHaveTextContent("agents will be able to read this note"));
+    expect(dialog).toHaveTextContent("changed since this opened");
+    fireEvent.click(screen.getByText("Delete contact"));
+    await waitFor(() => expect(testState.deleteContact).toHaveBeenLastCalledWith({ id: 1, choice: { notes: "keep", count: 1, hidden: true } }));
   });
 
   it("marks a contact as self via the This is me action", async () => {

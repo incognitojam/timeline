@@ -37,6 +37,7 @@ import {
   type ConversationParams,
   type ConversationRangeExportRequest,
   createContact,
+  type ContactNotesChoice,
   createContactMemory,
   createEvalCaseApi,
   createManualEvent,
@@ -1530,6 +1531,7 @@ export function useUpdateContact() {
     identities: ContactIdentity[];
     memories: ContactMemory[];
     avatarUrl: string | null;
+    memoryNoteCount: number;
   };
 
   return createMutation(() => ({
@@ -1643,9 +1645,11 @@ export function useDeleteContact() {
   const queryClient = useQueryClient();
 
   return createMutation(() => ({
-    mutationFn: (id: number) => deleteContact(id),
-    onSuccess: async (_data, id) => {
+    mutationFn: ({ id, choice }: { id: number; choice?: ContactNotesChoice }) => deleteContact(id, choice),
+    onSuccess: async (refused, { id }) => {
+      if (refused) return;
       await removeContactDetailQueries(queryClient, id);
+      queryClient.invalidateQueries({ queryKey: queryKeys.memoryRoot() });
       queryClient.invalidateQueries({ queryKey: queryKeys.contactsRoot() });
       queryClient.invalidateQueries({ queryKey: queryKeys.unlinkedIdentitiesRoot() });
       queryClient.invalidateQueries({ queryKey: queryKeys.contactEventsRoot() });

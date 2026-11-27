@@ -103,6 +103,9 @@ describe("contact membership mutations", () => {
       if (init?.method === "PATCH") {
         return Promise.resolve(Response.json({ contact: { id: 1 } }));
       }
+      if (init?.method === "DELETE" && /\/api\/contacts\/\d+$/.test(String(url))) {
+        return Promise.resolve(Response.json({ success: true }));
+      }
       return Promise.resolve(new Response(null, { status: 200 }));
     }));
     render(() => (
@@ -137,7 +140,7 @@ describe("contact membership mutations", () => {
       id: 1,
       updates: { displayName: "Alice Example" },
     })],
-    ["delete", () => mutations.deleteContact.mutateAsync(1)],
+    ["delete", () => mutations.deleteContact.mutateAsync({ id: 1 })],
   ])("invalidates cached friend display names after a contact %s", async (_name, mutate) => {
     const queryKey = queryKeys.musicFriendListens();
     queryClient.setQueryData(queryKey, { friends: [] });
