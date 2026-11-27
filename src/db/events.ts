@@ -1,3 +1,4 @@
+import { conversationTypeClause } from "./conversation-types";
 import { convertLegacyEmoji } from "./emoji";
 import type { QueryExecutor } from "./pool";
 import type { TimelineEvent } from "./schema";
@@ -572,9 +573,11 @@ export async function getEventContext(
     cursor?: string;
     sources?: string[];
     excludeSources?: string[];
+    /** Only this conversation's events. */
+    conversation?: { source: string; sourceAccount: string; conversationId: string };
   }
 ): Promise<TimelineEvent[]> {
-  const { eventId, timestamp, hoursWindow = 2, limit = 50, cursor, sources, excludeSources } = options;
+  const { eventId, timestamp, hoursWindow = 2, limit = 50, cursor, sources, excludeSources, conversation } = options;
 
   let centerTimestamp = timestamp;
 
@@ -601,6 +604,11 @@ export async function getEventContext(
   if (excludeSources && excludeSources.length > 0) {
     conditions.push(`source NOT IN (${excludeSources.map(() => "?").join(", ")})`);
     params.push(...excludeSources);
+  }
+  if (conversation) {
+    // The type clause lets SQLite use the partial conversation index.
+    conditions.push(`source = ? AND source_account = ? AND conversation_id = ? AND ${conversationTypeClause()}`);
+    params.push(conversation.source, conversation.sourceAccount, conversation.conversationId);
   }
   const parsedCursor = cursor ? parseCursor(cursor) : null;
   if (parsedCursor) {

@@ -1000,6 +1000,21 @@ describe("get_context — source filters", () => {
     expect(text).not.toContain("claude-code");
   });
 
+  test("same_conversation keeps to the anchor event's conversation", async () => {
+    const anchorId = insertEvent({ source: "discord", type: "message:guild", timestamp: "2026-07-03T12:00:00.000Z", title: "game night", content: "match starts at 7" });
+    insertEvent({ source: "discord", type: "message:guild", timestamp: "2026-07-03T12:05:00.000Z", title: "game night", content: "I'm in" });
+    insertEvent({ source: "discord", type: "message:guild", timestamp: "2026-07-03T12:01:00.000Z", title: "other channel", content: "unrelated chatter" });
+    const handlers = captureHandlers(db);
+
+    const text = (await handlers.get("get_context")!({ event_id: anchorId, same_conversation: true })).content[0].text;
+    expect(text).toContain("match starts at 7");
+    expect(text).toContain("I'm in");
+    expect(text).not.toContain("unrelated chatter");
+
+    const noAnchor = await handlers.get("get_context")!({ timestamp: "2026-07-03T12:00:00.000Z", same_conversation: true });
+    expect(noAnchor.isError).toBe(true);
+  });
+
   test("source restricts the window to the listed sources", async () => {
     const centerId = seedWindow();
 
