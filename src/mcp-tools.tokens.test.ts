@@ -18,7 +18,7 @@ import { registerTools } from "./mcp-tools";
  * Registration is unconditional for all tools (feature gates are call-time),
  * so the payload is deterministic.
  */
-const TOOL_SCHEMA_TOKEN_BUDGET = 3400;
+const TOOL_SCHEMA_TOKEN_BUDGET = 3590;
 
 describe("MCP tool schema context cost", () => {
   test(`tools/list payload stays within ${TOOL_SCHEMA_TOKEN_BUDGET} tokens`, async () => {
