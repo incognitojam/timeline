@@ -7,6 +7,7 @@ release, because releasing deletes them. Nothing here changes a changeset.
 
 import argparse
 from dataclasses import dataclass
+import html
 import json
 from pathlib import Path
 import re
@@ -100,20 +101,68 @@ def markdown(found: list[Change], previous_build: int, stable: str) -> str:
     return "\n".join(lines)
 
 
+def _inline(text: str) -> str:
+    text = html.escape(text, quote=False)
+    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+    return re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", text)
+
+
+# Sparkle 2.5 and later add sparkle-installed-version to the element whose
+# data-sparkle-version is the installed build; this hides that marker's later
+# siblings, the changes the Mac already has, and shows the marker's own line.
+# Without the class every marker stays hidden and the whole list shows.
+INSTALLED_STYLE = (
+    "<style>li.installed { display: none; list-style: none; font-style: italic; }"
+    " li.installed.sparkle-installed-version { display: list-item; }"
+    " li.sparkle-installed-version ~ li { display: none; }</style>"
+)
+
+
+def page(found: list[Change], current_build: int, stable: str, repository: str) -> str:
+    """HTML for the update window: every change since `stable`, newest first, with installed-build markers."""
+    if not found:
+        return f"<p>No user-visible changes since {html.escape(stable)}.</p>\n"
+    lines = [INSTALLED_STYLE, f"<p>Changes since {html.escape(stable)}, newest first:</p>", "<ul>"]
+    marker = current_build - 1
+    for change in found:
+        while marker >= change.build:
+            lines.append(f'<li class="installed" data-sparkle-version="{marker}">Earlier changes are already on this Mac.</li>')
+            marker -= 1
+        paragraphs = [_inline(paragraph.strip()) for paragraph in change.text.split("\n\n") if paragraph.strip()]
+        if change.pull_request:
+            url = f"https://github.com/{repository}/pull/{change.pull_request}"
+            paragraphs[-1] += f' (<a href="{url}">#{change.pull_request}</a>)'
+        lines.append("<li>" + "".join(f"<p>{paragraph}</p>" for paragraph in paragraphs) + "</li>")
+    return "\n".join(lines + ["</ul>"]) + "\n"
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("commit")
     parser.add_argument("--previous-build", required=True, type=int, help="the edge build the feed offered before this one")
     parser.add_argument("--repo", default=".", type=Path)
+    parser.add_argument("--html", metavar="REPOSITORY", help="write HTML for the update window instead, linking pull requests in REPOSITORY")
+    parser.add_argument("--build", type=int, help="this build's number, required with --html")
     args = parser.parse_args(argv)
     # The one deliberate exception to failing fast: notes only describe a
     # build, so a missing or broken note must never hold back an update.
+    # Markdown falls back to a placeholder; HTML prints nothing and exits 1,
+    # so the feed is published without a description.
     try:
         stable = json.loads(git(args.repo, "show", f"{args.commit}:package.json"))["version"]
-        print(markdown(changes(args.repo, args.commit), args.previous_build, stable), end="")
+        found = changes(args.repo, args.commit)
+        if args.html:
+            if args.build is None:
+                raise ValueError("--html needs --build")
+            output = page(found, args.build, stable, args.html)
+        else:
+            output = markdown(found, args.previous_build, stable)
     except Exception as error:  # noqa: BLE001 - see above
         print(f"edge_notes: {error}", file=sys.stderr)
-        print("Notes unavailable.")
+        if args.html:
+            return 1
+        output = "Notes unavailable.\n"
+    print(output, end="")
     return 0
 
 

@@ -59,6 +59,30 @@ def _item(xml: str) -> ElementTree.Element:
     return items[0]
 
 
+def _check_description(item: ElementTree.Element) -> None:
+    """Allow at most one non-empty HTML description, the release notes Sparkle shows."""
+    descriptions = item.findall("description")
+    if len(descriptions) > 1:
+        raise Refusal("appcast item has more than one description")
+    if descriptions and (not (descriptions[0].text or "").strip() or descriptions[0].get(f"{SPARKLE}format") not in (None, "html")):
+        raise Refusal("appcast description must be non-empty HTML")
+
+
+def add_notes(xml: str, notes: str) -> str:
+    """Return `xml` with `notes` as its one item's HTML description, or refuse."""
+    if _item(xml).find("description") is not None:
+        raise Refusal("appcast item already has a description")
+    if xml.count("</item>") != 1 or not notes.strip():
+        raise Refusal("cannot place the release notes")
+    cdata = notes.replace("]]>", "]]]]><![CDATA[>")
+    result = xml.replace("</item>", f"<description><![CDATA[{cdata}]]></description>\n        </item>")
+    item = _item(result)
+    _check_description(item)
+    if item.findtext("description") != notes:
+        raise Refusal("release notes changed when added to the appcast")
+    return result
+
+
 def feed_build(xml: str) -> int:
     """Return the build number the feed offers."""
     build = (_item(xml).findtext(f"{SPARKLE}version") or "").strip()
@@ -80,6 +104,7 @@ def check_appcast(xml: str, repository: str, release_tag: str, version: str, dmg
     elif not STABLE_VERSION.fullmatch(version) or release_tag != f"v{version}" or build is None:
         raise Refusal(f"unexpected release version: {version!r}")
     item = _item(xml)
+    _check_description(item)
     if feed_build(xml) != build:
         raise Refusal(f"appcast item is not build {build}")
     if (item.findtext(f"{SPARKLE}shortVersionString") or "").strip() != version:
@@ -225,6 +250,9 @@ def main(argv: list[str]) -> int:
     feed_command.add_argument("--version", required=True)
     feed_command.add_argument("--dmg", required=True, help="the DMG the feed must describe")
     feed_command.add_argument("--build-sources", nargs="*", type=int, default=[])
+    notes_command = commands.add_parser("add-notes", help="embed HTML release notes in edge feeds, changing none unless all succeed")
+    notes_command.add_argument("feeds", nargs="+")
+    notes_command.add_argument("--notes", required=True, help="the HTML notes file")
     release_help = "gh api output for the rolling release"
     offered_command = commands.add_parser("offered-build", help="print the build the rolling release offers")
     offered_command.add_argument("release", help=release_help)
@@ -243,6 +271,15 @@ def main(argv: list[str]) -> int:
     try:
         if args.command == "version":
             print(edge_version(args.stable_version, args.build))
+        elif args.command == "add-notes":
+            notes = _read(args.notes)
+            staged = {}
+            for feed in args.feeds:
+                staged[feed] = Path(f"{feed}.notes")
+                staged[feed].write_text(add_notes(_read(feed), notes), encoding="utf-8")
+            # Each replacement is atomic and every staged feed is complete, so a feed is either as before or has notes.
+            for feed, path in staged.items():
+                path.replace(feed)
         elif args.command == "check-appcast":
             patches = check_appcast(_read(args.appcast), args.repository, args.tag, args.version, os.path.getsize(args.dmg), Path(args.dmg).parent, args.build_sources)
             for name in patches:

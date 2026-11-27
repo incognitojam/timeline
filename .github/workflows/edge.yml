@@ -164,6 +164,7 @@ jobs:
       - name: Write release notes from the changesets
         env:
           VERSION: ${{ needs.select.outputs.version }}
+          BUILD: ${{ needs.select.outputs.build-number }}
           COMMIT: ${{ needs.select.outputs.commit }}
           PREVIOUS_BUILD: ${{ needs.select.outputs.previous-build }}
         run: |
@@ -171,6 +172,9 @@ jobs:
           mkdir "$RUNNER_TEMP/notes"
           { echo "## Timeline $VERSION"; echo; python3 -B scripts/ci/edge_notes.py "$COMMIT" --previous-build "$PREVIOUS_BUILD"; } > "$RUNNER_TEMP/notes/notes.md"
           cat "$RUNNER_TEMP/notes/notes.md" >> "$GITHUB_STEP_SUMMARY"
+          python3 -B scripts/ci/edge_notes.py "$COMMIT" --previous-build "$PREVIOUS_BUILD" \
+            --html "$GITHUB_REPOSITORY" --build "$BUILD" > "$RUNNER_TEMP/notes/notes.html" ||
+            rm "$RUNNER_TEMP/notes/notes.html"
       - uses: actions/upload-artifact@v7
         with:
           name: edge-notes-${{ needs.select.outputs.version }}
@@ -230,6 +234,11 @@ jobs:
           }
           if [ "$action" = upload ]; then
             upload "$files/$dmg" "$files/$dmg.sha256"
+            # Without notes the feed still ships, so a failure here only warns.
+            if ! [ -s "$RUNNER_TEMP/notes/notes.html" ] ||
+               ! python3 -B scripts/ci/edge_build.py add-notes "$files/appcast.xml" "$files/full-appcast.xml" --notes "$RUNNER_TEMP/notes/notes.html"; then
+              echo "::warning::Publishing the feed without release notes."
+            fi
             feed_path="$files/appcast.xml"
             check_feed() {
               python3 -B scripts/ci/edge_build.py check-appcast "$feed_path" \
