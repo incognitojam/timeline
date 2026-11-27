@@ -404,6 +404,32 @@ export async function fetchConversationStats(options: {
   return parseApiJson(res, "Failed to fetch conversation stats");
 }
 
+/** Whether the server can refresh this one conversation (see src/sync/refresh.ts). */
+export interface ConversationRefreshCheck {
+  refreshable: boolean;
+  reason?: string;
+}
+
+export async function fetchConversationRefresh(options: {
+  conversationId: string;
+  source: string;
+  signal: AbortSignal;
+}): Promise<ConversationRefreshCheck> {
+  const params = new URLSearchParams({ conversationId: options.conversationId, source: options.source });
+  const res = await apiFetch(`${API_BASE}/api/conversation/refresh?${params}`, { signal: options.signal });
+  return parseApiJson(res, "Failed to check whether this conversation can be refreshed");
+}
+
+/** Queue a refresh of one conversation, or join the one already queued or running. */
+export async function refreshConversation(source: string, conversationId: string): Promise<{ jobId: number; joined: boolean }> {
+  const res = await apiFetch(`${API_BASE}/api/conversation/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source, conversationId }),
+  });
+  return parseApiJson(res, "Failed to refresh this conversation");
+}
+
 export interface ConversationRangeExportResponse {
   text: string;
   eventCount: number;

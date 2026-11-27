@@ -106,3 +106,34 @@ export interface SyncLogEntry {
   duration_ms: number | null;
   metadata: string | null; // JSON string
 }
+
+/** One stored conversation a {@link ConversationRefresh} can sync on its own. */
+export interface RefreshTarget {
+  account: string;
+  conversationId: string;
+}
+
+export type RefreshCheck = { ok: true; target: RefreshTarget } | { ok: false; reason: string };
+
+/**
+ * Syncs one stored conversation instead of a whole source: new messages only,
+ * from the conversation's established cursor. See src/sync/refresh.ts.
+ */
+export interface ConversationRefresh {
+  /** The event source whose conversations this refreshes. */
+  source: string;
+  /** The sync source whose job runs the refresh; it must be enabled and able to sync. */
+  syncSource: SyncSource;
+  /**
+   * Resolve a displayed conversation to a target, or say why it can't be
+   * refreshed. Runs in the API, and again in the worker before the refresh.
+   */
+  resolve(args: {
+    conversationId: string;
+    /** Distinct accounts with stored events in the conversation (at most two). */
+    accounts: string[];
+    settings: Record<string, unknown> | undefined;
+  }): RefreshCheck;
+  /** Runs in the worker's serial lane, which holds the local-work gate throughout. */
+  run(target: RefreshTarget, options: SyncOptions): Promise<SyncResult>;
+}

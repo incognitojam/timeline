@@ -644,6 +644,10 @@ test("scrolls a long conversation, jumps to latest, and downloads an export", as
       });
       return true;
     }
+    if (request.method() === "GET" && url.pathname === "/api/conversation/refresh") {
+      await route.fulfill({ json: { refreshable: false, reason: "Conversations from this source can't be refreshed one at a time" } });
+      return true;
+    }
     if (request.method() === "GET" && url.pathname === "/api/conversation/stats") {
       await route.fulfill({
         json: {

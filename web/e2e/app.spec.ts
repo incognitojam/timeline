@@ -780,6 +780,8 @@ const apiResponses = {
     },
     server: { source: "discord", id: "example-server", name: "Example University" },
   },
+  // No Refresh button, so conversation shots stay the same.
+  "/api/conversation/refresh": { refreshable: false, reason: "Conversations from this source can't be refreshed one at a time" },
   "/api/conversation/stats": {
     totalMessages: conversationEvents.length,
     firstMessage: conversationEvents[0]?.timestamp,

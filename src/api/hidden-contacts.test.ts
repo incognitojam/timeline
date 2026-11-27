@@ -37,6 +37,7 @@ const exempt = {
   "/api/coding/conversations/filters": "Returns source and project names only.",
   "/api/contacts": "Hidden contacts are already omitted by the contacts query.",
   "/api/contacts/:id": "Direct contact lookup is an explicit escape hatch.",
+  "/api/conversation/refresh": "Returns whether a conversation can be refreshed, with no event content.",
   "/api/contacts/:id/conversations": "Contact-scoped conversation lookup is an explicit escape hatch.",
   "/api/contacts/:id/events": "Contact-scoped event lookup is an explicit escape hatch tested below.",
   "/api/contacts/:id/identities": "Direct contact identity lookup contains no event content.",

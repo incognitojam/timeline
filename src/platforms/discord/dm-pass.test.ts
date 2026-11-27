@@ -299,6 +299,17 @@ describe("Discord DM pass", () => {
     completeJob(job.jobId, null);
   });
 
+  test("does not take a running conversation refresh for a full sync", async () => {
+    fakeDiscord({ [BUSY]: [id(2), id(3)] });
+    const job = enqueueJob({ kind: "sync", source: "discord", payload: { refresh: { account: "user-1", conversationId: QUIET } } });
+    expect(claimNextJob({ workerId: "test", leaseMs: 60_000, syncSource: "discord" })?.id).toBe(job.jobId);
+
+    const report = await runSourceOnce("discord-dms", { state: { "discord-api": discordState({ [BUSY]: id(2) }) } });
+
+    expect(report.result).toMatchObject({ success: true, eventsAdded: 1 });
+    completeJob(job.jobId, null);
+  });
+
   test("waits for local work, then reads the cursors a full sync advanced meanwhile", async () => {
     const calls = fakeDiscord({ [BUSY]: [id(2), id(3)] });
     await runSourceOnce("discord-dms", { dryRun: true, state: { "discord-api": discordState({ [BUSY]: id(2) }) } });

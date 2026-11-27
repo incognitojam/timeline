@@ -89,6 +89,8 @@ function activeSyncJobFor(queue: Job[], source: string): Job | null {
       (job) =>
         job.kind === "sync" &&
         job.source === source &&
+        // A conversation refresh is not a sync of the whole source.
+        job.payload.refresh === undefined &&
         (job.status === "queued" || job.status === "running")
     ) ?? null
   );
