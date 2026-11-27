@@ -116,6 +116,49 @@ const NOTES: readonly SeedNote[] = [
   },
 ];
 
+/** More account notes and projects, so the Memory page is long enough to scroll. */
+const EXTRA_ACCOUNT_NOTES: readonly SeedNote[] = [
+  { name: "coffee-order", kind: "you", title: "Coffee order", summary: "Flat white, oat milk, no sugar", details: "Switches to decaf after 2pm." },
+  { name: "travel-preferences", kind: "you", title: "Travel preferences", summary: "Window seat, carry-on only, trains over short flights", details: "- Prefers arriving the night before\n- Books refundable fares" },
+  { name: "tooling", kind: "you", title: "Editor and tooling", summary: "Neovim, tmux, fish shell", details: "Explain shell snippets for fish, not bash, unless it's a script." },
+  { name: "dietary", kind: "you", title: "Dietary notes", summary: "Vegetarian on weekdays", details: "Fish at weekends is fine." },
+  { name: "baking", kind: "topic", title: "Baking", summary: "Bakes bread on Sundays from a rye starter", details: "Overnight cold retard in the fridge." },
+  { name: "home-network", kind: "topic", title: "Home network", summary: "Mesh Wi-Fi with a separate IoT VLAN", details: "The printer lives on the IoT network." },
+  { name: "film-photography", kind: "topic", title: "Film photography", summary: "Shoots Portra 400 on a 35mm rangefinder", details: "Develops colour at the lab, black and white at home." },
+  { name: "spanish", kind: "topic", title: "Learning Spanish", summary: "Thirty minutes a day, aiming for B1", details: "Conversation practice with a tutor on Wednesdays." },
+  { name: "board-games", kind: "topic", title: "Board games", summary: "Hosts a monthly game night", details: "Favourites: co-op games and short worker placement." },
+  { name: "home", kind: "area", title: "Home", summary: "One-bedroom apartment, renting", details: "Lease renews in the spring. Landlord prefers email." },
+  { name: "finances", kind: "area", title: "Finances", summary: "Budgets monthly in a spreadsheet", details: "Building the Rust CLI from [[learning-rust]] to replace it." },
+  { name: "volunteering", kind: "area", title: "Volunteering", summary: "Trail maintenance one Saturday a month", details: "Organised through the hiking group with [[rowan]]." },
+];
+
+const EXTRA_PROJECTS: ReadonlyArray<{ key: string; title: string; summary: string; notes: number }> = [
+  { key: "budget-cli", title: "Budget CLI", summary: "A Rust command-line budgeting tool", notes: 3 },
+  { key: "dotfiles", title: "Dotfiles", summary: "Shell, editor and terminal configuration", notes: 2 },
+  { key: "recipe-box", title: "Recipe box", summary: "A small web app for family recipes", notes: 4 },
+  { key: "photo-archive", title: "Photo archive", summary: "Scripts that file scanned negatives by date", notes: 2 },
+  { key: "garden-sensors", title: "Garden sensors", summary: "Soil moisture sensors on a microcontroller", notes: 3 },
+  { key: "blog", title: "Blog", summary: "A static site about hikes and baking", notes: 1 },
+];
+
+const EXTRA_TOPICS = [
+  { name: "conventions", title: "Conventions", summary: "Formatting and naming rules for this repository" },
+  { name: "testing", title: "Testing", summary: "How tests are run and what they cover" },
+  { name: "release", title: "Releases", summary: "How a version is tagged and published" },
+];
+
+const EXTRA_PROJECT_NOTES: readonly SeedNote[] = EXTRA_PROJECTS.flatMap((project) => [
+  { project: project.key, name: "overview", kind: "project" as const, title: project.title, summary: project.summary, details: `${project.summary}.` },
+  ...EXTRA_TOPICS.slice(0, project.notes - 1).map((topic) => ({
+    project: project.key,
+    name: topic.name,
+    kind: "topic" as const,
+    title: topic.title,
+    summary: topic.summary,
+    details: `${topic.summary} in ${project.title}.`,
+  })),
+]);
+
 /**
  * Alex's shared agent memory: notes of every kind, a project with an overview
  * and two notes, links between notes (one to a note never written), a note
@@ -123,7 +166,7 @@ const NOTES: readonly SeedNote[] = [
  */
 export function seedMemory(ctx: SeedContext, db: Database): void {
   const contactId = ctx.db.prepare("SELECT id FROM contacts WHERE display_name = ?");
-  for (const note of NOTES) {
+  for (const note of [...NOTES, ...EXTRA_ACCOUNT_NOTES, ...EXTRA_PROJECT_NOTES]) {
     // A contact exists only when the person's sources were seeded (see --only).
     const contact = note.contact ? (contactId.get(personByKey(note.contact).name) as { id: number } | null) : null;
     saveMemoryNote(db, {
