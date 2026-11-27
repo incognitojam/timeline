@@ -66,7 +66,6 @@ import {
 } from "./lib/format";
 import {
   DEFAULT_MCP_ARGS_EXCERPT_CHARS,
-  DEFAULT_MCP_RESULT_EXCERPT_CHARS,
   renderMcpCallSearchMarkdown,
   renderMcpSessionHeader,
   renderMcpSessionListMarkdown,
@@ -729,7 +728,7 @@ export function registerTools(
     const registered = server.tool(name, description, schema, annotations, cb);
     if (options.readOnly && !annotations.readOnlyHint) registered.disable();
   }
-  const mcpTranscriptExcerptHint = `Arguments are excerpted to ${DEFAULT_MCP_ARGS_EXCERPT_CHARS} chars and results to ${DEFAULT_MCP_RESULT_EXCERPT_CHARS} chars.`;
+  const mcpTranscriptExcerptHint = `Shows arguments, excerpted to ${DEFAULT_MCP_ARGS_EXCERPT_CHARS} chars, but not results or saved note content.`;
 
   /**
    * The session a search is scoped to ("current" is the caller's) and the

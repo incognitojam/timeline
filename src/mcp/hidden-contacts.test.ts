@@ -7,6 +7,8 @@ import { initDb } from "../db/schema";
 import { Database } from "../db/sqlite";
 import { registerTools } from "../mcp-tools";
 import { withoutHiddenContactEvents, withoutHiddenWindows } from "./hidden-contacts";
+import { getMcpSession, getMcpSessionStats, listMcpToolCalls, recordMcpToolCall, upsertMcpSession } from "./recording";
+import { renderMcpSessionMarkdown } from "./render";
 
 type Handler = (args: Record<string, unknown>) => Promise<{ isError?: boolean; content: { text: string }[] }>;
 
@@ -220,5 +222,55 @@ describe("hidden contacts in the named MCP tools", () => {
 
   test("get_schema(source) does not count a hidden contact's events", async () => {
     expect(await text("get_schema", { source: "discord" })).not.toContain("message:dm");
+  });
+});
+
+describe("recorded MCP tool calls", () => {
+  test("nothing a call returned, nor a note's saved content, is readable once its contact is hidden or the note deleted", async () => {
+    db.prepare("UPDATE contacts SET hidden = 0 WHERE display_name = 'Hana Hidden'").run();
+    const sessionId = "stdio:test";
+    upsertMcpSession({ id: sessionId, transport: "stdio" }, appDb);
+    const recorded = new Map<string, Handler>();
+    const server = { tool: (name: string, _d: unknown, _s: unknown, _a: unknown, handler: Handler) => recorded.set(name, handler) } as unknown as McpServer;
+    registerTools(server, wrapDatabase(db), {
+      appStateDb: appDb,
+      defaultSessionId: () => sessionId,
+      recordToolCall: (rec) => recordMcpToolCall({ ...rec, sessionId }, appDb),
+    });
+    const call = async (name: string, args: Record<string, unknown>) => (await recorded.get(name)!(args)).content[0].text;
+
+    await call("save_memory_note", { name: "hana", kind: "person", title: "Hana", summary: "picnic organiser", details: "allergic to walnuts", contact: "Hana Hidden" });
+    await call("save_memory_note", { name: "scratch", kind: "topic", title: "Scratch", summary: "burner", details: "the spare key is under the mat" });
+    expect(await call("get_memory_note", { name: "hana" })).toContain("allergic to walnuts");
+    expect(await call("query_events", { contact: "Hana Hidden" })).toContain("secret picnic plans");
+    expect(await call("get_context", { event_id: ids.hiddenGroup })).toContain("hana says picnic at noon");
+    await call("delete_memory_note", { name: "scratch" });
+    // A call to the retired remember_contact_fact, still in the log.
+    recordMcpToolCall({ sessionId, toolName: "remember_contact_fact", args: { contact: "Hana Hidden", fact: "picnic organiser" }, resultText: "Saved", isError: false, durationMs: 1 }, appDb);
+    db.prepare("UPDATE contacts SET hidden = 1 WHERE display_name = 'Hana Hidden'").run();
+
+    const secrets = ["secret picnic plans", "hana says picnic", "allergic to walnuts", "picnic organiser", "spare key", "burner"];
+    const searches: Record<string, unknown>[] = [
+      {}, { session_id: "current" }, { session_id: sessionId }, { errors_only: true }, { sessions: true },
+      ...["save_memory_note", "get_memory_note", "query_events", "get_context", "delete_memory_note", "remember_contact_fact"].map((tool_name) => ({ tool_name })),
+    ];
+    for (const args of searches) {
+      const out = await call("search_mcp_tool_calls", args);
+      for (const secret of secrets) expect({ args, leaked: out.includes(secret) ? secret : null }).toEqual({ args, leaked: null });
+      expect(out).not.toContain("Result chars");
+    }
+    // An agent still sees which calls were made, with what it asked for.
+    const all = await call("search_mcp_tool_calls", { tool_name: "save_memory_note" });
+    expect(all).toContain('"name": "hana"');
+    expect(all).toContain('"contact": "Hana Hidden"');
+
+    // The owner's sessions page keeps every call's result.
+    const owner = renderMcpSessionMarkdown(
+      getMcpSession(sessionId, appDb)!,
+      listMcpToolCalls(sessionId, { limit: 50, offset: 0 }, appDb),
+      getMcpSessionStats(sessionId, appDb),
+    );
+    expect(owner).toContain("allergic to walnuts");
+    expect(owner).toContain("secret picnic plans");
   });
 });

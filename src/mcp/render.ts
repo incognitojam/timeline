@@ -18,9 +18,21 @@ export interface McpCallSearchFilter {
 }
 
 interface RenderCallOptions extends RenderMcpExcerptOptions {
-  includeSessionId?: boolean;
+  /** For an agent: leave out what a call returned and what a note save wrote. */
+  forAgent?: boolean;
   ordinal?: number;
 }
+
+/**
+ * The arguments of each tool that saves memory which carry what it saved. Like a
+ * result, that may belong to a note or contact the tools now keep from agents
+ * (hidden since, or deleted), so an agent sees the save without it.
+ * remember_contact_fact is gone, but its calls stay recorded for a while.
+ */
+const SAVED_CONTENT_ARGS: Record<string, string[]> = {
+  save_memory_note: ["title", "summary", "details"],
+  remember_contact_fact: ["fact"],
+};
 
 interface PreparedBody {
   text: string;
@@ -91,7 +103,7 @@ export function renderMcpSessionMarkdown(
 export function renderMcpCallSearchMarkdown(
   calls: McpToolCallRow[],
   filter: McpCallSearchFilter,
-  opts: RenderMcpExcerptOptions = {},
+  opts: Pick<RenderMcpExcerptOptions, "argsExcerptChars"> = {},
 ): string {
   const lines = [
     "# MCP tool call search",
@@ -114,7 +126,7 @@ export function renderMcpCallSearchMarkdown(
   }
 
   calls.forEach((call, index) => {
-    lines.push(renderCall(call, { ...opts, includeSessionId: true, ordinal: index + 1 }));
+    lines.push(renderCall(call, { ...opts, forAgent: true, ordinal: index + 1 }));
   });
 
   return lines.join("\n\n");
@@ -130,9 +142,11 @@ function renderCall(call: McpToolCallRow, opts: RenderCallOptions): string {
     `### ${opts.ordinal ?? call.id}. \`${call.tool_name}\``,
     "",
   ];
-  if (opts.includeSessionId) {
+  if (opts.forAgent) {
     lines.push(`- Session: \`${call.session_id}\``);
   }
+  const savedContent = opts.forAgent ? SAVED_CONTENT_ARGS[call.tool_name] : undefined;
+  const args = savedContent ? withoutArgs(call.args_json, savedContent) : call.args_json;
   lines.push(
     `- Call ID: ${call.id}`,
     `- Created: ${call.created_at}`,
@@ -140,26 +154,43 @@ function renderCall(call: McpToolCallRow, opts: RenderCallOptions): string {
     `- Status: ${call.is_error ? "error" : "ok"}`,
     `- Flags: ${flags.length > 0 ? flags.join(", ") : "none"}`,
     `- Argument chars: ${call.args_chars}`,
-    `- Result chars: ${call.result_chars}`,
+    // A result's size could tell an agent that a contact hidden since was there.
+    ...(opts.forAgent ? [] : [`- Result chars: ${call.result_chars}`]),
     "",
     renderBodySection(
       "Arguments",
-      call.args_json,
-      call.args_chars,
+      args,
+      args === call.args_json ? call.args_chars : (args?.length ?? 0),
       opts.argsExcerptChars ?? DEFAULT_MCP_ARGS_EXCERPT_CHARS,
       prepareArgsBody,
     ),
-    "",
-    renderBodySection(
-      "Result",
-      call.result_text,
-      call.result_chars,
-      opts.resultExcerptChars ?? DEFAULT_MCP_RESULT_EXCERPT_CHARS,
-      (text) => ({ text, language: "text" }),
-    ),
   );
+  // What a call returned may show what the tools now leave out, such as a contact hidden since.
+  if (!opts.forAgent) {
+    lines.push(
+      "",
+      renderBodySection(
+        "Result",
+        call.result_text,
+        call.result_chars,
+        opts.resultExcerptChars ?? DEFAULT_MCP_RESULT_EXCERPT_CHARS,
+        (text) => ({ text, language: "text" }),
+      ),
+    );
+  }
 
   return lines.join("\n");
+}
+
+function withoutArgs(raw: string | null, keys: string[]): string | null {
+  if (raw === null) return null;
+  try {
+    const args: unknown = JSON.parse(raw);
+    if (!args || typeof args !== "object" || Array.isArray(args)) return null;
+    return JSON.stringify(Object.fromEntries(Object.entries(args).filter(([key]) => !keys.includes(key))));
+  } catch {
+    return null;
+  }
 }
 
 function renderBodySection(
