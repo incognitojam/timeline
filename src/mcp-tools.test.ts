@@ -282,18 +282,29 @@ describe("formatEvents — Discord mention resolution", () => {
     expect(out).toBe("No events found.");
   });
 
-  test("prepends #<id> to every event line so agents can deep-link", async () => {
+  test("groups events under UTC days and shared source/type, keeping #<id> on every line", async () => {
     const events = [
-      makeEvent({ source: "spotify", type: "listen:track", title: "Track A" }),
-      makeEvent({ source: "spotify", type: "listen:track", title: "Track B" }),
+      makeEvent({ source: "spotify", type: "listen:track", timestamp: "2026-05-06T08:09:53.525Z", title: "Track A", content: "Track A by Artist from Album" }),
+      makeEvent({ source: "spotify", type: "listen:track", timestamp: "2026-05-06T23:30:00.000-08:00", title: "Track B" }),
+      // The phone importer lists the other person first on a failed text.
+      makeEvent({ source: "phone", type: "sms:failed", timestamp: "2026-05-07T08:00:00Z", title: "Alice", content: "Alice, on my way", people: JSON.stringify(["phone:+15550100", "phone:me"]) }),
     ];
     events[0].id = 42;
     events[1].id = 1337;
+    events[2].id = 7;
 
     const out = await formatEvents(wrapDatabase(db), events);
-    const lines = out.split("\n");
-    expect(lines[0].startsWith("#42 ")).toBe(true);
-    expect(lines[1].startsWith("#1337 ")).toBe(true);
+    expect(out).toBe([
+      "Times in UTC.",
+      "## 2026-05-06",
+      "[spotify/listen:track]",
+      "08:09 #42 Track A by Artist from Album",
+      "## 2026-05-07",
+      "[spotify/listen:track]",
+      "07:30 #1337 Track B",
+      "[phone] Alice",
+      "08:00 #7 sms:failed Alice, on my way",
+    ].join("\n"));
   });
 });
 
@@ -718,7 +729,7 @@ describe("MCP tool handlers — identity-aware contact lookup workflow", () => {
           await vectorPool.closeAndWait();
           const text = result.content[0].text;
           if (!text.includes("1 event(s) most similar")) throw new Error(text);
-          if (!text.includes("#42 [facebook/post]")) throw new Error(text);
+          if (!text.includes("[facebook/post]") || !/ #42 /.test(text)) throw new Error(text);
           if (!text.includes(unicodeThumbsUp)) throw new Error(text);
           if (text.includes(legacyThumbsUp)) throw new Error(text);
           console.log("semantic_search success path ok");
