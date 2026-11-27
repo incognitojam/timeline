@@ -6,7 +6,6 @@ import { formatAbsoluteTime, timestampToBrowserIso, transportClass } from "../li
 import { useMcpSessions } from "../lib/queries";
 import { MCP_SESSION_LIMIT } from "../lib/query-params";
 import { buildMcpSessionUrl } from "../lib/routes";
-import McpConnectGuide from "./McpConnectGuide";
 import McpTokensPanel from "./McpTokensPanel";
 import McpCheckpointsPanel from "./McpCheckpointsPanel";
 
@@ -40,11 +39,9 @@ export default function McpSessionsView() {
         <div class="mb-6">
           <h1 class="font-display text-2xl font-medium">MCP</h1>
           <p class="text-sm text-muted-foreground mt-1">
-            The tokens clients connect with, and their tool calls grouped by session.
+            Create tokens for AI clients to connect with, and see their checkpoints and tool calls by session.
           </p>
         </div>
-
-        <McpConnectGuide />
 
         <McpTokensPanel />
         <McpCheckpointsPanel />

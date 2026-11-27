@@ -35,4 +35,22 @@ describe("Dialog", () => {
     }
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("returns focus to what opened it", async () => {
+    const [open, setOpen] = createSignal(false);
+    render(() => (
+      <>
+        <button type="button" onClick={() => setOpen(true)}>Open</button>
+        <Dialog open={open()} onClose={() => setOpen(false)} title="Test dialog">
+          <button type="button" onClick={() => setOpen(false)}>Cancel</button>
+        </Dialog>
+      </>
+    ));
+    const opener = screen.getByRole("button", { name: "Open" });
+    opener.focus();
+    fireEvent.click(opener);
+    await vi.waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Cancel" })));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await vi.waitFor(() => expect(document.activeElement).toBe(opener));
+  });
 });

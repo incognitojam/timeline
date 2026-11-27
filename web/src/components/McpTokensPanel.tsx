@@ -1,11 +1,12 @@
 import { useQueryClient } from "@tanstack/solid-query";
-import { createSignal, For, onCleanup, Show } from "solid-js";
+import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { createMcpToken, type McpToken } from "../lib/api";
 import { formatRelativeTime } from "../lib/format";
 import { formatAbsoluteTime, timestampToBrowserIso } from "../lib/mcp-format";
 import { queryKeys, useMcpTokens, useRevokeMcpToken } from "../lib/queries";
 import Dialog from "../ui/Dialog";
-import { IconCheck, IconCopy } from "../ui/icons";
+import { IconAdd } from "../ui/icons";
+import McpConnectGuide, { ConnectSteps, CopyValue } from "./McpConnectGuide";
 
 export const BUTTON = "rounded-sm border border-border px-3 py-1.5 text-sm text-foreground transition-colors enabled:hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
 const PRIMARY_BUTTON = "rounded-sm bg-primary px-3.5 py-1.5 text-sm font-medium text-primary-foreground transition-colors enabled:hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
@@ -16,87 +17,123 @@ export function When(props: { at: string }) {
   return <span title={formatAbsoluteTime(props.at)}>{formatRelativeTime(timestampToBrowserIso(props.at))}</span>;
 }
 
-/** The token just created: shown until dismissed, never fetched again. */
-function NewToken(props: { label: string; token: string; onDone: () => void }) {
-  const [copied, setCopied] = createSignal<boolean | null>(null);
-  async function copy() {
-    await navigator.clipboard.writeText(props.token).then(() => setCopied(true), () => setCopied(false));
-  }
+interface Created { label: string; token: string; readOnly: boolean; tailnetOnly: boolean }
+
+/** The token just created, with the steps to connect it: shown once, never fetched again. */
+function NewToken(props: { created: Created; onDone: () => void }) {
+  let copyButton: HTMLButtonElement | undefined;
+  // Masked by default so a screen share or screenshot does not show it; never kept beyond this dialog.
+  const [revealed, setRevealed] = createSignal(false);
+  // The form that had focus is gone; start on the token, the one thing to do now.
+  onMount(() => copyButton?.focus());
   return (
-    <div role="status" class="rounded-lg border border-primary/40 bg-primary/5 p-4">
-      <p class="text-sm font-medium [overflow-wrap:anywhere]">Token for {props.label}</p>
-      <p class="mt-1 text-xs text-muted-foreground">
-        Copy it now: it is not stored and will not be shown again. Send it as <code>Authorization: Bearer &lt;token&gt;</code>.
-      </p>
-      <div class="mt-3 flex flex-wrap items-center gap-2">
-        <code data-testid="new-mcp-token" class="min-w-0 flex-1 break-all rounded-sm bg-muted px-2 py-1.5 font-mono text-xs">{props.token}</code>
-        <button type="button" class={`${BUTTON} inline-flex items-center gap-1.5`} onClick={() => void copy()}>
-          <Show when={copied()} fallback={<IconCopy class="h-4 w-4" />}><IconCheck class="h-4 w-4" /></Show>
-          {copied() ? "Copied" : "Copy"}
-        </button>
-        <button type="button" class={BUTTON} onClick={() => props.onDone()}>Done</button>
+    <>
+      <div class="flex flex-wrap items-center gap-1.5 text-sm">
+        <span class="font-medium [overflow-wrap:anywhere]">{props.created.label}</span>
+        <span class={BADGE}>{props.created.readOnly ? "read-only" : "full access"}</span>
+        <Show when={props.created.tailnetOnly}><span class={BADGE}>tailnet only</span></Show>
       </div>
-      <Show when={copied() === false}>
-        <p role="alert" class="mt-2 text-xs text-destructive">Could not copy. Select the token and copy it.</p>
-      </Show>
-    </div>
+      <p id="mcp-new-token-warning" class="mt-2 text-sm text-muted-foreground"><span class="sr-only">Token created. </span>Copy it now. You won't be able to see it again.</p>
+      <CopyValue
+        value={props.created.token}
+        secret={props.created.token}
+        revealed={revealed()}
+        name="token"
+        testId="new-mcp-token"
+        describedBy="mcp-new-token-warning"
+        ref={(button) => { copyButton = button; }}
+      >
+        <button type="button" class={BUTTON} aria-label={`${revealed() ? "Hide" : "Show"} token`} onClick={() => setRevealed(!revealed())}>
+          {revealed() ? "Hide" : "Show"}
+        </button>
+      </CopyValue>
+      <h3 class="mt-6 mb-3 font-medium">{props.created.tailnetOnly ? "Connect a client on your tailnet" : "Connect claude.ai"}</h3>
+      <ConnectSteps token={props.created.token} tailnetOnly={props.created.tailnetOnly} revealed={revealed()} />
+      <div class="mt-6 flex justify-end">
+        <button type="button" class={PRIMARY_BUTTON} onClick={() => props.onDone()}>Done</button>
+      </div>
+    </>
   );
 }
 
-function CreateForm(props: { onCreated: (label: string, token: string) => void }) {
+const LABEL_MISSING = "Enter a label.";
+
+function CreateForm(props: { onCreated: (created: Created) => void; onCancel: () => void }) {
   const queryClient = useQueryClient();
   const [pending, setPending] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [label, setLabel] = createSignal("");
   const [readOnly, setReadOnly] = createSignal(false);
   const [tailnetOnly, setTailnetOnly] = createSignal(false);
+  let input: HTMLInputElement | undefined;
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
+    // Not disabled while pending: a disabled button would drop keyboard focus.
+    if (pending()) return;
     const name = label().trim();
+    if (!name) {
+      setError(LABEL_MISSING);
+      input?.focus();
+      return;
+    }
     setPending(true);
     setError(null);
     try {
-      const { token } = await createMcpToken({ label: name, read_only: readOnly(), tailnet_only: tailnetOnly() });
-      setLabel("");
-      setReadOnly(false);
-      setTailnetOnly(false);
-      props.onCreated(name, token);
+      const options = { readOnly: readOnly(), tailnetOnly: tailnetOnly() };
+      const { token } = await createMcpToken({ label: name, read_only: options.readOnly, tailnet_only: options.tailnetOnly });
+      props.onCreated({ label: name, token, ...options });
       void queryClient.invalidateQueries({ queryKey: queryKeys.mcpTokens() });
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
-    } finally {
       setPending(false);
     }
   }
 
   return (
-    <form class="flex flex-wrap items-end gap-x-4 gap-y-3" onSubmit={(event) => void submit(event)}>
-      <label class="flex min-w-48 flex-1 flex-col gap-1 text-xs text-muted-foreground">
-        Label
-        <input
-          class="rounded-sm border border-border bg-background px-2 py-1.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          value={label()}
-          onInput={(event) => setLabel(event.currentTarget.value)}
-          placeholder="e.g. claude-ai"
-          required
-        />
-      </label>
-      <label class="flex items-center gap-2 py-1.5 text-sm" title="Not offered the tools that change anything">
-        <input type="checkbox" checked={readOnly()} onChange={(event) => setReadOnly(event.currentTarget.checked)} />
-        Read-only
-      </label>
-      <label class="flex items-center gap-2 py-1.5 text-sm" title="Refused over public access (Funnel)">
-        <input type="checkbox" checked={tailnetOnly()} onChange={(event) => setTailnetOnly(event.currentTarget.checked)} />
-        Tailnet only
-      </label>
-      <button type="submit" class={PRIMARY_BUTTON} disabled={pending() || !label().trim()} aria-describedby="mcp-token-label-hint">Create token</button>
-      <Show when={!label().trim()}>
-        <p id="mcp-token-label-hint" class="w-full -mt-1 text-xs text-muted-foreground">Enter a label to create a token, such as the client that will use it.</p>
-      </Show>
+    <form noValidate onSubmit={(event) => void submit(event)}>
+      <label class="block text-sm font-medium" for="mcp-token-label">Label</label>
+      <input
+        id="mcp-token-label"
+        ref={input}
+        class="mt-1 w-full rounded-sm border border-border bg-background px-2 py-1.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        value={label()}
+        onInput={(event) => {
+          setLabel(event.currentTarget.value);
+          if (error() === LABEL_MISSING) setError(null);
+        }}
+        placeholder="e.g. claude-ai"
+        aria-describedby={error() ? "mcp-token-label-hint mcp-token-error" : "mcp-token-label-hint"}
+        aria-invalid={error() === LABEL_MISSING || undefined}
+        required
+      />
+      <p id="mcp-token-label-hint" class="mt-1 text-xs text-muted-foreground">Names the token in the list, such as the client that will use it.</p>
+
+      <fieldset class="mt-4 space-y-3">
+        <legend class="sr-only">Options</legend>
+        <div class="flex items-start gap-2 text-sm">
+          <input id="mcp-token-read-only" type="checkbox" class="mt-1" checked={readOnly()} onChange={(event) => setReadOnly(event.currentTarget.checked)} aria-describedby="mcp-token-read-only-hint" />
+          <div>
+            <label for="mcp-token-read-only">Read-only</label>
+            <p id="mcp-token-read-only-hint" class="text-xs text-muted-foreground">Not offered the tools that save or delete memory notes. Tick it for claude.ai unless it should save notes.</p>
+          </div>
+        </div>
+        <div class="flex items-start gap-2 text-sm">
+          <input id="mcp-token-tailnet-only" type="checkbox" class="mt-1" checked={tailnetOnly()} onChange={(event) => setTailnetOnly(event.currentTarget.checked)} aria-describedby="mcp-token-tailnet-hint" />
+          <div>
+            <label for="mcp-token-tailnet-only">Tailnet only</label>
+            <p id="mcp-token-tailnet-hint" class="text-xs text-muted-foreground">Refused over public access, so claude.ai cannot use it. Tick it for a client on your tailnet or on the Mac running Timeline.</p>
+          </div>
+        </div>
+      </fieldset>
+
       <Show when={error()}>
-        {(message) => <p role="alert" class="w-full text-xs text-destructive">{message()}</p>}
+        {(message) => <p id="mcp-token-error" role="alert" class="mt-4 text-xs text-destructive">{message()}</p>}
       </Show>
+      <div class="mt-6 flex justify-end gap-2">
+        <button type="button" class={BUTTON} onClick={() => props.onCancel()}>Cancel</button>
+        <button type="submit" class={PRIMARY_BUTTON} aria-disabled={pending()}>{pending() ? "Creating…" : "Create token"}</button>
+      </div>
     </form>
   );
 }
@@ -129,12 +166,21 @@ function TokenRow(props: { token: McpToken; onRevoke: () => void }) {
 export default function McpTokensPanel() {
   const query = useMcpTokens();
   const revoke = useRevokeMcpToken();
-  const [created, setCreated] = createSignal<{ label: string; token: string } | null>(null);
+  const [creating, setCreating] = createSignal(false);
+  // The new token lives only while the dialog is open.
+  const [created, setCreated] = createSignal<Created | null>(null);
   const [revoking, setRevoking] = createSignal<McpToken | null>(null);
+  const closeCreate = () => {
+    setCreating(false);
+    setCreated(null);
+  };
+  // A create that finishes after the dialog closed is not shown: its token is in the list to revoke.
+  const showCreated = (fresh: Created) => {
+    if (creating()) setCreated(fresh);
+  };
   // Drop a shown token when the page is left, so Back cannot bring it back.
-  const forget = () => setCreated(null);
-  window.addEventListener("pagehide", forget);
-  onCleanup(() => window.removeEventListener("pagehide", forget));
+  window.addEventListener("pagehide", closeCreate);
+  onCleanup(() => window.removeEventListener("pagehide", closeCreate));
 
   function askRevoke(token: McpToken) {
     revoke.reset();
@@ -148,15 +194,19 @@ export default function McpTokensPanel() {
 
   return (
     <section class="mb-8" aria-labelledby="mcp-tokens-heading">
-      <h2 id="mcp-tokens-heading" class="font-display text-lg font-medium">Tokens</h2>
+      <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <h2 id="mcp-tokens-heading" class="font-display text-lg font-medium">Tokens</h2>
+        <button type="button" class={`${PRIMARY_BUTTON} inline-flex items-center gap-1.5`} onClick={() => setCreating(true)}>
+          <IconAdd class="h-4 w-4" />
+          Create token
+        </button>
+      </div>
       <p class="mt-1 mb-4 text-sm text-muted-foreground">
         Clients connect to <code>/mcp</code> with a token. Revoking one stops it on its next request.
       </p>
 
       <div class="space-y-4">
-        <Show when={created()} fallback={<CreateForm onCreated={(label, token) => setCreated({ label, token })} />}>
-          {(fresh) => <NewToken label={fresh().label} token={fresh().token} onDone={() => setCreated(null)} />}
-        </Show>
+        <McpConnectGuide />
 
         <Show when={query.isError}>
           <div class="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">Failed to load MCP tokens.</div>
@@ -182,6 +232,12 @@ export default function McpTokensPanel() {
           )}
         </Show>
       </div>
+
+      <Dialog open={creating()} onClose={closeCreate} title={created() ? "Token created" : "Create a token"} class="max-w-xl">
+        <Show when={created()} fallback={<CreateForm onCreated={showCreated} onCancel={closeCreate} />}>
+          {(fresh) => <NewToken created={fresh()} onDone={closeCreate} />}
+        </Show>
+      </Dialog>
 
       <Dialog open={revoking() !== null} onClose={() => setRevoking(null)} title="Revoke this token?">
         <Show when={revoking()}>

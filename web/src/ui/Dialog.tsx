@@ -19,11 +19,25 @@ interface DialogProps {
  * initialise local state from props at mount time.
  */
 export default function Dialog(props: DialogProps) {
+  // Opened from outside a Kobalte trigger, so Kobalte has nothing to return
+  // focus to on close: keep what had focus when it opened, and go back there.
+  let opener: HTMLElement | null = null;
   return (
     <KDialog.Root open={props.open} onOpenChange={(open) => !open && props.onClose()}>
       <KDialog.Portal>
         <KDialog.Overlay class="fixed inset-0 z-50 bg-black/50" />
         <KDialog.Content
+          onOpenAutoFocus={() => {
+            opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          }}
+          onCloseAutoFocus={(event) => {
+            // Kobalte prevents it itself when focus already moved outside the dialog.
+            if (!event.defaultPrevented && opener?.isConnected) {
+              event.preventDefault();
+              opener.focus();
+            }
+            opener = null;
+          }}
           class={`fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 w-[calc(100vw-2rem)] max-h-[90vh] overflow-y-auto rounded-lg border border-border bg-popover text-popover-foreground p-6 shadow-lg ${props.class ?? "max-w-96"}`}
         >
           <div class="mb-4 pr-8">
