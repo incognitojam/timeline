@@ -28,7 +28,7 @@ import { IconBlock, IconFilterList, IconMoreHoriz, IconMusicNote } from "../../u
 import SegmentedControl, { type SegmentedControlOption } from "../../ui/SegmentedControl";
 import Avatar from "../../components/Avatar";
 import PlaylistArt from "./PlaylistArt";
-import { sharedElementName, useSharedElementLink } from "../../lib/view-transition";
+import { sharedElementName, sharedTextStyle, useSharedElementLink } from "../../lib/view-transition";
 import Sparkline from "../../components/Sparkline";
 
 function formatDate(dateStr: string | null): string {
@@ -72,7 +72,7 @@ function PlaylistRow(props: { playlist: TrackedPlaylist; onNavigate: (event: Mou
       />
 
       <div class="flex-1 min-w-0">
-        <div class="font-medium truncate">
+        <div class="font-medium truncate" style={sharedTextStyle(props.playlist.playlistId, "playlist-title")}>
           {props.playlist.name ?? props.playlist.playlistId}
         </div>
         <div

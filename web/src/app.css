@@ -229,11 +229,84 @@ body,
   display: none; /* Chrome, Safari, Opera */
 }
 
-/* Shared-element navigation (lib/view-transition.ts): short, no overshoot.
-   Reduced motion never starts one. */
-::view-transition-group(*),
+/* Shared-element navigation (lib/view-transition.ts). Reduced motion never
+   starts one. Long enough to follow the element across the page, easing out
+   without overshoot. */
+:root {
+  --vt-duration: 450ms;
+  --vt-ease: cubic-bezier(0.3, 0, 0, 1);
+}
+
+/* A shared object is the same thing at both ends: no crossfade, one snapshot
+   (the helper hides the smaller) filling the moving box without distortion,
+   clipped to the corner radius the helper animates. */
+::view-transition-group(*) {
+  animation-duration: var(--vt-duration);
+  animation-timing-function: var(--vt-ease);
+  overflow: hidden;
+}
+
 ::view-transition-old(*),
 ::view-transition-new(*) {
-  animation-duration: 220ms;
-  animation-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  animation: none;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* An element with no partner on the other page fades in or out in place. */
+::view-transition-old(*):only-child {
+  animation: vt-fade-out var(--vt-duration) var(--vt-ease) both;
+}
+
+::view-transition-new(*):only-child {
+  animation: vt-fade-in var(--vt-duration) var(--vt-ease) both;
+}
+
+/* Text keeps its natural size, anchored at its start, and hands over between
+   the two type sizes early in the flight, overlapping briefly so the two sizes
+   are rarely seen on top of each other. */
+::view-transition-group(*.shared-text) {
+  overflow: visible;
+}
+
+::view-transition-old(*.shared-text),
+::view-transition-new(*.shared-text) {
+  height: auto;
+  width: auto;
+  mix-blend-mode: plus-lighter;
+}
+
+::view-transition-old(*.shared-text) {
+  animation: vt-fade-out calc(var(--vt-duration) * 0.3) ease-out both;
+}
+
+::view-transition-new(*.shared-text) {
+  animation: vt-fade-in calc(var(--vt-duration) * 0.4) ease-in-out calc(var(--vt-duration) * 0.15) both;
+}
+
+/* The rest of the page swaps with a quick crossfade, blended so what stays put
+   does not dim halfway. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  mix-blend-mode: plus-lighter;
+}
+
+::view-transition-old(root) {
+  animation: vt-fade-out 150ms ease-out both;
+}
+
+::view-transition-new(root) {
+  animation: vt-fade-in 150ms ease-out both;
+}
+
+@keyframes vt-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes vt-fade-in {
+  from {
+    opacity: 0;
+  }
 }
