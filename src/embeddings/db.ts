@@ -34,7 +34,15 @@ export interface UpsertDocumentInput {
   renderedContent: string;
   contentHash: string;
   eventIds: number[];
+  /** Role per entry of eventIds; every event is 'primary' when omitted. */
+  eventRoles?: DocumentEventRole[];
 }
+
+/**
+ * How an event belongs to a document. A conversation window's own messages are
+ * 'primary'; the messages it repeats from the window before it are 'overlap'.
+ */
+export type DocumentEventRole = "primary" | "overlap";
 
 interface DimensionsRow {
   dimensions: number;
@@ -148,6 +156,28 @@ export function initEmbeddingsDb(db: Database): void {
       failed_at TEXT NOT NULL DEFAULT (datetime('now')),
       PRIMARY KEY (content_profile_id, model_profile_id, source_key)
     );
+
+    -- The conversation and time span of each conversation-window document, so
+    -- re-windowing a stretch of a conversation finds the windows it replaces.
+    CREATE TABLE IF NOT EXISTS conversation_windows (
+      document_id INTEGER PRIMARY KEY REFERENCES embedding_documents(id) ON DELETE CASCADE,
+      conversation_key TEXT NOT NULL,
+      start_timestamp TEXT NOT NULL,
+      end_timestamp TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_conversation_windows_span
+      ON conversation_windows(conversation_key, start_timestamp);
+
+    -- Stretches of conversations with messages past the window cursor that
+    -- have not been windowed yet, for one window content and model profile pair.
+    CREATE TABLE IF NOT EXISTS conversation_window_pending (
+      content_profile_id INTEGER NOT NULL REFERENCES content_profiles(id),
+      model_profile_id INTEGER NOT NULL REFERENCES embedding_model_profiles(id),
+      conversation_key TEXT NOT NULL,
+      start_timestamp TEXT NOT NULL,
+      end_timestamp TEXT NOT NULL,
+      PRIMARY KEY (content_profile_id, model_profile_id, conversation_key)
+    );
   `);
   if (!hasDocumentPrefixColumn(db)) {
     // Profiles created before the column existed never prefixed their documents.
@@ -166,14 +196,17 @@ function hasDocumentPrefixColumn(db: Database): boolean {
 }
 
 /**
- * Which documents a vector table holds. Event text and attachment images share
- * a model's vector space but sit in separate tables, so each kind is ranked on
- * its own: text lies closer to text queries than images do, and would crowd
- * images out of a single ranking.
+ * Which documents a vector table holds. Event text, attachment images and
+ * conversation windows share a model's vector space but sit in separate
+ * tables, so each kind is ranked on its own: text lies closer to text queries
+ * than images do, and would crowd images out of a single ranking; windows are
+ * ranked apart so single-event search is unchanged by them.
  */
-export type VectorKind = "event" | "attachment";
+export type VectorKind = "event" | "attachment" | "window";
 
-function vecTableName(modelProfileId: number, kind: VectorKind = "event"): string {
+const VECTOR_KINDS: readonly VectorKind[] = ["event", "attachment", "window"];
+
+export function vecTableName(modelProfileId: number, kind: VectorKind = "event"): string {
   // The id comes from embedding_model_profiles (an AUTOINCREMENT rowid), so it is
   // always a positive integer — guard anyway since it is interpolated into SQL.
   if (!Number.isInteger(modelProfileId) || modelProfileId <= 0) {
@@ -191,7 +224,7 @@ function ensureVecTables(db: Database, modelProfileId: number, dimensions: numbe
   if (!Number.isInteger(dimensions) || dimensions <= 0) {
     throw new Error("sqlite-vec dimensions must be a positive integer");
   }
-  for (const kind of ["event", "attachment"] as const) {
+  for (const kind of VECTOR_KINDS) {
     db.exec(
       `CREATE VIRTUAL TABLE IF NOT EXISTS ${vecTableName(modelProfileId, kind)} USING vec0(embedding float[${dimensions}])`
     );
@@ -313,7 +346,7 @@ export function upsertDocument(db: Database, input: UpsertDocumentInput): { id: 
   const selectExisting = db.prepare("SELECT id FROM embedding_documents WHERE content_profile_id = ? AND content_hash = ?");
   const before = selectExisting.get(input.contentProfileId, input.contentHash) as { id: number } | null;
   if (before) {
-    upsertDocumentEvents(db, before.id, input.eventIds);
+    upsertDocumentEvents(db, before.id, input.eventIds, input.eventRoles);
     return { id: before.id, created: false };
   }
 
@@ -341,15 +374,15 @@ export function upsertDocument(db: Database, input: UpsertDocumentInput): { id: 
     ) as { id: number } | null;
   const document = inserted ?? (selectExisting.get(input.contentProfileId, input.contentHash) as { id: number } | null);
   if (!document) throw new Error(`Embedding document ${input.contentHash} was neither inserted nor found`);
-  upsertDocumentEvents(db, document.id, input.eventIds);
+  upsertDocumentEvents(db, document.id, input.eventIds, input.eventRoles);
   return { id: document.id, created: inserted !== null };
 }
 
-function upsertDocumentEvents(db: Database, documentId: number, eventIds: number[]): void {
+function upsertDocumentEvents(db: Database, documentId: number, eventIds: number[], roles?: DocumentEventRole[]): void {
   const insertEvent = db.prepare(
-    "INSERT OR IGNORE INTO embedding_document_events (document_id, event_id, position, role) VALUES (?, ?, ?, 'primary')"
+    "INSERT OR IGNORE INTO embedding_document_events (document_id, event_id, position, role) VALUES (?, ?, ?, ?)"
   );
-  eventIds.forEach((eventId, index) => insertEvent.run(documentId, eventId, index));
+  eventIds.forEach((eventId, index) => insertEvent.run(documentId, eventId, index, roles?.[index] ?? "primary"));
 }
 
 export function getIndexCursor(db: Database, contentProfileId: number, modelProfileId: number): number {
@@ -400,12 +433,12 @@ export function listFailedSourceKeys(db: Database, contentProfileId: number, mod
   return new Set(rows.map(row => row.source_key));
 }
 
-export function hasVector(db: Database, documentId: number, modelProfileId: number): boolean {
+export function hasVector(db: Database, documentId: number, modelProfileId: number, kind: VectorKind = "event"): boolean {
   const row = db
     .prepare(
       `SELECT 1
        FROM embedding_vectors ev
-       JOIN ${vecTableName(modelProfileId)} vec ON vec.rowid = ev.id
+       JOIN ${vecTableName(modelProfileId, kind)} vec ON vec.rowid = ev.id
        WHERE ev.document_id = ? AND ev.model_profile_id = ?`
     )
     .get(documentId, modelProfileId);
@@ -499,4 +532,84 @@ function searchVectorsSql(modelProfileId: number): string {
        JOIN embedding_document_events ede ON ede.document_id = ev.document_id
        WHERE v.embedding MATCH ? AND k = ?
        ORDER BY v.distance, ede.position`;
+}
+
+/** source_kind of a conversation-window document. */
+export const WINDOW_SOURCE_KIND = "conversation-window";
+
+/**
+ * Delete conversation-window documents that a re-windowing replaced, with
+ * their event links and their vectors in every model's window table. Any
+ * other kind of document is refused, so single-event and photo vectors can
+ * never be removed through here.
+ */
+export function deleteWindowDocuments(db: Database, documentIds: readonly number[]): void {
+  if (documentIds.length === 0) return;
+  const selectKind = db.prepare("SELECT source_kind FROM embedding_documents WHERE id = ?");
+  const selectVectors = db.prepare("SELECT id, model_profile_id FROM embedding_vectors WHERE document_id = ?");
+  db.transaction(() => {
+    for (const documentId of documentIds) {
+      const document = selectKind.get(documentId) as { source_kind: string } | null;
+      if (!document) continue;
+      if (document.source_kind !== WINDOW_SOURCE_KIND) {
+        throw new Error(`Refusing to delete embedding document ${documentId}: it is a ${document.source_kind} document`);
+      }
+      for (const vector of selectVectors.all(documentId) as { id: number; model_profile_id: number }[]) {
+        db.prepare(`DELETE FROM ${vecTableName(vector.model_profile_id, "window")} WHERE rowid = ?`).run(vector.id);
+      }
+      db.prepare("DELETE FROM embedding_vectors WHERE document_id = ?").run(documentId);
+      db.prepare("DELETE FROM embedding_document_events WHERE document_id = ?").run(documentId);
+      db.prepare("DELETE FROM conversation_windows WHERE document_id = ?").run(documentId);
+      db.prepare("DELETE FROM embedding_documents WHERE id = ?").run(documentId);
+    }
+  })();
+}
+
+export interface WindowSearchHit {
+  document_id: number;
+  distance: number;
+  /** JSON [source, source_account, conversation_id]; see conversationKey in windows.ts. */
+  conversation_key: string;
+  title: string | null;
+  snippet: string | null;
+  start_timestamp: string;
+  end_timestamp: string;
+  /** The window's own messages (not its overlap), as a JSON array of event ids in order. */
+  primary_event_ids: string;
+}
+
+/**
+ * Nearest conversation windows to a query vector, closest first. Empty when
+ * the profile has no window table yet (an index written before windows
+ * existed, opened read-only).
+ */
+export async function queryWindowVectors(
+  db: QueryExecutor,
+  vector: number[],
+  modelProfile: ModelProfile,
+  limit: number
+): Promise<WindowSearchHit[]> {
+  if (vector.length !== modelProfile.dimensions) {
+    throw new Error(
+      `Vector has ${vector.length} dimensions, but model profile ${modelProfile.id} expects ${modelProfile.dimensions}`
+    );
+  }
+  const table = vecTableName(modelProfile.id, "window");
+  const exists = await db.get("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", table);
+  if (!exists) return [];
+  return db.query<WindowSearchHit>(
+    `SELECT ev.document_id, v.distance, d.source_key AS conversation_key, d.title, d.snippet,
+       d.start_timestamp, d.end_timestamp,
+       (SELECT json_group_array(event_id) FROM (
+         SELECT event_id FROM embedding_document_events
+         WHERE document_id = d.id AND role = 'primary' ORDER BY position
+       )) AS primary_event_ids
+     FROM ${table} v
+     JOIN embedding_vectors ev ON ev.id = v.rowid
+     JOIN embedding_documents d ON d.id = ev.document_id
+     WHERE v.embedding MATCH ? AND k = ?
+     ORDER BY v.distance`,
+    serializeVector(vector),
+    limit
+  );
 }

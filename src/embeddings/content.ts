@@ -42,7 +42,7 @@ function verbalizeEventKind(source: string, type: string): string {
 export const MAX_RENDERED_BYTES = 8000;
 
 /** The longest prefix of `text` within `maxBytes` UTF-8 bytes, cut on a code point boundary. */
-function truncateToBytes(text: string, maxBytes: number): string {
+export function truncateToBytes(text: string, maxBytes: number): string {
   let bytes = 0;
   let end = 0;
   for (const char of text) {

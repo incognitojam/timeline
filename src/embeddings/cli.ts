@@ -2,26 +2,38 @@ import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { Cause, Effect, Exit, Fiber, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import { getTimelineDbPath } from "../db/paths";
+import { wrapDatabase } from "../db/pool";
 import { PRODUCT_VERSION } from "../product-version";
 import { loadConfig } from "../config";
 import { errorMessage } from "./client";
 import { createEmbeddingClient, type EmbeddingProfileConfig, resolveEmbeddingProfile } from "./config";
 import type { CorpusFilterTerm } from "./corpus";
-import { ensureModelProfile, getEmbeddingsDb, getEmbeddingsDbPath, initEmbeddingsDb, searchVectors } from "./db";
-import { readEmbeddingBatchSize } from "./indexer";
+import {
+  ensureModelProfile,
+  getEmbeddingsDb,
+  getEmbeddingsDbPath,
+  initEmbeddingsDb,
+  queryWindowVectors,
+  searchVectors,
+} from "./db";
+import { formatWindowHit, toWindowHit } from "./search";
+import { logEmbeddingRate, readEmbeddingBatchSize } from "./indexer";
 import {
   type CliIndexCounts,
+  type CliWindowIndexCounts,
   DEFAULT_INDEX_CONCURRENCY,
   DEFAULT_INDEX_LIMIT,
   type IndexFilters,
   parseFilterTerms,
   parseSince,
   runIndex,
+  runWindowIndex,
   type SinceFilter,
 } from "./index-run";
 
-function reportIndexCounts(counts: CliIndexCounts): Effect.Effect<void> {
+function reportIndexCounts(counts: CliIndexCounts | CliWindowIndexCounts, label: string, startedAt: number): Effect.Effect<void> {
   return Effect.sync(() => {
+    logEmbeddingRate(label, counts.embedded, counts.embeddedBytes, startedAt);
     console.log(JSON.stringify(counts));
     // Partial progress is committed (and recoverable on re-run), but a clean
     // exit would let a misconfigured model or a down provider look successful
@@ -64,6 +76,13 @@ function filterTermsFlag(name: "include" | "exclude"): Flag.Flag<CorpusFilterTer
   );
 }
 
+const windowsFlag = Flag.String("windows").pipe(
+  Flag.optional,
+  Flag.withDescription(
+    "Embed this source's conversations as windows instead of single events; --limit then counts windows"
+  )
+);
+
 /** Open the embeddings DB (and load sqlite-vec) as a scoped, auto-closed resource. */
 const acquireEmbeddingsDb = Effect.acquireRelease(
   Effect.sync(() => {
@@ -86,7 +105,17 @@ function index(
   since?: SinceFilter
 ): Effect.Effect<void> {
   const batchSize = readEmbeddingBatchSize();
-  const counts: CliIndexCounts = { limit, selected: 0, created: 0, reused: 0, embedded: 0, skipped: 0, errors: 0 };
+  const counts: CliIndexCounts = {
+    limit,
+    selected: 0,
+    created: 0,
+    reused: 0,
+    embedded: 0,
+    skipped: 0,
+    errors: 0,
+    embeddedBytes: 0,
+  };
+  const startedAt = Date.now();
   return Effect.suspend(() =>
     runIndex(
       {
@@ -101,7 +130,40 @@ function index(
       },
       counts
     )
-  ).pipe(Effect.ensuring(reportIndexCounts(counts)));
+  ).pipe(Effect.ensuring(reportIndexCounts(counts, "embeddings index", startedAt)));
+}
+
+function indexWindows(
+  modelConfig: EmbeddingProfileConfig,
+  source: string,
+  limit: number,
+  concurrency: number
+): Effect.Effect<void> {
+  const counts: CliWindowIndexCounts = {
+    source,
+    limit,
+    windows: 0,
+    embedded: 0,
+    embeddedBytes: 0,
+    reused: 0,
+    removed: 0,
+    errors: 0,
+  };
+  const startedAt = Date.now();
+  return Effect.suspend(() =>
+    runWindowIndex(
+      {
+        timelineDbPath: getTimelineDbPath(),
+        embeddingsDbPath: getEmbeddingsDbPath(),
+        modelConfig,
+        source,
+        limit,
+        concurrency,
+        batchSize: readEmbeddingBatchSize(),
+      },
+      counts
+    )
+  ).pipe(Effect.ensuring(reportIndexCounts(counts, `embeddings index --windows ${source}`, startedAt)));
 }
 
 function search(modelConfig: EmbeddingProfileConfig, query: string | undefined, limit: number): Effect.Effect<void> {
@@ -114,6 +176,11 @@ function search(modelConfig: EmbeddingProfileConfig, query: string | undefined, 
     const vector = yield* client.embedQuery(query);
     const hits = searchVectors(embeddingsDb, vector, modelProfile.id, limit);
     console.log(JSON.stringify(hits, null, 2));
+    const windows = yield* Effect.promise(() => queryWindowVectors(wrapDatabase(embeddingsDb), vector, modelProfile, limit));
+    if (windows.length > 0) {
+      console.log(`\nConversation windows (${windows.length}), closest first:`);
+      for (const hit of windows) console.log(`${hit.distance.toFixed(4)} ${formatWindowHit(toWindowHit(hit))}`);
+    }
   }).pipe(
     Effect.scoped,
     // Either error kind means the query could not be embedded; report and exit nonzero.
@@ -160,11 +227,18 @@ const indexCommand = Command.make(
     since: sinceFlag,
     include: filterTermsFlag("include"),
     exclude: filterTermsFlag("exclude"),
+    windows: windowsFlag,
   },
-  ({ limit, concurrency, since, include, exclude }) => {
+  ({ limit, concurrency, since, include, exclude, windows }) => {
+    const windowSource = Option.getOrUndefined(windows);
+    if (windowSource && (Option.isSome(since) || include.length > 0 || exclude.length > 0)) {
+      throw new Error("--windows takes no --since, --include or --exclude");
+    }
     return Effect.promise(async () =>
       runWithSigintReport(
-        index(await loadEmbeddingProfile(), limit, concurrency, { include, exclude }, Option.getOrUndefined(since))
+        windowSource
+          ? indexWindows(await loadEmbeddingProfile(), windowSource, limit, concurrency)
+          : index(await loadEmbeddingProfile(), limit, concurrency, { include, exclude }, Option.getOrUndefined(since))
       )
       // runMain also interrupts on SIGINT and would exit 0 before the index
       // fiber finishes reporting; runWithSigintReport owns the shutdown instead.

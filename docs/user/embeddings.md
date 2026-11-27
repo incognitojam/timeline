@@ -254,6 +254,76 @@ saying so.
 - Photo vectors are kept in a separate table from event vectors, so semantic
   search over events is unchanged.
 
+Each run logs its embedding rate, documents and bytes per second, to the
+service log (`bun run embeddings index` logs it too).
+
+## Conversation windows (pilot)
+
+A short reply such as "haha yes" says nothing about its topic, so a search for
+a topic finds the one message that names it and misses the rest of the
+conversation. The window pilot also embeds conversations as windows of
+consecutive messages, for one source at a time, beside the single-event
+vectors. Nothing about single-event or photo vectors changes.
+
+How windows are cut ([`windows.ts`](../../src/embeddings/windows.ts)):
+
+- A conversation (source, account and `conversation_id`) is split into
+  sessions wherever more than 30 minutes pass between messages.
+- A session is cut into windows of up to 3,000 bytes, each after the first
+  repeating the last two messages of the one before. A one-message session gets
+  no window; its single-event vector covers it.
+- A window is a header naming the source, the conversation (the other person in
+  a DM) and the time span, then one `HH:MM <Name> text` line per message, named
+  the way `export_conversation` names them.
+- A window is embedded only once its session has closed, 30 minutes after its
+  last message. A new or backfilled message re-windows its session; unchanged
+  windows are reused by content hash, and the window documents the new ones
+  replace are deleted. A window the provider rejects is recorded in
+  `embedding_failures` and skipped by later runs, as photos are.
+
+Turn it on by choosing a source under **Conversation windows (pilot)** on the
+`embeddings` source's Sync page; Discord is a good first choice. Windows then
+take whatever time budget new events leave each run, before photos. Each
+source has its own window cursor, so switching sources starts the new one from
+its first message. Turning the setting off or switching sources leaves the
+windows already embedded in `embeddings.db`, and search keeps listing them,
+no longer updated; single-event results are unaffected either way.
+
+To time a run before leaving it to the service, window a source from the CLI.
+It uses the same cursor as the service, and `--limit` counts windows:
+
+```bash
+bun run embeddings index --windows discord --limit 500
+```
+
+The run logs its rate, for example
+`[embeddings index --windows discord] embedded 480 documents (1210000 bytes) in 60.2s: 7.97 documents/s, 20100 bytes/s`,
+and prints its counts. Comparing that rate with the event-index rate the
+service logs costs a full window index of a source. Only one window run at a time
+may use an `embeddings.db`: while the service is windowing, the CLI refuses to
+start (and the other way round, the service's run reports it and tries again
+next time).
+
+Once windows exist, `semantic_search` and `bun run embeddings search` list the
+nearest windows after the event hits, one line each: source, conversation,
+time span, the window's first message as an `#id` for `export_conversation`,
+and an excerpt. Windows are ranked on their own, not mixed into the event hits.
+
+To check whether windows help, score the eval cases against each kind of hit:
+
+```bash
+bun run src/scripts/eval-semantic-search.ts --mode=events   # single events (the default)
+bun run src/scripts/eval-semantic-search.ts --mode=windows  # windows only
+bun run src/scripts/eval-semantic-search.ts --mode=both     # both, merged by distance
+```
+
+A window hit matches an event expectation when the event is one of the
+window's own messages, and a range when their spans overlap. For "every
+conversation about X" cases, give the case a range expectation carrying the
+`conversation_id` of each conversation it should find (an eval fixture's
+`expect.conversations` list imports as these); the script reports how many of
+them reach the top `--k` hits (default 10) as `conversations@k`.
+
 ## Semantic search via MCP
 
 The `semantic_search` MCP tool exposes the same nearest-neighbour search to

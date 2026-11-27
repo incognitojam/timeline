@@ -19,6 +19,20 @@ export interface IndexCounts {
   embedded: number;
   skipped: number;
   errors: number;
+  /** UTF-8 bytes of the documents embedded, for the run's rate. */
+  embeddedBytes: number;
+}
+
+/**
+ * Log a run's embedding rate, so a pilot run can cost a full re-index. The
+ * elapsed time covers the whole run: rendering, the provider, and writes.
+ */
+export function logEmbeddingRate(label: string, documents: number, bytes: number, startedAt: number): void {
+  const seconds = Math.max(Date.now() - startedAt, 1) / 1000;
+  console.log(
+    `[${label}] embedded ${documents} documents (${bytes} bytes) in ${seconds.toFixed(1)}s: ` +
+      `${(documents / seconds).toFixed(2)} documents/s, ${Math.round(bytes / seconds)} bytes/s`
+  );
 }
 
 export interface IndexTarget {
@@ -48,7 +62,7 @@ export function readEmbeddingBatchSize(): number {
  */
 export const MAX_BATCH_BYTES = 8 * MAX_RENDERED_BYTES;
 
-interface PendingEmbedding {
+export interface PendingEmbedding {
   eventId: number;
   documentId: number;
   renderedContent: string;
@@ -60,7 +74,7 @@ interface PendingBatch {
   bytes: number;
 }
 
-type EmbeddingResult =
+export type EmbeddingResult =
   | { item: PendingEmbedding; vector: number[] }
   | { item: PendingEmbedding; error: EventEmbeddingError };
 
@@ -80,7 +94,7 @@ function recordEventError(counts: IndexCounts, error: EventEmbeddingError): Effe
  * batch for one input, the batch is split and each half retried until only the
  * bad input remains, which comes back as an error for its event.
  */
-function embedBatch(
+export function embedBatch(
   client: OpenAIEmbeddingClient,
   items: readonly PendingEmbedding[]
 ): Effect.Effect<EmbeddingResult[], FatalEmbeddingError> {
@@ -127,6 +141,7 @@ function writeEmbeddingResults(
           Effect.sync(() => {
             // Another index run stored this document's vector first.
             counts[inserted ? "embedded" : "skipped"]++;
+            if (inserted) counts.embeddedBytes += item.renderedBytes;
           })
         ),
         Effect.catchTag("EventEmbeddingError", error => recordEventError(counts, error))

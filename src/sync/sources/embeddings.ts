@@ -16,8 +16,16 @@ import {
   type CursorIndexOutcome,
   type IndexCounts,
   indexNewCorpusEvents,
+  logEmbeddingRate,
   readEmbeddingBatchSize,
 } from "../../embeddings/indexer";
+import {
+  conversationWindowProfile,
+  indexConversationWindows,
+  type WindowIndexCounts,
+  type WindowIndexOutcome,
+} from "../../embeddings/windows";
+import { sourceIdsWithTraits } from "../../shared/sources";
 import { DEFAULT_JOB_LEASE_MS } from "../../jobs/runner";
 import { getMediaStore } from "../../media/storage";
 import { NETWORK_GUARD_CONFIG_FIELDS } from "../network-guard";
@@ -31,10 +39,16 @@ export const DEFAULT_EMBEDDINGS_TIME_BUDGET_MS = 60_000;
 export const MAX_EMBEDDINGS_TIME_BUDGET_MS = DEFAULT_JOB_LEASE_MS / 2;
 export const DEFAULT_EMBEDDINGS_CONCURRENCY = 4;
 
+const WINDOWS_OFF = "off";
+/** Sources whose conversations can be windowed: searchable sources with conversation threads. */
+const WINDOW_SOURCES = sourceIdsWithTraits(traits => traits.conversation !== undefined && traits.corpus !== undefined);
+
 export interface EmbeddingsSyncSettings {
   timeBudgetMs: number;
   concurrency: number;
   indexImages: boolean;
+  /** The one source whose conversations are also embedded as windows (a pilot), or null. */
+  windowSource: string | null;
 }
 
 function positiveIntegerSetting(
@@ -55,12 +69,21 @@ export function parseEmbeddingsSyncSettings(config: Record<string, unknown> = {}
   if (typeof concurrency === "string") return concurrency;
   const indexImages = config.index_images ?? false;
   if (typeof indexImages !== "boolean") return "invalid index_images setting";
-  return { timeBudgetMs, concurrency, indexImages };
+  const windowSource = config.conversation_windows ?? WINDOWS_OFF;
+  if (typeof windowSource !== "string" || (windowSource !== WINDOWS_OFF && !WINDOW_SOURCES.includes(windowSource))) {
+    return "invalid conversation_windows setting";
+  }
+  return { timeBudgetMs, concurrency, indexImages, windowSource: windowSource === WINDOWS_OFF ? null : windowSource };
 }
 
 interface ImagePhase {
   counts: ImageIndexCounts;
   outcome: ImageIndexOutcome;
+}
+
+interface WindowPhase {
+  counts: WindowIndexCounts;
+  outcome: WindowIndexOutcome;
 }
 
 function failure(error: string, startedAt: number, metadata?: Record<string, unknown>): SyncResult {
@@ -79,11 +102,13 @@ export function embeddingsSyncResult(
   counts: IndexCounts,
   outcome: CursorIndexOutcome,
   startedAt: number,
-  images?: ImagePhase
+  images?: ImagePhase,
+  windows?: WindowPhase
 ): SyncResult {
   const metadata = {
     ...counts,
     ...outcome,
+    ...(windows ? { windows: { ...windows.counts, ...windows.outcome } } : {}),
     ...(images
       ? {
           images: { ...images.counts, remaining: images.outcome.remaining },
@@ -92,16 +117,18 @@ export function embeddingsSyncResult(
       : {}),
   };
   const imageFailures = images?.counts.failed ?? 0;
+  const windowFailures = windows?.counts.errors ?? 0;
   const errors = [
     // Failed events are passed by the cursor; a full `embeddings index` run retries them.
     ...(counts.errors > 0 ? [`${counts.errors} events failed to embed`] : []),
+    ...(windowFailures > 0 ? [`${windowFailures} conversation windows failed to embed`] : []),
     // Failed images are recorded in embedding_failures and skipped by later runs.
     ...(imageFailures > 0 ? [`${imageFailures} images failed to embed`] : []),
   ];
   return {
     source: SOURCE,
     success: errors.length === 0,
-    eventsAdded: counts.embedded + (images?.counts.embedded ?? 0),
+    eventsAdded: counts.embedded + (images?.counts.embedded ?? 0) + (windows?.counts.embedded ?? 0),
     eventsUpdated: 0,
     ...(errors.length > 0 ? { error: `${errors.join(" and ")}; see the service log` } : {}),
     durationMs: Date.now() - startedAt,
@@ -140,6 +167,14 @@ export const embeddingsSyncSource: SyncSource = {
       description: "Also embed photos from searchable sources, fetching them from remote media storage when needed; needs llama-server started with --mmproj",
       default: false,
     },
+    {
+      key: "conversation_windows",
+      type: "select",
+      label: "Conversation windows (pilot)",
+      description: "Also embed this source's conversations as windows of consecutive messages, so search finds conversations about a topic as well as single messages",
+      options: [WINDOWS_OFF, ...WINDOW_SOURCES],
+      default: WINDOWS_OFF,
+    },
     ...POWER_GUARD_CONFIG_FIELDS,
     ...NETWORK_GUARD_CONFIG_FIELDS,
   ],
@@ -155,8 +190,9 @@ export const embeddingsSyncSource: SyncSource = {
     const settings = parseEmbeddingsSyncSettings(options.config.sources[SOURCE]);
     if (typeof settings === "string") return failure(settings, startedAt);
 
-    const counts: IndexCounts = { created: 0, reused: 0, embedded: 0, skipped: 0, errors: 0 };
+    const counts: IndexCounts = { created: 0, reused: 0, embedded: 0, skipped: 0, errors: 0, embeddedBytes: 0 };
     let imageCounts: ImageIndexCounts | undefined;
+    let windows: WindowPhase | undefined;
     let embeddingsDb: Database | undefined;
     let timelineDb: Database | undefined;
     try {
@@ -182,7 +218,33 @@ export const embeddingsSyncSource: SyncSource = {
       );
       // A fatal error (dead provider, bad config) stops the run at the last complete cursor step.
       if (Result.isFailure(outcome)) return failure(outcome.failure.message, startedAt, { ...counts });
-      if (!settings.indexImages) return embeddingsSyncResult(counts, outcome.success, startedAt);
+      logEmbeddingRate("embeddings", counts.embedded, counts.embeddedBytes, startedAt);
+
+      if (settings.windowSource) {
+        // Windows take whatever budget the new events left, before photos.
+        const windowsStartedAt = Date.now();
+        const windowCounts: WindowIndexCounts = { windows: 0, embedded: 0, embeddedBytes: 0, reused: 0, removed: 0, errors: 0 };
+        const windowOutcome = await Effect.runPromise(
+          indexConversationWindows(
+            { ...target, contentProfile: ensureContentProfile(embeddingsDb, conversationWindowProfile(settings.windowSource)) },
+            timelineDb,
+            {
+              source: settings.windowSource,
+              batchSize: readEmbeddingBatchSize(),
+              concurrency: settings.concurrency,
+              deadline,
+            },
+            windowCounts
+          ).pipe(Effect.result),
+          { signal: options.signal }
+        );
+        if (Result.isFailure(windowOutcome)) {
+          return failure(windowOutcome.failure.message, startedAt, { ...counts, windows: { ...windowCounts } });
+        }
+        logEmbeddingRate(`embeddings windows ${settings.windowSource}`, windowCounts.embedded, windowCounts.embeddedBytes, windowsStartedAt);
+        windows = { counts: windowCounts, outcome: windowOutcome.success };
+      }
+      if (!settings.indexImages) return embeddingsSyncResult(counts, outcome.success, startedAt, undefined, windows);
 
       // Photos take whatever budget the new events left.
       imageCounts = { embedded: 0, failed: 0 };
@@ -199,7 +261,13 @@ export const embeddingsSyncSource: SyncSource = {
       if (Result.isFailure(imageOutcome)) {
         return failure(imageOutcome.failure.message, startedAt, { ...counts, images: { ...imageCounts } });
       }
-      return embeddingsSyncResult(counts, outcome.success, startedAt, { counts: imageCounts, outcome: imageOutcome.success });
+      return embeddingsSyncResult(
+        counts,
+        outcome.success,
+        startedAt,
+        { counts: imageCounts, outcome: imageOutcome.success },
+        windows
+      );
     } catch (error) {
       // Shutdown interrupts the run at the last complete cursor step; the next run resumes there.
       if (options.signal?.aborted) {
