@@ -1837,7 +1837,7 @@ test("renders contacts", async ({ page }) => {
 test("renders a contact detail", async ({ page }) => {
   const unexpectedRequests = await openApp(page, "/contacts?id=1");
 
-  await expect(page).toHaveTitle("Contacts · Timeline");
+  await expect(page).toHaveTitle("Alice · Contacts · Timeline");
   await expect(page.getByRole("heading", { name: "Alice", level: 1 })).toBeVisible();
   await expect(page.getByText("You", { exact: true })).toHaveCount(2);
   await expect(page.getByRole("button", { name: "Not me" })).toBeVisible();

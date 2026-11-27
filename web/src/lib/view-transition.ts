@@ -90,38 +90,29 @@ function canAnimate(): boolean {
 }
 
 /**
- * Click handler for a link whose destination shares `key`'s elements. Plain
- * left clicks navigate inside a view transition; anything else (modified
- * clicks, no API, reduced motion) is left to the router as an ordinary link.
+ * Runs `update`, a navigation that shows `key`'s shared elements, inside a view
+ * transition, or plainly where there is no API or reduced motion is on. For
+ * controls that navigate without a link, such as a master-detail list that
+ * changes a search param. `control`, the link or row that starts it, is scrolled
+ * fully into view first.
  *
  * The destination must render the shared elements without suspending, from
  * data already in the query cache, or the morph lands on the old page.
  */
-export function useSharedElementLink() {
-  const navigate = useNavigate();
+export function useSharedElementTransition() {
   const location = useLocation();
   const isRouting = useIsRouting();
-  return (key: string) => (event: MouseEvent & { currentTarget: HTMLAnchorElement }) => {
-    if (
-      event.defaultPrevented ||
-      event.button !== 0 ||
-      event.metaKey ||
-      event.ctrlKey ||
-      event.shiftKey ||
-      event.altKey ||
-      !canAnimate()
-    ) {
+  return (key: string, update: () => void, control: Element) => {
+    if (!canAnimate()) {
+      update();
       return;
     }
-    // Runs before the router's document listener, which skips prevented clicks.
-    event.preventDefault();
-    const url = new URL(event.currentTarget.href);
     const from = location.pathname + location.search;
     const click = ++latestClick;
     // The snapshot ignores clipping by scroll containers and the transition
     // paints above everything, so a link partly hidden under the mobile nav
     // bar or a list's edge would start its flight on top of them.
-    event.currentTarget.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
+    control.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
     // Name this item's elements now, so the old snapshot includes them.
     setActiveKey(key);
     const before = measureShared();
@@ -135,7 +126,7 @@ export function useSharedElementLink() {
       // browser snapshot the new page only once it is there. The timeout keeps
       // a destination that suspends from freezing the old page.
       const committed = await Promise.race([
-        startTransition(() => navigate(url.pathname + url.search + url.hash)).then(() => true),
+        startTransition(update).then(() => true),
         new Promise<false>((resolve) => setTimeout(resolve, MAX_UPDATE_MS, false)),
       ]);
       // Animating now would fly the element to where it already is; let the
@@ -163,5 +154,32 @@ export function useSharedElementLink() {
       transition.finished.then(land, land);
     }, () => {});
     transition.finished.catch(() => {});
+  };
+}
+
+/**
+ * Click handler for a link whose destination shares `key`'s elements. Plain
+ * left clicks navigate inside a view transition; anything else (modified
+ * clicks, no API, reduced motion) is left to the router as an ordinary link.
+ */
+export function useSharedElementLink() {
+  const navigate = useNavigate();
+  const shared = useSharedElementTransition();
+  return (key: string) => (event: MouseEvent & { currentTarget: HTMLAnchorElement }) => {
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey ||
+      !canAnimate()
+    ) {
+      return;
+    }
+    // Runs before the router's document listener, which skips prevented clicks.
+    event.preventDefault();
+    const url = new URL(event.currentTarget.href);
+    shared(key, () => navigate(url.pathname + url.search + url.hash), event.currentTarget);
   };
 }

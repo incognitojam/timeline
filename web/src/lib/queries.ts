@@ -1025,8 +1025,43 @@ export function useContacts(options?: () => { includeHidden?: boolean }) {
 }
 
 // Single contact query
-export function useContact(id: () => number | undefined) {
-  return createQuery(() => queryOptions.contact(id()));
+/**
+ * One contact's detail. Given the contacts list a page shows, that list's
+ * cached row stands in as placeholder data while the detail loads, so the
+ * header (name, avatar) shows at once. The placeholder has no identities or
+ * memories: callers show the rest only once `isPlaceholderData` is false, or
+ * once the data is no longer this contact's row. Only the list the page shows
+ * is used, so a hidden contact's row stands in only while hidden contacts are
+ * listed, and a list invalidated since it loaded (hiding a contact invalidates
+ * every query) is skipped. Without a row, the previous contact's detail stays
+ * as before.
+ */
+/** Starts loading a contact's detail, as hovering its row does. */
+export function usePrefetchContact() {
+  const queryClient = useQueryClient();
+  return (id: number) => {
+    void queryClient.prefetchQuery(queryOptions.contact(id));
+  };
+}
+
+export function useContact(id: () => number | undefined, listed?: () => { includeHidden?: boolean }) {
+  const queryClient = useQueryClient();
+  return createQuery(() => {
+    const contactId = id();
+    const listKey = listed && queryKeys.contacts(listed());
+    return {
+      ...queryOptions.contact(contactId),
+      placeholderData: (previous: Awaited<ReturnType<typeof fetchContact>> | undefined) => {
+        const row = listKey && !queryClient.getQueryState(listKey)?.isInvalidated
+          ? queryClient.getQueryData<ContactWithStats[]>(listKey)?.find((contact) => contact.id === contactId)
+          : undefined;
+        if (!row) return previous;
+        const { identityCount: _identities, eventCount: _events, avatarUrl, ...contact } = row;
+        // The row has no note count; Delete, its only reader, is disabled on a placeholder.
+        return { contact, avatarUrl, identities: [], memories: [], memoryNoteCount: 0 };
+      },
+    };
+  });
 }
 
 // Unlinked identities query
