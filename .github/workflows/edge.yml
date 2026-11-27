@@ -46,6 +46,7 @@ jobs:
       commit: ${{ steps.select.outputs.commit }}
       build-number: ${{ steps.select.outputs.build-number }}
       version: ${{ steps.select.outputs.version }}
+      previous-build: ${{ steps.select.outputs.previous-build }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -108,6 +109,7 @@ jobs:
             echo "commit=$commit"
             echo "build-number=$build"
             echo "version=$version"
+            echo "previous-build=$offered"
           } >> "$GITHUB_OUTPUT"
           echo "Building $version from $commit." | tee -a "$GITHUB_STEP_SUMMARY"
 
@@ -122,6 +124,10 @@ jobs:
             {
               echo
               echo "Would remove after uploading: ${remove:-nothing}"
+              echo
+              echo "Notes the build would publish:"
+              echo
+              timeout 60 python3 -B scripts/ci/edge_notes.py "$commit" --previous-build "$offered" || echo "Notes unavailable."
               echo
               echo "**Dry run:** nothing was signed, uploaded or deleted."
             } | tee -a "$GITHUB_STEP_SUMMARY"
@@ -140,8 +146,41 @@ jobs:
       commit: ${{ needs.select.outputs.commit }}
       edge-version: ${{ needs.select.outputs.version }}
 
+  # Notes are written beside the macOS build, so they never delay it; publishing
+  # ships the build without them if this job fails or times out.
+  notes:
+    needs: select
+    if: needs.select.outputs.build == 'true' && needs.select.outputs.dry-run != 'true'
+    continue-on-error: true
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Write release notes from the changesets
+        env:
+          VERSION: ${{ needs.select.outputs.version }}
+          COMMIT: ${{ needs.select.outputs.commit }}
+          PREVIOUS_BUILD: ${{ needs.select.outputs.previous-build }}
+        run: |
+          git fetch --quiet origin main
+          mkdir "$RUNNER_TEMP/notes"
+          { echo "## Timeline $VERSION"; echo; python3 -B scripts/ci/edge_notes.py "$COMMIT" --previous-build "$PREVIOUS_BUILD"; } > "$RUNNER_TEMP/notes/notes.md"
+          cat "$RUNNER_TEMP/notes/notes.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: edge-notes-${{ needs.select.outputs.version }}
+          path: ${{ runner.temp }}/notes
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
-    needs: [select, macos-dmg]
+    needs: [select, macos-dmg, notes]
+    if: ${{ !cancelled() && needs.macos-dmg.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -154,6 +193,11 @@ jobs:
         with:
           name: edge-${{ needs.select.outputs.version }}
           path: ${{ runner.temp }}/build
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: edge-notes-${{ needs.select.outputs.version }}
+          path: ${{ runner.temp }}/notes
       - name: Upload the build, then point the feed at it, then remove old DMGs
         env:
           GH_TOKEN: ${{ github.token }}
@@ -227,3 +271,16 @@ jobs:
             echo "Removing $name"
             gh release delete-asset "$FEED_TAG" "$name" --yes
           done <<< "$remove"
+      - name: Describe the offered build on the release
+        continue-on-error: true
+        timeout-minutes: 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.select.outputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/notes"
+          notes="$RUNNER_TEMP/notes/notes.md"
+          [ -s "$notes" ] || printf '## Timeline %s\n\nNotes unavailable.\n' "$VERSION" > "$notes"
+          printf '\n---\n\nThis release holds the edge update feed and the newest edge builds. Do not delete it; see docs/operations/releases.md.\n' >> "$notes"
+          gh release edit "$FEED_TAG" --notes-file "$notes"
