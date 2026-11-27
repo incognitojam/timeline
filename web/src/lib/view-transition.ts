@@ -118,6 +118,10 @@ export function useSharedElementLink() {
     const url = new URL(event.currentTarget.href);
     const from = location.pathname + location.search;
     const click = ++latestClick;
+    // The snapshot ignores clipping by scroll containers and the transition
+    // paints above everything, so a link partly hidden under the mobile nav
+    // bar or a list's edge would start its flight on top of them.
+    event.currentTarget.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
     // Name this item's elements now, so the old snapshot includes them.
     setActiveKey(key);
     const before = measureShared();
