@@ -44,6 +44,11 @@ also enables authentication. Use `AUTH_PASSWORD='' bun run dev` to explicitly
 disable it locally. When using `API_HOST` or `TIMELINE_API_TARGET`, the remote
 API's authentication still applies.
 
+Without `VITE_MAPTILER_API_KEY` in `web/.env` (see `web/.env.example`), the dev
+server's map draws markers on a blank background instead of loading tiles.
+Production builds still require the key; see
+[macOS distribution](macos-distribution.md).
+
 ### Background runs, status, and stopping
 
 ```bash

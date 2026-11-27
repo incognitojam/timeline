@@ -1,14 +1,14 @@
 import { onMount, onCleanup, createEffect, on } from "solid-js";
 import * as maplibregl from "maplibre-gl";
-import type { Map as MapLibreMap, MapOptions } from "maplibre-gl";
+import type { Map as MapLibreMap, MapOptions, StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { MAP_STYLE_URL, DEFAULT_CENTER, DEFAULT_ZOOM } from "./mapStyles";
+import { DEFAULT_CENTER, DEFAULT_ZOOM } from "./mapStyles";
 
 interface Props {
   class?: string;
   center?: [number, number];
   zoom?: number;
-  style?: string;
+  style: string | StyleSpecification;
   onMapReady?: (map: MapLibreMap) => void;
 }
 
@@ -22,7 +22,7 @@ export default function Map(props: Props) {
 
     const options: MapOptions = {
       container,
-      style: props.style ?? MAP_STYLE_URL,
+      style: props.style,
       center: props.center ?? DEFAULT_CENTER,
       zoom: props.zoom ?? DEFAULT_ZOOM,
     };
@@ -55,7 +55,7 @@ export default function Map(props: Props) {
     on(
       () => props.style,
       (newStyle) => {
-        if (map && newStyle) {
+        if (map) {
           map.setStyle(newStyle);
         }
       },

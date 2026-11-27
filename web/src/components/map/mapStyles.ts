@@ -1,26 +1,19 @@
 // MapTiler style configuration
 // Docs: https://docs.maptiler.com/maplibre-gl-js/
 
-const MAPTILER_API_KEY = import.meta.env.VITE_MAPTILER_API_KEY;
+import type { StyleSpecification } from "maplibre-gl";
 
-if (!MAPTILER_API_KEY) {
-  throw new Error(
-    "VITE_MAPTILER_API_KEY is not set. Add it to web/.env"
-  );
+// Only a dev server can lack the key: vite.config.ts refuses to build without it.
+const MAPTILER_API_KEY = import.meta.env.VITE_MAPTILER_API_KEY?.trim() || undefined;
+export const HAS_MAP_TILES = MAPTILER_API_KEY !== undefined;
+
+function offlineStyle(backgroundColor: string): StyleSpecification {
+  return {
+    version: 8,
+    sources: {},
+    layers: [{ id: "background", type: "background", paint: { "background-color": backgroundColor } }],
+  };
 }
-
-// Available MapTiler styles: streets-v2, satellite, hybrid, topo-v2, basic-v2, bright-v2, etc.
-// Using streets-v2 as default - clean and readable
-export const MAP_STYLE_URL = `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_API_KEY}`;
-
-// Alternative styles for future use
-export const MAP_STYLES = {
-  streets: `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_API_KEY}`,
-  satellite: `https://api.maptiler.com/maps/satellite/style.json?key=${MAPTILER_API_KEY}`,
-  hybrid: `https://api.maptiler.com/maps/hybrid/style.json?key=${MAPTILER_API_KEY}`,
-  topo: `https://api.maptiler.com/maps/topo-v2/style.json?key=${MAPTILER_API_KEY}`,
-  dark: `https://api.maptiler.com/maps/dataviz-dark/style.json?key=${MAPTILER_API_KEY}`,
-} as const;
 
 // Marker colors by event type
 export const MARKER_COLORS: Record<string, string> = {
@@ -44,9 +37,11 @@ export function getMarkerColor(eventType: string): string {
   return MARKER_COLORS.default;
 }
 
-// Get map style URL based on color scheme
-export function getMapStyleUrl(colorScheme: "dark" | "light"): string {
-  return colorScheme === "dark" ? MAP_STYLES.dark : MAP_STYLES.streets;
+// Get map style based on color scheme
+export function getMapStyle(colorScheme: "dark" | "light"): string | StyleSpecification {
+  if (!MAPTILER_API_KEY) return offlineStyle(colorScheme === "dark" ? "#1f2937" : "#e5e7eb");
+  const style = colorScheme === "dark" ? "dataviz-dark" : "streets-v2";
+  return `https://api.maptiler.com/maps/${style}/style.json?key=${MAPTILER_API_KEY}`;
 }
 
 // Default map center (UK) - will be overridden by fitBounds
