@@ -10,7 +10,7 @@ From a checkout, `bun run mcp` serves the tools over stdio against `./timeline.d
 
 ## Remote (HTTP)
 
-The service serves MCP over Streamable HTTP at `/mcp` while at least one MCP token exists. Create tokens on the **MCP sessions** page of the web app (under **More**), or on the service host; either way the token is shown once and never stored:
+The service serves MCP over Streamable HTTP at `/mcp` while at least one MCP token exists. Create tokens on the **MCP sessions** page of the web app (under **More**), or on the service host; either way the token is shown once. Timeline keeps only a hash of it, enough to check it but not to show it again:
 
 ```sh
 timeline-service mcp-token create --label claude-ai --read-only
@@ -25,7 +25,7 @@ A token's flags are fixed when it is created; to change them, create a new token
 
 Clients send the token in an `Authorization: Bearer <token>` header to `https://<node>.ts.net/mcp`. Prefer the header to putting the token in the URL as `/mcp/<token>`: clients show, store and log the URLs of their servers, so a token in the URL is easily copied into a screenshot or a log. Use the path form only for a client that cannot send a header.
 
-To add Timeline to claude.ai, turn on [public access](macos-host.md#public-access), then open **Customize → Connectors**, choose **+ Add → Add custom connector** (on a Team or Enterprise plan an owner adds it under **Organization settings → Connectors**), enter `https://<node>.ts.net/mcp` as the URL, choose **No sign in**, and under **Request headers** add one named `Authorization` with the value `Bearer <token>`. claude.ai stores the header and does not show it again. Give it a token without `--tailnet-only`, and `--read-only` unless it should save memory notes. The **Connect a client** section of the MCP sessions page shows the URL to paste and whether public access is on, as the menu bar app records it.
+To add Timeline to claude.ai, turn on [public access](macos-host.md#public-access), then open **Customize → Connectors**, choose **+ Add → Add custom connector** (on a Team or Enterprise plan an owner adds it under **Organization settings → Connectors**), give it a name and enter `https://<node>.ts.net/mcp` as the URL; its check of the server answers 401 and carries on. Under **Authentication** choose **No sign-in**, even though **Sign in now** is tagged **Detected** (Timeline's 401 advertises `Bearer`, which claude.ai reads as OAuth), and expect the warning that follows. Under **Request headers** press **+ Add header**, pick `authorization` as the **Header name**, enter `Bearer <token>` as the **Value** and leave **Required** ticked. Leave **Advanced** on **Streamable HTTP** and press **Add**. claude.ai stores the header and does not show it again. Give it a token without `--tailnet-only`, and `--read-only` unless it should save memory notes. Creating a token on the MCP sessions page shows these steps with the URL and the header value ready to copy, and whether public access is on, as the menu bar app records it; for a tailnet-only token it shows the steps for a tailnet client instead. **Connect a client** on the page shows the same steps later, without the token.
 
 If claude.ai reports that it couldn't reach the server:
 

@@ -80,7 +80,7 @@ export const createMcpRoutes = (options: { db: QueryExecutor; publicUrl?: string
     return c.json({ tokens, env_token_count: envTokens().length });
   })
 
-  // The only response that carries a token, which is never stored or shown again.
+  // The only response that carries a token; only its hash is kept, so it cannot be shown again.
   .post("/api/mcp/tokens", async (c) => {
     if (crossSite(c) || c.req.header("Content-Type") !== "application/json") {
       return c.json({ error: "Create tokens from the MCP page." }, 403);
