@@ -64,6 +64,13 @@ export function listMemoryNotes(db: Database, project = ""): MemoryNote[] {
     .all(project) as MemoryNote[];
 }
 
+/** Live notes linked to a contact, in every scope. */
+export function listContactMemoryNotes(db: Database, contactId: number): MemoryNote[] {
+  return db
+    .prepare(`SELECT ${COLUMNS} FROM memory_notes WHERE replaced_at IS NULL AND contact_id = ? ORDER BY project, name`)
+    .all(contactId) as MemoryNote[];
+}
+
 export function getMemoryNote(db: Database, project: string, name: string): MemoryNote | null {
   return db
     .prepare(`SELECT ${COLUMNS} FROM memory_notes WHERE replaced_at IS NULL AND project = ? AND name = ?`)

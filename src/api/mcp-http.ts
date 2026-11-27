@@ -5,7 +5,6 @@
  * Each session (Claude.ai chat) gets its own transport + server instance.
  */
 
-import type { Database } from "bun:sqlite";
 import { createHash, randomBytes } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
@@ -87,13 +86,11 @@ const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
  * Create the MCP HTTP handler with the given database connections.
  *
  * @param readDb - Pool or executor for readonly queries
- * @param writeDb - Writable database handle for mutation tools (e.g. Trakt correction)
  * @param options.publicUrl - Public URL of the timeline web app, named in the server instructions so agents can return clickable /event/<id> links.
  * @param options.semanticSearch - Embedding model and index for the semantic_search tool.
  */
 export function createMcpHandler(
   readDb: QueryExecutor,
-  writeDb: Database,
   options: { publicUrl?: string; semanticSearch?: SemanticSearch } = {},
 ) {
   const sessions = new Map<string, McpSession>();
@@ -189,8 +186,7 @@ export function createMcpHandler(
       }
     }
 
-    // No writable handle for a read-only session, so not even a cache refresh writes.
-    registerTools(server, readDb, access.readOnly ? undefined : writeDb, {
+    registerTools(server, readDb, {
       semanticSearch: options.semanticSearch,
       recordToolCall: persistToolCall,
       readOnly: access.readOnly,

@@ -78,7 +78,7 @@ function persistToolCall(rec: Omit<RecordToolCallInput, "sessionId"> & {
 }
 
 // Register all tools from shared module.
-registerTools(server, wrapDatabase(db), db, {
+registerTools(server, wrapDatabase(db), {
   // A single stdio client searches one query at a time, so it reads the index directly.
   semanticSearch: config.embeddings && {
     config: config.embeddings,

@@ -83,12 +83,12 @@ describe("MCP HTTP Transport", () => {
     const initData = parseSSE(await init.text()) as any;
     expect(initData.result.serverInfo.name).toBe("timeline");
 
-    // Call get_summary tool (no params → global stats)
+    // Call get_schema (no params → schema overview)
     const call = await app.request(MCP_URL, {
       method: "POST",
       headers: { ...BEARER_HEADERS, "mcp-session-id": sessionId! },
       body: jsonrpc(2, "tools/call", {
-        name: "get_summary",
+        name: "get_schema",
         arguments: {},
       }),
     });
@@ -97,7 +97,7 @@ describe("MCP HTTP Transport", () => {
     const callData = parseSSE(await call.text()) as any;
     expect(callData.result.content).toBeArray();
     expect(callData.result.content[0].type).toBe("text");
-    expect(callData.result.content[0].text).toContain("Total events:");
+    expect(callData.result.content[0].text).toContain("Sources (event count, latest date):");
   });
 
   test("initialize carries the memory instructions and the memory tools work over HTTP", async () => {
@@ -242,7 +242,7 @@ describe("MCP HTTP Transport", () => {
         "mcp-session-id": "nonexistent-session-id",
       },
       body: jsonrpc(1, "tools/call", {
-        name: "get_summary",
+        name: "get_schema",
         arguments: {},
       }),
     });
@@ -288,7 +288,7 @@ describe("MCP HTTP Transport", () => {
         app.request(MCP_URL, {
           method: "POST",
           headers: { ...headers, "mcp-session-id": sessionId! },
-          body: jsonrpc(302, "tools/call", { name: "get_summary", arguments: {} }),
+          body: jsonrpc(302, "tools/call", { name: "get_schema", arguments: {} }),
         });
 
       for (const headers of [{ ...HEADERS, Authorization: "Bearer wrong-token" }, HEADERS]) {
@@ -300,7 +300,7 @@ describe("MCP HTTP Transport", () => {
       // The session itself is untouched: the valid token still reaches it.
       const accepted = await call(BEARER_HEADERS);
       expect(accepted.status).toBe(200);
-      expect(await accepted.text()).toContain("Total events:");
+      expect(await accepted.text()).toContain("Sources (event count, latest date):");
     } finally {
       getAppStateDb().prepare("DELETE FROM mcp_sessions WHERE id = ?").run(sessionId);
     }

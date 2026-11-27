@@ -86,7 +86,7 @@ describe("MCP recording", () => {
     upsertMcpSession({ id: "kept-session", transport: "stdio" }, db);
     recordMcpToolCall({
       sessionId: "kept-session",
-      toolName: "get_summary",
+      toolName: "get_context",
       args: {},
       resultText: "summary",
       isError: false,
@@ -148,7 +148,7 @@ describe("MCP recording", () => {
     for (let i = 0; i < 3; i++) {
       recordMcpToolCall({
         sessionId: "session-5",
-        toolName: "get_summary",
+        toolName: "get_context",
         args: {},
         resultText: "ok",
         isError: i === 0,
@@ -177,14 +177,14 @@ describe("MCP recording", () => {
     insertCall.run("search-session-1", "query_events", "ok", 2, 0, 10, "2026-07-01 10:00:00");
     insertCall.run("search-session-1", "run_sql", "Error: bad SQL", 14, 1, 20, "2026-07-01 10:05:00");
     insertCall.run("search-session-2", "query_events", "Error: bad args", 15, 1, 30, "2026-07-02 09:00:00");
-    insertCall.run("search-session-2", "get_summary", "summary", 7, 0, 40, "2026-06-30 08:00:00");
+    insertCall.run("search-session-2", "get_context", "summary", 7, 0, 40, "2026-06-30 08:00:00");
 
     const all = searchMcpToolCalls({ limit: 10, offset: 0 }, db);
     expect(all.map((call) => `${call.session_id}:${call.tool_name}`)).toEqual([
       "search-session-2:query_events",
       "search-session-1:run_sql",
       "search-session-1:query_events",
-      "search-session-2:get_summary",
+      "search-session-2:get_context",
     ]);
     expect(all[0].session_id).toBe("search-session-2");
 

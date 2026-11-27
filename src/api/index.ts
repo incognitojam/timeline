@@ -232,7 +232,7 @@ const semanticSearch: SemanticSearch | undefined = apiConfig.embeddings && {
     return embeddingsDbPool;
   }),
 };
-const { handleMcpRequest, isMcpHttpEnabled, getMcpSessionCount } = createMcpHandler(readDb, db, {
+const { handleMcpRequest, isMcpHttpEnabled, getMcpSessionCount } = createMcpHandler(readDb, {
   publicUrl: apiConfig.server.public_url,
   semanticSearch,
 });

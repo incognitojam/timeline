@@ -3484,7 +3484,7 @@ describe("API Smoke Tests", () => {
             session_id, tool_name, args_json, args_chars, result_text,
             result_chars, is_error, truncated, duration_ms, created_at
           )
-          VALUES (?, 'get_summary', '{}', 2, 'summary', 7, 0, 0, 9, datetime('now'))
+          VALUES (?, 'get_context', '{}', 2, 'summary', 7, 0, 0, 9, datetime('now'))
         `).run(sessionId);
 
         const res = await app.request(`/api/mcp/sessions/${encodeURIComponent(sessionId)}`);
@@ -3493,7 +3493,7 @@ describe("API Smoke Tests", () => {
         expect(json.session.id).toBe(sessionId);
         expect(json.session.transport).toBe("stdio");
         expect(json.calls).toHaveLength(1);
-        expect(json.calls[0].tool_name).toBe("get_summary");
+        expect(json.calls[0].tool_name).toBe("get_context");
         expect(json.count).toBe(1);
         expect(json.stats).toEqual({
           call_count: 1,
@@ -3519,7 +3519,7 @@ describe("API Smoke Tests", () => {
             session_id, tool_name, args_json, args_chars, result_text,
             result_chars, is_error, truncated, duration_ms, created_at
           )
-          VALUES (?, 'get_summary', '{"date":"2026-07-03"}', 21, 'summary', 7, 0, 0, 9, datetime('now'))
+          VALUES (?, 'get_context', '{"date":"2026-07-03"}', 21, 'summary', 7, 0, 0, 9, datetime('now'))
         `).run(sessionId);
 
         const markdownRes = await app.request(`/api/mcp/sessions/${encodeURIComponent(sessionId)}.md`);
@@ -3527,7 +3527,7 @@ describe("API Smoke Tests", () => {
         expect(markdownRes.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
         const markdown = await markdownRes.text();
         expect(markdown).toContain(`# MCP session \`${sessionId}\``);
-        expect(markdown).toContain("`get_summary`");
+        expect(markdown).toContain("`get_context`");
 
         const jsonRes = await app.request(`/api/mcp/sessions/${encodeURIComponent(sessionId)}`);
         expect(jsonRes.status).toBe(200);
@@ -3565,7 +3565,7 @@ describe("API Smoke Tests", () => {
         `);
         seed(appDb, () => {
           for (let i = 0; i < 205; i++) {
-            insert.run(sessionId, "get_summary", i % 5 === 0 ? 1 : 0, i + 1, `-${i} seconds`);
+            insert.run(sessionId, "get_context", i % 5 === 0 ? 1 : 0, i + 1, `-${i} seconds`);
           }
         });
 
