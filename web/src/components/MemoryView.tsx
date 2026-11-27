@@ -98,7 +98,7 @@ export default function MemoryView() {
               What AI agents have saved about you, shared by every agent connected to Timeline.
             </p>
           </div>
-          <button type="button" class={`${SECONDARY_BUTTON} ml-12 sm:ml-0`} aria-expanded={importing()} onClick={() => setImporting(true)}>
+          <button type="button" class={`${SECONDARY_BUTTON} ml-12 sm:ml-0`} aria-expanded={importing()} onClick={() => setImporting((open) => !open)}>
             Import from Claude
           </button>
         </header>

@@ -64,13 +64,13 @@ async function zipOf(value: unknown): Promise<Uint8Array> {
 }
 
 /** A zip of these entries, stored uncompressed and named exactly as given, so tests can add names zip(1) would not. */
-function storedZip(entries: [string, string][]): Uint8Array {
+function storedZip(entries: [string, string | Uint8Array][]): Uint8Array {
   const parts: Uint8Array[] = [];
   const central: Uint8Array[] = [];
   let offset = 0;
   for (const [name, content] of entries) {
     const nameBytes = Buffer.from(name);
-    const data = Buffer.from(content);
+    const data = Buffer.from(content as string);
     const header = (signature: number, size: number) => {
       const out = Buffer.alloc(size);
       out.writeUInt32LE(signature, 0);
@@ -238,6 +238,36 @@ describe("import from claude.ai's memory export", () => {
       { project: "shed-build", kind: "topic", count: 1 },
     ]);
     expect(liveNotes()).toBe(3);
+  });
+
+  test("skips what a Mac adds when the export folder is zipped again", async () => {
+    const root = "claude-memory-2026-11-27/";
+    const result = await importAll(storedZip([
+      [root, ""],
+      [`${root}topics/climbing.md`, note("/topics/climbing.md", "climbing", "Fine").content],
+      [`${root}.DS_Store`, "binary"],
+      ["__MACOSX/", ""],
+      [`__MACOSX/${root}topics/._climbing.md`, "resource fork"],
+    ]));
+    expect(result.body).toMatchObject({ imported: true, add: [{ project: "", kind: "topic", count: 1 }], problems: [] });
+  });
+
+  test("lists duplicate and unreadable entries without letting an index stand in for an unreadable overview", async () => {
+    const root = "claude-memory-2026-11-27/";
+    const result = await importAll(storedZip([
+      [`${root}topics/climbing.md`, note("/topics/climbing.md", "climbing", "Fine").content],
+      [`${root}topics/twice.md`, note("/topics/twice.md", "twice", "First").content],
+      [`${root}topics/twice.md`, note("/topics/twice.md", "twice", "Second").content],
+      [`${root}projects/Reading List/index.md`, file("/x", 'name: "Reading List"\ndescription: Books').content],
+      [`${root}projects/Reading List/overview.md`, new Uint8Array([0x2d, 0x2d, 0x2d, 0x0a, 0xff, 0xfe])],
+    ]));
+    expect(result.body.problems).toEqual([
+      { path: "/topics/twice.md", reason: "The export lists this path more than once." },
+      { path: "/topics/twice.md", reason: "The export lists this path more than once." },
+      { path: "/projects/Reading List/overview.md", reason: "The file is not UTF-8 text." },
+    ]);
+    expect(result.body.add).toEqual([{ project: "", kind: "topic", count: 1 }]);
+    expect(getMemoryNote(appDb, "reading-list", "overview")).toBeNull();
   });
 
   test("takes the JSON inside the zip too, and leaves an existing note of the same name as it was", async () => {

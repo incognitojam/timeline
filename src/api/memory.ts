@@ -151,10 +151,7 @@ export function createMemoryRoutes(contacts: QueryExecutor, db: () => Database =
         }
         const expected = c.req.query("plan");
         try {
-          const upload = await readClaudeMemoryUpload(new Uint8Array(await c.req.arrayBuffer()));
-          const mapped = mapClaudeMemory(upload.files);
-          const notes = mapped.notes;
-          const problems = [...upload.problems, ...mapped.problems];
+          const { notes, problems } = mapClaudeMemory(await readClaudeMemoryUpload(new Uint8Array(await c.req.arrayBuffer())));
           const contactNames = await linkContacts(contacts, notes);
           if (expected === undefined) return c.json(importResult(planMemoryImport(db(), notes), problems, contactNames, false));
           const plan = importMemoryNotes(db(), notes, (fresh) => {

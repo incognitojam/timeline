@@ -85,34 +85,48 @@ export interface MemoryUpload {
 /**
  * The memory export's Markdown files, each at its path below the dated folder
  * and dated by the export, since the zip carries no time per memory. Only
- * entries with a safe path ending .md are unzipped; nothing is written to disk.
+ * entries at a path claude.ai's memory uses, listed once, are unzipped, one at
+ * a time to memory; nothing is written to disk.
  */
 async function memoryExportFiles(zip: string, entries: string[], root: string, date: string): Promise<MemoryUpload> {
   const updatedAt = `${date}T00:00:00.000Z`;
   if (!Number.isFinite(Date.parse(updatedAt))) throw new Error(`The folder ${root} does not name a real date.`);
   const upload: MemoryUpload = { files: [], problems: [] };
+  const refuse = (path: string, reason: string) => upload.problems.push({ path: path.slice(0, 200), reason });
   let budget = MEMORY_EXPORT_MAX_BYTES;
   for (const entry of entries) {
     if (entry.endsWith("/")) continue;
     const path = entry.slice(root.length);
     if (/[\\\0-\x1f]/.test(path) || path.split("/").slice(1).some((segment) => !segment || segment === "." || segment === "..")) {
-      upload.problems.push({ path: path.slice(0, 200), reason: "Not a path claude.ai's memory uses." });
-      continue;
-    }
-    if (!path.endsWith(".md")) {
-      upload.problems.push({ path: path.slice(0, 200), reason: "Not a Markdown memory file." });
-      continue;
-    }
-    const bytes = await unzipEntry(zip, entry, budget);
-    budget -= bytes.length;
-    try {
-      upload.files.push({ path, content: utf8(bytes), updated_at: updatedAt });
-    } catch {
-      upload.problems.push({ path: path.slice(0, 200), reason: "The file is not UTF-8 text." });
+      refuse(path, "Not a path claude.ai's memory uses.");
+    } else if (!path.endsWith(".md")) {
+      refuse(path, "Not a Markdown memory file.");
+    } else if (!FILE_PATH.test(path)) {
+      refuse(path, "Not a path claude.ai's memory uses.");
+    } else if (entries.indexOf(entry) !== entries.lastIndexOf(entry)) {
+      refuse(path, "The export lists this path more than once.");
+    } else {
+      let bytes: Uint8Array;
+      try {
+        bytes = await unzipEntry(zip, entry, budget);
+      } catch (error) {
+        if ((error as Error).message === TOO_LARGE) throw error;
+        refuse(path, "The file could not be unzipped.");
+        continue;
+      }
+      budget -= bytes.length;
+      try {
+        upload.files.push({ path, content: utf8(bytes), updated_at: updatedAt });
+      } catch {
+        refuse(path, "The file is not UTF-8 text.");
+      }
     }
   }
   return upload;
 }
+
+/** Files a Mac adds when it zips a folder, skipped without comment. */
+const macMetadata = (entry: string) => entry.startsWith("__MACOSX/") || /(?:^|\/)\.DS_Store$/.test(entry);
 
 /** The memory files in an upload of either export's zip, or of the data export's memories JSON. */
 export async function readClaudeMemoryUpload(upload: Uint8Array): Promise<MemoryUpload> {
@@ -133,7 +147,7 @@ export async function readClaudeMemoryUpload(upload: Uint8Array): Promise<Memory
     const listing = await unzip(["-Z1", zip], 1024 * 1024, `The zip lists more than ${MAX_ZIP_ENTRIES} files.`);
     let entries: string[];
     try {
-      entries = utf8(listing).split("\n").filter(Boolean);
+      entries = utf8(listing).split("\n").filter((entry) => entry && !macMetadata(entry));
     } catch {
       throw new Error("The zip lists a file name that is not UTF-8.");
     }
@@ -276,11 +290,13 @@ function projectKeys(files: Parsed[]): Map<string, { key: string } | { problem: 
  * Map an export's memory files to notes, contact links left to the caller.
  * A file that cannot be imported is listed as a problem with the reason.
  */
-export function mapClaudeMemory(memoryFiles: MemoryFile[]): { notes: ClaudeMemoryNote[]; problems: Problem[] } {
-  const problems: Problem[] = [];
+export function mapClaudeMemory(upload: MemoryUpload): { notes: ClaudeMemoryNote[]; problems: Problem[] } {
+  const problems: Problem[] = [...upload.problems];
   const files: Parsed[] = [];
-  const paths = memoryFiles.map((file) => file.path);
-  for (const file of memoryFiles) {
+  const paths = upload.files.map((file) => file.path);
+  // A file the zip holds but that could not be read still counts as present, so an unreadable overview is not replaced by its index.
+  const present = [...paths, ...upload.problems.map((problem) => problem.path)];
+  for (const file of upload.files) {
     try {
       if (paths.indexOf(file.path) !== paths.lastIndexOf(file.path)) throw new Error("The export lists this path more than once.");
       if (!Number.isFinite(Date.parse(file.updated_at))) throw new Error("updated_at is not a date.");
@@ -302,7 +318,7 @@ export function mapClaudeMemory(memoryFiles: MemoryFile[]): { notes: ClaudeMemor
     const note = { path: file.path, project: project.key, contactId: null, updatedAt: file.updatedAt, summary: file.frontmatter.description };
     if (file.index) {
       // The project's own overview file, when it has one, wins over its index, even when that file cannot be imported.
-      if (!paths.includes(`/projects/${file.project}/overview.md`)) {
+      if (!present.includes(`/projects/${file.project}/overview.md`)) {
         notes.push({ ...note, name: "overview", kind: "project", title: file.frontmatter.name, details: "", aliases: [] });
       }
       continue;
