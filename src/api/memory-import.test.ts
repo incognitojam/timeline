@@ -296,7 +296,7 @@ describe("import from claude.ai's memory export", () => {
   test("refuses an upload that is not the export, writing nothing", async () => {
     expect((await upload(JSON.stringify(EXPORT), undefined, { "Sec-Fetch-Site": "same-site" })).status).toBe(403);
     expect((await upload(JSON.stringify(EXPORT), undefined, { "Content-Type": "text/plain" })).status).toBe(403);
-    const unsupported = "Upload claude-memory-<date>.zip from claude.ai's Export memory, or memories-000.zip from its full data export.";
+    const unsupported = "Upload claude-memory-<date>.zip (in claude.ai: Settings → Your Claude → Memory → Export memory) or memories-000.zip (Settings → Privacy → Export data).";
     expect(await upload("hello")).toEqual({ status: 400, body: { error: unsupported } as never });
     const notExport = await upload(JSON.stringify({ memory_files: "nope" }), "any");
     expect(notExport.body.error).toStartWith("This is not claude.ai's memories export");

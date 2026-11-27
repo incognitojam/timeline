@@ -31,7 +31,7 @@ export const MEMORY_EXPORT_MAX_BYTES = 16 * 1024 * 1024;
 /** Most entries a memory export zip may list, folders included: well past the note limit. */
 const MAX_ZIP_ENTRIES = 2000;
 
-export const UNSUPPORTED_UPLOAD = "Upload claude-memory-<date>.zip from claude.ai's Export memory, or memories-000.zip from its full data export.";
+const UNSUPPORTED_UPLOAD = "Upload claude-memory-<date>.zip (in claude.ai: Settings → Your Claude → Memory → Export memory) or memories-000.zip (Settings → Privacy → Export data).";
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const DATA_EXPORT_ENTRY = new RegExp(`^memories/${UUID}\\.json$`);
