@@ -114,6 +114,16 @@ struct TimelineApp: App {
                 updates.checkForUpdates()
             }
             .disabled(!updates.canCheck)
+            Toggle("Check for Updates Automatically", isOn: Binding(
+                get: { updates.automaticallyChecks },
+                set: { updates.setAutomaticallyChecks($0) }
+            ))
+            .disabled(!updates.settingsAvailable)
+            Toggle("Download and Install Updates Automatically", isOn: Binding(
+                get: { updates.automaticallyDownloads },
+                set: { updates.setAutomaticallyDownloads($0) }
+            ))
+            .disabled(!updates.settingsAvailable || !updates.allowsAutomaticDownloads)
             if let version = service.runningVersion.flatMap({ $0.version ?? $0.commit }) {
                 Divider()
                 Text("Version \(version)")
