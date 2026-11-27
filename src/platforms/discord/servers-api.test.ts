@@ -11,8 +11,8 @@ process.env.NODE_ENV = "test";
 import { describe, test, expect, beforeAll } from "bun:test";
 import { app } from "../../api/index";
 
-const GUILD_A = "900000000000000001";
-const GUILD_B = "900000000000000002";
+const GUILD_A = "950000000000000001";
+const GUILD_B = "950000000000000002";
 const GUILD_A_ICON = "abc123def4567890abc123def4567890";
 const EMOJI_PARTY = "940000000000000001";
 const EMOJI_WAVE = "940000000000000002";
