@@ -4,7 +4,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { initAppStateDb } from "./db/app-state";
 import { QUERY_TIMEOUT_MS, QueryTimeoutError, type QueryExecutor, wrapDatabase } from "./db/pool";
 import { initDb, type TimelineEvent } from "./db/schema";
-import { formatEvents, registerTools, resolveContact, type RegisterToolsOptions } from "./mcp-tools";
+import { formatEvents, REPLY_CHAR_BUDGET, registerTools, resolveContact, type RegisterToolsOptions } from "./mcp-tools";
 import { skipWithoutSqliteVec } from "./testing/sqlite-vec";
 
 type ToolHandlerExtra = {
@@ -449,11 +449,50 @@ describe("MCP transcript export tools", () => {
     const handlers = captureHandlers(db);
     const result = await handlers.get("export_conversation")!({ conversation_id: "conversation-3", limit: 2 });
 
-    expect(result.content[0].text).toContain("Showing most recent 2 of 3 events.");
+    expect(result.content[0].text).toMatch(/Showing the newest 2 of 3 events\. Next page: earlier events: the same arguments with cursor: "2026-05-06T08:01:00\.000Z_\d+"\./);
     expect(result.content[0].text).not.toContain("Oldest message.");
     expect(result.content[0].text).toContain("Middle message.");
     expect(result.content[0].text).toContain("Newest message.");
     expect(result.content[0].text.indexOf("Middle message.")).toBeLessThan(result.content[0].text.indexOf("Newest message."));
+  });
+
+  test("a transcript too long for one reply keeps the newest messages and ends saying how to read earlier ones", async () => {
+    for (let minute = 0; minute < 60; minute++) {
+      insertTranscriptEvent({
+        conversationId: "long-chat",
+        timestamp: `2026-05-06T08:${String(minute).padStart(2, "0")}:00.000Z`,
+        content: `Message ${minute}: ${"word ".repeat(200)}`,
+      });
+    }
+
+    const result = await captureHandlers(db).get("export_conversation")!({ conversation_id: "long-chat" });
+    const text = result.content[0].text;
+    expect(text.length).toBeLessThanOrEqual(REPLY_CHAR_BUDGET);
+    expect(text).toContain("Message 59:");
+    expect(text).not.toContain("Message 0:");
+    expect(text).toMatch(/Showing the newest \d+ of 60 events\. Next page: earlier events: the same arguments with cursor: "[^"]+"\.$/);
+  });
+
+  test("following the cursor reads every message once, through messages that share a timestamp", async () => {
+    for (const content of ["First.", "Second.", "Third."]) {
+      insertTranscriptEvent({ conversationId: "ties", timestamp: "2026-05-06T08:00:00.000Z", content });
+    }
+    const handlers = captureHandlers(db);
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 5; page++) {
+      const text = (await handlers.get("export_conversation")!({ conversation_id: "ties", limit: 1, cursor })).content[0].text;
+      seen.push(...["First.", "Second.", "Third."].filter((m) => text.includes(m)));
+      cursor = text.match(/cursor: "([^"]+)"/)?.[1];
+      if (!cursor) break;
+    }
+    expect(seen).toEqual(["Third.", "Second.", "First."]);
+  });
+
+  test("a centered window too small to move names the next later event", async () => {
+    const eventIds = insertWindowEvents("conversation-step");
+    const text = (await captureHandlers(db).get("export_conversation")!({ event_id: eventIds[3], limit: 1 })).content[0].text;
+    expect(text).toContain(`later ones: event_id: ${eventIds[4]}.`);
   });
 
   test("requires exactly one conversation selector", async () => {
@@ -930,6 +969,32 @@ describe("query_events — cut-off notice", () => {
     expect(second).not.toContain("Next page");
     expect(second).toContain("hello on the 03");
     expect(second).not.toContain("hello on the 02");
+  });
+});
+
+describe("query_events — reply size", () => {
+  beforeEach(setup);
+  afterEach(teardown);
+
+  test("a page too long for one reply ends at the budget with the next page's cursor", async () => {
+    for (let minute = 0; minute < 60; minute++) {
+      insertEvent({ source: "manual", type: "note", timestamp: `2026-07-01T10:${String(minute).padStart(2, "0")}:00.000Z`, content: `note ${minute} ${"word ".repeat(200)}` });
+    }
+    const handlers = captureHandlers(db);
+    const args = { source: "manual", full_content: true };
+
+    const first = (await handlers.get("query_events")!(args)).content[0].text;
+    expect(first.length).toBeLessThanOrEqual(REPLY_CHAR_BUDGET);
+    const last = first.trimEnd().split("\n").at(-1) ?? "";
+    expect(last).toMatch(/^Showing \d+ events, newest first\. Next page: the same arguments with cursor: "[^"]+"\.$/);
+    const shown = Number(last.match(/Showing (\d+)/)?.[1]);
+    expect(shown).toBeLessThan(50);
+
+    const cursor = last.match(/cursor: "([^"]+)"/)?.[1];
+    const second = (await handlers.get("query_events")!({ ...args, cursor })).content[0].text;
+    const ids = (text: string) => [...text.matchAll(/ #(\d+) /g)].map((m) => m[1]);
+    expect(ids(first)).toHaveLength(shown);
+    expect(ids(second).some((id) => ids(first).includes(id))).toBe(false);
   });
 });
 

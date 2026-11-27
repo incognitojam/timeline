@@ -91,8 +91,9 @@ export function hiddenEventExclusionClause(tableAlias: string = "e"): string {
 export async function hiddenEventIdsAmong(db: QueryExecutor, ids: readonly number[]): Promise<Set<number>> {
   if (ids.length === 0 || !(await hasHiddenContacts(db))) return new Set();
   const rows = await db.query<{ event_id: number }>(
-    `SELECT event_id FROM (${hiddenEventIdsSubquery()}) WHERE event_id IN (${ids.map(() => "?").join(", ")})`,
-    ...ids,
+    // One JSON array, not a placeholder per id: a page can check hundreds.
+    `SELECT event_id FROM (${hiddenEventIdsSubquery()}) WHERE event_id IN (SELECT value FROM json_each(?))`,
+    JSON.stringify(ids),
   );
   return new Set(rows.map((row) => row.event_id));
 }

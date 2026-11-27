@@ -216,30 +216,6 @@
     },
     {
       "database": "timeline",
-      "sql": "SELECT event_id FROM ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) WHERE event_id IN ( ? )",
-      "reason": "MCP named tools leave hidden contacts out with the web app's hiddenEventIdsSubquery. Its join from event_people.person to identities is on an expression, so SQLite scans identities or builds an automatic index on contacts.hidden, the same cost the web surfaces pay (see underReview).",
-      "findings": [
-        "identities:table-scan"
-      ]
-    },
-    {
-      "database": "timeline",
-      "sql": "SELECT event_id FROM ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) WHERE event_id IN ( ? , ? )",
-      "reason": "MCP named tools leave hidden contacts out with the web app's hiddenEventIdsSubquery. Its join from event_people.person to identities is on an expression, so SQLite scans identities or builds an automatic index on contacts.hidden, the same cost the web surfaces pay (see underReview).",
-      "findings": [
-        "identities:table-scan"
-      ]
-    },
-    {
-      "database": "timeline",
-      "sql": "SELECT event_id FROM ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) WHERE event_id IN ( ? , ? , ? , ? , ? )",
-      "reason": "MCP named tools leave hidden contacts out with the web app's hiddenEventIdsSubquery. Its join from event_people.person to identities is on an expression, so SQLite scans identities or builds an automatic index on contacts.hidden, the same cost the web surfaces pay (see underReview).",
-      "findings": [
-        "contacts:automatic-index"
-      ]
-    },
-    {
-      "database": "timeline",
       "sql": "SELECT COUNT ( * ) AS count FROM events WHERE conversation_id = ? AND source = ? AND id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 )",
       "reason": "MCP named tools leave hidden contacts out with the web app's hiddenEventIdsSubquery. Its join from event_people.person to identities is on an expression, so SQLite scans identities or builds an automatic index on contacts.hidden, the same cost the web surfaces pay (see underReview).",
       "findings": [
@@ -281,19 +257,11 @@
     },
     {
       "database": "timeline",
-      "sql": "SELECT * FROM events WHERE conversation_id = ? AND id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) ORDER BY timestamp DESC LIMIT ?",
+      "sql": "SELECT * FROM events WHERE conversation_id = ? AND id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) ORDER BY timestamp DESC , id DESC LIMIT ?",
       "reason": "As above for the hidden-contact exclusion; export_conversation by conversation_id alone has no source to lead an index with, as before this exclusion (see underReview).",
       "findings": [
         "contacts:automatic-index",
         "events:index-scan"
-      ]
-    },
-    {
-      "database": "timeline",
-      "sql": "SELECT event_id FROM ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) WHERE event_id IN ( ? , ? , ? )",
-      "reason": "MCP named tools leave hidden contacts out with the web app's hiddenEventIdsSubquery. Its join from event_people.person to identities is on an expression, so SQLite scans identities or builds an automatic index on contacts.hidden, the same cost the web surfaces pay (see underReview).",
-      "findings": [
-        "identities:table-scan"
       ]
     },
     {
@@ -342,6 +310,87 @@
       "reason": "MCP named tools leave hidden contacts out with the web app's hiddenEventIdsSubquery. Its join from event_people.person to identities is on an expression, so SQLite scans identities or builds an automatic index on contacts.hidden, the same cost the web surfaces pay (see underReview).",
       "findings": [
         "contacts:automatic-index"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT * FROM events WHERE conversation_id = ? AND ( timestamp < ? OR ( timestamp = ? AND id < ? ) ) ORDER BY timestamp DESC , id DESC LIMIT ?",
+      "reason": "export_conversation's next page by conversation id alone, which no index leads with; the same scan as the first page, bounded by LIMIT.",
+      "findings": [
+        "events:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT event_id FROM ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) WHERE event_id IN ( SELECT value FROM json_each ( ? ) )",
+      "reason": "MCP named tools leave hidden contacts out with the web app's hiddenEventIdsSubquery, checking which of the events about to be shown are hidden; the ids come as one JSON array so any number of them is one statement.",
+      "findings": [
+        "contacts:automatic-index"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT COUNT ( * ) AS count FROM events WHERE conversation_id = ? AND id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) AND ( timestamp < ? OR ( timestamp = ? AND id < ? ) )",
+      "reason": "export_conversation's next page by cursor, with the hidden-contact exclusion; the same scans as its first page by conversation id.",
+      "findings": [
+        "contacts:automatic-index"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT * FROM events WHERE conversation_id = ? AND id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) AND ( timestamp < ? OR ( timestamp = ? AND id < ? ) ) ORDER BY timestamp DESC , id DESC LIMIT ?",
+      "reason": "export_conversation's next page by cursor, with the hidden-contact exclusion; the same scans as its first page by conversation id.",
+      "findings": [
+        "contacts:automatic-index",
+        "events:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT id FROM events WHERE conversation_id = ? AND source = ? AND ( timestamp > ? OR ( timestamp = ? AND id > ? ) ) AND id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) ORDER BY timestamp , id LIMIT 1",
+      "reason": "export_conversation's next later event after a cut window, one row, with the hidden-contact exclusion its transcript uses.",
+      "findings": [
+        "identities:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT * FROM events e WHERE 1 = 1 AND timestamp >= ? AND source = ? AND e . id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) ORDER BY timestamp ASC , id ASC LIMIT ?",
+      "reason": "query_events browsing from a start_date, a page and the next by cursor, with the hidden-contact exclusion; bounded by LIMIT.",
+      "findings": [
+        "identities:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT * FROM events e WHERE 1 = 1 AND timestamp >= ? AND source = ? AND ( timestamp > ? OR ( timestamp = ? AND id > ? ) ) AND e . id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) ORDER BY timestamp ASC , id ASC LIMIT ?",
+      "reason": "query_events browsing from a start_date, a page and the next by cursor, with the hidden-contact exclusion; bounded by LIMIT.",
+      "findings": [
+        "identities:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT * FROM events WHERE timestamp >= ? AND timestamp < ? AND source = ? AND source_account = ? AND conversation_id = ? AND ( type LIKE '%message%' OR type LIKE 'sms:%' OR type LIKE 'mms:%' OR type LIKE 'rcs:%' OR type LIKE 'call:%' ) AND events . id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) ORDER BY timestamp , id LIMIT ?",
+      "reason": "get_context with same_conversation, a page and the next by cursor, with the hidden-contact exclusion; the window is bounded by time and LIMIT.",
+      "findings": [
+        "identities:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT * FROM events WHERE timestamp >= ? AND timestamp < ? AND source = ? AND source_account = ? AND conversation_id = ? AND ( type LIKE '%message%' OR type LIKE 'sms:%' OR type LIKE 'mms:%' OR type LIKE 'rcs:%' OR type LIKE 'call:%' ) AND ( timestamp > ? OR ( timestamp = ? AND id > ? ) ) AND events . id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) ORDER BY timestamp , id LIMIT ?",
+      "reason": "get_context with same_conversation, a page and the next by cursor, with the hidden-contact exclusion; the window is bounded by time and LIMIT.",
+      "findings": [
+        "identities:table-scan"
+      ]
+    },
+    {
+      "database": "timeline",
+      "sql": "SELECT DISTINCT event_id FROM ( SELECT * FROM ( SELECT DISTINCT ep . event_id , ep . timestamp FROM event_people ep JOIN events e ON e . id = ep . event_id WHERE ep . person IN ( ? , ? ) AND ep . is_sender = 1 AND ( ep . timestamp < ? OR ( ep . timestamp = ? AND ep . event_id < ? ) OR ep . timestamp IS NULL ) AND e . id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) ORDER BY ep . timestamp DESC , ep . event_id DESC LIMIT ? ) UNION ALL SELECT * FROM ( SELECT DISTINCT ep . event_id , ep . timestamp FROM event_people ep JOIN events e ON e . id = ep . event_id WHERE ep . person IN ( ? , ? ) AND ep . is_sender = 0 AND ( e . type LIKE 'message:dm%' OR e . source = 'phone' ) AND ( ep . timestamp < ? OR ( ep . timestamp = ? AND ep . event_id < ? ) OR ep . timestamp IS NULL ) AND e . id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) ORDER BY ep . timestamp DESC , ep . event_id DESC LIMIT ? ) UNION ALL SELECT * FROM ( SELECT DISTINCT ep . event_id , ep . timestamp FROM event_people ep JOIN events e ON e . id = ep . event_id WHERE ep . person IN ( ? , ? ) AND ep . is_sender = 0 AND e . source = 'manual' AND ( ep . timestamp < ? OR ( ep . timestamp = ? AND ep . event_id < ? ) OR ep . timestamp IS NULL ) AND e . id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) ORDER BY ep . timestamp DESC , ep . event_id DESC LIMIT ? ) ) ORDER BY timestamp DESC , event_id DESC LIMIT ?",
+      "reason": "query_events for a contact, the next page by cursor, with the hidden-contact exclusion; the same contact search as its first page.",
+      "findings": [
+        "identities:table-scan"
       ]
     }
   ],
@@ -420,8 +469,8 @@
     },
     {
       "database": "timeline",
-      "sql": "SELECT * FROM events WHERE conversation_id = ? ORDER BY timestamp DESC LIMIT ?",
-      "reason": "found by the first run; under review",
+      "sql": "SELECT * FROM events WHERE conversation_id = ? ORDER BY timestamp DESC , id DESC LIMIT ?",
+      "reason": "found by the first run; under review. The id tiebreak lets export_conversation page back by a (timestamp, id) cursor.",
       "findings": [
         "events:index-scan"
       ]

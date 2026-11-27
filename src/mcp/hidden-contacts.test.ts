@@ -5,7 +5,7 @@ import { wrapDatabase } from "../db/pool";
 import { invalidateHiddenClauseCaches } from "../db/queries";
 import { initDb } from "../db/schema";
 import { Database } from "../db/sqlite";
-import { registerTools } from "../mcp-tools";
+import { REPLY_CHAR_BUDGET, registerTools } from "../mcp-tools";
 import { withoutHiddenContactEvents, withoutHiddenWindows } from "./hidden-contacts";
 
 type Handler = (args: Record<string, unknown>) => Promise<{ isError?: boolean; content: { text: string }[] }>;
@@ -220,5 +220,94 @@ describe("hidden contacts in the named MCP tools", () => {
 
   test("get_schema(source) does not count a hidden contact's events", async () => {
     expect(await text("get_schema", { source: "discord" })).not.toContain("message:dm");
+  });
+
+  describe("in a reply cut to fit the size budget", () => {
+    // A long group chat in which every visible message is followed by the
+    // hidden contact's, and mentions, quotes or forwards them, so whatever a
+    // cut reply shows, the event just past it is hidden.
+    const LONG = "lorem ipsum ".repeat(100);
+    const leaks = /hana|hidden_handle|\b900\b/i;
+    let visible: number[];
+    let hidden: Set<number>;
+
+    beforeEach(() => {
+      const insert = db.prepare(`
+        INSERT INTO events (source, source_id, source_account, type, timestamp, title, content, people, raw_data, conversation_id)
+        VALUES ('discord', ?, 'me', ?, ?, 'long chat', ?, ?, ?, 'long-chat')
+      `);
+      visible = [];
+      hidden = new Set();
+      for (let i = 0; i < 60; i++) {
+        const at = (offset: number) => new Date(Date.UTC(2026, 6, 4, 0, 2 * i + offset)).toISOString();
+        const quote = { content: `hana secret ${i - 1}`, author: { id: "900", username: "hidden_handle" } };
+        const [type, content, raw] = [
+          ["message:group", `vic mentions <@900> ${LONG}`, { mentions: [{ id: "900", username: "hidden_handle" }] }],
+          ["message:group", `vic replies ${LONG}`, { message_reference: { message_id: `${5000 + i - 1}` }, referenced_message: quote }],
+          ["message:group:forward", `hana secret ${i - 1}`, { message_reference: { type: 1, message_id: `${5000 + i - 1}` }, message_snapshots: [{ message: { content: `hana secret ${i - 1} ${LONG}` } }] }],
+        ][i % 3] as [string, string, object];
+        visible.push(Number(insert.run(`${6000 + i}`, type, at(0), content, '["discord:901"]', JSON.stringify(raw)).lastInsertRowid));
+        // Vic's own message filed under them too: hidden, though it is Vic's.
+        hidden.add(Number(insert.run(`${7000 + i}`, "message:group", at(1), `vic tells hana ${i}`, '["discord:901", "discord:900"]', "{}").lastInsertRowid));
+        hidden.add(Number(insert.run(`${5000 + i}`, "message:group", at(1), `hana secret ${i} ${LONG}`, '["discord:900"]', "{}").lastInsertRowid));
+      }
+      invalidateHiddenClauseCaches();
+    });
+
+    const cursorId = (reply: string) => Number(reply.match(/cursor: "[^"]*_(\d+)"/)?.[1]);
+
+    test("export_conversation shows, counts and points to none of the hidden contact's messages", async () => {
+      let cursor: string | undefined;
+      let shown = 0;
+      for (let page = 0; page < 10; page++) {
+        const reply = await text("export_conversation", { conversation_id: "long-chat", cursor });
+        expect(reply.length).toBeLessThanOrEqual(REPLY_CHAR_BUDGET);
+        expect(reply).not.toMatch(leaks);
+        shown += Number(reply.match(/^Events: (\d+)$/m)?.[1]);
+        cursor = reply.match(/cursor: "([^"]+)"/)?.[1];
+        if (!cursor) break;
+        if (page === 0) expect(reply).toMatch(/Showing the newest \d+ of 60 events\. Next page: [^\n]*cursor: "[^"]+"\.$/);
+        expect(hidden.has(cursorId(reply))).toBe(false);
+      }
+      expect(shown).toBe(60);
+
+      // Around an event, the later event it names must be a visible one too.
+      const around = await text("export_conversation", { event_id: visible[20] });
+      expect(around).not.toMatch(leaks);
+      expect(around).toMatch(/Showing \d+ of 60 events around event/);
+      const later = Number(around.match(/later ones: event_id: (\d+)/)?.[1]);
+      expect(visible).toContain(later);
+      expect(hidden.has(cursorId(around))).toBe(false);
+    });
+
+    test("query_events and get_context show, count and page past none of the hidden contact's events", async () => {
+      const walk = async (name: string, args: Record<string, unknown>) => {
+        const seen: number[] = [];
+        let first = "";
+        let cursor: string | undefined;
+        for (let page = 0; page < 10; page++) {
+          const reply = await text(name, { ...args, full_content: true, limit: 500, cursor });
+          expect(reply.length).toBeLessThanOrEqual(REPLY_CHAR_BUDGET);
+          expect(reply).not.toMatch(leaks);
+          seen.push(...[...reply.matchAll(/^\d\d:\d\d #(\d+)/gm)].map((m) => Number(m[1])));
+          first ||= reply;
+          if (page === 0) expect(reply.trimEnd()).toMatch(/Next page: the same arguments with cursor: "[^"]+"\.$/);
+          cursor = reply.match(/cursor: "([^"]+)"/)?.[1];
+          if (!cursor) return { seen, first };
+          expect(hidden.has(cursorId(reply))).toBe(false);
+        }
+        throw new Error("did not reach the last page");
+      };
+      for (const [name, args] of [
+        ["query_events", { source: "discord", start_date: "2026-07-04" }],
+        ["get_context", { event_id: visible[30], hours_window: 24, same_conversation: true }],
+      ] as const) {
+        expect((await walk(name, args)).seen).toEqual(visible);
+      }
+      // A contact's count is of the events that can be shown, which the pages then show.
+      const { seen, first } = await walk("query_events", { contact: "Vic Visible" });
+      expect(seen.some((id) => hidden.has(id))).toBe(false);
+      expect(first).toContain(`Showing ${first.match(/Showing (\d+)/)?.[1]} of ${seen.length} events`);
+    });
   });
 });
