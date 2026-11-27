@@ -50,7 +50,7 @@ import {
 } from "./db/queries";
 import type { TimelineEvent } from "./db/schema";
 import { notConfiguredMessage } from "./embeddings/config";
-import { type SemanticSearch, searchEmbeddings } from "./embeddings/search";
+import { formatWindowHit, type SemanticSearch, searchEmbeddingsWithWindows } from "./embeddings/search";
 import { exportConversation } from "./export/export";
 import {
   getAttachmentDescription,
@@ -1348,7 +1348,7 @@ Tips:
     "semantic_search",
     `Search timeline events by *meaning* using vector embeddings, complementing query_events (which does keyword/FTS matching). Reach for this on conceptual queries where the exact words may not appear in the events — e.g. "times I felt burned out", "planning a trip abroad", "conversations about moving house". Results are ranked by similarity, closest first.
 
-Requires embeddings to be configured and an index to be built (see docs/user/embeddings.md). When embeddings aren't configured this returns a short setup message instead of results.
+Requires embeddings to be configured and an index to be built (see docs/user/embeddings.md). When embeddings aren't configured this returns a short setup message instead of results. Indexed conversation windows follow the events, each with an #id for export_conversation.
 
 ${idHint}`,
     {
@@ -1370,9 +1370,11 @@ ${idHint}`,
       }
 
       const candidateLimit = Math.min(limit * 10, 250);
-      let hits: Awaited<ReturnType<typeof searchEmbeddings>>;
+      let hits: Awaited<ReturnType<typeof searchEmbeddingsWithWindows>>["hits"];
+      let windows: Awaited<ReturnType<typeof searchEmbeddingsWithWindows>>["windows"];
+      let windowsError: string | undefined;
       try {
-        hits = await searchEmbeddings(options.semanticSearch, query, candidateLimit);
+        ({ hits, windows, windowsError } = await searchEmbeddingsWithWindows(options.semanticSearch, query, candidateLimit, limit));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return {
@@ -1381,11 +1383,16 @@ ${idHint}`,
         };
       }
 
+      // Present only once a conversation-window pilot has indexed some windows.
+      const windowSection = windows.length > 0
+        ? `\n\n${windows.length} conversation window(s) most similar, closest first; each is a stretch of one conversation, and its #id opens it with export_conversation:\n${windows.map(formatWindowHit).join("\n")}`
+        : windowsError ? `\n\nConversation windows could not be searched: ${windowsError}` : "";
+
       if (hits.length === 0) {
         return {
           content: [{
             type: "text" as const,
-            text: `No events found near "${query}". The index may be empty for this model — run \`bun run embeddings index\` first.`,
+            text: `No events found near "${query}". The index may be empty for this model — run \`bun run embeddings index\` first.${windowSection}`,
           }],
         };
       }
@@ -1404,7 +1411,7 @@ ${idHint}`,
         return {
           content: [{
             type: "text" as const,
-            text: `Semantic search found indexed vector hits for "${query}", but none of their events still exist in timeline.db. The embeddings index may be stale — run \`bun run embeddings index\` after refreshing the database.`,
+            text: `Semantic search found indexed vector hits for "${query}", but none of their events still exist in timeline.db. The embeddings index may be stale — run \`bun run embeddings index\` after refreshing the database.${windowSection}`,
           }],
         };
       }
@@ -1413,11 +1420,10 @@ ${idHint}`,
         ? ` Skipped ${missingCount} indexed hit(s) whose events no longer exist in timeline.db.`
         : "";
       const header = `${events.length} event(s) most similar to "${query}", closest first (nearest matches by meaning, not exact).${staleNote}\n\n`;
-
       return {
         content: [{
           type: "text" as const,
-          text: header + (await formatEvents(db, events, full_content)),
+          text: header + (await formatEvents(db, events, full_content)) + windowSection,
         }],
       };
     })

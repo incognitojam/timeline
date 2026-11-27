@@ -1296,7 +1296,16 @@ describe("embeddings index command", () => {
     let requests = 0;
     const server = Bun.serve({ port: 0, fetch: request => options.respond(requests++, request) });
     const limit = options.limit ?? 1;
-    const counts: CliIndexCounts = { limit, selected: 0, created: 0, reused: 0, embedded: 0, skipped: 0, errors: 0 };
+    const counts: CliIndexCounts = {
+      limit,
+      selected: 0,
+      created: 0,
+      reused: 0,
+      embedded: 0,
+      skipped: 0,
+      errors: 0,
+      embeddedBytes: 0,
+    };
     try {
       const modelConfig = resolveEmbeddingProfile({
         base_url: `${server.url}v1`,

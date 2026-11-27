@@ -7,7 +7,9 @@
  * Idempotent: cases whose name already exists are skipped, so re-runs are safe.
  * Fixture `filter` expectations (aggregate targets like an artist-month) import
  * as ranges with the filter detail in the note; `todo` cases import with no
- * expectations, to be labelled in the /eval UI.
+ * expectations, to be labelled in the /eval UI. `conversations` lists every
+ * conversation a query should find, each imported as a range carrying its
+ * conversation_id, which eval-semantic-search scores as conversation coverage.
  */
 
 import { readFileSync } from "node:fs";
@@ -48,6 +50,7 @@ interface FixtureCase {
   expect: {
     events?: FixtureEventRef[];
     range?: FixtureRange;
+    conversations?: FixtureRange[];
     filter?: FixtureFilter;
     none?: boolean;
     todo?: string;
@@ -96,8 +99,10 @@ for (const fixtureCase of fixture.cases) {
     });
   }
 
-  const range = fixtureCase.expect.range;
-  if (range) {
+  for (const range of [
+    ...(fixtureCase.expect.range ? [fixtureCase.expect.range] : []),
+    ...(fixtureCase.expect.conversations ?? []),
+  ]) {
     addEvalExpectation(db, created.id, {
       kind: "range",
       source: range.source,

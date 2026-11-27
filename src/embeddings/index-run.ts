@@ -5,6 +5,7 @@ import { createEmbeddingClient, type EmbeddingProfileConfig } from "./config";
 import { buildCorpusWhere, type CorpusFilterTerm } from "./corpus";
 import { ensureContentProfile, ensureModelProfile, getEmbeddingsDb, initEmbeddingsDb } from "./db";
 import { type IndexCounts, indexEvents } from "./indexer";
+import { conversationWindowProfile, indexConversationWindows, type WindowIndexCounts, type WindowIndexOutcome } from "./windows";
 
 // A whole source (no `type`) or a single source/type pair. SOURCE:TYPE values
 // split on the first colon so event types containing colons (e.g.
@@ -137,6 +138,68 @@ export function runIndex(run: IndexRun, counts: CliIndexCounts): Effect.Effect<v
   return program.pipe(
     // A fatal error (bad config / dead provider) aborts after the first failure
     // instead of hammering the provider once per event.
+    Effect.catchTag("FatalEmbeddingError", error =>
+      Effect.sync(() => {
+        counts.errors++;
+        console.error(error.message);
+      })
+    )
+  );
+}
+
+export interface WindowIndexRun {
+  timelineDbPath: string;
+  embeddingsDbPath: string;
+  modelConfig: EmbeddingProfileConfig;
+  source: string;
+  /** Stop starting new work once this many windows have been handled. */
+  limit: number;
+  concurrency: number;
+  batchSize: number;
+}
+
+export type CliWindowIndexCounts = WindowIndexCounts & { source: string; limit: number } & Partial<WindowIndexOutcome>;
+
+/**
+ * Window one source's conversations, as the background indexer does, through
+ * the same cursor and pending ranges, until caught up or `limit` windows have
+ * been handled. A fatal error is counted and ends the run.
+ */
+export function runWindowIndex(run: WindowIndexRun, counts: CliWindowIndexCounts): Effect.Effect<void> {
+  const program = Effect.gen(function* () {
+    const embeddingsDb = yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        const db = getEmbeddingsDb(run.embeddingsDbPath);
+        initEmbeddingsDb(db);
+        return db;
+      }),
+      db => Effect.sync(() => db.close())
+    );
+    const timelineDb = yield* Effect.acquireRelease(
+      Effect.sync(() => new Database(run.timelineDbPath, { readonly: true })),
+      db => Effect.sync(() => db.close())
+    );
+    const outcome = yield* indexConversationWindows(
+      {
+        embeddingsDb,
+        client: createEmbeddingClient(run.modelConfig),
+        contentProfile: ensureContentProfile(embeddingsDb, conversationWindowProfile(run.source)),
+        modelProfile: ensureModelProfile(embeddingsDb, run.modelConfig),
+      },
+      timelineDb,
+      {
+        source: run.source,
+        batchSize: run.batchSize,
+        concurrency: run.concurrency,
+        deadline: Number.POSITIVE_INFINITY,
+        maxWindows: run.limit,
+      },
+      counts
+    );
+    Object.assign(counts, outcome);
+  }).pipe(Effect.scoped);
+
+  return program.pipe(
     Effect.catchTag("FatalEmbeddingError", error =>
       Effect.sync(() => {
         counts.errors++;

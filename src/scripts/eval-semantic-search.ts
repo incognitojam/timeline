@@ -1,7 +1,12 @@
 /**
  * Score the labelled retrieval-eval corpus against the current semantic index.
  *
- * Usage: bun run src/scripts/eval-semantic-search.ts [--json]
+ * Usage: bun run src/scripts/eval-semantic-search.ts [--json] [--mode=events|windows|both] [--k=N]
+ *
+ * --mode picks the hits scored: single events (the default), conversation
+ * windows, or both merged by distance. --k (default 10) is how deep
+ * conversation coverage looks, for cases that list the conversations a query
+ * should find.
  */
 
 import { existsSync } from "node:fs";
@@ -26,16 +31,31 @@ import {
   getSemanticSearchCandidateIds,
   postProcessSemanticSearch,
   type SemanticSearch,
-  searchEmbeddings,
+  searchEmbeddingsWithWindows,
 } from "../embeddings/search";
-import { aggregateEvalQueryScores, scoreEvalQuery, type EvalQueryScore } from "../eval/scoring";
+import {
+  aggregateEvalQueryScores,
+  type ConversationCoverage,
+  type EvalQueryScore,
+  type EvalSearchHit,
+  scoreConversationCoverage,
+  scoreEvalQuery,
+} from "../eval/scoring";
+
+type EvalMode = "events" | "windows" | "both";
+
+interface ScoredHit extends EvalSearchHit {
+  kind: "event" | "window";
+  distance: number;
+}
 
 interface IndexedContentProfile extends Pick<ContentProfile, "name" | "version"> {}
 
 interface QueryResult extends EvalQueryScore {
   id: number;
   text: string;
-  hits: Array<{ event_id: number; distance: number }>;
+  hits: Array<{ kind: ScoredHit["kind"]; event_id: number; distance: number }>;
+  conversation_coverage: ConversationCoverage | null;
 }
 
 interface CaseResult {
@@ -48,9 +68,12 @@ interface CaseResult {
   recall_at_10: number | null;
   mrr: number | null;
   negatives_retrieved: number;
+  conversations_at_k: number | null;
 }
 
 interface EvalRunResult {
+  mode: EvalMode;
+  k: number;
   model_profile: Pick<ModelProfile, "name" | "model" | "dimensions">;
   content_profiles: IndexedContentProfile[];
   cases: CaseResult[];
@@ -61,7 +84,15 @@ interface EvalRunResult {
     recall_at_10: number | null;
     mrr: number | null;
     negatives_retrieved: number;
+    conversations_at_k: number | null;
   };
+}
+
+/** Mean share of expected conversations found, over the queries whose case lists any. */
+function meanCoverage(queries: QueryResult[]): number | null {
+  const covered = queries.flatMap((query) => (query.conversation_coverage ? [query.conversation_coverage] : []));
+  if (covered.length === 0) return null;
+  return covered.reduce((total, coverage) => total + coverage.found / coverage.expected, 0) / covered.length;
 }
 
 function requireDatabase(path: string, label: string): void {
@@ -143,7 +174,7 @@ function loadIndexProfiles(embeddingsConfig: EmbeddingsConfig | undefined, embed
   }
 }
 
-async function run(): Promise<EvalRunResult> {
+async function run(mode: EvalMode, k: number): Promise<EvalRunResult> {
   // Both must precede every bun:sqlite open in this process: setCustomSQLite
   // throws once SQLite has auto-loaded, the eval tables are read before the
   // sqlite-vec-backed embeddings DB, and TIMELINE_SQLITE_LIBRARY_PATH usually
@@ -159,6 +190,10 @@ async function run(): Promise<EvalRunResult> {
   requireDatabase(embeddingsPath, "Embeddings database");
   const { modelProfile, contentProfiles } = loadIndexProfiles(embeddingsConfig, embeddingsPath);
   if (!embeddingsConfig) throw new Error(notConfiguredMessage());
+  if (mode !== "events" && !contentProfiles.some((profile) => profile.name.startsWith("conversation-window:"))) {
+    throw new Error(`--mode=${mode} needs conversation windows, and ${embeddingsPath} has none for this model`);
+  }
+  const depth = Math.max(10, k);
   const vectorDb = openVectorSearchDb(embeddingsPath);
   const search: SemanticSearch = { config: embeddingsConfig, embeddingsDb: async () => wrapDatabase(vectorDb) };
   const timelineDb = openReadonlyTimelineDb();
@@ -170,21 +205,44 @@ async function run(): Promise<EvalRunResult> {
     for (const evalCase of evalCases) {
       const queries: QueryResult[] = [];
       for (const query of evalCase.queries) {
-        const hits = await searchEmbeddings(search, query.text, 100);
-        const { events: candidates } = await hydrateEventsById(readDb, getSemanticSearchCandidateIds(hits));
-        const visibleHits = postProcessSemanticSearch(hits, candidates, excludedSources, 10);
-        const score = scoreEvalQuery(
-          evalCase.expectations,
-          visibleHits.map((hit) => ({
-            event_id: hit.id,
-            conversation_id: hit.conversation_id,
-            timestamp: hit.timestamp,
-          })),
-        );
+        // Fetch past depth, since excluded sources are dropped after the nearest-neighbour search.
+        const candidates = Math.max(100, depth * 2);
+        const { hits, windows } = await searchEmbeddingsWithWindows(search, query.text, candidates, candidates);
+        const { events } = await hydrateEventsById(readDb, getSemanticSearchCandidateIds(hits));
+        const eventHits: ScoredHit[] = postProcessSemanticSearch(hits, events, excludedSources, depth).map((hit) => ({
+          kind: "event",
+          distance: hit.distance,
+          event_id: hit.id,
+          source: hit.source,
+          conversation_id: hit.conversation_id,
+          timestamp: hit.timestamp,
+        }));
+        const windowHits: ScoredHit[] = windows
+          .filter((hit) => !excludedSources.has(hit.source))
+          .flatMap((hit) => {
+            const first = hit.eventIds[0];
+            if (first === undefined) return [];
+            return [{
+              kind: "window" as const,
+              distance: hit.distance,
+              event_id: first,
+              event_ids: hit.eventIds,
+              source: hit.source,
+              conversation_id: hit.conversationId,
+              timestamp: hit.start,
+              end_timestamp: hit.end,
+            }];
+          });
+        // Both kinds share the model's vector space, so "both" merges them by distance.
+        const scored = (mode === "events" ? eventHits : mode === "windows" ? windowHits : [...eventHits, ...windowHits])
+          .sort((left, right) => left.distance - right.distance)
+          .slice(0, depth);
+        const score = scoreEvalQuery(evalCase.expectations, scored.slice(0, 10));
         queries.push({
           id: query.id,
           text: query.text,
-          hits: visibleHits.map((hit) => ({ event_id: hit.id, distance: hit.distance })),
+          hits: scored.slice(0, 10).map((hit) => ({ kind: hit.kind, event_id: hit.event_id, distance: hit.distance })),
+          conversation_coverage: scoreConversationCoverage(evalCase.expectations, scored, k),
           ...score,
         });
       }
@@ -199,11 +257,14 @@ async function run(): Promise<EvalRunResult> {
         recall_at_10: aggregate.recall_at_10,
         mrr: aggregate.mrr,
         negatives_retrieved: queries.reduce((count, query) => count + query.negatives_retrieved, 0),
+        conversations_at_k: meanCoverage(queries),
       });
     }
     const queries = cases.flatMap((evalCase) => evalCase.queries);
     const aggregate = aggregateEvalQueryScores(queries);
     return {
+      mode,
+      k,
       model_profile: modelProfile,
       content_profiles: contentProfiles,
       cases,
@@ -214,6 +275,7 @@ async function run(): Promise<EvalRunResult> {
         recall_at_10: aggregate.recall_at_10,
         mrr: aggregate.mrr,
         negatives_retrieved: queries.reduce((count, query) => count + query.negatives_retrieved, 0),
+        conversations_at_k: meanCoverage(queries),
       },
     };
   } finally {
@@ -226,28 +288,37 @@ function printHuman(result: EvalRunResult): void {
   const contentProfiles = result.content_profiles.map((profile) => `${profile.name}:v${profile.version}`).join(", ");
   console.log(`Embedding model: ${result.model_profile.name} (${result.model_profile.model}, ${result.model_profile.dimensions}d)`);
   console.log(`Content profile: ${contentProfiles}`);
-  console.log("\nCase | Query | Recall@10 | MRR rank | Negatives");
-  console.log("--- | --- | ---: | ---: | ---:");
+  console.log(`Hits scored: ${result.mode}`);
+  console.log(`\nCase | Query | Recall@10 | MRR rank | Negatives | Conversations@${result.k}`);
+  console.log("--- | --- | ---: | ---: | ---: | ---:");
   for (const evalCase of result.cases) {
     for (const query of evalCase.queries) {
+      const coverage = query.conversation_coverage;
       console.log(
-        `${evalCase.name} | ${query.text} | ${formatMetric(query.recall_at_10)}${query.skip_reason ? ` (${query.skip_reason})` : ""} | ${query.first_grade_2_rank ?? "-"} | ${query.negatives_retrieved}`,
+        `${evalCase.name} | ${query.text} | ${formatMetric(query.recall_at_10)}${query.skip_reason ? ` (${query.skip_reason})` : ""} | ${query.first_grade_2_rank ?? "-"} | ${query.negatives_retrieved} | ${coverage ? `${coverage.found}/${coverage.expected}` : "-"}`,
       );
     }
     console.log(
-      `${evalCase.name} (average) | ${evalCase.scored_query_count} scored, ${evalCase.skipped_query_count} skipped | ${formatMetric(evalCase.recall_at_10)} | ${formatMetric(evalCase.mrr)} | ${evalCase.negatives_retrieved}`,
+      `${evalCase.name} (average) | ${evalCase.scored_query_count} scored, ${evalCase.skipped_query_count} skipped | ${formatMetric(evalCase.recall_at_10)} | ${formatMetric(evalCase.mrr)} | ${evalCase.negatives_retrieved} | ${formatMetric(evalCase.conversations_at_k)}`,
     );
   }
   console.log(
-    `\nOverall (${result.overall.query_count} scored queries, ${result.overall.skipped_query_count} skipped unlabelled of ${result.overall.total_query_count} total): recall@10 ${formatMetric(result.overall.recall_at_10)}, MRR ${formatMetric(result.overall.mrr)}, negatives ${result.overall.negatives_retrieved}`,
+    `\nOverall (${result.overall.query_count} scored queries, ${result.overall.skipped_query_count} skipped unlabelled of ${result.overall.total_query_count} total): recall@10 ${formatMetric(result.overall.recall_at_10)}, MRR ${formatMetric(result.overall.mrr)}, negatives ${result.overall.negatives_retrieved}, conversations@${result.k} ${formatMetric(result.overall.conversations_at_k)}`,
   );
 }
 
+const USAGE = "Usage: bun run src/scripts/eval-semantic-search.ts [--json] [--mode=events|windows|both] [--k=N]";
 const args = process.argv.slice(2);
-if (args.some((arg) => arg !== "--json")) {
-  throw new Error("Usage: bun run src/scripts/eval-semantic-search.ts [--json]");
+let mode: EvalMode = "events";
+let k = 10;
+for (const arg of args) {
+  if (arg === "--json") continue;
+  const [flag, value] = arg.split("=", 2);
+  if (flag === "--mode" && (value === "events" || value === "windows" || value === "both")) mode = value;
+  else if (flag === "--k" && value && Number.isInteger(Number(value)) && Number(value) > 0) k = Number(value);
+  else throw new Error(USAGE);
 }
 
-const result = await run();
+const result = await run(mode, k);
 if (args.includes("--json")) console.log(JSON.stringify(result, null, 2));
 else printHuman(result);

@@ -16,12 +16,23 @@ const vecIt = it.skipIf(skipWithoutSqliteVec);
 
 describe("embeddings sync settings", () => {
   it("defaults the time budget and concurrency and rejects invalid values", () => {
-    expect(parseEmbeddingsSyncSettings()).toEqual({ timeBudgetMs: 60_000, concurrency: 4, indexImages: false });
-    expect(parseEmbeddingsSyncSettings({ concurrency: 2, time_budget_ms: 5_000, index_images: true })).toEqual({
+    expect(parseEmbeddingsSyncSettings()).toEqual({
+      timeBudgetMs: 60_000,
+      concurrency: 4,
+      indexImages: false,
+      windowSource: null,
+    });
+    expect(
+      parseEmbeddingsSyncSettings({ concurrency: 2, time_budget_ms: 5_000, index_images: true, conversation_windows: "discord" })
+    ).toEqual({
       timeBudgetMs: 5_000,
       concurrency: 2,
       indexImages: true,
+      windowSource: "discord",
     });
+    expect(parseEmbeddingsSyncSettings({ conversation_windows: "off" })).toMatchObject({ windowSource: null });
+    // Only searchable sources with conversations can be windowed.
+    expect(parseEmbeddingsSyncSettings({ conversation_windows: "spotify" })).toBe("invalid conversation_windows setting");
     expect(parseEmbeddingsSyncSettings({ index_images: "yes" })).toBe("invalid index_images setting");
     expect(parseEmbeddingsSyncSettings({ concurrency: 0 })).toBe("invalid concurrency setting");
     expect(parseEmbeddingsSyncSettings({ time_budget_ms: "60s" })).toBe("invalid time_budget_ms setting");

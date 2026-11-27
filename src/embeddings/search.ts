@@ -3,7 +3,8 @@ import type { EmbeddingsConfig } from "../config";
 import type { QueryExecutor } from "../db/pool";
 import { NOISY_MACHINE_SOURCES } from "../shared/noisy-sources";
 import { createEmbeddingClient, resolveEmbeddingProfile } from "./config";
-import { queryVectors, readModelProfile, type SearchHit } from "./db";
+import { queryVectors, queryWindowVectors, readModelProfile, type SearchHit, type WindowSearchHit } from "./db";
+import { parseConversationKey } from "./windows";
 
 /**
  * Sources excluded from semantic search results by default: AI-agent session
@@ -35,13 +36,7 @@ export function openOnFirstUse(open: () => Promise<QueryExecutor>): () => Promis
   };
 }
 
-/**
- * Embed a free-text query with the configured model and return the nearest
- * indexed events from embeddings.db, closest first. A document may map to more
- * than one event, so the result can contain more than `limit` rows; callers that
- * want at most `limit` events should dedupe and cap.
- */
-export async function searchEmbeddings(search: SemanticSearch, query: string, limit: number): Promise<SearchHit[]> {
+async function embedSearchQuery(search: SemanticSearch, query: string) {
   const modelConfig = resolveEmbeddingProfile(search.config);
   const db = await search.embeddingsDb();
   const modelProfile = await readModelProfile(db, modelConfig.name);
@@ -59,7 +54,80 @@ export async function searchEmbeddings(search: SemanticSearch, query: string, li
   }
   const client = createEmbeddingClient(modelConfig);
   const vector = await Effect.runPromise(client.embedQuery(query));
+  return { db, modelProfile, vector };
+}
+
+/**
+ * Embed a free-text query with the configured model and return the nearest
+ * indexed events from embeddings.db, closest first. A document may map to more
+ * than one event, so the result can contain more than `limit` rows; callers that
+ * want at most `limit` events should dedupe and cap.
+ */
+export async function searchEmbeddings(search: SemanticSearch, query: string, limit: number): Promise<SearchHit[]> {
+  const { db, modelProfile, vector } = await embedSearchQuery(search, query);
   return queryVectors(db, vector, modelProfile, limit);
+}
+
+/** A conversation window near the query: one stretch of one conversation. */
+export interface WindowHit {
+  distance: number;
+  source: string;
+  sourceAccount: string | null;
+  conversationId: string;
+  title: string | null;
+  start: string;
+  end: string;
+  /** The window's own messages, in order; the first is the example `#id` shown for it. */
+  eventIds: number[];
+  snippet: string | null;
+}
+
+/**
+ * searchEmbeddings, plus the nearest conversation windows ranked on their
+ * own, from one embedding of the query. There are no window hits until a
+ * window pilot has indexed some.
+ */
+export async function searchEmbeddingsWithWindows(
+  search: SemanticSearch,
+  query: string,
+  limit: number,
+  windowLimit: number,
+): Promise<{ hits: SearchHit[]; windows: WindowHit[]; windowsError?: string }> {
+  const { db, modelProfile, vector } = await embedSearchQuery(search, query);
+  const hits = await queryVectors(db, vector, modelProfile, limit);
+  // The pilot's windows must not take the event results down with them.
+  try {
+    return { hits, windows: (await queryWindowVectors(db, vector, modelProfile, windowLimit)).map(toWindowHit) };
+  } catch (error) {
+    return { hits, windows: [], windowsError: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+export function toWindowHit(hit: WindowSearchHit): WindowHit {
+  const conversation = parseConversationKey(hit.conversation_key);
+  const eventIds: unknown = JSON.parse(hit.primary_event_ids);
+  if (!Array.isArray(eventIds) || !eventIds.every((id) => typeof id === "number")) {
+    throw new Error(`Window document ${hit.document_id} has invalid event ids`);
+  }
+  return {
+    distance: hit.distance,
+    source: conversation.source,
+    sourceAccount: conversation.sourceAccount,
+    conversationId: conversation.conversationId,
+    title: hit.title,
+    start: hit.start_timestamp,
+    end: hit.end_timestamp,
+    eventIds,
+    snippet: hit.snippet,
+  };
+}
+
+/** One line per window hit: `window discord "Rowan" 2023-12-11 03:07–03:13 #5 conversation 1039…: excerpt` */
+export function formatWindowHit(hit: WindowHit): string {
+  const start = hit.start.slice(0, 16).replace("T", " ");
+  const end = hit.end.slice(0, 10) === hit.start.slice(0, 10) ? hit.end.slice(11, 16) : hit.end.slice(0, 16).replace("T", " ");
+  const excerpt = (hit.snippet ?? "").replace(/\s+/g, " ").slice(0, 120);
+  return `window ${hit.source} "${hit.title ?? "(untitled)"}" ${start}–${end} #${hit.eventIds[0]} conversation ${hit.conversationId}: ${excerpt}`;
 }
 
 export interface SemanticSearchCandidate {

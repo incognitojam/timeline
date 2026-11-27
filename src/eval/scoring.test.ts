@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { EvalExpectation } from "../db/eval";
-import { aggregateEvalQueryScores, matchesEvalExpectation, scoreEvalQuery } from "./scoring";
+import { aggregateEvalQueryScores, matchesEvalExpectation, scoreConversationCoverage, scoreEvalQuery } from "./scoring";
 
 function expectation(overrides: Partial<EvalExpectation>): EvalExpectation {
   return {
@@ -118,5 +118,46 @@ describe("retrieval eval scoring", () => {
       mrr: 0,
       first_grade_2_rank: null,
     });
+  });
+
+  it("matches a conversation-window hit by any of its own messages or by its span", () => {
+    const window = {
+      event_id: 7,
+      event_ids: [7, 8, 9],
+      conversation_id: "conversation-2",
+      timestamp: "2026-01-01T00:50:00Z",
+      end_timestamp: "2026-01-01T01:10:00Z",
+    };
+    expect(matchesEvalExpectation(expectation({ event_id: 9 }), window)).toBe(true);
+    expect(matchesEvalExpectation(expectation({ event_id: 10 }), window)).toBe(false);
+    // The window starts before the range and ends inside it.
+    expect(matchesEvalExpectation(expectation({
+      kind: "range",
+      event_id: null,
+      start_timestamp: "2026-01-01T01:00:00Z",
+      end_timestamp: "2026-01-01T02:00:00Z",
+    }), window)).toBe(true);
+  });
+
+  it("counts the expected conversations that reach the top k", () => {
+    const conversations = ["c1", "c2", "c3"].map((conversation_id, index) => expectation({
+      id: index + 1,
+      kind: "range",
+      event_id: null,
+      conversation_id,
+      start_timestamp: "2026-01-01T00:00:00Z",
+      end_timestamp: "2026-01-02T00:00:00Z",
+    }));
+    const hits = ["c2", "other", "c1", "c3"].map((conversation_id, index) => ({
+      event_id: index + 1,
+      conversation_id,
+      timestamp: null,
+    }));
+    expect(scoreConversationCoverage(conversations, hits, 3)).toEqual({ expected: 3, found: 2 });
+    expect(scoreConversationCoverage([expectation({ event_id: 1 })], hits, 3)).toBeNull();
+    // A conversation id is only unique within its source.
+    const discordOnly = [expectation({ kind: "range", event_id: null, source: "discord", conversation_id: "c1" })];
+    expect(scoreConversationCoverage(discordOnly, [{ event_id: 1, source: "skype", conversation_id: "c1", timestamp: null }], 3))
+      .toEqual({ expected: 1, found: 0 });
   });
 });
