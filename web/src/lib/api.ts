@@ -8,7 +8,7 @@ import type {
   MusicRecentResponse,
 } from "@platforms/spotify/shared/music";
 import type { NetworkSettings } from "@shared/network-settings";
-import type { MemoryImportLinks, MemoryImportResult, MemoryIndex, MemoryNote, MemoryVersion } from "@shared/memory";
+import type { MemoryImportLinks, MemoryImportResult, MemoryIndexWithContacts, MemoryNote, MemoryVersion } from "@shared/memory";
 import type { ReleaseStatus } from "@shared/releases";
 import type { SourceFreshness } from "@shared/source-freshness";
 import type { TimelineServiceStatus, VersionInfo } from "@shared/version";
@@ -2465,11 +2465,18 @@ function memoryNotePath(project: string, name: string, suffix = ""): string {
   return `${API_BASE}/api/memory/notes/${encodeURIComponent(name)}${suffix}${query}`;
 }
 
-export type MemoryNoteEdit = Pick<MemoryNote, "kind" | "title" | "summary" | "details">;
+/**
+ * The fields a save changes. `contactId` null unlinks the contact; it comes
+ * with whether agents could read the note before and can after, as the page
+ * said, which the server checks.
+ */
+export type MemoryNoteEdit =
+  | Partial<Pick<MemoryNote, "kind" | "title" | "summary" | "details">>
+  | { contactId: number | null; agentsCouldRead: boolean; agentsCanRead: boolean };
 
-export async function fetchMemoryIndex(signal: AbortSignal): Promise<MemoryIndex> {
+export async function fetchMemoryIndex(signal: AbortSignal): Promise<MemoryIndexWithContacts> {
   const res = await apiFetch(`${API_BASE}/api/memory`, { signal });
-  return parseApiJson<MemoryIndex>(res, "Failed to load memory");
+  return parseApiJson<MemoryIndexWithContacts>(res, "Failed to load memory");
 }
 
 export async function fetchMemoryNote(project: string, name: string, signal: AbortSignal): Promise<MemoryNote | null> {

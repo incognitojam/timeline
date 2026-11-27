@@ -25,9 +25,11 @@ import { type ClaudeMemoryNote, MEMORY_EXPORT_MAX_BYTES, mapClaudeMemory, readCl
 import {
   type MemoryContactMatch,
   type MemoryImportContact,
+  type MemoryIndexWithContacts,
   type MemoryImportNote,
   type MemoryImportResult,
   type MemoryKind,
+  type MemoryNote,
 } from "../shared/memory";
 
 const EDITABLE = ["kind", "title", "summary", "details"] as const;
@@ -150,10 +152,55 @@ function importResult(
   };
 }
 
+/**
+ * A PATCH's change to a person note's contact: `contactId`, a contact (hidden ones included, since linking to
+ * one keeps the note from agents) or null to unlink, with whether agents could read the note before and can
+ * after, as the page told the owner. Refused if either is no longer true, or if the note's contact changes
+ * before the save (`check`).
+ */
+async function contactChange(
+  contacts: QueryExecutor,
+  current: MemoryNote | null,
+  body: Record<string, unknown>,
+): Promise<{ contactId?: number | null; check?: (latest: MemoryNote) => void } | { error: string; status: 400 | 409 }> {
+  const { contactId, agentsCouldRead, agentsCanRead } = body;
+  if (contactId === undefined) return {};
+  if (contactId !== null && !Number.isSafeInteger(contactId)) return { error: "contactId must be a contact id or null", status: 400 };
+  if (typeof agentsCouldRead !== "boolean" || typeof agentsCanRead !== "boolean") {
+    return { error: "agentsCouldRead and agentsCanRead must be booleans alongside contactId", status: 400 };
+  }
+  const next = contactId as number | null;
+  const before = current?.contact_id ?? null;
+  const rows = await contacts.query<{ id: number; hidden: number }>(
+    "SELECT id, hidden FROM contacts WHERE id IN (SELECT value FROM json_each(?))",
+    JSON.stringify([before, next].filter((id) => id !== null)),
+  );
+  if (next !== null && !rows.some((row) => row.id === next)) return { error: "That contact is no longer in your contacts.", status: 400 };
+  // As agents see it: a note is readable unless its contact exists and is hidden.
+  const readable = (id: number | null) => !rows.some((row) => row.id === id && row.hidden === 1);
+  if (current && (readable(before) !== agentsCouldRead || readable(next) !== agentsCanRead)) {
+    return { error: "Whether agents can read this note has changed since the page loaded. Check the contact and choose again.", status: 409 };
+  }
+  return {
+    contactId: next,
+    check: (latest) => {
+      if (latest.contact_id !== before) throw new Error("This note's contact changed since the page loaded. Check it and choose again.");
+    },
+  };
+}
+
 /** `contacts` is timeline.db, for linking imported person notes to contacts. */
 export function createMemoryRoutes(contacts: QueryExecutor, db: () => Database = getAppStateDb) {
   return new Hono()
-    .get("/api/memory", (c) => c.json(memoryIndex(db())))
+    .get("/api/memory", async (c) => {
+      const index = memoryIndex(db());
+      const ids = [...index.account, ...index.projects.flatMap((project) => project.notes)].flatMap((note) => note.contact_id ?? []);
+      const rows = await contacts.query<{ id: number; name: string; hidden: number }>(
+        `SELECT ${CONTACT_COLUMNS} FROM contacts WHERE id IN (SELECT value FROM json_each(?))`,
+        JSON.stringify([...new Set(ids)]),
+      );
+      return c.json({ ...index, contacts: Object.fromEntries(rows.map((row) => [row.id, contactRow(row)])) } satisfies MemoryIndexWithContacts);
+    })
 
     .get("/api/memory/notes/:name", (c) => {
       const { project, name } = scope(c);
@@ -173,8 +220,10 @@ export function createMemoryRoutes(contacts: QueryExecutor, db: () => Database =
         if (typeof value !== "string") return c.json({ error: `${field} must be a string` }, 400);
         fields[field] = value;
       }
+      const contact = await contactChange(contacts, getMemoryNote(db(), project, name), body as Record<string, unknown>);
+      if ("error" in contact) return c.json({ error: contact.error }, contact.status);
       try {
-        const note = updateMemoryNote(db(), { project, name, ...fields });
+        const note = updateMemoryNote(db(), { project, name, ...fields, contactId: contact.contactId }, contact.check);
         if (!note) return c.json({ error: "Note not found" }, 404);
         return c.json({ note });
       } catch (error) {

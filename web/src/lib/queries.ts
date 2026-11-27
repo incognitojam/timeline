@@ -1409,7 +1409,16 @@ function useMemoryMutation<T, R>(mutationFn: (variables: T) => Promise<R>) {
 }
 
 export function useUpdateMemoryNote() {
-  return useMemoryMutation((v: { project: string; name: string; edit: MemoryNoteEdit }) => updateMemoryNote(v.project, v.name, v.edit));
+  const queryClient = useQueryClient();
+  return createMutation(() => ({
+    mutationFn: (v: { project: string; name: string; edit: MemoryNoteEdit }) => updateMemoryNote(v.project, v.name, v.edit),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.memoryRoot() }),
+    // A refused change to a note's contact may have met a link or a hidden contact the page had not seen: refetch both.
+    onError: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.memoryRoot() }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.contactsRoot() }),
+    ]),
+  }));
 }
 
 export function useDeleteMemoryNote() {

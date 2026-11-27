@@ -305,8 +305,10 @@ export function listMemoryVersions(db: Database, project: string, name: string):
 
 /**
  * Make a kept version the live note again, through saveMemoryNote: the note it
- * replaces is kept as a version, and a deleted note comes back. Null when no
- * version has this id.
+ * replaces is kept as a version, and a deleted note comes back. A live note
+ * keeps its contact, so restoring text never changes whether agents can read
+ * it; a deleted note comes back with the contact it had. Null when no version
+ * has this id.
  */
 export function restoreMemoryVersion(db: Database, id: number): { note: MemoryNote; created: boolean } | null {
   return db.transaction(() => {
@@ -321,14 +323,29 @@ export function restoreMemoryVersion(db: Database, id: number): { note: MemoryNo
       title: version.title,
       summary: version.summary,
       details: version.details,
-      contactId: version.contact_id,
+      contactId: getMemoryNote(db, version.project, version.name) ? undefined : version.contact_id,
     });
   }).immediate();
 }
 
-/** Update an existing note's fields; null, creating nothing, when there is no live note of that name. */
-export function updateMemoryNote(db: Database, input: SaveMemoryNoteInput): MemoryNote | null {
-  return db.transaction(() => (getMemoryNote(db, input.project, input.name) ? saveMemoryNote(db, input).note : null)).immediate();
+/**
+ * Update an existing note's fields; null, creating nothing, when there is no
+ * live note of that name. Only a note about a person can be linked to a
+ * contact, or changed to another kind while linked. `check` sees the current
+ * note first and throws to refuse the update.
+ */
+export function updateMemoryNote(db: Database, input: SaveMemoryNoteInput, check?: (current: MemoryNote) => void): MemoryNote | null {
+  return db.transaction(() => {
+    const current = getMemoryNote(db, input.project, input.name);
+    if (!current) return null;
+    check?.(current);
+    const kind = input.kind ?? current.kind;
+    const contactId = input.contactId === undefined ? current.contact_id : input.contactId;
+    if (kind !== "person" && contactId !== null && (input.contactId != null || kind !== current.kind)) {
+      throw new Error("Only a note about a person can be linked to a contact.");
+    }
+    return saveMemoryNote(db, input).note;
+  }).immediate();
 }
 
 // Projects whose list_memory leaves out the account's notes, as a JSON array in app_settings.
