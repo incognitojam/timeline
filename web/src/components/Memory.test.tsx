@@ -86,6 +86,19 @@ describe("Memory page", () => {
     expect(screen.getByRole("button", { name: "Restore" })).toBeTruthy();
   });
 
+  it("says which file Import from Claude takes before offering the picker", () => {
+    render(() => <MemoryView />);
+    expect(screen.queryByRole("region", { name: "Import from Claude" })).toBeNull();
+    screen.getByRole("button", { name: "Import from Claude" }).click();
+    const panel = screen.getByRole("region", { name: "Import from Claude" });
+    expect(panel.textContent).toContain("Settings → Your Claude → Memory");
+    expect(panel.textContent).toContain("claude-memory-<date>.zip");
+    expect(panel.textContent).toContain("memories-000.zip");
+    expect(within(panel).getByRole("button", { name: "Choose file" })).toBeTruthy();
+    within(panel).getByRole("button", { name: "Cancel" }).click();
+    expect(screen.queryByRole("region", { name: "Import from Claude" })).toBeNull();
+  });
+
   it("links [[name]] to the project's note, falls back to the account, and leaves a missing note as text", async () => {
     render(() => <MemoryNoteView />);
     const watering = await screen.findByRole("link", { name: "Watering" });

@@ -1,11 +1,11 @@
 import type { MemoryNote, MemoryProject } from "@shared/memory";
 import { A } from "@solidjs/router";
-import { For, Index, Show } from "solid-js";
+import { createSignal, For, Index, Show } from "solid-js";
 import { ACCOUNT_GROUPS, formatMemoryDate, projectNotesInOrder, scopeLabel } from "../lib/memory";
 import { useMemoryIndex, useRestoreMemoryVersion, useSetProjectUsesAccountMemory } from "../lib/queries";
 import { buildMemoryNoteUrl } from "../lib/routes";
 import { IconChevronRight, IconPsychology } from "../ui/icons";
-import MemoryImport, { MEMORY_IMPORT_INPUT_ID } from "./MemoryImport";
+import MemoryImport from "./MemoryImport";
 
 const HEADING = "font-mono text-[0.625rem] uppercase tracking-[0.16em] text-muted-foreground";
 const LIST = "divide-y divide-border overflow-hidden rounded-lg border border-border bg-card";
@@ -79,6 +79,7 @@ function ProjectGroup(props: { project: MemoryProject }) {
 export default function MemoryView() {
   const query = useMemoryIndex();
   const restore = useRestoreMemoryVersion();
+  const [importing, setImporting] = createSignal(false);
   const isEmpty = () => {
     const data = query.data;
     return data !== undefined && data.account.length === 0 && data.projects.length === 0 && data.deleted.length === 0;
@@ -97,24 +98,14 @@ export default function MemoryView() {
               What AI agents have saved about you, shared by every agent connected to Timeline.
             </p>
           </div>
-          {/* A label opens the file picker; the import panel below holds the input. */}
-          <label
-            for={MEMORY_IMPORT_INPUT_ID}
-            tabindex="0"
-            role="button"
-            class={`${SECONDARY_BUTTON} ml-12 cursor-pointer sm:ml-0`}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                event.currentTarget.click();
-              }
-            }}
-          >
+          <button type="button" class={`${SECONDARY_BUTTON} ml-12 sm:ml-0`} aria-expanded={importing()} onClick={() => setImporting((open) => !open)}>
             Import from Claude
-          </label>
+          </button>
         </header>
 
-        <MemoryImport />
+        <Show when={importing()}>
+          <MemoryImport onClose={() => setImporting(false)} />
+        </Show>
 
         <Show when={query.error}>
           {(error) => <p role="alert" class="mb-4 rounded-lg border border-destructive/40 p-4 text-sm text-destructive">{error().message}</p>}

@@ -1,7 +1,10 @@
 /**
- * claude.ai's memory files, from memories-000.zip in the account data export,
- * as Timeline memory notes. The older prose summaries beside them
- * (conversations_memory, project_memories) are not imported.
+ * claude.ai's memory files as Timeline memory notes, from either export:
+ * claude-memory-<date>.zip (Settings → Your Claude → Memory → Export memory),
+ * the memory tree as Markdown files under one dated folder, or memories-000.zip
+ * from the account data export, the same files in one JSON with an updated_at
+ * each. The data export's older prose summaries (conversations_memory,
+ * project_memories) are not imported.
  */
 
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -12,18 +15,30 @@ import { projectScope } from "../../db/memory-notes";
 import { z } from "zod";
 import { memorySchema } from "./memories";
 
-// The export's envelope; each file is checked on its own so one bad file does not refuse the rest.
+interface MemoryFile {
+  path: string;
+  content: string;
+  updated_at: string;
+}
+
+// The data export's envelope; each file is checked on its own so one bad file does not refuse the rest.
 const exportSchema = memorySchema.extend({
   memory_files: z.array(z.object({ path: z.string(), content: z.string(), updated_at: z.string() }).passthrough()),
 });
 
-/** Largest upload, and largest memories JSON unzipped from it. */
+/** Largest upload, and most bytes unzipped from it. */
 export const MEMORY_EXPORT_MAX_BYTES = 16 * 1024 * 1024;
+/** Most entries a memory export zip may list, folders included: well past the note limit. */
+const MAX_ZIP_ENTRIES = 2000;
+
+const UNSUPPORTED_UPLOAD = "Upload claude-memory-<date>.zip (in claude.ai: Settings → Your Claude → Memory → Export memory) or memories-000.zip (Settings → Privacy → Export data).";
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
-const ZIP_ENTRY = new RegExp(`^memories/${UUID}\\.json$`);
-// /preferences.md, /topics/<name>.md, /projects/<uuid>/<name>.md, /projects/<uuid>/people/<name>.md, …
-const FILE_PATH = new RegExp(`^(?:/projects/(${UUID}))?/(?:(topics|areas|people)/)?([^/]{1,100})\\.md$`);
+const DATA_EXPORT_ENTRY = new RegExp(`^memories/${UUID}\\.json$`);
+const MEMORY_EXPORT_ROOT = /^(claude-memory-(\d{4}-\d{2}-\d{2}))\//;
+// /preferences.md, /topics/<name>.md, /projects/<project>/<name>.md, /projects/<project>/people/<name>.md, …
+// <project> is a UUID in the data export and the project's title in the memory export.
+const FILE_PATH = /^(?:\/projects\/([^/]{1,200}))?\/(?:(topics|areas|people)\/)?([^/]{1,100})\.md$/;
 const FOLDER_KINDS = { topics: "topic", areas: "area", people: "person" } as const;
 
 const utf8 = (bytes: Uint8Array) => new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -45,33 +60,118 @@ async function unzip(args: string[], limit: number, tooLarge: string): Promise<U
   return Buffer.concat(chunks);
 }
 
-/** The memories JSON from memories-000.zip: its one entry, memories/<account-uuid>.json, read to memory. */
-async function memoriesJsonFromZip(zip: Uint8Array): Promise<Uint8Array> {
-  const dir = await mkdtemp(join(tmpdir(), "timeline-memory-import-"));
-  try {
-    const path = join(dir, "upload.zip");
-    await writeFile(path, zip);
-    const entries = utf8(await unzip(["-Z1", path], 64 * 1024, "The zip lists more files than memories-000.zip holds.")).split("\n").filter((entry) => entry && entry !== "memories/");
-    if (entries.length !== 1 || !ZIP_ENTRY.test(entries[0])) {
-      throw new Error("The zip should hold just memories/<account-id>.json, as memories-000.zip from the claude.ai export does.");
-    }
-    // -P: an encrypted entry fails instead of prompting on the terminal.
-    return await unzip(["-p", "-Px", path, entries[0]], MEMORY_EXPORT_MAX_BYTES, `The memories file unzips to more than ${MEMORY_EXPORT_MAX_BYTES / 1024 / 1024} MiB.`);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
+const TOO_LARGE = `The zip unzips to more than ${MEMORY_EXPORT_MAX_BYTES / 1024 / 1024} MiB.`;
+
+/** One entry's bytes; -P makes an encrypted entry fail instead of prompting, and the name is escaped so unzip matches it literally. */
+const unzipEntry = (zip: string, entry: string, limit: number) =>
+  unzip(["-p", "-Px", zip, entry.replace(/[[\]*?]/g, "\\$&")], limit, TOO_LARGE);
+
+function dataExportFiles(value: unknown): MemoryFile[] {
+  const parsed = exportSchema.safeParse(value);
+  if (!parsed.success) {
+    const at = parsed.error.issues[0]?.path.join(".") || "the top level";
+    throw new Error(`This is not claude.ai's memories export: unexpected content at ${at}.`);
   }
+  return parsed.data.memory_files;
 }
 
-/** The export's memories JSON from an upload of memories-000.zip or of the JSON inside it. */
-export async function readClaudeMemoryUpload(upload: Uint8Array): Promise<unknown> {
+type Problem = { path: string; reason: string };
+export interface MemoryUpload {
+  files: MemoryFile[];
+  /** Entries of the zip that were not read, with the reason. */
+  problems: Problem[];
+}
+
+/**
+ * The memory export's Markdown files, each at its path below the dated folder
+ * and dated by the export, since the zip carries no time per memory. Only
+ * entries at a path claude.ai's memory uses, listed once, are unzipped, one at
+ * a time to memory; nothing is written to disk.
+ */
+async function memoryExportFiles(zip: string, entries: string[], root: string, date: string): Promise<MemoryUpload> {
+  const updatedAt = `${date}T00:00:00.000Z`;
+  if (!Number.isFinite(Date.parse(updatedAt))) throw new Error(`The folder ${root} does not name a real date.`);
+  const upload: MemoryUpload = { files: [], problems: [] };
+  const refuse = (path: string, reason: string) => upload.problems.push({ path: path.slice(0, 200), reason });
+  let budget = MEMORY_EXPORT_MAX_BYTES;
+  for (const entry of entries) {
+    if (entry.endsWith("/")) continue;
+    const path = entry.slice(root.length);
+    if (/[\\\0-\x1f]/.test(path) || path.split("/").slice(1).some((segment) => !segment || segment === "." || segment === "..")) {
+      refuse(path, "Not a path claude.ai's memory uses.");
+    } else if (!path.endsWith(".md")) {
+      refuse(path, "Not a Markdown memory file.");
+    } else if (!FILE_PATH.test(path)) {
+      refuse(path, "Not a path claude.ai's memory uses.");
+    } else if (entries.indexOf(entry) !== entries.lastIndexOf(entry)) {
+      refuse(path, "The export lists this path more than once.");
+    } else {
+      let bytes: Uint8Array;
+      try {
+        bytes = await unzipEntry(zip, entry, budget);
+      } catch (error) {
+        if ((error as Error).message === TOO_LARGE) throw error;
+        refuse(path, "The file could not be unzipped.");
+        continue;
+      }
+      budget -= bytes.length;
+      try {
+        upload.files.push({ path, content: utf8(bytes), updated_at: updatedAt });
+      } catch {
+        refuse(path, "The file is not UTF-8 text.");
+      }
+    }
+  }
+  return upload;
+}
+
+/** Files a Mac adds when it zips a folder, skipped without comment. */
+const macMetadata = (entry: string) => entry.startsWith("__MACOSX/") || /(?:^|\/)\.DS_Store$/.test(entry);
+
+/** The memory files in an upload of either export's zip, or of the data export's memories JSON. */
+export async function readClaudeMemoryUpload(upload: Uint8Array): Promise<MemoryUpload> {
   const isZip = upload[0] === 0x50 && upload[1] === 0x4b && upload[2] === 0x03 && upload[3] === 0x04;
-  const bytes = isZip ? await memoriesJsonFromZip(upload) : upload;
+  if (!isZip) {
+    let value: unknown;
+    try {
+      value = JSON.parse(utf8(upload));
+    } catch {
+      throw new Error(UNSUPPORTED_UPLOAD);
+    }
+    return { files: dataExportFiles(value), problems: [] };
+  }
+  const dir = await mkdtemp(join(tmpdir(), "timeline-memory-import-"));
   try {
-    return JSON.parse(utf8(bytes));
-  } catch {
-    throw new Error(isZip
-      ? "The memories file in the zip is not valid JSON."
-      : "Upload memories-000.zip from the claude.ai export, or the JSON file inside it.");
+    const zip = join(dir, "upload.zip");
+    await writeFile(zip, upload);
+    const listing = await unzip(["-Z1", zip], 1024 * 1024, `The zip lists more than ${MAX_ZIP_ENTRIES} files.`);
+    let entries: string[];
+    try {
+      entries = utf8(listing).split("\n").filter((entry) => entry && !macMetadata(entry));
+    } catch {
+      throw new Error("The zip lists a file name that is not UTF-8.");
+    }
+    if (entries.length > MAX_ZIP_ENTRIES) throw new Error(`The zip lists more than ${MAX_ZIP_ENTRIES} files.`);
+
+    const files = entries.filter((entry) => entry !== "memories/");
+    if (files.length === 1 && DATA_EXPORT_ENTRY.test(files[0])) {
+      const bytes = await unzipEntry(zip, files[0], MEMORY_EXPORT_MAX_BYTES);
+      let value: unknown;
+      try {
+        value = JSON.parse(utf8(bytes));
+      } catch {
+        throw new Error("The memories file in the zip is not valid JSON.");
+      }
+      return { files: dataExportFiles(value), problems: [] };
+    }
+
+    const root = MEMORY_EXPORT_ROOT.exec(entries[0] ?? "");
+    if (root && entries.every((entry) => entry.startsWith(root[0]))) {
+      return await memoryExportFiles(zip, entries, root[1], root[2]);
+    }
+    throw new Error(`This zip is not a claude.ai memory export. ${UNSUPPORTED_UPLOAD}`);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 }
 
@@ -153,7 +253,7 @@ interface Parsed {
   frontmatter: Frontmatter;
 }
 
-function parseEntry(file: { path: string; content: string; updated_at: string }): Parsed {
+function parseEntry(file: MemoryFile): Parsed {
   const path = FILE_PATH.exec(file.path);
   if (!path) throw new Error("Not a path claude.ai's memory uses.");
   const [, project, folder, name] = path;
@@ -166,41 +266,37 @@ function parseEntry(file: { path: string; content: string; updated_at: string })
   return { path: file.path, updatedAt: file.updated_at, project, folder: folder as Parsed["folder"], file: name, index, frontmatter };
 }
 
-/** Each project's key, the slug of the title in its index.md, or why the project cannot be imported. */
+/** Each project folder's key, the slug of the title in its index.md, or why the project cannot be imported. */
 function projectKeys(files: Parsed[]): Map<string, { key: string } | { problem: string }> {
   const projects = new Map<string, { key: string } | { problem: string }>();
-  for (const uuid of new Set(files.flatMap((file) => (file.project ? [file.project] : [])))) {
-    const index = files.find((file) => file.project === uuid && file.index);
+  for (const folder of new Set(files.flatMap((file) => (file.project ? [file.project] : [])))) {
+    const index = files.find((file) => file.project === folder && file.index);
     try {
-      if (!index) throw new Error(`Project ${uuid} has no index.md giving its title.`);
-      projects.set(uuid, { key: projectScope(index.frontmatter.name) });
+      if (!index) throw new Error(`Project ${folder} has no index.md giving its title.`);
+      projects.set(folder, { key: projectScope(index.frontmatter.name) });
     } catch (error) {
-      projects.set(uuid, { problem: (error as Error).message });
+      projects.set(folder, { problem: (error as Error).message });
     }
   }
-  const keyed = [...projects].flatMap(([uuid, project]) => ("key" in project ? [{ uuid, key: project.key }] : []));
-  for (const { uuid, key } of keyed) {
-    const same = keyed.filter((other) => other.key === key).map((other) => other.uuid);
-    if (same.length > 1) projects.set(uuid, { problem: `Projects ${same.sort().join(" and ")} both make the project key "${key}".` });
+  const keyed = [...projects].flatMap(([folder, project]) => ("key" in project ? [{ folder, key: project.key }] : []));
+  for (const { folder, key } of keyed) {
+    const same = keyed.filter((other) => other.key === key).map((other) => other.folder);
+    if (same.length > 1) projects.set(folder, { problem: `Projects ${same.sort().join(" and ")} both make the project key "${key}".` });
   }
   return projects;
 }
 
 /**
- * Map the export's memory files to notes, contact links left to the caller.
- * Throws when the JSON is not the export's shape; a file that cannot be
- * imported is listed as a problem with the reason.
+ * Map an export's memory files to notes, contact links left to the caller.
+ * A file that cannot be imported is listed as a problem with the reason.
  */
-export function mapClaudeMemory(value: unknown): { notes: ClaudeMemoryNote[]; problems: { path: string; reason: string }[] } {
-  const parsed = exportSchema.safeParse(value);
-  if (!parsed.success) {
-    const at = parsed.error.issues[0]?.path.join(".") || "the top level";
-    throw new Error(`This is not claude.ai's memories export: unexpected content at ${at}.`);
-  }
-  const problems: { path: string; reason: string }[] = [];
+export function mapClaudeMemory(upload: MemoryUpload): { notes: ClaudeMemoryNote[]; problems: Problem[] } {
+  const problems: Problem[] = [...upload.problems];
   const files: Parsed[] = [];
-  const paths = parsed.data.memory_files.map((file) => file.path);
-  for (const file of parsed.data.memory_files) {
+  const paths = upload.files.map((file) => file.path);
+  // A file the zip holds but that could not be read still counts as present, so an unreadable overview is not replaced by its index.
+  const present = [...paths, ...upload.problems.map((problem) => problem.path)];
+  for (const file of upload.files) {
     try {
       if (paths.indexOf(file.path) !== paths.lastIndexOf(file.path)) throw new Error("The export lists this path more than once.");
       if (!Number.isFinite(Date.parse(file.updated_at))) throw new Error("updated_at is not a date.");
@@ -222,7 +318,7 @@ export function mapClaudeMemory(value: unknown): { notes: ClaudeMemoryNote[]; pr
     const note = { path: file.path, project: project.key, contactId: null, updatedAt: file.updatedAt, summary: file.frontmatter.description };
     if (file.index) {
       // The project's own overview file, when it has one, wins over its index, even when that file cannot be imported.
-      if (!paths.includes(`/projects/${file.project}/overview.md`)) {
+      if (!present.includes(`/projects/${file.project}/overview.md`)) {
         notes.push({ ...note, name: "overview", kind: "project", title: file.frontmatter.name, details: "", aliases: [] });
       }
       continue;

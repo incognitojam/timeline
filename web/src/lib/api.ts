@@ -2483,7 +2483,7 @@ export async function restoreMemoryVersion(id: number): Promise<MemoryNote> {
   return (await parseApiJson<{ note: MemoryNote }>(res, "Failed to restore note")).note;
 }
 
-/** Preview an import of claude.ai's memories-000.zip (or the JSON inside it), or with a preview's planId, run it. */
+/** Preview an import of claude.ai's claude-memory-<date>.zip or memories-000.zip (or its JSON), or with a preview's planId, run it. */
 export async function importClaudeMemory(file: File, planId?: string): Promise<MemoryImportResult> {
   const res = await apiFetch(`${API_BASE}/api/memory/import${planId ? `?plan=${encodeURIComponent(planId)}` : ""}`, {
     method: "POST",

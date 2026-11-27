@@ -136,7 +136,7 @@ export function createMemoryRoutes(contacts: QueryExecutor, db: () => Database =
       }
     })
 
-    // An upload of claude.ai's memories-000.zip (or its JSON): a preview, or with ?plan=<planId> from that preview, the import.
+    // An upload of claude.ai's claude-memory-<date>.zip or memories-000.zip (or its JSON): a preview, or with ?plan=<planId> from that preview, the import.
     .post(
       "/api/memory/import",
       bodyLimit({
