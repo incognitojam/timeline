@@ -6,6 +6,7 @@ import { formatAbsoluteTime, timestampToBrowserIso, transportClass } from "../li
 import { useMcpSessions } from "../lib/queries";
 import { MCP_SESSION_LIMIT } from "../lib/query-params";
 import { buildMcpSessionUrl } from "../lib/routes";
+import McpConnectGuide from "./McpConnectGuide";
 import McpTokensPanel from "./McpTokensPanel";
 
 function clientLabel(session: McpSessionSummary): string {
@@ -41,6 +42,8 @@ export default function McpSessionsView() {
             The tokens clients connect with, and their tool calls grouped by session.
           </p>
         </div>
+
+        <McpConnectGuide />
 
         <McpTokensPanel />
 
