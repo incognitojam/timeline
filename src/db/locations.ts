@@ -7,9 +7,11 @@ import { transformEvents } from "./events";
  */
 export async function searchByLocation(
   db: QueryExecutor,
-  options: { latitude?: number; longitude?: number; radiusKm?: number; locationName?: string; limit?: number }
+  options: { latitude?: number; longitude?: number; radiusKm?: number; locationName?: string; limit?: number; excludeSources?: string[] }
 ): Promise<TimelineEvent[]> {
-  const { latitude, longitude, radiusKm = 1, locationName, limit = 50 } = options;
+  const { latitude, longitude, radiusKm = 1, locationName, limit = 50, excludeSources = [] } = options;
+  // Before LIMIT, so left-out sources don't use up the page.
+  const exclusion = excludeSources.length > 0 ? `AND source NOT IN (${excludeSources.map(() => "?").join(", ")})` : "";
 
   if (locationName) {
     // Search by location name using FTS
@@ -19,10 +21,11 @@ export async function searchByLocation(
       SELECT * FROM events
       WHERE id IN (SELECT rowid FROM events_fts WHERE events_fts MATCH ?)
         AND location_name IS NOT NULL
+        ${exclusion}
       ORDER BY timestamp DESC
       LIMIT ?
     `;
-    return transformEvents(await db.query<TimelineEvent>(sql, escapedName, limit));
+    return transformEvents(await db.query<TimelineEvent>(sql, escapedName, ...excludeSources, limit));
   }
 
   if (latitude !== undefined && longitude !== undefined) {
@@ -36,11 +39,12 @@ export async function searchByLocation(
       SELECT * FROM events
       WHERE latitude BETWEEN ? AND ?
         AND longitude BETWEEN ? AND ?
+        ${exclusion}
       ORDER BY timestamp ASC
       LIMIT ?
     `;
 
-    return transformEvents(await db.query<TimelineEvent>(sql, latitude - latDelta, latitude + latDelta, longitude - lonDelta, longitude + lonDelta, limit));
+    return transformEvents(await db.query<TimelineEvent>(sql, latitude - latDelta, latitude + latDelta, longitude - lonDelta, longitude + lonDelta, ...excludeSources, limit));
   }
 
   return [];
