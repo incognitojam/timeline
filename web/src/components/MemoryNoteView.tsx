@@ -1,7 +1,7 @@
 import { MEMORY_KINDS, type MemoryKind, type MemoryNote, type MemoryVersion } from "@shared/memory";
 import { A, useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import { createEffect, createSignal, For, Show, Suspense } from "solid-js";
-import { formatMemoryDate, KIND_LABELS, linkMemoryNotes, scopeLabel } from "../lib/memory";
+import { formatMemoryDate, KINDS, linkMemoryNotes, scopeLabel } from "../lib/memory";
 import {
   useContact,
   useDeleteMemoryNote,
@@ -82,7 +82,7 @@ function EditForm(props: { note: MemoryNote; onDone: () => void }) {
       <label class="block text-sm font-medium">
         Kind
         <select class={FIELD} value={kind()} onChange={(e) => setKind(e.currentTarget.value as MemoryKind)} disabled={update.isPending}>
-          <For each={kinds}>{(k) => <option value={k}>{KIND_LABELS[k]}</option>}</For>
+          <For each={kinds}>{(k) => <option value={k}>{KINDS[k].label}</option>}</For>
         </select>
       </label>
       <label class="block text-sm font-medium">
@@ -126,7 +126,7 @@ function VersionRow(props: { version: MemoryVersion }) {
       </Show>
       <Show when={open()}>
         <div class="mt-3 space-y-2 border-l-2 border-border pl-3">
-          <p class="text-xs text-muted-foreground">{KIND_LABELS[props.version.kind]}</p>
+          <p class="text-xs text-muted-foreground">{KINDS[props.version.kind].label}</p>
           <p class="text-sm">{props.version.summary}</p>
           <NoteDetails note={props.version} />
         </div>
@@ -211,7 +211,7 @@ function NotePage(props: { project: string; name: string }) {
               <header class="mb-6">
                 <h1 class="font-display text-2xl font-medium break-words">{note().title}</h1>
                 <p class="mt-2 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
-                  <span>{KIND_LABELS[note().kind]}</span>
+                  <span>{KINDS[note().kind].label}</span>
                   <span aria-hidden>·</span>
                   <span>{scopeLabel(note().project)}</span>
                   <Show when={note().contact_id}>

@@ -8,7 +8,7 @@ import { getMemoryNote, MEMORY_LIMITS, saveMemoryNote } from "../db/memory-notes
 import { wrapDatabase } from "../db/pool";
 import { initDb } from "../db/schema";
 import { Database } from "../db/sqlite";
-import type { MemoryImportResult } from "../shared/memory";
+import type { MemoryImportLinks, MemoryImportResult } from "../shared/memory";
 import { createMemoryRoutes } from "./memory";
 
 const ACCOUNT = "00000000-0000-4000-8000-000000000000";
@@ -52,6 +52,9 @@ let timelineDb: Database;
 let app: ReturnType<typeof createMemoryRoutes>;
 let dir: string;
 let aliceId: number;
+let bobbyId: number;
+
+const CHANGED = "Memory or your contacts have changed since the preview. Choose the file again to see what the import would add now.";
 
 /** memories-000.zip as claude.ai exports it, built with zip(1). */
 async function zipOf(value: unknown): Promise<Uint8Array> {
@@ -115,8 +118,9 @@ function memoryExportZip(files: { path: string; content: string }[], titles: Rec
 
 type Response = { status: number; body: MemoryImportResult & { error?: string } };
 
-async function upload(body: Uint8Array | string, plan?: string, headers: Record<string, string> = {}): Promise<Response> {
-  const res = await app.request(`/api/memory/import${plan ? `?plan=${plan}` : ""}`, {
+async function upload(body: Uint8Array | string, plan?: string, headers: Record<string, string> = {}, links?: MemoryImportLinks): Promise<Response> {
+  const query = plan ? `?plan=${plan}${links ? `&links=${encodeURIComponent(JSON.stringify(links))}` : ""}` : "";
+  const res = await app.request(`/api/memory/import${query}`, {
     method: "POST",
     headers: { "Content-Type": "application/octet-stream", ...headers },
     body: body as BodyInit,
@@ -124,11 +128,17 @@ async function upload(body: Uint8Array | string, plan?: string, headers: Record<
   return { status: res.status, body: (await res.json()) as Response["body"] };
 }
 
+/** The links a preview shows, as the page sends them when the owner changes none. */
+const shownLinks = (result: MemoryImportResult): MemoryImportLinks => result.people.map((person) => person.contact?.id ?? null);
+
 /** Preview, then import what the preview showed, as the page does. */
 async function importAll(body: Uint8Array | string): Promise<Response> {
   const preview = await upload(body);
-  return preview.status === 200 ? upload(body, preview.body.planId) : preview;
+  return preview.status === 200 ? upload(body, preview.body.planId, {}, shownLinks(preview.body)) : preview;
 }
+
+/** Each note as "<project>/<name>". */
+const keys = (notes: { project: string; name: string }[]) => notes.map((note) => `${note.project}/${note.name}`);
 
 const liveNotes = () => (appDb.prepare("SELECT COUNT(*) AS n FROM memory_notes WHERE replaced_at IS NULL").get() as { n: number }).n;
 
@@ -139,7 +149,7 @@ beforeEach(() => {
   timelineDb = new Database(":memory:");
   initDb(timelineDb);
   aliceId = createContact(timelineDb, "alice brown");
-  createContact(timelineDb, "Bobby Tables");
+  bobbyId = createContact(timelineDb, "Bobby Tables");
   app = createMemoryRoutes(wrapDatabase(timelineDb), () => appDb);
 });
 
@@ -155,26 +165,39 @@ describe("import from claude.ai's memory export", () => {
     expect(preview.status).toBe(200);
     expect(liveNotes()).toBe(0);
     const expected: Omit<MemoryImportResult, "imported" | "planId"> = {
+      projects: { "garden-planner": "Garden Planner", "reading-list": "Reading List" },
       add: [
-        { project: "", kind: "you", count: 2 },
-        { project: "", kind: "topic", count: 1 },
-        { project: "", kind: "area", count: 1 },
-        { project: "", kind: "person", count: 2 },
-        { project: "garden-planner", kind: "project", count: 2 },
-        { project: "garden-planner", kind: "topic", count: 1 },
-        { project: "garden-planner", kind: "area", count: 1 },
-        { project: "garden-planner", kind: "person", count: 1 },
-        { project: "reading-list", kind: "project", count: 1 },
+        { project: "", name: "preferences", kind: "you", title: "Preferences" },
+        { project: "", name: "profile", kind: "you", title: "Profile" },
+        { project: "", name: "climbing", kind: "topic", title: "Climbing" },
+        { project: "", name: "home-and-utilities", kind: "area", title: "Home And Utilities" },
+        { project: "", name: "alice-b", kind: "person", title: "Alice B" },
+        { project: "", name: "bob", kind: "person", title: "Bob" },
+        { project: "garden-planner", name: "overview", kind: "project", title: "Garden Planner" },
+        { project: "garden-planner", name: "watering", kind: "project", title: "Watering" },
+        { project: "garden-planner", name: "soil", kind: "topic", title: "Soil" },
+        { project: "garden-planner", name: "beds", kind: "area", title: "Beds" },
+        { project: "garden-planner", name: "carol", kind: "person", title: "Carol" },
+        { project: "reading-list", name: "overview", kind: "project", title: "Overview" },
       ],
-      links: [{ project: "", name: "alice-b", contact: "alice brown" }],
-      existing: 0,
+      people: [
+        { project: "", name: "alice-b", kind: "person", title: "Alice B", aliases: ["Alice Brown", "Ali"], match: { by: "alias", alias: "Alice Brown" }, contact: { id: aliceId, name: "alice brown", hidden: false } },
+        { project: "", name: "bob", kind: "person", title: "Bob", aliases: [], match: { by: "none" }, contact: null },
+        { project: "garden-planner", name: "carol", kind: "person", title: "Carol", aliases: [], match: { by: "none" }, contact: null },
+      ],
+      existing: [],
       problems: [],
       overLimit: null,
     };
     expect(preview.body).toEqual({ imported: false, planId: expect.any(String), ...expected });
 
-    const imported = await upload(zip, preview.body.planId);
-    expect(imported.body).toEqual({ imported: true, planId: preview.body.planId, ...expected });
+    const imported = await upload(zip, preview.body.planId, {}, shownLinks(preview.body));
+    expect(imported.body).toEqual({
+      imported: true,
+      planId: preview.body.planId,
+      ...expected,
+      people: expected.people.map((person) => ({ ...person, saved: person.contact })),
+    });
     expect(liveNotes()).toBe(12);
 
     expect(getMemoryNote(appDb, "", "profile")).toMatchObject({
@@ -194,7 +217,8 @@ describe("import from claude.ai's memory export", () => {
 
     // Re-running the same import adds nothing.
     const again = await importAll(zip);
-    expect(again.body).toMatchObject({ imported: true, add: [], existing: 12, problems: [] });
+    expect(again.body).toMatchObject({ imported: true, add: [], people: [], problems: [] });
+    expect(again.body.existing).toHaveLength(12);
     expect(liveNotes()).toBe(12);
   });
 
@@ -202,15 +226,16 @@ describe("import from claude.ai's memory export", () => {
     const zip = memoryExportZip(EXPORT.memory_files);
     const result = await importAll(zip);
     expect(result.status).toBe(200);
-    expect(result.body).toMatchObject({ imported: true, existing: 0, problems: [], links: [{ project: "", name: "alice-b", contact: "alice brown" }] });
+    expect(result.body).toMatchObject({ imported: true, existing: [], problems: [] });
+    expect(result.body.people.map((person) => person.contact?.name ?? null)).toEqual(["alice brown", null, null]);
     expect(liveNotes()).toBe(12);
     expect(getMemoryNote(appDb, "garden-planner", "soil")).toMatchObject({ kind: "topic", created_at: "2026-11-27T00:00:00.000Z" });
     expect(getMemoryNote(appDb, "garden-planner", "overview")).toMatchObject({ title: "Garden Planner", summary: "Watering and planting planner" });
     expect(getMemoryNote(appDb, "reading-list", "overview")).toMatchObject({ summary: "What the reading list is for" });
 
-    expect((await importAll(zip)).body).toMatchObject({ imported: true, add: [], existing: 12 });
+    expect((await importAll(zip)).body).toMatchObject({ imported: true, add: [] });
     // The data export of the same memory names the same notes, so it adds nothing either.
-    expect((await importAll(await zipOf(EXPORT))).body).toMatchObject({ imported: true, add: [], existing: 12 });
+    expect((await importAll(await zipOf(EXPORT))).body).toMatchObject({ imported: true, add: [] });
     expect(liveNotes()).toBe(12);
   });
 
@@ -232,11 +257,8 @@ describe("import from claude.ai's memory export", () => {
       { path: "/topics/../people/sneaky.md", reason: "Not a path claude.ai's memory uses." },
       { path: "/topics//double.md", reason: "Not a path claude.ai's memory uses." },
     ]);
-    expect(result.body.add).toEqual([
-      { project: "", kind: "topic", count: 1 },
-      { project: "shed-build", kind: "project", count: 1 },
-      { project: "shed-build", kind: "topic", count: 1 },
-    ]);
+    expect(keys(result.body.add)).toEqual(["/climbing", "shed-build/overview", "shed-build/wood"]);
+    expect(result.body.projects).toEqual({ "shed-build": "Shed Build" });
     expect(liveNotes()).toBe(3);
   });
 
@@ -249,7 +271,8 @@ describe("import from claude.ai's memory export", () => {
       ["__MACOSX/", ""],
       [`__MACOSX/${root}topics/._climbing.md`, "resource fork"],
     ]));
-    expect(result.body).toMatchObject({ imported: true, add: [{ project: "", kind: "topic", count: 1 }], problems: [] });
+    expect(result.body).toMatchObject({ imported: true, problems: [] });
+    expect(keys(result.body.add)).toEqual(["/climbing"]);
   });
 
   test("lists duplicate and unreadable entries without letting an index stand in for an unreadable overview", async () => {
@@ -266,7 +289,7 @@ describe("import from claude.ai's memory export", () => {
       { path: "/topics/twice.md", reason: "The export lists this path more than once." },
       { path: "/projects/Reading List/overview.md", reason: "The file is not UTF-8 text." },
     ]);
-    expect(result.body.add).toEqual([{ project: "", kind: "topic", count: 1 }]);
+    expect(keys(result.body.add)).toEqual(["/climbing"]);
     expect(getMemoryNote(appDb, "reading-list", "overview")).toBeNull();
   });
 
@@ -274,7 +297,7 @@ describe("import from claude.ai's memory export", () => {
     saveMemoryNote(appDb, { project: "", name: "bob", kind: "person", title: "Bob Stone", summary: "Saved by an agent" });
     const before = getMemoryNote(appDb, "", "bob");
     const result = await importAll(JSON.stringify(EXPORT));
-    expect(result.body).toMatchObject({ imported: true, existing: 1, problems: [] });
+    expect(result.body).toMatchObject({ imported: true, existing: [{ project: "", name: "bob", kind: "person", title: "Bob" }], problems: [] });
     expect(getMemoryNote(appDb, "", "bob")).toEqual(before);
     expect(appDb.prepare("SELECT COUNT(*) AS n FROM memory_notes WHERE replaced_at IS NOT NULL").get()).toEqual({ n: 0 });
     expect(liveNotes()).toBe(12);
@@ -319,7 +342,7 @@ describe("import from claude.ai's memory export", () => {
       { path: "/topics/Not_A_Slug.md", reason: expect.stringContaining("Note name must be a lowercase slug") },
     ]);
     // The reading list's own overview cannot be imported, so its index does not stand in for it.
-    expect(result.body.add).toEqual([{ project: "", kind: "topic", count: 1 }]);
+    expect(keys(result.body.add)).toEqual(["/climbing"]);
     expect(liveNotes()).toBe(1);
   });
 
@@ -351,8 +374,8 @@ describe("import from claude.ai's memory export", () => {
   test("refuses an import when memory changed since its preview", async () => {
     const preview = await upload(JSON.stringify(EXPORT));
     saveMemoryNote(appDb, { project: "", name: "climbing", kind: "topic", title: "Climbing", summary: "Saved by an agent meanwhile" });
-    const refused = await upload(JSON.stringify(EXPORT), preview.body.planId);
-    expect(refused).toEqual({ status: 400, body: { error: "Memory has changed since the preview. Choose the file again to see what the import would add now." } as never });
+    const refused = await upload(JSON.stringify(EXPORT), preview.body.planId, {}, shownLinks(preview.body));
+    expect(refused).toEqual({ status: 400, body: { error: CHANGED } as never });
     expect(liveNotes()).toBe(1);
   });
 
@@ -361,8 +384,79 @@ describe("import from claude.ai's memory export", () => {
     for (let i = 0; i < MEMORY_LIMITS.notes - 5; i++) insert.run(`n${i}`);
     const preview = await upload(JSON.stringify(EXPORT));
     expect(preview.body.overLimit).toBe(`Memory holds ${MEMORY_LIMITS.notes - 5} notes; adding 12 would pass the limit of ${MEMORY_LIMITS.notes}. Delete notes first.`);
-    const refused = await upload(JSON.stringify(EXPORT), preview.body.planId);
+    const refused = await upload(JSON.stringify(EXPORT), preview.body.planId, {}, shownLinks(preview.body));
     expect(refused).toEqual({ status: 400, body: { error: preview.body.overLimit } as never });
     expect(liveNotes()).toBe(MEMORY_LIMITS.notes - 5);
+  });
+
+  test("saves the contact the owner chose for each person, hidden ones included", async () => {
+    const hiddenId = createContact(timelineDb, "Dana Hidden");
+    timelineDb.prepare("UPDATE contacts SET hidden = 1 WHERE id = ?").run(hiddenId);
+    const preview = await upload(JSON.stringify(EXPORT));
+    // People in preview order: alice-b, bob, carol.
+    expect(keys(preview.body.people)).toEqual(["/alice-b", "/bob", "garden-planner/carol"]);
+    const attempt = (links: MemoryImportLinks) => upload(JSON.stringify(EXPORT), preview.body.planId, {}, links);
+    expect((await attempt([aliceId, null, 99999])).body.error).toBe("A chosen contact is no longer in your contacts. Choose the file again.");
+    const mismatch = "The contact choices do not match the people in the preview. Choose the file again.";
+    expect((await attempt([aliceId])).body.error).toBe(mismatch);
+    expect((await attempt([aliceId, null, null, null])).body.error).toBe(mismatch);
+    expect((await upload(JSON.stringify(EXPORT), preview.body.planId)).body.error).toBe("Import needs the contact chosen for each person.");
+    expect((await attempt([aliceId, "2" as never, null])).body.error).toBe("Import needs the contact chosen for each person.");
+    expect(liveNotes()).toBe(0);
+
+    const imported = await attempt([null, bobbyId, hiddenId]);
+    expect(imported.status).toBe(200);
+    expect(imported.body.people.map((person) => [person.name, person.saved])).toEqual([
+      ["alice-b", null],
+      ["bob", { id: bobbyId, name: "Bobby Tables", hidden: false }],
+      ["carol", { id: hiddenId, name: "Dana Hidden", hidden: true }],
+    ]);
+    expect(getMemoryNote(appDb, "", "alice-b")?.contact_id).toBeNull();
+    expect(getMemoryNote(appDb, "", "bob")?.contact_id).toBe(bobbyId);
+    expect(getMemoryNote(appDb, "garden-planner", "carol")?.contact_id).toBe(hiddenId);
+    expect(getMemoryNote(appDb, "", "climbing")?.contact_id).toBeNull();
+  });
+
+  test("matches a hidden contact by name, and refuses the import if it is hidden or shown again after the preview", async () => {
+    const carolId = createContact(timelineDb, "Carol");
+    timelineDb.prepare("UPDATE contacts SET hidden = 1 WHERE id = ?").run(carolId);
+    const preview = await upload(JSON.stringify(EXPORT));
+    expect(preview.body.people.find((person) => person.name === "carol")).toMatchObject({
+      match: { by: "title" },
+      contact: { id: carolId, name: "Carol", hidden: true },
+    });
+
+    timelineDb.prepare("UPDATE contacts SET hidden = 0 WHERE id = ?").run(carolId);
+    expect(await upload(JSON.stringify(EXPORT), preview.body.planId, {}, shownLinks(preview.body))).toEqual({ status: 400, body: { error: CHANGED } as never });
+    timelineDb.prepare("UPDATE contacts SET hidden = 1 WHERE id = ?").run(carolId);
+    const imported = await upload(JSON.stringify(EXPORT), preview.body.planId, {}, shownLinks(preview.body));
+    expect(imported.status).toBe(200);
+    expect(getMemoryNote(appDb, "garden-planner", "carol")?.contact_id).toBe(carolId);
+
+    // A visible contact hidden after its preview refuses too.
+    appDb.exec("DELETE FROM memory_notes");
+    const again = await upload(JSON.stringify(EXPORT));
+    timelineDb.prepare("UPDATE contacts SET hidden = 1 WHERE id = ?").run(aliceId);
+    expect(await upload(JSON.stringify(EXPORT), again.body.planId, {}, shownLinks(again.body))).toEqual({ status: 400, body: { error: CHANGED } as never });
+  });
+
+  test("says why a person was not linked, and refuses an import whose matches changed since the preview", async () => {
+    createContact(timelineDb, "Bob");
+    const hiddenBob = createContact(timelineDb, "BOB");
+    timelineDb.prepare("UPDATE contacts SET hidden = 1 WHERE id = ?").run(hiddenBob);
+    const preview = await upload(JSON.stringify(EXPORT));
+    expect(preview.body.people.find((person) => person.name === "bob")).toMatchObject({ match: { by: "several", count: 2, hidden: 1 }, contact: null });
+    createContact(timelineDb, "Carol");
+    const refused = await upload(JSON.stringify(EXPORT), preview.body.planId, {}, shownLinks(preview.body));
+    expect(refused).toEqual({ status: 400, body: { error: CHANGED } as never });
+    expect(liveNotes()).toBe(0);
+  });
+
+  test("refuses an import of a file that differs from the previewed one, even with the same notes", async () => {
+    const preview = await upload(JSON.stringify(EXPORT));
+    const edited = exportJson(EXPORT.memory_files.map((file) => (file.path === "/topics/climbing.md" ? note(file.path, "climbing", "Edited after the preview") : file)));
+    const refused = await upload(JSON.stringify(edited), preview.body.planId, {}, shownLinks(preview.body));
+    expect(refused).toEqual({ status: 400, body: { error: CHANGED } as never });
+    expect(liveNotes()).toBe(0);
   });
 });
