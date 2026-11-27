@@ -9,7 +9,7 @@ import { useMusicPlaylist } from "../../lib/queries";
 import { IconHistory, IconOpenInNew } from "../../ui/icons";
 import PlaylistArt from "./PlaylistArt";
 import { APP_NAME } from "../../lib/routes";
-import { sharedElementName, useSharedElementLink } from "../../lib/view-transition";
+import { sharedElementName, sharedTextStyle, useSharedElementLink } from "../../lib/view-transition";
 
 function formatDate(dateStr: string): string {
   return new Date(`${dateStr}T00:00:00`).toLocaleDateString(undefined, {
@@ -195,7 +195,12 @@ export default function MusicPlaylistView() {
               <A href="/music" onClick={sharedLink(playlistId())} class="text-xs text-muted-foreground hover:text-foreground">
                 ← Music
               </A>
-              <h1 class="font-display text-2xl font-medium break-words mt-1">{title()}</h1>
+              <h1
+                class="font-display text-2xl font-medium break-words mt-1"
+                style={sharedTextStyle(playlistId(), "playlist-title")}
+              >
+                {title()}
+              </h1>
             </div>
           </div>
           <a
