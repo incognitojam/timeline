@@ -16,6 +16,7 @@ import { renderExportText } from "../export/export";
 import { countTokens } from "../export/tokens";
 import { NOISY_MACHINE_SOURCES } from "../shared/noisy-sources";
 import { sourceIdsWithTraits } from "../shared/sources";
+import { type RefreshOptions, refreshDiscordDms, wantsDmRefresh } from "./dm-refresh";
 
 /** Daily health records; on a day both report a type, the first source wins. */
 const HEALTH_SOURCES = ["google-health", "fitbit"] as const;
@@ -59,6 +60,8 @@ export interface UpdatesParams {
   healthDays?: number;
   maxTokens?: number;
   now?: Date;
+  /** A line for the header, such as when a source that may be behind last synced. */
+  notice?: string;
   /** Override of WINDOW_IDS for tests. */
   windowIds?: number;
 }
@@ -223,6 +226,7 @@ export async function getUpdates(db: QueryExecutor, params: UpdatesParams): Prom
   const counted = groups.filter((group) => !shown.includes(group));
 
   const header = [`Updates ${window.label}, up to id:${window.untilId}. Times in UTC.`];
+  if (params.notice) header.push(params.notice);
   if (window.capped) header.push(`More was added than one reply covers, so this stops at id:${window.untilId}; the next check continues from there.`);
   const page = skip > 0 || params.until !== undefined;
   const healthDays = params.healthDays ?? (page || params.conversationId !== undefined ? 0 : UPDATES_DEFAULT_HEALTH_DAYS);
@@ -492,9 +496,13 @@ export const GET_UPDATES_SCHEMA = {
 export async function runGetUpdates(
   db: QueryExecutor,
   params: { since: string; until?: string; skip?: number; sources?: string[]; conversation_id?: string; health_days?: number; max_tokens?: number },
+  refresh?: RefreshOptions,
 ): Promise<CallToolResult> {
   try {
+    // Before getUpdates fixes its window, so messages the pass stores are in it.
+    const notice = wantsDmRefresh(params) ? await refreshDiscordDms(refresh) : null;
     const text = await getUpdates(db, {
+      notice: notice ?? undefined,
       since: params.since,
       until: params.until,
       skip: params.skip,

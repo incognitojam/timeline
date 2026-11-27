@@ -33,6 +33,9 @@ const BACKOFF_STATE = "discord-dms";
 
 const MAX_BACKOFF_MS = 30 * 60_000;
 
+/** sync_state row holding when the last completed pass listed DMs; get_updates reads it. */
+const PASSED_STATE = "discord-dms-passed";
+
 /**
  * Most pages of 100 messages fetched per channel in one pass. A channel with
  * more waits for the next pass, which continues from its cursor.
@@ -65,7 +68,7 @@ export const discordDmsSyncSource: SyncSource = {
 
     if (isFullSyncRunning(appDb)) return skipped("A full Discord sync is running", startTime);
     const backoff = getSyncState<Backoff>(appDb, BACKOFF_STATE);
-    if (backoff && Date.parse(backoff.retryAt) > Date.now()) {
+    if (backoff && isBackingOff(backoff)) {
       return skipped("Backing off after a failed or rate-limited pass", startTime, { retryAt: backoff.retryAt });
     }
     const listedState = getSyncState<DiscordApiSyncState>(appDb, "discord-api");
@@ -77,6 +80,10 @@ export const discordDmsSyncSource: SyncSource = {
     let result: SyncResult;
     try {
       result = await runPass(client, token, listedState, appDb, options, startTime, progress);
+      // Only a pass that stored everything its listing showed makes DMs fresh.
+      if (!options.signal?.aborted && !result.metadata?.channelsCapped) {
+        setSyncState(appDb, PASSED_STATE, { at: new Date(startTime).toISOString() });
+      }
     } catch (error) {
       const aborted = error instanceof DOMException && error.name === "AbortError";
       result = {
@@ -104,6 +111,19 @@ export const discordDmsSyncSource: SyncSource = {
     };
   },
 };
+
+/** When the last completed pass started, so every DM message sent before it is stored. */
+export function lastDmPassAt(appDb: Database): number | null {
+  const at = Date.parse(getSyncState<{ at: string }>(appDb, PASSED_STATE)?.at ?? "");
+  return Number.isFinite(at) ? at : null;
+}
+
+export function isDmPassBackingOff(appDb: Database): boolean {
+  const backoff = getSyncState<Backoff>(appDb, BACKOFF_STATE);
+  return backoff !== null && isBackingOff(backoff);
+}
+
+const isBackingOff = (backoff: Backoff) => Date.parse(backoff.retryAt) > Date.now();
 
 async function runPass(
   client: DiscordClient,
@@ -160,6 +180,7 @@ async function storeChannels(
     verbose: options.verbose,
   }));
   const forbidden: Record<string, string> = {};
+  let channelsCapped = 0;
   try {
     for (const channel of channels) {
       const ctx = buildChannelContext(channel);
@@ -172,7 +193,11 @@ async function storeChannels(
         await store.storeBatch(batch, ctx);
         pages++;
         // A short page is the last one; stopping saves the empty page after it.
-        if (batch.length < MESSAGE_PAGE_SIZE || pages >= MAX_PAGES_PER_CHANNEL) break;
+        if (batch.length < MESSAGE_PAGE_SIZE) break;
+        if (pages >= MAX_PAGES_PER_CHANNEL) {
+          channelsCapped++;
+          break;
+        }
       }
       // Nothing after the cursor although the listing says otherwise: the
       // newest message was deleted. No message lies between the two (a later
@@ -194,6 +219,7 @@ async function storeChannels(
     ...storedCounts(store),
     metadata: {
       channelsFetched: channels.length,
+      ...(channelsCapped > 0 ? { channelsCapped } : {}),
       attachmentsStored: store.totals.attachments.stored,
       attachmentsFailed: store.totals.attachments.failed,
     },
