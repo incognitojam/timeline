@@ -51,7 +51,7 @@ enum PublicAccess {
     static func resumable(_ paused: String?, boot: String?, uptime: Int, now: Date) -> (record: String, deadline: Int)? {
         guard let parts = paused?.split(separator: " "), parts.count == 4, let boot,
               parts[0] == boot, let quit = Int(parts[1]),
-              quit <= uptime, uptime - quit <= Int(resumeWindow)
+              quit >= 0, quit <= uptime, uptime - quit <= Int(resumeWindow)
         else { return nil }
         let record = "\(parts[2]) \(parts[3])"
         return end(of: record, now: now) == nil ? nil : (record, quit + Int(resumeWindow))

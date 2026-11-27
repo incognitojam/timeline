@@ -35,6 +35,7 @@ struct PublicAccessTests {
         precondition(PublicAccess.resumable(paused, boot: boot, uptime: quit - 1, now: now.addingTimeInterval(120)) == nil, "uptime before the quit")
         precondition(PublicAccess.resumable(paused, boot: boot, uptime: quit + window + 1, now: now.addingTimeInterval(120)) == nil, "relaunch too long after the quit")
         precondition(PublicAccess.resumable(nil, boot: boot, uptime: quit, now: now) == nil, "nothing paused")
+        precondition(PublicAccess.resumable("\(boot) \(Int.min) \(hour)", boot: boot, uptime: quit, now: now) == nil, "forged quit uptime")
         precondition(PublicAccess.resumable("garbage", boot: boot, uptime: quit, now: now) == nil, "malformed")
         precondition(PublicAccess.resumable("\(boot) \(quit) garbage x", boot: boot, uptime: quit + 60, now: now.addingTimeInterval(120)) == nil, "malformed record")
         precondition(PublicAccess.resumable("\(boot) \(quit) \(tooLong)", boot: boot, uptime: quit + 60, now: now.addingTimeInterval(120)) == nil, "paused record longer than a day")

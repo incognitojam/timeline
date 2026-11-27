@@ -440,9 +440,10 @@ final class RemoteAccessController: ObservableObject {
                     }
                 }
                 if let paused = self.pausedRecord {
-                    if !enabled || uptime() > self.resumeDeadline
-                        || PublicAccess.end(of: paused, now: Date()) == nil {
+                    if !enabled || PublicAccess.end(of: paused, now: Date()) == nil {
                         self.pausedRecord = nil
+                    } else if uptime() > self.resumeDeadline {
+                        self.giveUpResume("Remote Access was not ready in time")
                     } else if resumeReady {
                         switch shown {
                         case .starting:
@@ -456,6 +457,12 @@ final class RemoteAccessController: ObservableObject {
                                 try paused.write(to: publicAccessRecordURL(), atomically: true, encoding: .utf8)
                                 self.attemptRecord = paused
                                 self.refreshQueued = true
+                                // The restarted tailscaled's own serve reset
+                                // can land just after; check again soon.
+                                Task { @MainActor [weak self] in
+                                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                                    self?.refresh()
+                                }
                             } catch {
                                 writeError("Timeline remote access: could not resume public access: \(error)\n")
                                 let failure = PublicAccessFailure.other(reason: "could not record when it ends.")
@@ -463,7 +470,7 @@ final class RemoteAccessController: ObservableObject {
                                 self.showMakePublicFailure(failure)
                             }
                         default:
-                            self.pausedRecord = nil
+                            self.giveUpResume("Remote Access is not running")
                         }
                     }
                 }
@@ -476,6 +483,14 @@ final class RemoteAccessController: ObservableObject {
                 }
             }
         }
+    }
+
+    // Drops a paused share that can't resume, saying why, as a failed Make
+    // Public click would.
+    private func giveUpResume(_ why: String) {
+        pausedRecord = nil
+        writeError("Timeline remote access: did not resume public access after the update: \(why).\n")
+        publicAccessFailure = .other(reason: "did not resume after the update: \(why).")
     }
 
     private func apply(_ next: RemoteAccessState) {

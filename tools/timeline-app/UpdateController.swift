@@ -41,6 +41,9 @@ final class UpdateController: NSObject, ObservableObject, NSApplicationDelegate,
 
     func checkForUpdates() {
         if let immediateInstall {
+            // Sparkle announces a relaunch only once, and the immediate
+            // handler installs and relaunches.
+            relaunchAnnounced = true
             immediateInstall()
         } else {
             controller?.checkForUpdates(nil)
@@ -109,6 +112,7 @@ final class UpdateController: NSObject, ObservableObject, NSApplicationDelegate,
                     try maintenance.recover()
                     installation.resetPreparation()
                     serviceAgent.resumeAfterUpdate()
+                    relaunchAnnounced = false
                     sender.reply(toApplicationShouldTerminate: false)
                     return
                 }
@@ -120,6 +124,8 @@ final class UpdateController: NSObject, ObservableObject, NSApplicationDelegate,
                 installation.resetPreparation()
                 serviceAgent.resumeAfterUpdate()
                 issue = "Update paused: \(error.localizedDescription)"
+                // A later quit is not this relaunch; a retry announces again.
+                relaunchAnnounced = false
                 sender.reply(toApplicationShouldTerminate: false)
                 let alert = NSAlert()
                 alert.messageText = "Timeline could not prepare the update"
