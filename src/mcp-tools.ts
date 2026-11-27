@@ -1070,6 +1070,7 @@ Examples:
       source: z.string().optional().describe("Only include these sources (comma-separated, e.g. \"discord,spotify\")"),
       exclude_source: z.string().optional().describe("Drop these sources from the window (comma-separated) — e.g. \"claude-code,conductor,t3code,codex\" to hide AI agent-session noise"),
       limit: z.number().int().min(1).optional().default(50).describe("Max results (default 50)"),
+      same_conversation: z.boolean().optional().describe("Only events in event_id's own conversation (chat, channel or DM)"),
       cursor: cursorParam,
       full_content: z.boolean().optional().default(false).describe("Return full content instead of truncated previews"),
     },
@@ -1079,12 +1080,29 @@ Examples:
       const limit = params.limit ?? 50;
       const cursorError = invalidCursor(cursor);
       if (cursorError) return cursorError;
+      let conversation: { source: string; sourceAccount: string; conversationId: string } | undefined;
+      if (params.same_conversation) {
+        const anchor = event_id === undefined
+          ? null
+          : await db.get<{ source: string; source_account: string | null; conversation_id: string | null }>(
+            "SELECT source, source_account, conversation_id FROM events WHERE id = ?",
+            event_id,
+          );
+        if (!anchor?.conversation_id || !anchor.source_account) {
+          return {
+            isError: true,
+            content: [{ type: "text" as const, text: "Error: same_conversation needs an event_id of an event in a conversation." }],
+          };
+        }
+        conversation = { source: anchor.source, sourceAccount: anchor.source_account, conversationId: anchor.conversation_id };
+      }
       const fetched = await getEventContext(db, {
         eventId: event_id,
         timestamp,
         hoursWindow: hours_window,
         sources: splitSources(source),
         excludeSources: splitSources(exclude_source),
+        conversation,
         cursor,
         limit: limit + 1,
       });
