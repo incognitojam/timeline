@@ -1,3 +1,4 @@
+import type { MemoryNote } from "@shared/memory";
 import type { HealthWindow } from "@shared/health-periods";
 import type { MusicExclusionRequest, MusicPeriod } from "@platforms/spotify/shared/music";
 import type { NetworkSettings } from "@shared/network-settings";
@@ -1374,8 +1375,23 @@ export function useMemoryIndex() {
   return createQuery(() => queryOptions.memoryIndex());
 }
 
+/**
+ * One note. While it loads, the note as the cached index lists it stands in as
+ * placeholder data, so its page shows at once; it is never cached as the note.
+ */
 export function useMemoryNote(scope: () => { project: string; name: string }) {
-  return createQuery(() => queryOptions.memoryNote(scope().project, scope().name));
+  const queryClient = useQueryClient();
+  return createQuery(() => {
+    const { project, name } = scope();
+    return {
+      ...queryOptions.memoryNote(project, name),
+      placeholderData: (): MemoryNote | undefined => {
+        const index = queryClient.getQueryData(queryOptions.memoryIndex().queryKey);
+        const notes = project ? index?.projects.find((p) => p.key === project)?.notes : index?.account;
+        return notes?.find((note) => note.name === name);
+      },
+    };
+  });
 }
 
 export function useMemoryVersions(scope: () => { project: string; name: string }) {

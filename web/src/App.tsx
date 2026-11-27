@@ -16,6 +16,7 @@ import Layout from "./components/Layout";
 import McpSessionDetailView from "./components/McpSessionDetailView";
 import McpSessionsView from "./components/McpSessionsView";
 import MemoryNoteView from "./components/MemoryNoteView";
+import MemoryProjectView from "./components/MemoryProjectView";
 import MemoryView from "./components/MemoryView";
 import MusicOverview from "./platforms/spotify/MusicOverview";
 import MusicExclusionsView from "./platforms/spotify/MusicExclusionsView";
@@ -166,6 +167,17 @@ const preloadMusicPlaylist: RoutePreloadFunc = ({ params }) => {
   return queryClient.prefetchQuery(queryOptions.musicPlaylist(params.id));
 };
 
+const preloadMemoryIndex: RoutePreloadFunc = () => {
+  return queryClient.prefetchQuery(queryOptions.memoryIndex());
+};
+
+const preloadMemoryNote: RoutePreloadFunc = ({ params, location }) => {
+  return Promise.all([
+    queryClient.prefetchQuery(queryOptions.memoryIndex()),
+    queryClient.prefetchQuery(queryOptions.memoryNote(normalizeRouteParam(location.query.project), params.name ?? "")),
+  ]);
+};
+
 const preloadMcpSessions: RoutePreloadFunc = () => {
   return queryClient.prefetchQuery(queryOptions.mcpSessions({ limit: MCP_SESSION_LIMIT, offset: 0 }));
 };
@@ -198,8 +210,9 @@ export default function App() {
       <Route path="/attachments" component={suspenseRoute(AttachmentsView, "attachments")} preload={preloadAttachments} />
       <Route path="/eval" component={suspenseRoute(EvalView, "eval")} preload={preloadEval} />
       <Route path="/mcp-sessions" component={suspenseRoute(McpSessionsView, "MCP sessions")} preload={preloadMcpSessions} />
-      <Route path={ROUTES.MEMORY} component={suspenseRoute(MemoryView, "memory")} />
-      <Route path={ROUTES.MEMORY_NOTE} component={suspenseRoute(MemoryNoteView, "note")} />
+      <Route path={ROUTES.MEMORY} component={suspenseRoute(MemoryView, "memory")} preload={preloadMemoryIndex} />
+      <Route path={ROUTES.MEMORY_PROJECT} component={suspenseRoute(MemoryProjectView, "project")} preload={preloadMemoryIndex} />
+      <Route path={ROUTES.MEMORY_NOTE} component={suspenseRoute(MemoryNoteView, "note")} preload={preloadMemoryNote} />
       <Route path="/mcp-sessions/:id" component={suspenseRoute(McpSessionDetailView, "MCP session")} preload={preloadMcpSession} />
       <Route path="/conversation/:source/:conversationId" component={suspenseRoute(ConversationView, "conversation")} />
       <Route path="/event/:id" component={suspenseRoute(EventRedirect, "event")} />

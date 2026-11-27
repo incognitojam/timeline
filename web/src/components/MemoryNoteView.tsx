@@ -1,6 +1,6 @@
 import { MEMORY_KINDS, type MemoryKind, type MemoryNote, type MemoryVersion } from "@shared/memory";
 import { A, useNavigate, useParams, useSearchParams } from "@solidjs/router";
-import { createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, Show, Suspense } from "solid-js";
 import { formatMemoryDate, KIND_LABELS, linkMemoryNotes, scopeLabel } from "../lib/memory";
 import {
   useContact,
@@ -11,10 +11,11 @@ import {
   useRestoreMemoryVersion,
   useUpdateMemoryNote,
 } from "../lib/queries";
+import { useRestoredScroll } from "../lib/page-scroll";
 import { normalizeRouteParam } from "../lib/route-params";
-import { buildContactsUrl, ROUTES } from "../lib/routes";
+import { APP_NAME, buildContactsUrl, buildMemoryProjectUrl, ROUTES } from "../lib/routes";
 import Dialog from "../ui/Dialog";
-import { IconChevronLeft } from "../ui/icons";
+import { IconChevronLeft, IconChevronRight } from "../ui/icons";
 import { Markdown } from "./Markdown";
 
 const BUTTON = "rounded-sm border border-border px-3 py-1.5 text-sm text-foreground transition-colors enabled:hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
@@ -158,18 +159,42 @@ function NotePage(props: { project: string; name: string }) {
   const remove = useDeleteMemoryNote();
   const [editing, setEditing] = createSignal(false);
   const [confirming, setConfirming] = createSignal(false);
+  const scrollRef = useRestoredScroll();
+  // The project's page for a project's note, else Memory.
+  const parentUrl = () => props.project ? buildMemoryProjectUrl(props.project) : ROUTES.MEMORY;
+  // Placeholder data is the index's copy: shown, but not edited or deleted.
+  const isPlaceholder = () => noteQuery.isPlaceholderData;
+
+  createEffect(() => {
+    const title = noteQuery.data?.title;
+    document.title = title ? `${title} · Memory · ${APP_NAME}` : `Memory · ${APP_NAME}`;
+  });
+
+  const index = useMemoryIndex();
 
   async function confirmDelete() {
+    // Resolves once the index has refetched; a project's last note can take its project with it.
     await remove.mutateAsync(scope());
-    navigate(ROUTES.MEMORY);
+    const projectRemains = index.data?.projects.some((p) => p.key === props.project) ?? false;
+    navigate(projectRemains ? parentUrl() : ROUTES.MEMORY);
   }
 
   return (
-    <div class="h-full overflow-auto">
+    <div ref={scrollRef} class="h-full overflow-auto">
       <div class="mx-auto max-w-3xl px-4 pt-6 pb-12">
-        <A href={ROUTES.MEMORY} class="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-          <IconChevronLeft class="h-4 w-4" aria-hidden /> Memory
-        </A>
+        <nav aria-label="Breadcrumb" class="mb-4 flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
+          <A href={ROUTES.MEMORY} class="inline-flex items-center gap-1 hover:text-foreground">
+            <IconChevronLeft class="h-4 w-4" aria-hidden /> Memory
+          </A>
+          <Show when={props.project}>
+            {(project) => (
+              <>
+                <IconChevronRight class="h-4 w-4" aria-hidden />
+                <A href={buildMemoryProjectUrl(project())} class="hover:text-foreground">{project()}</A>
+              </>
+            )}
+          </Show>
+        </nav>
 
         <Show when={noteQuery.error}>
           {(error) => <p role="alert" class="rounded-lg border border-destructive/40 p-4 text-sm text-destructive">{error().message}</p>}
@@ -194,7 +219,10 @@ function NotePage(props: { project: string; name: string }) {
                       <>
                         <span aria-hidden>·</span>
                         <A href={buildContactsUrl({ id: contactId() })} class="text-foreground underline underline-offset-2 hover:text-primary">
-                          {contact.data?.contact.display_name ?? "Linked contact"}
+                          {/* The contact loads after the note; it must not hold the note's page back. */}
+                          <Suspense fallback="Linked contact">
+                            {contact.data?.contact.display_name ?? "Linked contact"}
+                          </Suspense>
                         </A>
                       </>
                     )}
@@ -211,8 +239,8 @@ function NotePage(props: { project: string; name: string }) {
                     <p class="mb-4 text-base text-foreground">{note().summary}</p>
                     <NoteDetails note={note()} />
                     <div class="mt-6 flex gap-2">
-                      <button type="button" class={BUTTON} onClick={() => setEditing(true)}>Edit</button>
-                      <button type="button" class={BUTTON} onClick={() => setConfirming(true)}>Delete</button>
+                      <button type="button" class={BUTTON} disabled={isPlaceholder()} onClick={() => setEditing(true)}>Edit</button>
+                      <button type="button" class={BUTTON} disabled={isPlaceholder()} onClick={() => setConfirming(true)}>Delete</button>
                     </div>
                   </>
                 }
@@ -220,14 +248,17 @@ function NotePage(props: { project: string; name: string }) {
                 <EditForm note={note()} onDone={() => setEditing(false)} />
               </Show>
 
-              <Show when={(versions.data ?? []).length > 0}>
-                <section class="mt-10">
-                  <h2 class={`${HEADING} mb-2 px-1`}>Previous versions</h2>
-                  <ul class="divide-y divide-border rounded-lg border border-border bg-card">
-                    <For each={versions.data}>{(version) => <VersionRow version={version} />}</For>
-                  </ul>
-                </section>
-              </Show>
+              {/* Versions arrive after the note; they must not hold its page back. */}
+              <Suspense>
+                <Show when={(versions.data ?? []).length > 0}>
+                  <section class="mt-10">
+                    <h2 class={`${HEADING} mb-2 px-1`}>Previous versions</h2>
+                    <ul class="divide-y divide-border rounded-lg border border-border bg-card">
+                      <For each={versions.data}>{(version) => <VersionRow version={version} />}</For>
+                    </ul>
+                  </section>
+                </Show>
+              </Suspense>
 
               <Dialog open={confirming()} onClose={() => setConfirming(false)} title="Delete this note?">
                 <p class="text-sm text-muted-foreground">

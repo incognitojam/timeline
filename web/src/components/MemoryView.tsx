@@ -1,17 +1,18 @@
 import type { MemoryNote, MemoryProject } from "@shared/memory";
 import { A } from "@solidjs/router";
-import { createSignal, For, Index, Show } from "solid-js";
-import { ACCOUNT_GROUPS, formatMemoryDate, projectNotesInOrder, scopeLabel } from "../lib/memory";
-import { useMemoryIndex, useRestoreMemoryVersion, useSetProjectUsesAccountMemory } from "../lib/queries";
-import { buildMemoryNoteUrl } from "../lib/routes";
+import { createSignal, For, Show } from "solid-js";
+import { ACCOUNT_GROUPS, formatMemoryDate, scopeLabel } from "../lib/memory";
+import { useRestoredScroll } from "../lib/page-scroll";
+import { useMemoryIndex, useRestoreMemoryVersion } from "../lib/queries";
+import { buildMemoryNoteUrl, buildMemoryProjectUrl } from "../lib/routes";
 import { IconChevronRight, IconPsychology } from "../ui/icons";
 import MemoryImport from "./MemoryImport";
 
-const HEADING = "font-mono text-[0.625rem] uppercase tracking-[0.16em] text-muted-foreground";
-const LIST = "divide-y divide-border overflow-hidden rounded-lg border border-border bg-card";
+export const HEADING = "font-mono text-[0.625rem] uppercase tracking-[0.16em] text-muted-foreground";
+export const LIST = "divide-y divide-border overflow-hidden rounded-lg border border-border bg-card";
 const SECONDARY_BUTTON = "shrink-0 rounded-sm border border-border px-3 py-1.5 text-sm text-foreground transition-colors enabled:hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
 
-function NoteRow(props: { note: MemoryNote }) {
+export function NoteRow(props: { note: MemoryNote }) {
   return (
     <li>
       <A
@@ -28,57 +29,29 @@ function NoteRow(props: { note: MemoryNote }) {
   );
 }
 
-function ProjectGroup(props: { project: MemoryProject }) {
-  const setUse = useSetProjectUsesAccountMemory();
-  const switchId = () => `memory-account-${props.project.key}`;
+function ProjectRow(props: { project: MemoryProject }) {
+  const count = () => props.project.notes.length;
   return (
-    <details class="group rounded-lg border border-border bg-card">
-      <summary class="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
-        <IconChevronRight class="h-5 w-5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" aria-hidden />
-        <span class="min-w-0 flex-1 truncate">{props.project.key}</span>
-        <span class="shrink-0 text-xs font-normal text-muted-foreground">
-          {props.project.notes.length} {props.project.notes.length === 1 ? "note" : "notes"}
+    <li>
+      <A
+        href={buildMemoryProjectUrl(props.project.key)}
+        class="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
+      >
+        <span class="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{props.project.key}</span>
+        <span class="shrink-0 text-xs text-muted-foreground">
+          {count()} {count() === 1 ? "note" : "notes"}
           <Show when={!props.project.useAccountMemory}> · account memory off</Show>
         </span>
-      </summary>
-      <div class="border-t border-border px-4 py-3">
-        <label for={switchId()} class="flex items-start gap-2 text-sm text-foreground">
-          <input
-            id={switchId()}
-            type="checkbox"
-            class="mt-0.5"
-            checked={props.project.useAccountMemory}
-            disabled={setUse.isPending}
-            onChange={(event) => {
-              const box = event.currentTarget;
-              // On failure, show the saved state again.
-              setUse.mutate(
-                { project: props.project.key, useAccountMemory: box.checked },
-                { onError: () => { box.checked = props.project.useAccountMemory; } },
-              );
-            }}
-          />
-          <span>
-            Use account memory
-            <span class="mt-0.5 block text-xs text-muted-foreground">
-              When off, list_memory for this project lists only its own notes. Agents still receive the account's notes when they connect, since those instructions are the same for every project.
-            </span>
-          </span>
-        </label>
-        <Show when={setUse.error}>
-          {(error) => <p role="alert" class="mt-2 text-xs text-destructive">{error().message}</p>}
-        </Show>
-      </div>
-      <ul class="divide-y divide-border border-t border-border">
-        <For each={projectNotesInOrder(props.project.notes)}>{(note) => <NoteRow note={note} />}</For>
-      </ul>
-    </details>
+        <IconChevronRight class="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
+      </A>
+    </li>
   );
 }
 
 export default function MemoryView() {
   const query = useMemoryIndex();
   const restore = useRestoreMemoryVersion();
+  const scrollRef = useRestoredScroll();
   const [importing, setImporting] = createSignal(false);
   const isEmpty = () => {
     const data = query.data;
@@ -86,7 +59,7 @@ export default function MemoryView() {
   };
 
   return (
-    <div class="h-full overflow-auto">
+    <div ref={scrollRef} class="h-full overflow-auto">
       <div class="mx-auto max-w-4xl px-4 pt-6 pb-12">
         <header class="mb-8 flex flex-wrap items-start gap-3">
           <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm bg-secondary text-secondary-foreground">
@@ -136,10 +109,9 @@ export default function MemoryView() {
               <Show when={data().projects.length > 0}>
                 <section>
                   <h2 class={`${HEADING} mb-2 px-1`}>Projects</h2>
-                  <div class="space-y-2">
-                    {/* Index, not For: a refetch brings new objects, and an open group must stay open. */}
-                    <Index each={data().projects}>{(project) => <ProjectGroup project={project()} />}</Index>
-                  </div>
+                  <ul class={LIST}>
+                    <For each={data().projects}>{(project) => <ProjectRow project={project} />}</For>
+                  </ul>
                 </section>
               </Show>
 
