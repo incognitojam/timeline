@@ -10,7 +10,7 @@
  * again, fetches and stores only while holding the worker's local-work gate,
  * which a full sync, like every serial job, holds for its whole run, so the
  * two never run against that state at the same time. It saves only the
- * cursors and DMs it changed, merged into the latest state (saveDmProgress).
+ * cursors and DMs it changed, merged into the latest state (saveChannelProgress).
  * Separately, and only to save a listing while one runs, it skips its tick
  * while a full Discord sync job is running.
  */
@@ -105,6 +105,21 @@ export const discordDmsSyncSource: SyncSource = {
   },
 };
 
+/**
+ * Throw unless the token belongs to the account the saved state is for. The
+ * token is checked once (one request), then remembered.
+ */
+export async function verifyDiscordAccount(client: DiscordClient, token: string, state: DiscordApiSyncState): Promise<void> {
+  if (verified?.token !== token) {
+    const user = await client.getCurrentUser();
+    if (!user) throw new Error("Failed to get current Discord user - check token");
+    verified = { token, userId: user.id };
+  }
+  if (verified.userId !== state.userId) {
+    throw new Error(`Discord account changed: cached ${state.username} (${state.userId}); the full sync reports the details`);
+  }
+}
+
 async function runPass(
   client: DiscordClient,
   token: string,
@@ -114,14 +129,7 @@ async function runPass(
   startTime: number,
   progress: { store?: MessageStore },
 ): Promise<SyncResult> {
-  if (verified?.token !== token) {
-    const user = await client.getCurrentUser();
-    if (!user) throw new Error("Failed to get current Discord user - check token");
-    verified = { token, userId: user.id };
-  }
-  if (verified.userId !== listedState.userId) {
-    throw new Error(`Discord account changed: cached ${listedState.username} (${listedState.userId}); the full sync reports the details`);
-  }
+  await verifyDiscordAccount(client, token, listedState);
 
   const channels = await client.fetchDMChannels();
   const moved = (state: DiscordApiSyncState) =>
@@ -184,7 +192,11 @@ async function storeChannels(
     }
   } finally {
     // Cursors moved only as far as storeBatch stored, also when a fetch failed.
-    finishMessageStore(db, store, () => saveDmProgress(appDb, state, channels, forbidden));
+    finishMessageStore(db, store, () =>
+      saveChannelProgress(appDb, state, channels.map(({ id }) => id), forbidden, (latest) => {
+        latest.knownDMChannelIds = [...new Set([...latest.knownDMChannelIds, ...channels.map(({ id }) => id)])];
+      })
+    );
   }
   if (store.totals.added + store.totals.edited + store.totals.tombstonesCleared === 0) {
     return skipped("No new DM messages", startTime);
@@ -206,9 +218,16 @@ async function storeChannels(
  * first, and the ones right after the cursor rather than the newest ones. The
  * last needs one extra request for each full page.
  */
-async function checkPage(client: DiscordClient, channelId: string, after: string | undefined, page: { id: string }[]) {
+export async function checkPage(
+  client: DiscordClient,
+  channelId: string,
+  after: string | undefined,
+  page: { id: string }[],
+  /** Starts the error, before the channel id. */
+  subject = "discord-dms: Discord paged DM channel",
+) {
   const fail = (problem: string): never => {
-    throw new Error(`discord-dms: Discord paged DM channel ${channelId} after ${after ?? 0} out of order: ${problem}`);
+    throw new Error(`${subject} ${channelId} after ${after ?? 0} out of order: ${problem}`);
   };
   const floor = BigInt(after ?? 0);
   page.forEach(({ id }, i) => {
@@ -227,26 +246,27 @@ async function checkPage(client: DiscordClient, channelId: string, after: string
 }
 
 /**
- * Write only what this pass changed into the latest `discord-api` state, in
- * one transaction: each fetched channel's cursor (never moved back), the DMs
- * now known, and channels that answered 403. Anything else in the state stays
+ * Write only what a pass changed into the latest `discord-api` state, in one
+ * transaction: each fetched channel's cursor (never moved back), channels that
+ * answered 403, and whatever `update` adds. Anything else in the state stays
  * as the full sync last saved it, even if another process saved it meanwhile.
  */
-function saveDmProgress(
+export function saveChannelProgress(
   appDb: Database,
   ours: DiscordApiSyncState,
-  channels: DiscordChannel[],
+  channelIds: string[],
   forbidden: Record<string, string>,
+  update?: (latest: DiscordApiSyncState) => void,
 ): void {
   appDb.transaction(() => {
     const latest = getSyncState<DiscordApiSyncState>(appDb, "discord-api");
-    if (latest?.userId !== ours.userId) throw new Error("Discord sync state changed during the DM pass");
-    for (const { id } of channels) {
+    if (latest?.userId !== ours.userId) throw new Error("Discord sync state changed during the pass");
+    for (const id of channelIds) {
       const cursor = ours.channelCursors[id];
       const existing = latest.channelCursors[id];
       if (cursor && (!existing || BigInt(cursor) > BigInt(existing))) latest.channelCursors[id] = cursor;
     }
-    latest.knownDMChannelIds = [...new Set([...latest.knownDMChannelIds, ...channels.map(({ id }) => id)])];
+    update?.(latest);
     if (Object.keys(forbidden).length > 0) latest.forbiddenChannelIds = { ...latest.forbiddenChannelIds, ...forbidden };
     setSyncState(appDb, "discord-api", latest);
   }).immediate();
@@ -260,7 +280,9 @@ function storedCounts(store: MessageStore | undefined): Pick<SyncResult, "events
 }
 
 function isFullSyncRunning(appDb: Database): boolean {
-  return listJobs({ kind: "sync", source: discordSyncSource.name, status: "running", limit: 1 }, appDb).length > 0;
+  // A conversation refresh is a `discord` job too, with its target in the payload.
+  return listJobs({ kind: "sync", source: discordSyncSource.name, status: "running" }, appDb)
+    .some((job) => job.payload.refresh === undefined);
 }
 
 function emptyResult(startTime: number): SyncResult {

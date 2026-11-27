@@ -32,6 +32,7 @@ import type { Job, JobKind } from "../jobs/types";
 import { syncJobResult } from "./job-result";
 import { attachmentDescriptionsSyncSource } from "../sync/sources/attachment-descriptions";
 import { discordDmsSyncSource } from "../platforms/discord/dm-pass";
+import { refreshTargetOf, runRefreshJob } from "../sync/refresh";
 import { lowerThreadToBackground } from "../lib/background-priority";
 
 interface WorkerMessage {
@@ -69,7 +70,10 @@ function buildHandlers(
       if (!job.source) {
         throw new Error("sync job is missing `source`");
       }
-      const result = await currentScheduler.runNow(job.source, job.id, signal, job.trigger, localWork);
+      const target = refreshTargetOf(job);
+      const result = target
+        ? await runRefreshJob(job.source, target, signal)
+        : await currentScheduler.runNow(job.source, job.id, signal, job.trigger, localWork);
       if (!result.success) {
         throw new Error(result.error || "Sync failed");
       }

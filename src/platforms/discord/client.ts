@@ -855,7 +855,10 @@ export class DiscordClient {
           handlers?.onForbidden?.(channelId);
           return;
         }
-        if (res.status === 404) return;
+        if (res.status === 404) {
+          handlers?.onNotFound?.(channelId);
+          return;
+        }
         throw new Error(`Failed to fetch messages: ${res.status}`);
       }
 

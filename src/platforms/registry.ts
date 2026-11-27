@@ -1,12 +1,14 @@
 import type { RendererRegistration } from "../render/types";
 import type { SeedSource } from "../seed/context";
-import type { SyncSource } from "../sync/types";
+import type { ConversationRefresh, SyncSource } from "../sync/types";
 import type { PlatformMeta } from "./types";
 
 /** What one platform contributes to the service. See `metas.ts` for the web-safe half. */
 export interface PlatformModule {
   meta: PlatformMeta;
   syncSources?: readonly SyncSource[];
+  /** Syncs one of the platform's conversations on request (the conversation view's Refresh button). */
+  conversationRefresh?: ConversationRefresh;
   /** Keyed by the source id whose stored events the renderer rewrites. */
   renderers?: Readonly<Record<string, RendererRegistration>>;
   /**
@@ -31,6 +33,13 @@ export function collectSyncSources(
   const sources = [...platforms.flatMap((platform) => platform.syncSources ?? []), ...systemJobs];
   assertUnique("sync source", sources.map((source) => source.name));
   return sources;
+}
+
+export function collectConversationRefreshers(platforms: readonly PlatformModule[]): ConversationRefresh[] {
+  const refreshers = platforms.flatMap((platform) => platform.conversationRefresh ?? []);
+  assertUnique("conversation refresh", refreshers.map((refresher) => refresher.source));
+  assertUnique("conversation refresh sync source", refreshers.map((refresher) => refresher.syncSource.name));
+  return refreshers;
 }
 
 export function collectRenderers(

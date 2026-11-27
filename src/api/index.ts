@@ -58,6 +58,7 @@ import { getDiscordServer, listDiscordServers } from "../platforms/discord/serve
 import { getWakaTimeProject, getWakaTimeProjectSessions, getWakaTimeStats } from "../platforms/wakatime/stats";
 import { mcpRoutes } from "./mcp";
 import { createMemoryRoutes } from "./memory";
+import { createConversationRefreshRoutes } from "./conversation-refresh";
 import { generateStatusMarkdown, renderMarkdownToHtml } from "./status-md";
 import { uploadAuth } from "./upload-auth";
 import { authMiddleware, authRoutes, isAuthEnabled, assertApiAuthConfigured } from "./auth";
@@ -440,6 +441,7 @@ app.route("/", statusRoutes);
 app.route("/", jobsRoutes);
 app.route("/", mcpRoutes);
 app.route("/", createMemoryRoutes(readDb));
+app.route("/", createConversationRefreshRoutes(readDb));
 app.route("/", evalRoutes);
 app.route("/", createSyncSourceRoutes(apiConfig.scheduler.default_interval));
 app.route("/", createRemoteAgentsRoutes());

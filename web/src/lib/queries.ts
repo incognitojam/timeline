@@ -71,6 +71,7 @@ import {
   fetchConversationAround,
   fetchConversationMedia,
   fetchConversationSources,
+  fetchConversationRefresh,
   fetchConversationStats,
   fetchConversations,
   fetchDayEvents,
@@ -201,8 +202,10 @@ export const queryKeys = {
     ["conversation", "media", params] as const,
   conversationRangeExport: (params: ConversationRangeExportRequest | undefined) =>
     ["conversation", "rangeExport", params] as const,
+  conversationStatsRoot: () => ["conversationStats"] as const,
   conversationStats: (params: { conversationId: string; source: string; sourceAccount?: string }) =>
-    ["conversationStats", params] as const,
+    [...queryKeys.conversationStatsRoot(), params] as const,
+  conversationRefresh: (params: { conversationId: string; source: string }) => ["conversationRefresh", params] as const,
   attachmentsList: () => ["attachments", "list"] as const,
   attachments: (params: AttachmentsQueryParams) => [...queryKeys.attachmentsList(), params] as const,
   attachmentsStats: () => ["attachments", "stats"] as const,
@@ -492,6 +495,12 @@ export const queryOptions = {
     defineQueryOptions({
       queryKey: queryKeys.conversationStats(params),
       queryFn: ({ signal }) => fetchConversationStats({ ...params, signal }),
+    }),
+
+  conversationRefresh: (params: { conversationId: string; source: string }) =>
+    defineQueryOptions({
+      queryKey: queryKeys.conversationRefresh(params),
+      queryFn: ({ signal }) => fetchConversationRefresh({ ...params, signal }),
     }),
 
   attachments: (params: AttachmentsQueryParams) =>
@@ -1101,6 +1110,10 @@ export function useConversationStats(
   params: () => { conversationId: string; source: string; sourceAccount?: string },
 ) {
   return createQuery(() => queryOptions.conversationStats(params()));
+}
+
+export function useConversationRefresh(params: () => { conversationId: string; source: string }) {
+  return createQuery(() => queryOptions.conversationRefresh(params()));
 }
 
 export function useConversationMedia(params: () => ConversationMediaQueryParams) {

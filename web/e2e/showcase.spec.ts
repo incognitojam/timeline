@@ -1002,6 +1002,10 @@ async function mockApi(page: Page): Promise<string[]> {
       await route.fulfill({ json: page });
       return;
     }
+    if (request.method() === "GET" && pathname === "/api/conversation/refresh") {
+      await route.fulfill({ json: { refreshable: false, reason: "Conversations from this source can't be refreshed one at a time" } });
+      return;
+    }
     if (request.method() === "GET" && pathname === "/api/conversation/stats") {
       await route.fulfill({ json: conversation.stats });
       return;

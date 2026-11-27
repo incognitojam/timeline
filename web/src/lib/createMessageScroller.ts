@@ -99,6 +99,11 @@ export interface MessageScroller<T> {
   scrollToStart: (behavior?: ScrollBehavior) => void;
   /** Scroll a rendered message into view. Returns false if it is not loaded. */
   scrollToMessage: (id: string | number, behavior?: ScrollBehavior, block?: ScrollLogicalPosition) => boolean;
+  /**
+   * Fetch messages newer than the newest loaded one now, after any poll already in flight.
+   * Rejects with the fetch's error; does nothing when the window isn't at the live edge.
+   */
+  fetchNewest: () => Promise<void>;
 }
 
 // rAF where available (browser), falling back to a macrotask under jsdom so
@@ -246,6 +251,14 @@ export function createMessageScroller<T>(options: MessageScrollerOptions<T>): Me
     }
   };
 
+  // Settles when the poll in flight finishes, with its error if it failed.
+  let autoRefetchInFlight: Promise<string | null> = Promise.resolve(null);
+  let settleAutoRefetch: (error: string | null) => void = () => {};
+  const endAutoRefetch = (error: string | null) => {
+    isAutoRefetching = false;
+    settleAutoRefetch(error);
+  };
+
   const autoRefetchAfterNewest = async () => {
     const autoRefetch = options.autoRefetch;
     const viewport = viewportEl;
@@ -261,6 +274,9 @@ export function createMessageScroller<T>(options: MessageScrollerOptions<T>): Me
     if (!cursor) return;
 
     isAutoRefetching = true;
+    autoRefetchInFlight = new Promise((resolve) => {
+      settleAutoRefetch = resolve;
+    });
     const generation = loadGeneration;
     const wasPinnedToEnd = isPinnedToEnd(viewport);
     const scrollTopBefore = viewport.scrollTop;
@@ -282,20 +298,28 @@ export function createMessageScroller<T>(options: MessageScrollerOptions<T>): Me
             viewport.scrollTop = scrollTopBefore;
           }
         }
-        isAutoRefetching = false;
+        endAutoRefetch(null);
         updateIsAtEnd();
       });
     } catch (e) {
       if (!isCurrentGeneration(generation)) return;
       setError(String(e));
-      isAutoRefetching = false;
+      endAutoRefetch(String(e));
     }
+  };
+
+  const fetchNewest = async () => {
+    // A poll already in flight may have read the page before the caller's change landed.
+    await autoRefetchInFlight;
+    void autoRefetchAfterNewest();
+    const error = await autoRefetchInFlight;
+    if (error) throw new Error(error);
   };
 
   const reload = async () => {
     const generation = ++loadGeneration;
     disconnectObservers();
-    isAutoRefetching = false;
+    endAutoRefetch(null);
     setIsLoading(true);
     setIsLoadingBefore(false);
     setIsLoadingAfter(false);
@@ -395,6 +419,7 @@ export function createMessageScroller<T>(options: MessageScrollerOptions<T>): Me
     scrollToEnd,
     scrollToStart,
     scrollToMessage,
+    fetchNewest,
   };
 
   return scroller;

@@ -163,6 +163,41 @@ export function enqueueJob(req: EnqueueRequest, db: Database = getAppStateDb()):
   }
 }
 
+/**
+ * Return the queued or running job with this dedupe key, or enqueue one. Unlike
+ * enqueueJob, which dedupes onto queued jobs only, a request made while the
+ * job runs joins it rather than queueing a second run behind it.
+ */
+export function enqueueOrJoinJob(
+  req: EnqueueRequest & { dedupeKey: string },
+  db: Database = getAppStateDb(),
+): EnqueueOutcome {
+  return db.transaction(() => {
+    const active = db
+      .prepare(
+        `SELECT id FROM jobs WHERE kind = ? AND dedupe_key = ? AND status IN ('queued', 'running')
+         ORDER BY id DESC LIMIT 1`,
+      )
+      .get(req.kind, req.dedupeKey) as { id: number } | null;
+    if (active) return { jobId: active.id, deduped: true };
+    const inserted = db
+      .prepare(
+        `INSERT INTO jobs (kind, source, payload, dedupe_key, priority, max_attempts, trigger)
+         VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      )
+      .get(
+        req.kind,
+        req.source ?? null,
+        JSON.stringify(req.payload ?? {}),
+        req.dedupeKey,
+        req.priority ?? TRIGGER_PRIORITY[req.trigger ?? "manual"],
+        req.maxAttempts ?? 1,
+        req.trigger ?? "manual",
+      ) as { id: number };
+    return { jobId: inserted.id, deduped: false };
+  }).immediate();
+}
+
 export function getJob(id: number, db: Database = getAppStateDb()): Job | null {
   const row = db.prepare(`SELECT * FROM jobs WHERE id = ?`).get(id) as JobRow | null;
   return row ? rowToJob(row) : null;
