@@ -352,6 +352,42 @@ describe("createMessageScroller", () => {
       cleanup();
     });
 
+    it("fetchNewest waits out a poll already in flight, then fetches again", async () => {
+      const stalePoll = deferred<MessagePageDelta<number>>();
+      const loadAfter = vi
+        .fn<(cursor: string) => Promise<MessagePageDelta<number>>>()
+        .mockReturnValueOnce(stalePoll.promise)
+        .mockResolvedValueOnce({ items: [3], hasMore: false, nextCursor: null });
+      const { result, cleanup } = renderHook(() =>
+        createMessageScroller<number>({
+          key: () => "k",
+          loadInitial: async () => page({ items: [1, 2] }),
+          loadBefore: async () => ({ items: [], hasMore: false, nextCursor: null }),
+          loadAfter,
+          autoRefetch: { intervalMs: 1000, getCursor: (item) => `c${item}` },
+        })
+      );
+      result.viewportRef(makeViewport());
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(loadAfter).toHaveBeenCalledTimes(1);
+
+      let settled = false;
+      const refreshed = result.fetchNewest().then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+
+      // The poll that started before the change comes back empty.
+      stalePoll.resolve({ items: [], hasMore: false, nextCursor: null });
+      await vi.advanceTimersByTimeAsync(50);
+      await refreshed;
+
+      expect(loadAfter).toHaveBeenCalledTimes(2);
+      expect(result.items()).toEqual([1, 2, 3]);
+      cleanup();
+    });
+
     it("keeps the viewport pinned to the end when auto-refetched messages arrive at the live edge", async () => {
       let scrollHeight = 100;
       const viewport = makeViewport();

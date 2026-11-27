@@ -28,6 +28,13 @@ function phaseLabel(phase: Phase): string {
   }
 }
 
+/** What to say when a finished job brought no messages to load: it failed, was cancelled or was deferred. */
+function unfinishedOutcome(job: Job): { message: string; success: boolean } | null {
+  if (job.status === "failed") return { message: `Sync failed: ${job.error ?? "unknown error"}`, success: false };
+  if (job.status !== "succeeded" || job.result?.skipped === true) return summarizeSyncJob(job);
+  return null;
+}
+
 /**
  * Runs the conversation's source sync through the same job queue the sync page uses.
  * No source can sync a single conversation, so the whole source runs.
@@ -53,16 +60,21 @@ export function ConversationRefreshButton(props: {
 
   const run = async () => {
     if (busy()) return;
+    // The view is keyed per conversation, so once it is disposed props describe another one.
+    const source = props.source;
+    const disposed = () => controller.signal.aborted;
     setResult(null);
     setPhase({ kind: "starting" });
     try {
       const before = await props.countMessages();
+      if (disposed()) return;
       // Join a sync of this source that is already queued or running rather than
       // queueing another full run behind it.
-      const active = await listJobs({ kind: "sync", source: props.source, status: ["running", "queued"], limit: 1 });
+      const active = await listJobs({ kind: "sync", source, status: ["running", "queued"], limit: 1 });
+      if (disposed()) return;
       let jobId = active.jobs[0]?.id;
       if (jobId === undefined) {
-        const started = await triggerSync.mutateAsync(props.source);
+        const started = await triggerSync.mutateAsync(source);
         if (!started.success || started.jobId === undefined) {
           setResult({ message: started.message, success: false });
           return;
@@ -73,25 +85,29 @@ export function ConversationRefreshButton(props: {
         signal: controller.signal,
         onUpdate: (update) => setPhase(update.status === "queued" ? queuedPhase(update) : { kind: "running" }),
       });
-      if (job.status === "failed") {
-        setResult({ message: `Sync failed: ${job.error ?? "unknown error"}`, success: false });
+      const unfinished = unfinishedOutcome(job);
+      if (unfinished) {
+        setResult(unfinished);
         return;
       }
-      if (job.status !== "succeeded" || job.result?.skipped === true) {
-        setResult(summarizeSyncJob(job));
+      try {
+        await props.onSynced();
+      } catch (error) {
+        if (disposed()) return;
+        setResult({ message: `Synced, but couldn't load new messages: ${error instanceof Error ? error.message : String(error)}`, success: false });
         return;
       }
-      await props.onSynced();
+      if (disposed()) return;
       const added = (await props.countMessages()) - before;
       setResult({
         success: true,
         message: added > 0 ? `${added} new message${added === 1 ? "" : "s"}` : "Up to date",
       });
     } catch (error) {
-      if (controller.signal.aborted) return;
+      if (disposed()) return;
       setResult({ message: error instanceof Error ? error.message : "Refresh failed", success: false });
     } finally {
-      if (!controller.signal.aborted) setPhase({ kind: "idle" });
+      if (!disposed()) setPhase({ kind: "idle" });
     }
   };
 
@@ -102,7 +118,8 @@ export function ConversationRefreshButton(props: {
           {(text) => (
             <span
               role="status"
-              class={`hidden md:inline text-xs ${result()?.success === false && !busy() ? "text-destructive" : "text-muted-foreground"}`}
+              title={text()}
+              class={`max-w-40 truncate text-xs ${result()?.success === false && !busy() ? "text-destructive" : "text-muted-foreground"}`}
             >
               {text()}
             </span>
