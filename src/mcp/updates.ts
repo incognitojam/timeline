@@ -14,6 +14,7 @@ import type { QueryExecutor } from "../db/pool";
 import type { TimelineEvent } from "../db/schema";
 import { renderExportText } from "../export/export";
 import { countTokens } from "../export/tokens";
+import { HIDDEN_CONTACT_NAME } from "./hidden-contacts";
 import { NOISY_MACHINE_SOURCES } from "../shared/noisy-sources";
 import { sourceIdsWithTraits } from "../shared/sources";
 
@@ -165,9 +166,11 @@ async function resolveWindow(db: QueryExecutor, params: UpdatesParams, now: Date
  */
 async function requireConversation(db: QueryExecutor, conversationId: string): Promise<void> {
   const conversation = `conversation_id IS NOT NULL AND ${conversationTypeClause()}`;
+  // A conversation with only hidden contacts' events reads as missing, as in export_conversation.
+  const hidden = await hiddenFilter(db);
   const next = async (sql: string, ...args: unknown[]) => (await db.get<{ next: string | null }>(sql, ...args))?.next ?? null;
   const probe = async (source: string, account: string | null) => await db.get(
-    `SELECT 1 FROM events WHERE source = ? AND source_account IS ? AND conversation_id = ? AND ${conversation} LIMIT 1`,
+    `SELECT 1 FROM events WHERE source = ? AND source_account IS ? AND conversation_id = ? AND ${conversation}${hidden ? ` AND ${hidden}` : ""} LIMIT 1`,
     source, account, conversationId,
   );
   for (
@@ -384,7 +387,7 @@ async function renderGroup(
     // Events outside a conversation render as several titled groups, so they take full timestamps instead of date headers.
     const loose = group.conversation_id === null;
     const transcript = await renderExportText(db, events, {
-      compactAuthors: true, noSummaries: true, fullTimestamps: loose, omitHiddenReplyAuthors: true,
+      compactAuthors: true, noSummaries: true, fullTimestamps: loose, hiddenContactName: HIDDEN_CONTACT_NAME,
     });
     const rest = loose
       ? transcript.split("\n").map((line) => line.replace(/^## [^:]*: /, "### "))

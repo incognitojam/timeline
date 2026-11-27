@@ -87,6 +87,16 @@ export function hiddenEventExclusionClause(tableAlias: string = "e"): string {
   `;
 }
 
+/** Which of these events are filed under a hidden contact. */
+export async function hiddenEventIdsAmong(db: QueryExecutor, ids: readonly number[]): Promise<Set<number>> {
+  if (ids.length === 0 || !(await hasHiddenContacts(db))) return new Set();
+  const rows = await db.query<{ event_id: number }>(
+    `SELECT event_id FROM (${hiddenEventIdsSubquery()}) WHERE event_id IN (${ids.map(() => "?").join(", ")})`,
+    ...ids,
+  );
+  return new Set(rows.map((row) => row.event_id));
+}
+
 export async function buildHiddenEventClause(db: QueryExecutor, tableAlias: string = "e"): Promise<string> {
   return await hasHiddenContacts(db) ? hiddenEventExclusionClause(tableAlias) : "";
 }
@@ -575,6 +585,8 @@ export async function getEventContext(
     excludeSources?: string[];
     /** Only this conversation's events. */
     conversation?: { source: string; sourceAccount: string; conversationId: string };
+    /** Leave out events filed under a hidden contact. */
+    excludeHidden?: boolean;
   }
 ): Promise<TimelineEvent[]> {
   const { eventId, timestamp, hoursWindow = 2, limit = 50, cursor, sources, excludeSources, conversation } = options;
@@ -583,7 +595,8 @@ export async function getEventContext(
 
   if (eventId && !timestamp) {
     const event = await db.get<{ timestamp: string }>(`SELECT timestamp FROM events WHERE id = ?`, eventId);
-    if (!event?.timestamp) return [];
+    // A hidden anchor reads as a missing one, or its neighbours would date it.
+    if (!event?.timestamp || (options.excludeHidden && (await hiddenEventIdsAmong(db, [eventId])).size > 0)) return [];
     centerTimestamp = event.timestamp;
   }
 
@@ -616,9 +629,10 @@ export async function getEventContext(
     params.push(parsedCursor.timestamp, parsedCursor.timestamp, parsedCursor.id);
   }
 
+  const hiddenClause = options.excludeHidden ? await buildHiddenEventClause(db, "events") : "";
   const sql = `
     SELECT * FROM events
-    WHERE ${conditions.join(" AND ")}
+    WHERE ${conditions.join(" AND ")} ${hiddenClause}
     ORDER BY timestamp, id
     LIMIT ?
   `;

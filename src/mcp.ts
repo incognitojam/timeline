@@ -22,6 +22,7 @@ import {
   upsertMcpSession,
   type RecordToolCallInput,
 } from "./mcp/recording";
+import { hiddenContactIds } from "./mcp/hidden-contacts";
 import { mcpInstructions, registerTools } from "./mcp-tools";
 import { PRODUCT_VERSION } from "./product-version";
 
@@ -41,7 +42,12 @@ const config = await loadConfig();
 // stdio clients start a process per connection, so this is read at connect time.
 const server = new McpServer(
   { name: "timeline", version: PRODUCT_VERSION },
-  { instructions: mcpInstructions(getAppStateDb(), { publicUrl: config.server.public_url }) },
+  {
+    instructions: mcpInstructions(getAppStateDb(), {
+      publicUrl: config.server.public_url,
+      hiddenContactIds: await hiddenContactIds(wrapDatabase(db)),
+    }),
+  },
 );
 const sessionId = `stdio:${process.pid}:${Date.now()}`;
 let invalidRecorder: InvalidToolCallRecorder | undefined;

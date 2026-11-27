@@ -1,4 +1,5 @@
 import { convertLegacyEmoji } from "../db/emoji";
+import { hiddenEventIdsAmong } from "../db/events";
 import { resolveIdentities } from "../db/identities";
 import type { QueryExecutor } from "../db/pool";
 import type { TimelineEvent } from "../db/schema";
@@ -7,6 +8,7 @@ import {
   type DiscordReplyTarget,
 } from "../platforms/discord/reply-references";
 import { discordMentionsToPlainText, extractUserMentionIds } from "../platforms/discord/shared/mentions";
+import { hiddenForwardIds } from "./hidden-forwards";
 import { quotePreview } from "./quote-preview";
 
 /** Inline reply-quote markers keyed by the replying event's id. */
@@ -43,8 +45,8 @@ export async function loadReplyQuotesForEvents(
     participantNameResolver?: (name: string, identifier?: string) => string;
     /** Zone for inline `<t:…>` timestamps, so a quote reads like the message it quotes. */
     timeZone?: string;
-    /** Leave out quotes of messages written by hidden contacts. */
-    omitHiddenAuthors?: boolean;
+    /** Set to leave out quotes of a hidden contact's messages and call them this where a quote mentions them. */
+    hiddenName?: string;
   } = {},
 ): Promise<Map<number, string>> {
   const targets = await resolveDiscordReplyTargets(db, events);
@@ -61,11 +63,30 @@ export async function loadReplyQuotesForEvents(
   }
   const identities = identifiers.size > 0 ? await resolveIdentities(db, [...identifiers]) : {};
   const resolver = (id: string): string | null =>
-    options.discordUserResolver?.(id) ?? identities[`discord:${id}`]?.name ?? null;
+    options.discordUserResolver?.(id)
+      ?? (options.hiddenName !== undefined && identities[`discord:${id}`]?.hidden ? options.hiddenName : identities[`discord:${id}`]?.name ?? null);
+
+  // A quoted message is hidden when it is filed under a hidden contact or
+  // forwards one of their messages, or, for an embedded snapshot with no local
+  // row, when its author is one. A reply shares its target's account.
+  const hiddenTargets = new Set<number>();
+  if (options.hiddenName !== undefined) {
+    const accounts = new Map(events.map((event) => [event.id, event.source_account]));
+    const local = [...targets].flatMap(([replyId, t]) => t.eventId === null ? [] : [{
+      id: t.eventId, source: "discord", source_account: accounts.get(replyId) ?? null, raw_data: t.rawData,
+    }]);
+    for (const id of await hiddenEventIdsAmong(db, local.map((t) => t.id))) hiddenTargets.add(id);
+    for (const id of await hiddenForwardIds(db, local)) hiddenTargets.add(id);
+  }
+  const isHidden = (target: DiscordReplyTarget): boolean =>
+    options.hiddenName !== undefined && (
+      (target.eventId !== null && hiddenTargets.has(target.eventId))
+      || (target.authorId !== null && identities[`discord:${target.authorId}`]?.hidden === true)
+    );
 
   const quotes = new Map<number, string>();
   for (const [eventId, target] of targets) {
-    if (options.omitHiddenAuthors && target.authorId && identities[`discord:${target.authorId}`]?.hidden) continue;
+    if (isHidden(target)) continue;
     const author = authorName(target, identities, options.participantNameResolver);
     const text = quotedText(target, resolver, options.timeZone);
     quotes.set(eventId, text ? `↪ (to ${author}: "${text}")` : `↪ (to ${author})`);

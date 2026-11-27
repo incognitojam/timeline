@@ -119,6 +119,22 @@ function checkFields(input: SaveMemoryNoteInput, current: MemoryNote | null) {
   return { kind, title, summary, details };
 }
 
+/** Check the input as saveMemoryNote would for a note that does not exist yet, without saving. */
+export function checkNewMemoryNote(db: Database, input: SaveMemoryNoteInput): void {
+  checkName(input.name);
+  checkFields(input, null);
+  checkRoomForNote(db);
+}
+
+function checkRoomForNote(db: Database): void {
+  const { count } = db
+    .prepare("SELECT COUNT(*) AS count FROM memory_notes WHERE replaced_at IS NULL")
+    .get() as { count: number };
+  if (count >= MEMORY_LIMITS.notes) {
+    throw new Error(`Memory already holds ${MEMORY_LIMITS.notes} notes, the limit. Merge or delete notes before adding another.`);
+  }
+}
+
 /**
  * Create a note, or update the one with this name in this scope, replacing
  * only the fields given.
@@ -145,12 +161,7 @@ export function saveMemoryNote(db: Database, input: SaveMemoryNoteInput): { note
       return { note, created: false };
     }
 
-    const { count } = db
-      .prepare("SELECT COUNT(*) AS count FROM memory_notes WHERE replaced_at IS NULL")
-      .get() as { count: number };
-    if (count >= MEMORY_LIMITS.notes) {
-      throw new Error(`Memory already holds ${MEMORY_LIMITS.notes} notes, the limit. Merge or delete notes before adding another.`);
-    }
+    checkRoomForNote(db);
     const note = db.prepare(`
       INSERT INTO memory_notes (project, name, kind, title, summary, details, contact_id, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING ${COLUMNS}
