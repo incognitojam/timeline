@@ -30,6 +30,7 @@ import { MEMORY_KINDS } from "./shared/memory";
 import { resolveIdentities } from "./db/identities";
 import type { QueryExecutor } from "./db/pool";
 import {
+  contactEventGroups,
   countContactEvents,
   createContactMemory,
   createCursor,
@@ -51,7 +52,9 @@ import {
   searchByContact,
   searchByLocation,
   searchTimeline,
+  searchTimelineGroups,
 } from "./db/queries";
+import type { EventGroup } from "./db/queries";
 import type { TimelineEvent } from "./db/schema";
 import { notConfiguredMessage } from "./embeddings/config";
 import { formatWindowHit, type SemanticSearch, searchEmbeddingsWithWindows } from "./embeddings/search";
@@ -327,6 +330,80 @@ function otherEventLine(e: TimelineEvent, fullContent: boolean): EventLine {
   if (title) parts.push(title);
   if (content) parts.push(`${title ? "- " : ""}${preview(content, 100, fullContent)}`);
   return { runLine: `[${e.source}/${e.type}]`, parts };
+}
+
+const groupParam = z.boolean().optional().describe("Instead of events, one line per conversation: hits, dates, an #id");
+
+type HitGroup = Pick<EventGroup, "source" | "conversation_id" | "type" | "title" | "hits" | "first" | "last" | "example_id">;
+
+/** `[source] <conversation>: N hits, first to last day, <example> #id` per group. */
+function formatGroups(groups: HitGroup[], example: string): string {
+  return groups.map((g) => {
+    const label = g.conversation_id ? `[${g.source}] ${g.title ?? g.conversation_id}:` : `[${g.source}/${g.type}]`;
+    const first = utcDayAndTime(g.first).day;
+    const last = utcDayAndTime(g.last).day;
+    const span = first === last ? first : `${first} to ${last}`;
+    return `${label} ${g.hits} hit${g.hits === 1 ? "" : "s"}, ${span}, ${example} #${g.example_id}`;
+  }).join("\n");
+}
+
+/** Group events (in rank order) as groupEvents does in SQL; each group's example is its first event. */
+function groupByConversation(events: TimelineEvent[]): HitGroup[] {
+  const groups = new Map<string, HitGroup>();
+  for (const e of events) {
+    const key = JSON.stringify(e.conversation_id === null
+      ? [e.source, e.type]
+      : [e.source, e.source_account, e.conversation_id]);
+    const group = groups.get(key);
+    if (!group) {
+      const { source, conversation_id, type, title, timestamp, id } = e;
+      groups.set(key, { source, conversation_id, type, title, hits: 1, first: timestamp, last: timestamp, example_id: id });
+      continue;
+    }
+    group.hits++;
+    if (e.timestamp && (!group.first || e.timestamp < group.first)) group.first = e.timestamp;
+    if (e.timestamp && (!group.last || e.timestamp > group.last)) group.last = e.timestamp;
+  }
+  return [...groups.values()];
+}
+
+const READ_GROUP = "Read a conversation with export_conversation(event_id: <#id>); see around any other #id with get_context.";
+
+/** query_events with group_by_conversation: its matches grouped in SQL, most hits first. */
+async function groupedQueryEvents(
+  db: QueryExecutor,
+  params: {
+    query?: string; source?: string; type?: string; contact?: string; location?: string; latitude?: number;
+    longitude?: number; cursor?: string; startDate?: string; endDate?: string; limit: number;
+  },
+): Promise<CallToolResult> {
+  const { query, source, type, contact, startDate, endDate, limit } = params;
+  const refuse = (text: string): CallToolResult => ({ isError: true, content: [{ type: "text" as const, text: `Error: ${text}` }] });
+  if (params.location || params.latitude !== undefined || params.longitude !== undefined) {
+    return refuse("group_by_conversation does not combine with location or coordinates.");
+  }
+  if (params.cursor) return refuse("group_by_conversation lists every group at once; it takes no cursor.");
+  if (!query && !source && !type && !contact && !startDate && !endDate) {
+    return refuse("group_by_conversation needs a query, contact, source, type or date filter.");
+  }
+  const filters = { query, source, type, startDate, endDate };
+  let prefix = "";
+  let groups: EventGroup[];
+  if (contact) {
+    const resolved = await resolveContact(db, contact);
+    if (resolved.error) return { content: resolved.error, isError: true };
+    prefix = `Contact: ${resolved.contact.display_name} (ID: ${resolved.contact.id})\n`;
+    groups = await contactEventGroups(db, resolved.contact.id, filters, limit);
+  } else {
+    // MCP is an agent data-access seam and remains intentionally unfiltered.
+    groups = await searchTimelineGroups(db, { ...filters, includeHiddenContacts: true }, limit);
+  }
+  if (groups.length === 0) return { content: [{ type: "text" as const, text: `${prefix}No events found.` }] };
+
+  const { groups: groupCount, total_hits: totalHits } = groups[0];
+  const shown = groupCount > groups.length ? ` Showing the ${groups.length} with most hits; raise limit for the rest.` : "";
+  const header = `Times in UTC. ${totalHits} hit${totalHits === 1 ? "" : "s"} in ${groupCount} group${groupCount === 1 ? "" : "s"}, most hits first.${shown} ${READ_GROUP}`;
+  return { content: [{ type: "text" as const, text: `${prefix}${header}\n${formatGroups(groups, "newest")}` }] };
 }
 
 // TSV helpers for run_sql output
@@ -801,6 +878,7 @@ Examples:
       limit: z.number().int().min(1).optional().default(50).describe("Max results (default 50)"),
       cursor: cursorParam,
       full_content: z.boolean().optional().default(false).describe("Return full content instead of truncated previews"),
+      group_by_conversation: groupParam,
     },
     READS,
     async (params, extra) => instrumentToolCall("query_events", params, extra, async () => {
@@ -822,6 +900,10 @@ Examples:
       // searchTimeline/searchByContact expand a bare YYYY-MM-DD endDate to end of day.
       const rangeStart = date ?? start_date;
       const rangeEnd = date ?? end_date;
+
+      if (params.group_by_conversation) {
+        return groupedQueryEvents(db, { ...params, limit, startDate: rangeStart, endDate: rangeEnd });
+      }
 
       // Strategy 1: Contact-based search
       if (contact) {
@@ -938,9 +1020,10 @@ Examples:
       }
 
       let conversationId = conversation_id;
+      let conversationSource: string | undefined;
       if (event_id !== undefined) {
-        const event = await db.get<{ conversation_id: string | null }>(
-          "SELECT conversation_id FROM events WHERE id = ?",
+        const event = await db.get<{ conversation_id: string | null; source: string }>(
+          "SELECT conversation_id, source FROM events WHERE id = ?",
           event_id,
         );
         if (!event) {
@@ -959,6 +1042,8 @@ Examples:
           };
         }
         conversationId = event.conversation_id;
+        // Two sources can share a conversation id (phone and google-messages do).
+        conversationSource = event.source;
       }
 
       if (!conversationId) {
@@ -971,6 +1056,7 @@ Examples:
         endDate: expandEndDateToEndOfDay(end_date),
       }, {
         limit,
+        source: conversationSource,
         mostRecent: true,
         includeTotal: true,
         aroundEventId: event_id !== undefined && start_date === undefined && end_date === undefined
@@ -1466,6 +1552,7 @@ ${idHint}`,
       query: z.string().trim().min(1).describe("Natural-language query, matched by meaning against indexed event content"),
       limit: z.number().int().min(1).max(50).optional().default(10).describe("Max events to return (1-50, default 10)"),
       full_content: z.boolean().optional().default(false).describe("Return full content instead of truncated previews"),
+      group_by_conversation: groupParam,
     },
     READS,
     async (params, extra) => instrumentToolCall("semantic_search", params, extra, async () => {
@@ -1531,6 +1618,17 @@ ${idHint}`,
         ? ` Skipped ${missingCount} indexed hit(s) whose events no longer exist in timeline.db.`
         : "";
       const header = `${events.length} event(s) most similar to "${query}", closest first (nearest matches by meaning, not exact).${staleNote}\n\n`;
+
+      if (params.group_by_conversation) {
+        const groups = groupByConversation(events);
+        return {
+          content: [{
+            type: "text" as const,
+            text: `${header}Times in UTC. ${groups.length} group${groups.length === 1 ? "" : "s"}, closest first. ${READ_GROUP}\n${formatGroups(groups, "closest")}${windowSection}`,
+          }],
+        };
+      }
+
       return {
         content: [{
           type: "text" as const,

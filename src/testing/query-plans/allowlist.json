@@ -242,22 +242,6 @@
     },
     {
       "database": "timeline",
-      "sql": "SELECT * FROM events WHERE conversation_id = ? AND ( timestamp IS NULL OR timestamp < ? OR ( timestamp = ? AND id < ? ) ) ORDER BY timestamp DESC , id DESC LIMIT ?",
-      "reason": "found by the first run; under review",
-      "findings": [
-        "events:index-scan"
-      ]
-    },
-    {
-      "database": "timeline",
-      "sql": "SELECT * FROM events WHERE conversation_id = ? AND ( timestamp > ? OR ( timestamp = ? AND id > ? ) ) ORDER BY timestamp ASC , id ASC LIMIT ?",
-      "reason": "found by the first run; under review",
-      "findings": [
-        "events:index-scan"
-      ]
-    },
-    {
-      "database": "timeline",
       "sql": "SELECT * FROM events WHERE conversation_id = ? ORDER BY timestamp DESC LIMIT ?",
       "reason": "found by the first run; under review",
       "findings": [

@@ -3,8 +3,8 @@ import type { QueryExecutor } from "./pool";
 import type { TimelineEvent, Contact, ContactAlias, Platform } from "./schema";
 import { isValidPlatform } from "./schema";
 import { conversationTypeClause } from "./conversations";
-import { addCursorCondition, addTextSearch, transformEvents, parseCursor, createCursor } from "./events";
-import type { SearchOptions } from "./events";
+import { addCursorCondition, addTextSearch, groupEvents, transformEvents, parseCursor, createCursor } from "./events";
+import type { EventGroup, SearchOptions } from "./events";
 import { parseIdentifier, formatIdentifier, getIdentitiesForContact } from "./identities";
 import { notSupersededClause } from "./superseded-conversations";
 import { PHONE_IDENTITY_PLATFORM, PHONE_IDENTITY_SOURCES } from "../lib/phone";
@@ -385,6 +385,22 @@ export async function countContactEvents(
     cap,
   );
   return row?.n ?? 0;
+}
+
+/** searchByContact's matches (ignoring limit, cursor and sort), grouped by groupEvents. */
+export async function contactEventGroups(
+  db: QueryExecutor,
+  contactId: number,
+  options: Omit<ContactEventOptions, "limit" | "cursor" | "sort">,
+  limit: number,
+): Promise<EventGroup[]> {
+  const { branches, params } = await contactEventBranches(db, contactId, options);
+  return groupEvents(
+    db,
+    `e.id IN (${branches.map((b) => `SELECT event_id FROM (${b})`).join(" UNION ")})`,
+    branches.flatMap(() => params),
+    limit,
+  );
 }
 
 export interface ContactConversation {
