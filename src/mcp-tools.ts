@@ -58,8 +58,9 @@ import type { EventGroup } from "./db/queries";
 import type { TimelineEvent } from "./db/schema";
 import { notConfiguredMessage } from "./embeddings/config";
 import { formatWindowHit, type SemanticSearch, searchEmbeddingsWithWindows } from "./embeddings/search";
-import { exportConversation } from "./export/export";
+import { exportConversation, renderExportText } from "./export/export";
 import { maskForwardsOfHiddenEvents } from "./export/hidden-forwards";
+import { countTokens } from "./export/tokens";
 import {
   getAttachmentDescription,
   getMessageMarkers,
@@ -101,6 +102,43 @@ const MONTH_NAMES = [
 
 const MCP_EXPORT_LIMIT = 500;
 
+/** The most events query_events and get_context return at once; 500 compact lines already fill most of a reply. */
+const MAX_EVENT_LIMIT = 500;
+
+/**
+ * Characters a reply may hold: under Claude Code's 50,000, past which it moves
+ * a result to a file, and claude.ai's ~150,000 cap; event lines run about 3
+ * characters a token, so also well under Claude Code's 25,000-token cap.
+ */
+export const REPLY_CHAR_BUDGET = 40_000;
+
+/**
+ * The reply for as many of `count` items as fit the budget: at least one, which
+ * cutToBudget may still cut. `reply(n)` renders the first n, and grows with n.
+ */
+async function fitReply(count: number, reply: (n: number) => string | Promise<string>): Promise<string> {
+  const all = await reply(count);
+  if (count <= 1 || all.length <= REPLY_CHAR_BUDGET) return all;
+  let fits = 1;
+  let best = await reply(1);
+  let over = count;
+  while (over - fits > 1) {
+    const mid = Math.floor((fits + over) / 2);
+    const text = await reply(mid);
+    if (text.length <= REPLY_CHAR_BUDGET) [fits, best] = [mid, text];
+    else over = mid;
+  }
+  return best;
+}
+
+/** A reply still over the budget (one long item) is cut, saying so. Every tool here replies with one text part. */
+function cutToBudget(result: CallToolResult): CallToolResult {
+  const [part] = result.content;
+  if (result.content.length !== 1 || part.type !== "text" || part.text.length <= REPLY_CHAR_BUDGET) return result;
+  const note = `\n[Reply cut at ${REPLY_CHAR_BUDGET.toLocaleString("en-US")} characters; ask for less.]`;
+  return { ...result, content: [{ ...part, text: part.text.slice(0, REPLY_CHAR_BUDGET - note.length) + note }] };
+}
+
 /** A contact's events are counted up to here; past it the header says "more than". */
 const CONTACT_COUNT_CAP = 10_000;
 
@@ -122,6 +160,8 @@ function pageOf(
     /** The query pages past events with no timestamp (searchTimeline and searchByContact do). */
     untimedCursor?: boolean;
     filter?: (event: TimelineEvent) => boolean;
+    /** The reply's size, not limit, ended the page. */
+    cut?: boolean;
   } = {},
 ): { events: TimelineEvent[]; header: string } {
   const kept = fetched.slice(0, limit);
@@ -148,16 +188,46 @@ function pageOf(
   // A filter after the fetch may have dropped every remaining match.
   const next = cursor
     ? `Next page: the same arguments with cursor: "${cursor}".`
-    : `More ${options.filter ? "may match" : "exist"}: narrow the filters or raise limit.`;
+    : `More ${options.filter ? "may match" : "exist"}: narrow the filters${options.cut ? "" : " or raise limit"}.`;
   return { events, header: `Showing ${shown}, ${order}. ${next}\n` };
+}
+
+type PageOptions = NonNullable<Parameters<typeof pageOf>[3]>;
+
+/**
+ * A page of events as a reply: `prefix`, the page line, the events. Past the
+ * budget it ends the page at the last event that fits, and repeats the page
+ * line at the end, where the reply stops.
+ */
+async function eventReply(
+  db: QueryExecutor,
+  fetched: TimelineEvent[],
+  limit: number,
+  order: PageOrder,
+  options: PageOptions,
+  fullContent: boolean,
+  prefix: string,
+): Promise<CallToolResult> {
+  const full = pageOf(fetched, limit, order, options);
+  const pageOfSize = (n: number) => n === full.events.length
+    ? full
+    : pageOf(fetched, fetched.indexOf(full.events[n - 1]) + 1, order, { ...options, cut: true });
+  const render = async (n: number) => {
+    const page = pageOfSize(n);
+    const end = n < full.events.length ? `\n${page.header}` : "";
+    return prefix + page.header + (await formatEvents(db, page.events, fullContent)) + end;
+  };
+  const text = await fitReply(full.events.length, render);
+  return { content: [{ type: "text" as const, text }] };
 }
 
 const cursorParam = z.string().optional().describe('From a "Next page" line');
 
+const badCursor = (cursor: string): CallToolResult =>
+  ({ isError: true, content: [{ type: "text" as const, text: `Error: invalid cursor "${cursor}"; pass one exactly as a "Next page" line gave it.` }] });
+
 function invalidCursor(cursor: string | undefined): CallToolResult | null {
-  return cursor !== undefined && !parseCursor(cursor, { allowNullTimestamp: true })
-    ? { isError: true, content: [{ type: "text" as const, text: `Error: invalid cursor "${cursor}"; pass one exactly as a "Next page" line gave it.` }] }
-    : null;
+  return cursor !== undefined && !parseCursor(cursor, { allowNullTimestamp: true }) ? badCursor(cursor) : null;
 }
 
 function withTranscriptMetadata(metadata: string[], transcript: string | null): string {
@@ -388,7 +458,7 @@ async function contactQueryEvents(
     query?: string; source?: string; type?: string; location?: string; cursor?: string; limit: number;
     order: PageOrder; excludeSources?: string[]; startDate?: string; endDate?: string;
   },
-  respond: (page: { events: TimelineEvent[]; header: string }, prefix: string) => Promise<CallToolResult>,
+  respond: (fetched: TimelineEvent[], order: PageOrder, options: PageOptions, prefix: string) => Promise<CallToolResult>,
 ): Promise<CallToolResult> {
   const { query, source, type, location, cursor, limit, order, excludeSources, startDate, endDate } = params;
   const resolved = await resolveContact(db, contact);
@@ -404,11 +474,11 @@ async function contactQueryEvents(
     ? undefined
     : await countContactEvents(db, resolved.contact.id, filters, CONTACT_COUNT_CAP + 1);
   const lowerLoc = location?.toLowerCase();
-  const page = pageOf(fetched, limit, order, {
+  const pageOptions: PageOptions = {
     total,
     untimedCursor: true,
     filter: lowerLoc ? (e) => e.location_name?.toLowerCase().includes(lowerLoc) ?? false : undefined,
-  });
+  };
 
   const header = [
     `Contact: ${resolved.contact.display_name} (ID: ${resolved.contact.id})`,
@@ -416,7 +486,7 @@ async function contactQueryEvents(
     "",
   ].join("\n");
 
-  return respond(page, header);
+  return respond(fetched, order, pageOptions, header);
 }
 
 /** query_events with group_by_conversation: its matches grouped in SQL, most hits first. */
@@ -453,7 +523,13 @@ async function groupedQueryEvents(
   const { groups: groupCount, total_hits: totalHits } = groups[0];
   const shown = groupCount > groups.length ? ` Showing the ${groups.length} with most hits; raise limit for the rest.` : "";
   const header = `Times in UTC. ${totalHits} hit${totalHits === 1 ? "" : "s"} in ${groupCount} group${groupCount === 1 ? "" : "s"}, most hits first.${shown} ${READ_GROUP}`;
-  return { content: [{ type: "text" as const, text: `${prefix}${header}\n${formatGroups(groups, "newest")}` }] };
+  const text = await fitReply(groups.length, (n) => {
+    const cut = n < groups.length
+      ? `\nShowing ${n} of ${groupCount} groups; the rest did not fit in one reply. Narrow the filters.`
+      : "";
+    return `${prefix}${header}\n${formatGroups(groups.slice(0, n), "newest")}${cut}`;
+  });
+  return { content: [{ type: "text" as const, text }] };
 }
 
 // TSV helpers for run_sql output
@@ -766,13 +842,15 @@ export function registerTools(
     // Read hidden contacts afresh for every call: a stdio server is a separate
     // process the web app's invalidation never reaches.
     invalidateHiddenClauseCaches();
-    if (!recordToolCall) return handler();
+    // get_updates sizes its reply to its own max_tokens.
+    const run = name === "get_updates" ? handler : async () => cutToBudget(await handler());
+    if (!recordToolCall) return run();
 
     const start = performance.now();
     let text: string | null = null;
     let isError = false;
     try {
-      const result = await handler();
+      const result = await run();
       text = result.content
         .filter((content) => content.type === "text")
         .map((content) => content.text)
@@ -849,19 +927,14 @@ export function registerTools(
         limit,
         offset,
       }, historyDb);
-      return {
-        content: [{
-          type: "text" as const,
-          text: sessionHeader + renderMcpCallSearchMarkdown(calls, {
-            sessionId,
-            toolName: params.tool_name,
-            errorsOnly,
-            since: params.since,
-            limit,
-            offset,
-          }),
-        }],
-      };
+      const filter = { sessionId, toolName: params.tool_name, errorsOnly, since: params.since, limit, offset };
+      const text = await fitReply(calls.length, (n) => {
+        const page = sessionHeader + renderMcpCallSearchMarkdown(calls.slice(0, n), filter);
+        return n < calls.length
+          ? `${page}\n\nShowing ${n} of ${calls.length} calls; the rest did not fit in one reply. Next page: the same arguments with offset: ${offset + n}.`
+          : page;
+      });
+      return { content: [{ type: "text" as const, text }] };
     }),
   );
 
@@ -894,7 +967,7 @@ Examples:
       latitude: z.number().optional().describe("Latitude for coordinate search"),
       longitude: z.number().optional().describe("Longitude for coordinate search"),
       radius_km: z.number().optional().describe("Search radius in km when latitude/longitude are given (default 1; ignored otherwise)"),
-      limit: z.number().int().min(1).optional().default(50).describe("Max results (default 50)"),
+      limit: z.number().int().min(1).max(MAX_EVENT_LIMIT).optional().default(50).describe(`Max results (default 50, max ${MAX_EVENT_LIMIT})`),
       exclude_source: z.string().optional().describe('Leave out these sources (comma-separated). A keyword search over all sources leaves out AI-assistant sessions and screen recall unless given; "" keeps them'),
       cursor: cursorParam,
       full_content: z.boolean().optional().default(false).describe("Return full content instead of truncated previews"),
@@ -910,12 +983,8 @@ Examples:
       const fetchLimit = limit + 1;
       const order: PageOrder = rangeOrder(date, start_date, end_date);
       const { excludeSources, notice } = excludedSources(params.exclude_source, Boolean(query && !source && !contact));
-      const respond = async (page: { events: TimelineEvent[]; header: string }, prefix = "") => ({
-        content: [{
-          type: "text" as const,
-          text: prefix + notice + page.header + (await formatEvents(db, page.events, full_content)),
-        }],
-      });
+      const respond = (fetched: TimelineEvent[], pageOrder: PageOrder, pageOptions: PageOptions = {}, prefix = "") =>
+        eventReply(db, fetched, limit, pageOrder, pageOptions, full_content, prefix + notice);
 
       // `date` narrows to that single day; like getEvents, it wins over start/end.
       // searchTimeline/searchByContact expand a bare YYYY-MM-DD endDate to end of day.
@@ -950,7 +1019,7 @@ Examples:
         }
         const keep = locationSearchFilter({ query, source, type, date, start_date, end_date });
         // searchByLocation has no cursor.
-        return respond(pageOf(fetched, limit, location ? "newest first" : "oldest first", { pageable: false, filter: keep }));
+        return respond(fetched, location ? "newest first" : "oldest first", { pageable: false, filter: keep });
       }
 
       // Strategy 3: Text search (FTS)
@@ -965,7 +1034,7 @@ Examples:
           cursor,
           limit: fetchLimit,
         });
-        return respond(pageOf(fetched, limit, order, { untimedCursor: true }));
+        return respond(fetched, order, { untimedCursor: true });
       }
 
       // Strategy 4: Date-based browsing
@@ -980,12 +1049,12 @@ Examples:
           cursor,
           limit: fetchLimit,
         });
-        return respond(pageOf(fetched, limit, order));
+        return respond(fetched, order);
       }
 
       // Strategy 5: Fallback — recent events (filtered by source/type)
       const fetched = await getRecentEvents(db, { source, type, excludeSources, cursor, limit: fetchLimit });
-      return respond(pageOf(fetched, limit, "newest first"));
+      return respond(fetched, "newest first");
     })
   );
 
@@ -1001,11 +1070,15 @@ Examples:
       limit: z.number().int().min(1).max(2000).optional().default(MCP_EXPORT_LIMIT).describe("Maximum events to render (default 500, max 2000). conversation_id alone returns the newest events; event_id returns a window around that event."),
       start_date: z.string().optional().describe("Inclusive ISO 8601 lower timestamp bound. Any date bound overrides event_id centering."),
       end_date: z.string().optional().describe("Inclusive ISO 8601 upper timestamp bound. Any date bound overrides event_id centering."),
+      cursor: cursorParam,
     },
     READS,
     async (params, extra) => instrumentToolCall("export_conversation", params, extra, async () => {
-      const { conversation_id, event_id, start_date, end_date } = params;
+      const { conversation_id, event_id, start_date, end_date, cursor } = params;
       const limit = params.limit ?? MCP_EXPORT_LIMIT;
+      // A cursor pages back from the newest; one with no timestamp names no place to page from.
+      const before = cursor === undefined ? undefined : parseCursor(cursor);
+      if (before === null) return badCursor(cursor ?? "");
 
       if ((conversation_id === undefined) === (event_id === undefined)) {
         return {
@@ -1048,39 +1121,65 @@ Examples:
         throw new Error("Conversation id was not resolved");
       }
 
+      const centered = event_id !== undefined && start_date === undefined && end_date === undefined && before === undefined;
+      const renderOptions = { compactAuthors: true, noSummaries: false, fullTimestamps: false, hiddenContactName: HIDDEN_CONTACT_NAME };
       const result = await exportConversation(db, {
         conversationId,
         startDate: start_date,
         endDate: expandEndDateToEndOfDay(end_date),
+        before,
       }, {
         limit,
         source: conversationSource,
         excludeHidden: true,
-        hiddenContactName: HIDDEN_CONTACT_NAME,
         mostRecent: true,
         includeTotal: true,
-        aroundEventId: event_id !== undefined && start_date === undefined && end_date === undefined
-          ? event_id
-          : undefined,
-        compactAuthors: true,
-        noSummaries: false,
-        fullTimestamps: false,
+        aroundEventId: centered ? event_id : undefined,
+        ...renderOptions,
       });
-      const limitNote = result.totalEventCount !== undefined && result.totalEventCount > result.events.length
-        ? event_id !== undefined && start_date === undefined && end_date === undefined
-          ? `Showing ${result.events.length} of ${result.totalEventCount} events around event #${event_id}.`
-          : `Showing most recent ${result.events.length} of ${result.totalEventCount} events.`
-        : undefined;
-      const metadata = [
-        `Conversation: ${result.conversationId}`,
-        `Events: ${result.events.length}`,
-        ...(limitNote ? [limitNote] : []),
-        `Transcript tokens: ${result.tokenCount ?? 0}.`,
-      ];
-
-      return {
-        content: [{ type: "text" as const, text: withTranscriptMetadata(metadata, result.text) }],
+      const { events } = result;
+      const total = result.totalEventCount ?? events.length;
+      const anchor = events.findIndex((e) => e.id === event_id);
+      // The n events kept when the reply cannot hold them all: those nearest
+      // the anchor event, or the newest.
+      const kept = (n: number) => {
+        if (!centered) return events.slice(events.length - n);
+        const start = Math.min(Math.max(anchor - Math.floor((n - 1) / 2), 0), events.length - n);
+        return events.slice(start, start + n);
       };
+      // The event after a centered window, to re-center on for later events;
+      // like the export, never a hidden contact's.
+      const notHidden = await hasHiddenContacts(db) ? ` AND id NOT IN (${hiddenEventIdsSubquery()})` : "";
+      const after = async (last: TimelineEvent | undefined) => last?.timestamp && centered
+        ? (await db.get<{ id: number }>(
+          `SELECT id FROM events WHERE conversation_id = ? AND source = ? AND (timestamp > ? OR (timestamp = ? AND id > ?))${notHidden}
+           ORDER BY timestamp, id LIMIT 1`,
+          conversationId, last.source, last.timestamp, last.timestamp, last.id,
+        ))?.id
+        : undefined;
+      const text = await fitReply(events.length, async (n) => {
+        const shown = kept(n);
+        const transcript = n === events.length ? result.text : await renderExportText(db, shown, renderOptions);
+        const earlier = shown[0] && createCursor(shown[0]);
+        const later = total > n ? await after(shown[shown.length - 1]) : undefined;
+        const next = [
+          earlier && `earlier events: the same arguments with cursor: "${earlier}"`,
+          later && `later ones: event_id: ${later}`,
+        ].filter(Boolean).join("; ");
+        const limitNote = total <= n
+          ? undefined
+          : `Showing ${centered ? `${n} of ${total} events around event #${event_id}` : `the newest ${n} of ${total} events`}.${next ? ` Next page: ${next}.` : ""}`;
+        const metadata = [
+          `Conversation: ${result.conversationId}`,
+          `Events: ${n}`,
+          ...(limitNote ? [limitNote] : []),
+          `Transcript tokens: ${(n === events.length ? result.tokenCount : transcript && countTokens(transcript)) ?? 0}.`,
+        ];
+        const reply = withTranscriptMetadata(metadata, transcript);
+        return limitNote && n < events.length ? `${reply}\n\n${limitNote}` : reply;
+      });
+
+      return { content: [{ type: "text" as const, text }] };
     }),
   );
 
@@ -1096,7 +1195,7 @@ Examples:
       hours_window: z.number().optional().default(2).describe("Hours before and after to include (default 2)"),
       source: z.string().optional().describe("Only include these sources (comma-separated, e.g. \"discord,spotify\")"),
       exclude_source: z.string().optional().describe("Drop these sources from the window (comma-separated) — e.g. \"claude-code,conductor,t3code,codex\" to hide AI agent-session noise"),
-      limit: z.number().int().min(1).optional().default(50).describe("Max results (default 50)"),
+      limit: z.number().int().min(1).max(MAX_EVENT_LIMIT).optional().default(50).describe(`Max results (default 50, max ${MAX_EVENT_LIMIT})`),
       same_conversation: z.boolean().optional().describe("Only events in event_id's own conversation (chat, channel or DM)"),
       cursor: cursorParam,
       full_content: z.boolean().optional().default(false).describe("Return full content instead of truncated previews"),
@@ -1135,14 +1234,7 @@ Examples:
         cursor,
         limit: limit + 1,
       });
-      const page = pageOf(fetched, limit, "oldest first");
-
-      return {
-        content: [{
-          type: "text" as const,
-          text: page.header + (await formatEvents(db, page.events, full_content)),
-        }],
-      };
+      return eventReply(db, fetched, limit, "oldest first", {}, full_content, "");
     })
   );
 
@@ -1255,12 +1347,14 @@ Tips:
         };
       }
 
-      const tsv = toTSV(result.rows);
-      const header = result.count > 150 ? `Showing 150 of ${result.count} rows\n` : "";
-
-      return {
-        content: [{ type: "text" as const, text: header + tsv }],
-      };
+      const text = await fitReply(result.rows.length, (n) => {
+        const tsv = toTSV(result.rows.slice(0, n));
+        if (n < result.rows.length) {
+          return `${tsv}\nShowing ${n} of ${result.count} rows; the rest did not fit in one reply. Select fewer or shorter columns (substr()), or page with LIMIT and OFFSET.`;
+        }
+        return (result.count > 150 ? `Showing 150 of ${result.count} rows\n` : "") + tsv;
+      });
+      return { content: [{ type: "text" as const, text }] };
     })
   );
 
@@ -1305,9 +1399,10 @@ Tips:
         return `${c.id}. ${c.display_name}${detailsTag} (${c.platformCount} ${platformLabel} · ${c.activeIdentityCount} ${activeIdentityLabel} · ${c.eventCount} events)${notesTag}`;
       });
 
-      return {
-        content: [{ type: "text" as const, text: lines.join("\n") }],
-      };
+      const text = await fitReply(lines.length, (n) => n < lines.length
+        ? `${lines.slice(0, n).join("\n")}\nShowing ${n} of ${lines.length} contacts; the rest did not fit in one reply. Narrow with search.`
+        : lines.join("\n"));
+      return { content: [{ type: "text" as const, text }] };
     })
   );
 
@@ -1492,12 +1587,13 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
         };
       }
 
-      return {
-        content: [{
-          type: "text" as const,
-          text: header + (await formatEvents(db, events, full_content)) + windowSection,
-        }],
-      };
+      const text = await fitReply(events.length, async (n) => {
+        const cut = n < events.length
+          ? `\nShowing ${n} of ${events.length} events; the rest did not fit in one reply. Leave out full_content to see them all.`
+          : "";
+        return header + (await formatEvents(db, events.slice(0, n), full_content)) + windowSection + cut;
+      });
+      return { content: [{ type: "text" as const, text }] };
     })
   );
 

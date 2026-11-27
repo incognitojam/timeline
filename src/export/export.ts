@@ -44,6 +44,8 @@ export interface ConversationExportParams {
   conversationId: string;
   startDate?: string;
   endDate?: string;
+  /** Only events before this one, in timestamp then id order. */
+  before?: { timestamp: string; id: number };
 }
 
 export interface ConversationExportOptions extends ExportRenderOptions {
@@ -429,7 +431,7 @@ export async function exportRange(
 
 export async function exportConversation(
   db: QueryExecutor,
-  { conversationId, startDate, endDate }: ConversationExportParams,
+  { conversationId, startDate, endDate, before }: ConversationExportParams,
   options: ConversationExportOptions,
 ): Promise<ConversationExportResult> {
   const params: unknown[] = [conversationId];
@@ -449,6 +451,10 @@ export async function exportConversation(
   if (options.excludeHidden && await hasHiddenContacts(db)) {
     whereConditions.push(`id NOT IN (${hiddenEventIdsSubquery()})`);
   }
+  if (before) {
+    whereConditions.push("(timestamp < ? OR (timestamp = ? AND id < ?))");
+    params.push(before.timestamp, before.timestamp, before.id);
+  }
 
   const whereClause = whereConditions.join(" AND ");
 
@@ -459,7 +465,7 @@ export async function exportConversation(
     ))?.count ?? 0
     : undefined;
 
-  const shouldCenterOnEvent = options.aroundEventId !== undefined && !startDate && !endDate;
+  const shouldCenterOnEvent = options.aroundEventId !== undefined && !startDate && !endDate && !before;
   if (shouldCenterOnEvent) {
     const anchor = await db.get<TimelineEvent>(
       `SELECT * FROM events WHERE ${whereClause} AND id = ?`,
@@ -523,7 +529,7 @@ export async function exportConversation(
   let sql = `
     SELECT * FROM events
     WHERE ${whereClause}
-    ORDER BY timestamp ${options.mostRecent && options.limit ? "DESC" : "ASC"}
+    ORDER BY timestamp ${options.mostRecent && options.limit ? "DESC, id DESC" : "ASC, id ASC"}
   `;
   if (options.limit) {
     sql += " LIMIT ?";
