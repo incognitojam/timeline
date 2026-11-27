@@ -24,12 +24,13 @@ afterEach(() => {
 function insert(event: { source: string; type: string; timestamp: string; title?: string; content?: string; conversation?: string; end?: string; people?: string[]; sourceId?: string; raw?: unknown }): number {
   sequence += 1;
   return Number(db.prepare(`
-    INSERT INTO events (source, source_id, source_account, type, timestamp, end_timestamp, title, content, people, raw_data, conversation_id)
-    VALUES (?, ?, 'test', ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO events (source, source_id, source_account, type, timestamp, end_timestamp, title, content, people, raw_data, conversation_id, imported_at)
+    VALUES (?, ?, 'test', ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     event.source, event.sourceId ?? `e${sequence}`, event.type, event.timestamp, event.end ?? null,
     event.title ?? event.conversation ?? null, event.content ?? null,
     JSON.stringify(event.people ?? [`${event.source}:alice`]), JSON.stringify(event.raw ?? {}), event.conversation ?? null,
+    NOW.toISOString().slice(0, 19).replace("T", " "),
   ).lastInsertRowid);
 }
 
@@ -55,11 +56,16 @@ test("the marker neither repeats nor misses events, including a late import with
   expect(first).toContain("first message");
 
   message("second", "2026-03-09T09:00:00Z");
-  message("imported late", "2025-12-01T09:00:00Z");
+  message("imported late", "2026-02-20T09:00:00Z");
+  // Dated before a date since could reach from when the marker was added: summed, not shown.
+  message("from an old export", "2025-12-01T09:00:00Z");
+  message("also old", "2024-06-01T09:00:00Z");
   const second = await updates(nextMarker(first));
   expect(second).toContain("second");
   expect(second).toContain("imported late");
   expect(second).not.toContain("first message");
+  expect(second).not.toContain("old export");
+  expect(second).toContain("# Imported but dated before 2026-02-07, not listed (query_events with source and end_date reads them)\ndiscord 2, dated 2024-06-01 to 2025-12-01");
 
   const third = await updates(nextMarker(second));
   expect(third).toContain("No new messages.");
@@ -254,7 +260,7 @@ test("a conversation too long for the cap on its own is pointed to, and paging m
   expect(await getUpdates(wrapDatabase(db), { cursor, now: NOW })).toContain("short and sweet");
 });
 
-test("the not-shown list stays within the cap, however long the conversation ids", async () => {
+test("the index stays within the cap, however long the conversation ids", async () => {
   seed(db, () => {
     for (let c = 0; c < 30; c += 1) {
       for (let m = 0; m < 10; m += 1) message(`chan ${c} message ${m} with a few more ordinary words`, `2026-03-09T${String(c % 24).padStart(2, "0")}:${String(m).padStart(2, "0")}:00Z`, `${c}-${"x9Qz".repeat(60)}`);
@@ -262,7 +268,7 @@ test("the not-shown list stays within the cap, however long the conversation ids
   });
   const text = await updates("id:0", { maxTokens: 1000 });
   expect(countTokens(text)).toBeLessThanOrEqual(1000);
-  expect(text).toMatch(/more conversations, \d+ new messages/);
+  expect(text).toMatch(/^- and \d+ more conversations, \d+ new$/m);
 });
 
 test("listing a health source narrows the health lines to it", async () => {
@@ -386,6 +392,47 @@ test("one day of health counts the night that ended today and nothing dated late
   const text = await updates("id:0", { healthDays: 1 });
   expect(text).toContain("2026-03-10: Sleep: 7h 0m");
   expect(text).not.toContain("2026-03-11");
+});
+
+test("conversations that involve the owner come before busier channels, after an index of all of them", async () => {
+  const self = Number(db.prepare("INSERT INTO contacts (display_name, is_self) VALUES ('Alex Example', 1)").run().lastInsertRowid);
+  for (const platform of ["discord", "facebook"]) {
+    db.prepare("INSERT INTO identities (platform, platform_id, display_name, contact_id) VALUES (?, 'me', 'Alex Example', ?)").run(platform, self);
+  }
+  seed(db, () => {
+    for (let m = 0; m < 40; m += 1) message(`busy channel chatter ${m}`, `2026-03-09T12:${String(m).padStart(2, "0")}:00Z`, "busy");
+  });
+  // An incoming DM may list only its sender; a group lists everyone, the owner included, whether or not they posted.
+  insert({ source: "discord", type: "message:dm", timestamp: "2026-03-09T08:00:00Z", content: "are we still on for 9?", conversation: "dm-bob", people: ["discord:bob"] });
+  insert({ source: "facebook", type: "message", timestamp: "2026-03-09T13:00:00Z", content: "who's bringing chairs", conversation: "fb-group", people: ["facebook:carol", "facebook:me", "facebook:dan"] });
+  const text = await updates("id:0");
+  expect(text).toMatch(/# Messages: 42 new in 3 conversations, most recent first\n- discord: dm-bob · conversation_id="dm-bob" · 1 new\n- facebook: fb-group · conversation_id="fb-group" · 1 new\n- discord: busy · conversation_id="busy" · 40 new\n/);
+  expect(text.indexOf("are we still on")).toBeLessThan(text.indexOf("busy channel chatter"));
+  // The first line after a heading, a date or a trim always names its sender.
+  const lines = text.split("\n");
+  lines.forEach((line, i) => {
+    if (/^(## |### |Showing the latest)/.test(line) && /^\d\d:\d\d /.test(lines[i + 1] ?? "")) expect(lines[i + 1]).toMatch(/^\d\d:\d\d <[^>]+> /);
+  });
+});
+
+test("quiet sources get one line an event, busy ones a count", async () => {
+  insert({ source: "google-calendar", type: "event", timestamp: "2026-03-09T15:00:00Z", title: "Dentist" });
+  insert({ source: "google-location", type: "location:visit", timestamp: "2026-03-09T16:00:00Z", title: "Visited Greenline Grocery" });
+  insert({ source: "google-location", type: "location:transit", timestamp: "2026-03-09T16:30:00Z", title: "Walked 1 km" });
+  insert({ source: "spotify", type: "listen:track", timestamp: "2026-03-09T17:00:00Z", title: "A song" });
+  const text = await updates("id:0");
+  expect(text).toContain("# Events, one line each (2)\n- 2026-03-09 16:00 google-location: Visited Greenline Grocery\n- 2026-03-09 15:00 google-calendar: Dentist");
+  expect(text).toContain("google-location other 1, spotify 1");
+  expect(text).not.toContain("Walked");
+  // Listing a source shows all of it in full instead.
+  expect(await updates("id:0", { sources: ["google-location"] })).toContain("Walked 1 km");
+});
+
+test("a conversation titled by a known number shows the contact's name beside it", async () => {
+  const bob = Number(db.prepare("INSERT INTO contacts (display_name) VALUES ('Bob Example')").run().lastInsertRowid);
+  db.prepare("INSERT INTO identities (platform, platform_id, contact_id) VALUES ('phone', '+15550100', ?)").run(bob);
+  insert({ source: "google-messages", type: "sms:received", timestamp: "2026-03-09T09:00:00Z", content: "running late", conversation: "+15550100", people: ["phone:+15550100"] });
+  expect(await updates("id:0")).toContain('- google-messages: Bob Example (+15550100) · conversation_id="+15550100" · 1 new');
 });
 
 describe("checkpoints", () => {

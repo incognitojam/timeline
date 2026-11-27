@@ -17,6 +17,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { conversationTypeClause } from "../db/conversation-types";
 import { hasHiddenContacts, hiddenEventIdsSubquery } from "../db/events";
+import { formatIdentifier, resolveIdentities } from "../db/identities";
 import type { QueryExecutor } from "../db/pool";
 import type { Database } from "../db/sqlite";
 import type { TimelineEvent } from "../db/schema";
@@ -34,14 +35,21 @@ const HEALTH_TYPE_ORDER = [
 ];
 const SOCIAL_SOURCES = new Set(sourceIdsWithTraits((traits) => traits.conversation === "social"));
 const NOISY_SOURCES = new Set(NOISY_MACHINE_SOURCES);
+const PHONE_SOURCES = new Set(sourceIdsWithTraits((traits) => traits.phoneIdentity === true));
+/** Few events, each worth reading: one line apiece instead of a count. No source trait says this. */
+const LISTED_SOURCES = ["google-calendar", "call-recordings", "trakt", "swarm"];
+const LISTED_TYPES = ["location:visit"];
+const LISTED_SQL = `(source IN (${LISTED_SOURCES.map(() => "?").join(", ")}) OR type IN (${LISTED_TYPES.map(() => "?").join(", ")}))`;
+/** Most one-line events a reply lists. */
+const LISTED_LIMIT = 30;
+/** Longest text a one-line event shows. */
+const LINE_CHARS = 120;
 /** Most messages one conversation shows; the rest are pointed to. */
 const GROUP_MESSAGE_LIMIT = 100;
 /** Fewest messages a conversation is cut to before the reply stops. */
 const GROUP_MESSAGE_MIN = 5;
 /** Most conversations one reply shows. */
 const GROUP_LIMIT = 40;
-/** Not-shown conversations named before the rest are summed. */
-const NAMED_LEFT = 10;
 /** Most ids one reply covers, so a stale marker costs several bounded calls rather than one walk of the whole table. */
 const WINDOW_IDS = 100_000;
 /** How far back a date since may reach. */
@@ -118,6 +126,10 @@ interface Group {
   count: number;
   first_ts: string | null;
   last_ts: string | null;
+  /** 1 when its source or type is listed one line per event. */
+  listed: number;
+  /** 1 when the owner sent one of its events, or it is a direct conversation with them. */
+  mine: number;
 }
 
 /** The ids and filters every query of one reply shares. */
@@ -132,8 +144,10 @@ interface Window {
   latest: number;
   /** More was added than one reply covers. */
   capped: boolean;
-  /** Filters; `idExpr` is `+id` where a query should stay off the id indexes. */
-  where: (idExpr: "id" | "+id") => { sql: string; args: unknown[] };
+  /** Events dated before this are old imports, summed rather than shown; set for a marker since. */
+  oldBefore: string | null;
+  /** Filters, for the events dated after oldBefore unless `old`; `idExpr` is `+id` where a query should stay off the id indexes. */
+  where: (idExpr: "id" | "+id", old?: boolean) => { sql: string; args: unknown[] };
 }
 
 /** The page a call asks for, and a line on where its checkpoint starts. */
@@ -232,6 +246,7 @@ async function resolveWindow(db: QueryExecutor, params: Page, now: Date, windowI
   let untilId = Math.min(params.until ?? latest, latest);
   let capped = false;
   let sinceId: number | null = null;
+  let oldBefore: string | null = null;
   let range: (idExpr: string) => { sql: string[]; args: unknown[] };
   let label: string;
   let since: string;
@@ -250,6 +265,10 @@ async function resolveWindow(db: QueryExecutor, params: Page, now: Date, windowI
     range = (idExpr) => ({ sql: [`${idExpr} > ?`, `${idExpr} <= ?`], args: [from, untilId] });
     label = `added after id:${sinceId}`;
     since = `id:${sinceId}`;
+    // Ids follow insertion, so an export of years ago arrives as new: events dated
+    // further before the marker was added than a date since may reach are old.
+    const added = (await db.get<{ imported_at: string }>("SELECT imported_at FROM events WHERE id <= ? AND id > 0 ORDER BY id DESC LIMIT 1", sinceId))?.imported_at;
+    if (added) oldBefore = new Date(Date.parse(`${added.replace(" ", "T")}Z`) - DATE_LOOKBACK_DAYS * DAY_MS).toISOString();
   } else {
     const ms = Date.parse(params.since);
     if (Number.isNaN(ms)) {
@@ -292,9 +311,12 @@ async function resolveWindow(db: QueryExecutor, params: Page, now: Date, windowI
     untilId,
     latest,
     capped,
-    where: (idExpr) => {
+    oldBefore,
+    where: (idExpr, old = false) => {
       const r = range(idExpr);
-      return { sql: [...r.sql, ...filters].join(" AND "), args: [...r.args, ...filterArgs] };
+      // One shape whether or not oldBefore is set, `+` keeping it off the timestamp index.
+      const age = old ? "+timestamp < ?" : "(+timestamp IS NULL OR +timestamp >= ?)";
+      return { sql: [...r.sql, age, ...filters].join(" AND "), args: [...r.args, oldBefore ?? "", ...filterArgs] };
     },
   };
 }
@@ -351,34 +373,31 @@ export async function getUpdates(db: QueryExecutor, params: UpdatesParams, store
   const requested = new Set(request.sources ?? []);
   const skip = request.skip;
 
-  const conversation = conversationTypeClause();
-  const all = window.where("id");
-  const groups = await db.query<Group>(`
-    SELECT source, source_account, CASE WHEN ${conversation} THEN conversation_id END AS conversation_id,
-      MAX(title) AS title, COUNT(*) AS count, MIN(timestamp) AS first_ts, MAX(timestamp) AS last_ts
-    FROM events
-    WHERE ${all.sql}
-    GROUP BY 1, 2, 3
-  `, ...all.args);
+  const groups = await loadGroups(db, window, requested);
   if (request.conversationId !== undefined && groups.length === 0) await requireConversation(db, request.conversationId);
+  // Conversations that involve the owner first, then the newest.
   const shown = groups
-    .filter((group) => isShown(group, requested))
-    .sort((a, b) => (b.last_ts ?? "").localeCompare(a.last_ts ?? "")
+    .filter((group) => !group.listed && isShown(group, requested))
+    .sort((a, b) => b.mine - a.mine
+      || (b.last_ts ?? "").localeCompare(a.last_ts ?? "")
       || a.source.localeCompare(b.source)
       || (a.conversation_id ?? "").localeCompare(b.conversation_id ?? ""));
-  const counted = groups.filter((group) => !shown.includes(group));
+  await nameHandles(db, shown);
+  const later = request.until !== undefined;
+  const oneLine = groups.filter((group) => group.listed);
+  const counted = groups.filter((group) => !group.listed && !shown.includes(group));
 
   const of = request.checkpoint === undefined ? "" : ` for checkpoint "${request.checkpoint}"`;
   const header = [`Updates${of} ${window.label}, up to id:${window.untilId}. Times in UTC.`, ...note];
   if (window.capped) header.push(`More was added than one reply covers, so this stops at id:${window.untilId}; the next check continues from there.`);
-  const later = request.until !== undefined;
-  const healthDays = params.healthDays ?? (later || request.conversationId !== undefined ? 0 : UPDATES_DEFAULT_HEALTH_DAYS);
+  const healthDays = params.healthDays ?? defaultHealthDays(request);
   const health = healthSources(request);
   const footer = [
     ...(health.length > 0 && healthDays > 0
       ? await renderHealth(db, health, now, healthDays, window.untilId, Math.floor(maxTokens / 4))
       : []),
-    ...renderCounts(later ? [] : counted, requested),
+    ...renderCounts(later ? [] : counted, requested, new Set(oneLine.map((group) => group.source))),
+    ...(later ? [] : await renderOld(db, window, Math.floor(maxTokens / 8))),
   ];
 
   const order = checksum(shown.map((group) => `${group.source}\t${group.source_account}\t${group.conversation_id}`).join("\n"));
@@ -387,23 +406,132 @@ export async function getUpdates(db: QueryExecutor, params: UpdatesParams, store
   }
   const pending = shown.slice(skip);
   const { heading, noun } = sectionHeading(pending, skip);
-  // Room for the not-shown list and the last line; renderLeft names only as many as fit.
-  const leftReserve = NAMED_LEFT * 40 + 300;
-  const budget = maxTokens - countTokens([...header, heading, ...footer].join("\n")) - leftReserve;
-  const { sections, remaining } = await renderSections(db, pending, window, budget, noun);
+  const listing = [
+    ...(pending.length === 0 ? [`No new ${noun}.`] : [heading, ...renderIndex(pending, Math.floor(maxTokens / 2), noun)]),
+    ...(later ? [] : await renderListed(db, window, oneLine, Math.floor(maxTokens / 6), window.since)),
+  ];
+  // Room for the last line.
+  const budget = maxTokens - countTokens([...header, ...listing, ...footer].join("\n")) - 200;
+  const { sections } = await renderSections(db, pending, window, budget, noun);
 
-  const left = pending.slice(sections.length);
-  const body = pending.length === 0 ? ["", `No new ${noun}.`] : ["", heading];
+  const body = ["", ...listing];
   if (sections.length > 0) body.push("", sections.join("\n\n"));
-  if (left.length === 0) return [...header, ...body, ...footer, "", nextCheckLine(request, window, store, now)].join("\n");
+  if (pending.length === sections.length) return [...header, ...body, ...footer, "", nextCheckLine(request, window, store, now)].join("\n");
 
   const cursor = encodeCursor({ ...request, until: window.untilId, skip: skip + sections.length, order });
   const more = [
-    "(Paging gets more conversations; export_conversation gets earlier messages of one already shown.)",
+    "(Paging gets the conversations not shown in full; export_conversation gets earlier messages of one already shown.)",
     `More: call again with cursor="${cursor}".`,
   ];
-  body.push("", ...renderLeft(left, leftReserve + remaining - countTokens(more.join("\n"))));
   return [...header, ...body, ...footer, "", ...more].join("\n");
+}
+
+/** The window's events by source, account and conversation, with whether each group is listed and involves the owner. */
+async function loadGroups(db: QueryExecutor, window: Window, requested: Set<string>): Promise<Group[]> {
+  const conversation = conversationTypeClause();
+  const all = window.where("id");
+  const mine = await selfIdentifiers(db);
+  // Listing a source shows it in full, so listed events only stand apart in a broad check.
+  const listed = requested.size === 0 ? { sql: LISTED_SQL, args: [...LISTED_SOURCES, ...LISTED_TYPES] } : { sql: "0", args: [] };
+  return await db.query<Group>(`
+    SELECT source, source_account, CASE WHEN ${conversation} THEN conversation_id END AS conversation_id,
+      CASE WHEN ${conversation} THEN 0 ELSE ${listed.sql} END AS listed,
+      MAX(title) AS title, COUNT(*) AS count, MIN(timestamp) AS first_ts, MAX(timestamp) AS last_ts,
+      MAX(json_extract(people, '$[0]') IN (SELECT value FROM json_each(?)) OR type LIKE 'message:dm%'
+        OR (json_array_length(people) <= 2 AND EXISTS (SELECT 1 FROM json_each(people) WHERE value IN (SELECT value FROM json_each(?))))) AS mine
+    FROM events
+    WHERE ${all.sql}
+    GROUP BY 1, 2, 3, 4
+  `, ...listed.args, JSON.stringify(mine), JSON.stringify(mine), ...all.args);
+}
+
+/** The owner's identifiers, as events' people name them. */
+async function selfIdentifiers(db: QueryExecutor): Promise<string[]> {
+  const rows = await db.query<{ platform: string; platform_id: string }>(
+    "SELECT platform, platform_id FROM identities WHERE contact_id = (SELECT id FROM contacts WHERE is_self = 1)",
+  );
+  return rows.map((row) => formatIdentifier(row.platform, row.platform_id));
+}
+
+/** A conversation titled by a phone number gets its contact's name beside it, where Timeline knows one. */
+async function nameHandles(db: QueryExecutor, groups: Group[]): Promise<void> {
+  const numbered = groups.filter((group) => PHONE_SOURCES.has(group.source) && /^\+?\d{6,}$/.test(group.title ?? ""));
+  if (numbered.length === 0) return;
+  const identities = await resolveIdentities(db, numbered.map((group) => `phone:${group.title}`));
+  for (const group of numbered) {
+    const identity = identities[`phone:${group.title}`];
+    if (identity?.name && !identity.hidden) group.title = `${identity.name} (${group.title})`;
+  }
+}
+
+/** One line per conversation still to show, within `budget` tokens, so a reply cut short still names them. */
+function renderIndex(pending: Group[], budget: number, noun: string): string[] {
+  const lines: string[] = [];
+  let used = 20;
+  for (const group of pending) {
+    const line = `- ${groupLabel(group)} · ${group.count} new`;
+    used += countTokens(line) + 1;
+    if (used > budget) break;
+    lines.push(line);
+  }
+  const rest = pending.slice(lines.length);
+  if (rest.length > 0) lines.push(`- and ${plural(rest.length, noun === "messages" ? "more conversation" : "more group")}, ${rest.reduce((sum, group) => sum + group.count, 0)} new`);
+  return lines;
+}
+
+/** Listed sources' events, one line each, newest first, within `budget` tokens. */
+async function renderListed(db: QueryExecutor, window: Window, groups: Group[], budget: number, since: string): Promise<string[]> {
+  if (groups.length === 0) return [];
+  const filter = window.where("id");
+  const rows = await db.query<Pick<TimelineEvent, "source" | "type" | "timestamp" | "title" | "content" | "location_name">>(`
+    SELECT source, type, timestamp, title, content, location_name FROM events
+    WHERE ${LISTED_SQL} AND (conversation_id IS NULL OR NOT ${conversationTypeClause()}) AND ${filter.sql}
+    ORDER BY timestamp DESC, id DESC
+    LIMIT ?
+  `, ...LISTED_SOURCES, ...LISTED_TYPES, ...filter.args, LISTED_LIMIT);
+  const total = groups.reduce((sum, group) => sum + group.count, 0);
+  const lines: string[] = [];
+  let used = 40;
+  for (const row of rows) {
+    const what = row.title ?? row.content ?? row.type;
+    const where = row.location_name && !what.includes(row.location_name) ? ` @ ${row.location_name}` : "";
+    const text = `${what}${where}`.replace(/\s+/g, " ");
+    const line = `- ${row.timestamp?.slice(0, 16).replace("T", " ") ?? "undated"} ${row.source}: ${text.length > LINE_CHARS ? `${text.slice(0, LINE_CHARS - 1)}…` : text}`;
+    used += countTokens(line) + 1;
+    if (used > budget) break;
+    lines.push(line);
+  }
+  const sources = [...new Set(groups.map((group) => group.source))];
+  if (total > lines.length) lines.push(`- and ${total - lines.length} more; get_updates with since=${JSON.stringify(since)}, sources=${JSON.stringify(sources)} lists every event of these sources, those above included`);
+  return ["", `# Events, one line each (${total})`, ...lines];
+}
+
+/**
+ * Old events imported in this window, one line per source within `budget` tokens.
+ * When the marker's event was added stands in for when the caller last checked;
+ * since="id:0" has no such event, so nothing is old.
+ */
+async function renderOld(db: QueryExecutor, window: Window, budget: number): Promise<string[]> {
+  if (window.oldBefore === null) return [];
+  const filter = window.where("id", true);
+  const rows = await db.query<{ source: string; count: number; first_ts: string; last_ts: string }>(`
+    SELECT source, COUNT(*) AS count, MIN(timestamp) AS first_ts, MAX(timestamp) AS last_ts
+    FROM events WHERE ${filter.sql}
+    GROUP BY source ORDER BY count DESC
+  `, ...filter.args);
+  if (rows.length === 0) return [];
+  const heading = `# Imported but dated before ${window.oldBefore.slice(0, 10)}, not listed (query_events with source and end_date reads them)`;
+  const lines: string[] = [];
+  let used = countTokens(heading) + 30;
+  for (const row of rows) {
+    const line = `${row.source} ${row.count}, dated ${row.first_ts.slice(0, 10)} to ${row.last_ts.slice(0, 10)}`;
+    used += countTokens(line) + 1;
+    if (used > budget) break;
+    lines.push(line);
+  }
+  const rest = rows.slice(lines.length);
+  if (rest.length > 0) lines.push(`and ${plural(rest.length, "more source")}, ${rest.reduce((sum, row) => sum + row.count, 0)} events`);
+  return ["", heading, ...lines];
 }
 
 /** A catch-up without filters, the only kind that moves a checkpoint. */
@@ -434,7 +562,7 @@ async function renderSections(
   window: Window,
   start: number,
   noun: string,
-): Promise<{ sections: string[]; remaining: number }> {
+): Promise<{ sections: string[] }> {
   let budget = start;
   const sections: string[] = [];
   for (const [index, group] of pending.entries()) {
@@ -454,7 +582,7 @@ async function renderSections(
     budget -= countTokens(pointer) + 2;
     break;
   }
-  return { sections, remaining: budget };
+  return { sections };
 }
 
 /** "Messages" only when every group is a conversation of messages; recordings and other listed sources are events. */
@@ -473,26 +601,15 @@ function plural(count: number, word: string): string {
   return `${count} ${word}${count === 1 ? "" : "s"}`;
 }
 
+/** Health shows on a broad first page; later pages and one conversation leave it out. */
+function defaultHealthDays(request: Page): number {
+  return request.until !== undefined || request.conversationId !== undefined ? 0 : UPDATES_DEFAULT_HEALTH_DAYS;
+}
+
 /** Listed sources narrow health to the health sources among them. */
 function healthSources(params: Page): string[] {
   const requested = params.sources ?? [];
   return HEALTH_SOURCES.filter((source) => requested.length === 0 || requested.includes(source));
-}
-
-/** The not-shown list within `budget` tokens: as many named conversations as fit, then a sum of the rest. */
-function renderLeft(left: Group[], budget: number): string[] {
-  const heading = `Not shown, over the size cap (${left.length}):`;
-  let used = countTokens(heading) + 40;
-  const named: string[] = [];
-  for (const group of left.slice(0, NAMED_LEFT)) {
-    const line = `- ${groupLabel(group)}: ${group.count} new, last ${group.last_ts ?? "undated"}`;
-    used += countTokens(line) + 1;
-    if (used > budget) break;
-    named.push(line);
-  }
-  const rest = left.slice(named.length);
-  if (rest.length > 0) named.push(`- ${named.length > 0 ? "and " : ""}${rest.length} more conversations, ${rest.reduce((sum, group) => sum + group.count, 0)} new messages`);
-  return [heading, ...named];
 }
 
 function restPointer(group: Group): string {
@@ -618,7 +735,8 @@ async function renderHealth(db: QueryExecutor, sources: string[], now: Date, day
   return ["", heading, ...kept.reverse(), ...cut];
 }
 
-function renderCounts(counted: Group[], requested: Set<string>): string[] {
+/** Counts by source; a source with some events listed one line each is counted as its "other" events. */
+function renderCounts(counted: Group[], requested: Set<string>, listed: Set<string>): string[] {
   const bySource = new Map<string, number>();
   for (const group of counted) bySource.set(group.source, (bySource.get(group.source) ?? 0) + group.count);
   if (bySource.size === 0) return [];
@@ -627,8 +745,8 @@ function renderCounts(counted: Group[], requested: Set<string>): string[] {
   const noisy = entries.filter(([source]) => requested.size === 0 && NOISY_SOURCES.has(source));
   const lines: string[] = [];
   if (other.length > 0) {
-    lines.push("", "# Other new events, counted not shown (pass sources to see one, or use query_events)");
-    lines.push(other.map(([source, count]) => `${source} ${count}`).join(", "));
+    lines.push("", "# Other new events, counted (pass sources to see one, or use query_events)");
+    lines.push(other.map(([source, count]) => `${source}${listed.has(source) ? " other" : ""} ${count}`).join(", "));
   }
   if (noisy.length > 0) {
     lines.push("", `Left out as noisy unless listed in sources: ${noisy.map(([source, count]) => `${source} ${count}`).join(", ")}`);
@@ -636,7 +754,7 @@ function renderCounts(counted: Group[], requested: Set<string>): string[] {
   return lines;
 }
 
-export const GET_UPDATES_DESCRIPTION = `What was added to Timeline since you last checked: new messages by conversation, recent daily health lines, and a count per source of other new events. Pass a checkpoint name of your own and Timeline remembers where you left off; or pass since. It catches old events imported late; edits to existing events are not new.`;
+export const GET_UPDATES_DESCRIPTION = `What was added to Timeline since you last checked: an index of conversations with new messages, then their messages; one line per calendar event, call recording, show or place visit; recent daily health lines; counts for other sources and for old events imported late. Pass a checkpoint name of your own and Timeline remembers where you left off; or pass since. Edits to existing events are not new.`;
 
 export const GET_UPDATES_SCHEMA = {
   checkpoint: z.string().min(1).optional().describe("A name Timeline keeps your place under; use the same one every time. The last page of an unfiltered catch-up moves it"),
