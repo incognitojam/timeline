@@ -25,6 +25,8 @@ function fakeDiscord(
     failAfter?: string; listing429Once?: boolean; forbidden?: string; onMessages?: () => void; on429?: () => void;
     /** Answer `after=` wrongly: pages sent oldest first, or the newest page instead of the oldest. */
     paging?: "oldest-first" | "newest-page";
+    /** Answer `after=` from this id on with the newest page instead of the oldest. */
+    jumpFrom?: string;
     /** Answer `before=` requests with 403. */
     forbidBefore?: boolean;
   } = {},
@@ -60,7 +62,7 @@ function fakeDiscord(
       const newer = ids.filter((m) => BigInt(m) > after);
       const page = before
         ? ids.filter((m) => BigInt(m) < BigInt(before)).slice(-Number(url.searchParams.get("limit")))
-        : opts.paging === "newest-page" ? newer.slice(-100) : newer.slice(0, 100);
+        : opts.paging === "newest-page" || (opts.jumpFrom && after >= BigInt(opts.jumpFrom)) ? newer.slice(-100) : newer.slice(0, 100);
       // Discord returns a page newest first.
       return Response.json((opts.paging === "oldest-first" ? page : page.reverse()).map((m) => message(m, channelId)));
     }
@@ -169,6 +171,24 @@ describe("Discord DM pass", () => {
     expect(storedIds()).toEqual([id(1)]);
     expect(cursors()).toEqual({ [QUIET]: id(1), [BUSY]: id(2) });
     expect(messageFetches(calls)).toHaveLength(paging === "newest-page" ? 3 : 2);
+  });
+
+  test("checks every full page, so a later page that jumps ahead stores nothing", async () => {
+    const ids = Array.from({ length: 250 }, (_, i) => id(10 + i));
+    // The first page is right; the second skips ids[100] to ids[149].
+    const calls = fakeDiscord({ [BUSY]: ids }, { jumpFrom: ids[99] });
+
+    const run = await runSourceOnce("discord-dms", { state: { "discord-api": discordState({ [BUSY]: id(2) }) } });
+
+    expect(run.result).toMatchObject({
+      success: false,
+      eventsAdded: 100,
+      error: `discord-dms: Discord paged DM channel ${BUSY} after ${ids[99]} out of order: expected the oldest messages after ${ids[99]} first, saw a page starting at ${ids[150]} with ${ids[149]} skipped`,
+    });
+    expect(storedIds()).toEqual(ids.slice(0, 100));
+    expect(cursors()?.[BUSY]).toBe(ids[99]);
+    // Two pages, each followed by its check.
+    expect(messageFetches(calls)).toHaveLength(4);
   });
 
   test("fails without storing anything when the paging check itself is refused", async () => {
