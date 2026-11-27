@@ -171,7 +171,17 @@ struct TimelineApp: App {
         case .running:
             Text(remoteAccess.makingPublic ? "Remote Access: making public…" : "Remote Access: tailnet only")
         case .publicAccess(_, let until):
-            Text("Remote Access: public until \(until.formatted(date: Calendar.current.isDateInToday(until) ? .omitted : .abbreviated, time: .shortened))")
+            let end = until.formatted(date: Calendar.current.isDateInToday(until) ? .omitted : .abbreviated, time: .shortened)
+            switch remoteAccess.reachability {
+            case .reachable:
+                Text("Remote Access: public until \(end)")
+            case .unconfirmed(let reason):
+                Text("Remote Access: public until \(end), not confirmed reachable")
+                Text("Last check: \(reason)")
+            case .checking, nil:
+                Text("Remote Access: public until \(end), starting…")
+                Text("Checking that it answers from the internet…")
+            }
         case .unconfirmed:
             Text("Remote Access: could not confirm it is tailnet only")
             Text("Turn Remote Access off if this persists.")
@@ -220,7 +230,14 @@ struct TimelineApp: App {
     }
 
     private var copyURLButton: some View {
-        Button("Copy URL", systemImage: "doc.on.doc") { remoteAccess.copyURL() }
+        let label: String
+        switch (remoteAccess.state, remoteAccess.reachability) {
+        case (.publicAccess, .reachable?), (.running, _):
+            label = "Copy URL"
+        default:
+            label = "Copy URL (not confirmed reachable)"
+        }
+        return Button(label, systemImage: "doc.on.doc") { remoteAccess.copyURL() }
     }
 
     private var turnOffRemoteAccessButton: some View {

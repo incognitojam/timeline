@@ -155,6 +155,14 @@ final class RemoteAccessController: ObservableObject {
     @Published private var pausedRecord: String?
     private var resumeDeadline = 0
     var resumingPublicAccess: Bool { pausedRecord != nil }
+    // While public: whether the address answers from the internet yet. It
+    // only qualifies .publicAccess; what is exposed is still decided by the
+    // config. nil whenever the state is not .publicAccess.
+    @Published private(set) var reachability: PublicReachability?
+    // The share the running checks belong to (its end), so a share that ends
+    // and comes back is checked again from the start.
+    private var reachabilityShare: Date?
+    private var reachabilityChecks: Task<Void, Never>?
     // Latched at logIn() and cleared only when the backend reaches Running (or
     // the feature is turned off / the login never started). While latched the
     // poll renders .loggingIn instead of .needsLogin, so the login button can't
@@ -494,8 +502,45 @@ final class RemoteAccessController: ObservableObject {
     }
 
     private func apply(_ next: RemoteAccessState) {
-        guard next != state else { return }
-        state = next
+        if next != state { state = next }
+        trackReachability()
+    }
+
+    // Starts a short run of checks each time public access comes on, then
+    // stops: at the first answer, or after the last check with why not.
+    private func trackReachability() {
+        guard case .publicAccess(let dnsName, let until) = state else {
+            reachabilityChecks?.cancel()
+            reachabilityChecks = nil
+            reachabilityShare = nil
+            reachability = nil
+            return
+        }
+        guard reachabilityShare != until else { return }
+        reachabilityChecks?.cancel()
+        reachabilityShare = until
+        reachability = .checking
+        reachabilityChecks = Task { @MainActor [weak self] in
+            var elapsed: TimeInterval = 0
+            var reason = "it did not answer."
+            for time in PublicReachability.checkTimes {
+                try? await Task.sleep(nanoseconds: UInt64((time - elapsed) * 1_000_000_000))
+                elapsed = time
+                guard !Task.isCancelled, self?.reachabilityShare == until else { return }
+                let failure = await Task.detached(priority: .utility) {
+                    Self.checkReachable(dnsName: dnsName)
+                }.value
+                guard !Task.isCancelled, let self, self.reachabilityShare == until else { return }
+                guard let failure else {
+                    self.reachability = .reachable
+                    return
+                }
+                reason = failure
+            }
+            guard !Task.isCancelled, let self, self.reachabilityShare == until else { return }
+            writeError("Timeline remote access: public address did not answer from the internet: \(reason)\n")
+            self.reachability = .unconfirmed(reason: reason)
+        }
     }
 
     // MARK: - CLI (off-main)
@@ -636,6 +681,66 @@ final class RemoteAccessController: ObservableObject {
         // for this port in the same write.
         _ = runTailscale(socket: socket, ["serve", "--bg", "--https=443", proxyTarget(port)])
         return serveConfig(socket: socket).map(confirmed) ?? false
+    }
+
+    // Checks from the Mac that the public address answers from the internet
+    // (see PublicReachability); nil if it does, else why not. What leaves the
+    // Mac: a query for ts.net's name servers to the Mac's resolver; the node
+    // name, without recursion, to those servers (and to any server they
+    // delegate the tailnet's zone to); and one HTTPS GET of /mcp with no
+    // credentials to the address they give, a Funnel relay.
+    nonisolated private static func checkReachable(dnsName: String) -> String? {
+        let name = dnsName.lowercased()
+        guard PublicReachability.isCheckable(name) else { return "its name is not under ts.net." }
+        func dig(_ args: [String]) -> String? {
+            guard let result = runCommand("/usr/bin/dig", ["+time=3", "+tries=1"] + args, captureStderr: false, timeout: 10),
+                  result.succeeded else { return nil }
+            return result.output
+        }
+        var servers = dig(["+short", "NS", "ts.net"]).map(PublicReachability.nameServers) ?? []
+        var addresses: [String] = []
+        // At most two delegations deep, two servers per zone.
+        lookup: for _ in 0..<3 {
+            var answer: PublicReachability.Answer?
+            for server in servers.prefix(2) {
+                if let output = dig(["+norecurse", "+noall", "+answer", "+authority", "@\(server)", name, "A"]) {
+                    answer = PublicReachability.answer(for: name, inDigOutput: output)
+                    break
+                }
+            }
+            switch answer {
+            case nil:
+                return "could not ask public DNS for its address."
+            case .missing?:
+                return "its public DNS record is not there yet."
+            case .addresses(let found)?:
+                addresses = found
+                break lookup
+            case .referral(let next)?:
+                servers = next
+            case .alias(let target)?:
+                // Another name, outside the zone these servers answer for.
+                addresses = dig(["+short", target, "A"]).map(PublicReachability.addresses) ?? []
+                break lookup
+            }
+        }
+        guard !addresses.isEmpty else { return "public DNS gave no address for it." }
+        var code = ""
+        for address in addresses.prefix(2) {
+            // --resolve pins the public address while keeping the name for
+            // TLS (verified as usual) and Host, so the request goes out to
+            // the relay and not across the tailnet.
+            code = runCommand("/usr/bin/curl", [
+                "--silent", "--output", "/dev/null", "--write-out", "%{http_code}",
+                "--max-time", "10", "--noproxy", "*", "--proto", "=https",
+                "--resolve", "\(name):443:\(address)", "https://\(name)/mcp",
+            ], captureStderr: false, timeout: 20)?.output ?? ""
+            if PublicReachability.isAnswered(httpCode: code) { return nil }
+        }
+        let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || trimmed == "000"
+            ? "its public address did not answer over HTTPS."
+            : "its public address answered HTTP \(trimmed)."
     }
 
     nonisolated private static func proxyTarget(_ port: Int) -> String {
