@@ -1,4 +1,4 @@
-import type { MemoryIndex, MemoryKind, MemoryNote } from "@shared/memory";
+import type { MemoryIndex, MemoryIndexWithContacts, MemoryKind, MemoryNote } from "@shared/memory";
 import { buildMemoryNoteUrl } from "./routes";
 
 /**
@@ -24,6 +24,17 @@ export const ACCOUNT_GROUPS = KIND_ORDER.filter((kind) => kind !== "project").ma
 
 export function scopeLabel(project: string): string {
   return project ? `Project ${project}` : "Account";
+}
+
+/** The hidden contacts among those the index's notes link to. */
+export function hiddenContactIdsOf(index: MemoryIndexWithContacts): Set<number> {
+  return new Set(Object.values(index.contacts).filter((contact) => contact.hidden).map((contact) => contact.id));
+}
+
+/** `notes` split into those shown as usual and those linked to a hidden contact, which the page lists under Hidden notes. */
+export function splitHiddenNotes(notes: readonly MemoryNote[], hiddenIds: ReadonlySet<number>): { shown: MemoryNote[]; hidden: MemoryNote[] } {
+  const isHidden = (note: MemoryNote) => note.contact_id !== null && hiddenIds.has(note.contact_id);
+  return { shown: notes.filter((note) => !isHidden(note)), hidden: notes.filter(isHidden) };
 }
 
 /** A project's notes with its overview first. */

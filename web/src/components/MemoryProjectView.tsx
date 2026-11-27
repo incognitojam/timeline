@@ -1,11 +1,11 @@
 import { A, useParams } from "@solidjs/router";
 import { createEffect, For, Show } from "solid-js";
-import { projectNotesInOrder } from "../lib/memory";
+import { hiddenContactIdsOf, projectNotesInOrder, splitHiddenNotes } from "../lib/memory";
 import { backToPrevious } from "../lib/back-link";
 import { useMemoryIndex, useSetProjectUsesAccountMemory } from "../lib/queries";
 import { APP_NAME, ROUTES } from "../lib/routes";
 import { IconChevronLeft } from "../ui/icons";
-import { HEADING, LIST, NoteRow } from "./MemoryView";
+import { HEADING, HiddenNotes, LIST, NoteRow } from "./MemoryView";
 
 /** One project's notes and its account-memory setting, read from the memory index. */
 export default function MemoryProjectView() {
@@ -14,6 +14,11 @@ export default function MemoryProjectView() {
   const query = useMemoryIndex();
   const setUse = useSetProjectUsesAccountMemory();
   const project = () => query.data?.projects.find((p) => p.key === key());
+  const notes = () => {
+    const data = query.data;
+    const found = project();
+    return data && found ? splitHiddenNotes(projectNotesInOrder(found.notes), hiddenContactIdsOf(data)) : { shown: [], hidden: [] };
+  };
   const switchId = () => `memory-account-${key()}`;
 
   createEffect(() => {
@@ -71,14 +76,15 @@ export default function MemoryProjectView() {
               </section>
 
               {/* A project with account memory off stays listed after its last note goes. */}
-              <Show when={project().notes.length > 0}>
+              <Show when={notes().shown.length > 0}>
                 <section>
                   <h2 class={`${HEADING} mb-2 px-1`}>Notes</h2>
                   <ul class={LIST}>
-                    <For each={projectNotesInOrder(project().notes)}>{(note) => <NoteRow note={note} />}</For>
+                    <For each={notes().shown}>{(note) => <NoteRow note={note} />}</For>
                   </ul>
                 </section>
               </Show>
+              <HiddenNotes notes={notes().hidden} />
             </div>
           )}
         </Show>
