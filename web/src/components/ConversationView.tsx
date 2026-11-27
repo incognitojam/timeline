@@ -27,8 +27,10 @@ import {
   navigateToIdentity,
   populateCacheFromParticipants,
 } from "../lib/identities";
-import { queryKeys, queryOptions, useConversationStats } from "../lib/queries";
-import { APP_NAME, buildCodingProjectUrl, safeDecode } from "../lib/routes";
+import { cachedConversationRow, newestConversationPage, queryKeys, queryOptions, useConversationStats } from "../lib/queries";
+import { APP_NAME, buildCodingProjectUrl, buildConversationUrl, safeDecode } from "../lib/routes";
+import { getSourceColorStyle } from "../lib/source-styles";
+import { sharedElementName, sharedTextStyle } from "../lib/view-transition";
 import type { TimelineEvent } from "../lib/types";
 import { useScrollToAnchor } from "../lib/useScrollToAnchor";
 import { IconArrowDownward, IconChevronLeft, IconInfo } from "../ui/icons";
@@ -129,6 +131,29 @@ function Sparkline(props: { data: number[]; width?: number; height?: number }) {
   );
 }
 
+/**
+ * Message-shaped placeholders, stacked from the bottom where the newest
+ * messages land, so the transcript replaces them without a jump.
+ */
+function ConversationSkeleton() {
+  return (
+    <div role="status" aria-label="Loading conversation" class="min-h-full flex flex-col justify-end gap-5 p-4">
+      <span class="sr-only">Loading conversation...</span>
+      <For each={["70%", "45%", "85%", "35%", "60%"]}>
+        {(width) => (
+          <div class="flex items-start gap-3">
+            <div class="h-8 w-8 rounded-full bg-accent animate-pulse shrink-0" />
+            <div class="flex-1 space-y-2">
+              <div class="h-3 w-28 rounded bg-accent animate-pulse" />
+              <div class="h-4 rounded bg-accent animate-pulse" style={{ width }} />
+            </div>
+          </div>
+        )}
+      </For>
+    </div>
+  );
+}
+
 export default function ConversationView() {
   const queryClient = useQueryClient();
   const params = useParams();
@@ -144,11 +169,13 @@ export default function ConversationView() {
   };
   const highlightEventId = useScrollToAnchor();
 
-  // Get conversation identity from URL params. Display title comes from the API.
+  // Get conversation identity from URL params. Display title comes from the
+  // API; until it does, from the conversation's row in a cached list.
   const source = () => safeDecode(params.source || "");
   const conversationId = () => safeDecode(params.conversationId || "");
   const [conversationTitle, setConversationTitle] = createSignal<string | null>(null);
-  const displayTitle = () => conversationTitle() ?? sourceLabel(source());
+  const listedConversation = createMemo(() => cachedConversationRow(queryClient, source(), conversationId()));
+  const displayTitle = () => conversationTitle() ?? listedConversation()?.title ?? sourceLabel(source());
 
   createEffect(() => {
     document.title = `${displayTitle()} · ${APP_NAME}`;
@@ -291,12 +318,9 @@ export default function ConversationView() {
         };
       }
 
-      const data = await queryClient.fetchQuery(queryOptions.conversationPage({
-        conversationId: conversationId(),
-        source: source(),
-        limit: 100,
-        order: "desc",
-      }));
+      const data = await queryClient.fetchQuery(
+        queryOptions.conversationPage(newestConversationPage(source(), conversationId())),
+      );
       if (key === conversationKey()) {
         setConversationTitle(data.title);
         populateCacheFromParticipants(data.participants);
@@ -616,9 +640,22 @@ export default function ConversationView() {
               )}
             </Show>
             <div class="min-w-0">
-              <h2 class="font-display font-medium truncate">{displayTitle()}</h2>
+              <h2
+                class="font-display font-medium truncate"
+                style={sharedTextStyle(buildConversationUrl(source(), conversationId()), "conversation-title")}
+              >
+                {displayTitle()}
+              </h2>
               <p class="text-sm text-muted-foreground">
-                {sourceLabel(source())}
+                <span
+                  class="text-xs px-1.5 py-0.5 rounded source-badge"
+                  style={{
+                    ...getSourceColorStyle(source()),
+                    "view-transition-name": sharedElementName(buildConversationUrl(source(), conversationId()), "conversation-source"),
+                  }}
+                >
+                  {sourceLabel(source())}
+                </span>
                 <Show when={codingProject()}>
                   {(name) => (
                     <>
@@ -632,7 +669,16 @@ export default function ConversationView() {
                     </>
                   )}
                 </Show>
-                {" · "}<span class="font-mono">{scroller.items().length}</span> messages loaded
+                {/* A failed load has no count to show; the transcript says why. */}
+                <Show when={!scroller.error()}>
+                  {" · "}
+                  <Show
+                    when={!scroller.isLoading()}
+                    fallback={<span class="inline-block h-3 w-24 rounded bg-accent animate-pulse align-middle" />}
+                  >
+                    <span class="font-mono">{scroller.items().length}</span> messages loaded
+                  </Show>
+                </Show>
               </p>
             </div>
           </div>
@@ -690,7 +736,7 @@ export default function ConversationView() {
           </Show>
 
           <Show when={scroller.isLoading()}>
-            <div class="text-center py-8 px-4 text-muted-foreground">Loading conversation...</div>
+            <ConversationSkeleton />
           </Show>
 
           <Show when={!scroller.isLoading() && scroller.items().length > 0}>
@@ -885,7 +931,14 @@ export default function ConversationView() {
 
           <div class="overflow-auto flex-1">
             {/* AI tab */}
-            <Show when={sidebarTab() === "ai" && aiAggregate()}>
+            <Show when={sidebarTab() === "ai" && scroller.isLoading()}>
+              <div class="p-4 space-y-3" aria-busy="true">
+                <For each={["w-24", "w-full", "w-3/4", "w-full", "w-2/3"]}>
+                  {(width) => <div class={`h-4 ${width} rounded bg-accent animate-pulse`} />}
+                </For>
+              </div>
+            </Show>
+            <Show when={sidebarTab() === "ai" && !scroller.isLoading() && !scroller.error() && aiAggregate()}>
               {(agg) => <AISidebarPanel aggregated={agg()} />}
             </Show>
 

@@ -20,6 +20,7 @@ import {
 } from "../lib/routes";
 import { getSourceColorStyle } from "../lib/source-styles";
 import { staleContentClass } from "../lib/stale-content";
+import { revealSharedElement, sharedElementName, sharedTextStyle, useSharedElementLink } from "../lib/view-transition";
 import { IconChevronLeft, IconStorage } from "../ui/icons";
 
 const DEBOUNCE_MS = 300;
@@ -209,6 +210,33 @@ function ConversationListView(props: { scope: ConversationListScope }) {
     Math.ceil((conversationData()?.total ?? 0) / CONVERSATIONS_PAGE_SIZE);
   const conversationsAreStale = () => query.isPlaceholderData;
 
+  const sharedLink = useSharedElementLink();
+  // Coming back to the list (browser Back, the nav link) remounts it at the
+  // top: scroll the conversation last opened from it back into view. The list
+  // renders before the router swaps it into the document, and a background
+  // refetch can replace the row meanwhile, so reveal the latest row once it is
+  // in the document, giving up after a second.
+  let pendingRow: HTMLElement | undefined;
+  let frame: number | undefined;
+  let revealed = false;
+  onCleanup(() => { if (frame !== undefined) cancelAnimationFrame(frame); });
+  const revealRow = (row: HTMLElement) => {
+    if (revealed) return;
+    pendingRow = row;
+    if (frame !== undefined) return;
+    let frames = 0;
+    const reveal = () => {
+      frame = undefined;
+      if (pendingRow?.isConnected) {
+        revealed = true;
+        revealSharedElement(pendingRow);
+      } else if (++frames < 60) {
+        frame = requestAnimationFrame(reveal);
+      }
+    };
+    frame = requestAnimationFrame(reveal);
+  };
+
   return (
     <div class="flex flex-col h-full">
       {/* Header */}
@@ -326,31 +354,36 @@ function ConversationListView(props: { scope: ConversationListScope }) {
               }
             >
               <For each={data().conversations}>
-                {(conv) => (
-                  <a
-                    href={buildConversationUrl(conv.source, conv.conversationId)}
-                    class="flex items-center gap-2 px-4 py-3 border-b border-border hover:bg-accent transition-colors"
-                  >
-                    <span
-                      class="text-xs px-1.5 py-0.5 rounded source-badge shrink-0"
-                      style={getSourceColorStyle(conv.source)}
+                {(conv) => {
+                  const href = buildConversationUrl(conv.source, conv.conversationId);
+                  return (
+                    <a
+                      href={href}
+                      onClick={sharedLink(href)}
+                      class="flex items-center gap-2 px-4 py-3 border-b border-border hover:bg-accent transition-colors"
                     >
-                      {sourceLabel(conv.source)}
-                    </span>
-                    <span class="truncate flex-1 text-sm">{conv.title}</span>
-                    <Show when={rowProject(conv)}>
-                      {(name) => (
-                        <span class="text-xs text-muted-foreground truncate max-w-40 shrink-0">{name()}</span>
-                      )}
-                    </Show>
-                    <span class="text-sm text-muted-foreground font-mono tabular-nums shrink-0">
-                      {conv.messageCount.toLocaleString()}
-                    </span>
-                    <span class="text-sm text-muted-foreground shrink-0 w-20 text-right font-mono">
-                      {formatRelativeDate(conv.lastMessage)}
-                    </span>
-                  </a>
-                )}
+                      <span
+                        class="text-xs px-1.5 py-0.5 rounded source-badge shrink-0"
+                        style={{ ...getSourceColorStyle(conv.source), "view-transition-name": sharedElementName(href, "conversation-source") }}
+                        ref={(badge) => { if (sharedElementName(href, "conversation-source")) revealRow(badge); }}
+                      >
+                        {sourceLabel(conv.source)}
+                      </span>
+                      <span class="truncate flex-1 text-sm" style={sharedTextStyle(href, "conversation-title")}>{conv.title}</span>
+                      <Show when={rowProject(conv)}>
+                        {(name) => (
+                          <span class="text-xs text-muted-foreground truncate max-w-40 shrink-0">{name()}</span>
+                        )}
+                      </Show>
+                      <span class="text-sm text-muted-foreground font-mono tabular-nums shrink-0">
+                        {conv.messageCount.toLocaleString()}
+                      </span>
+                      <span class="text-sm text-muted-foreground shrink-0 w-20 text-right font-mono">
+                        {formatRelativeDate(conv.lastMessage)}
+                      </span>
+                    </a>
+                  );
+                }}
               </For>
             </Show>
           )}

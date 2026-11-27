@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, waitFor } from "@solidjs/testing-library";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { Suspense } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { queryKeys } from "../lib/queries";
 import type { TimelineEvent } from "../lib/types";
 import ConversationView from "./ConversationView";
 
@@ -144,4 +145,80 @@ describe("ConversationView", () => {
     expect(view.getByText("deleted")).toBeInTheDocument();
     expect(view.container.querySelector("#event-9001 .flex-1")).toHaveClass("border-l-2", "opacity-70");
   });
+  it("takes its header and tab title from a cached list row until the messages load", async () => {
+    let respond: (response: Response) => void = () => {};
+    const fetchMock = vi.fn((input: RequestInfo | URL) => String(input).includes("/api/conversation?")
+      ? new Promise<Response>((resolve) => { respond = resolve; })
+      : new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("IntersectionObserver", NoopIntersectionObserver);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(queryKeys.conversations({ scope: "messages", limit: 50, offset: 0 }), {
+      conversations: [listedConversation("Study Group")],
+      total: 1,
+    });
+
+    const view = renderConversation(client);
+    expect(view.getByRole("heading", { name: "Study Group" })).toBeInTheDocument();
+    expect(document.title).toBe("Study Group · Timeline");
+    // The row's message count is the conversation's total, not what is loaded.
+    expect(view.queryByText(/messages loaded/)).not.toBeInTheDocument();
+    expect(view.getByRole("status", { name: "Loading conversation" })).toBeInTheDocument();
+
+    respond(Response.json({ title: "Study Group (renamed)", events: [], nextCursor: null, server: null }));
+    expect(await view.findByRole("heading", { name: "Study Group (renamed)" })).toBeInTheDocument();
+    expect(view.getByText(/messages loaded/)).toHaveTextContent("0 messages loaded");
+  });
+
+  it("shows no message count when the first page fails to load", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => String(input).includes("/api/conversation?")
+      ? Promise.resolve(new Response("boom", { status: 500 }))
+      : new Promise<Response>(() => {})));
+    vi.stubGlobal("IntersectionObserver", NoopIntersectionObserver);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(queryKeys.conversations({ scope: "messages", limit: 50, offset: 0 }), {
+      conversations: [listedConversation("Study Group")],
+      total: 1,
+    });
+
+    const view = renderConversation(client);
+    expect(await view.findByText(/^Error:/)).toBeInTheDocument();
+    expect(view.getByRole("heading", { name: "Study Group" })).toBeInTheDocument();
+    expect(view.queryByText(/messages loaded/)).not.toBeInTheDocument();
+  });
+
+  it("takes the title from the most recently fetched list holding the conversation", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    vi.stubGlobal("IntersectionObserver", NoopIntersectionObserver);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(queryKeys.conversations({ scope: "messages", limit: 50, offset: 0 }), {
+      conversations: [listedConversation("Old Name")], total: 1,
+    }, { updatedAt: 1_000 });
+    client.setQueryData(queryKeys.conversations({ scope: "messages", search: "new", limit: 50, offset: 0 }), {
+      conversations: [listedConversation("New Name")], total: 1,
+    }, { updatedAt: 2_000 });
+
+    const view = renderConversation(client);
+    expect(view.getByRole("heading", { name: "New Name" })).toBeInTheDocument();
+  });
+
+  it("ignores a cached list row once its list is invalidated", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    vi.stubGlobal("IntersectionObserver", NoopIntersectionObserver);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(queryKeys.contactConversations(7), { conversations: [listedConversation("Hidden Friend")] });
+    // Hiding a contact invalidates every query.
+    await client.invalidateQueries();
+
+    const view = renderConversation(client);
+    expect(view.getByRole("heading", { name: "Discord" })).toBeInTheDocument();
+    expect(view.queryByText("Hidden Friend")).not.toBeInTheDocument();
+  });
 });
+
+function listedConversation(title: string) {
+  return {
+    source: "discord", sourceAccount: null, conversationId: "conversation-1", title,
+    messageCount: 42, firstMessage: "2026-01-01T10:00:00.000Z", lastMessage: "2026-03-01T10:00:00.000Z",
+  };
+}
