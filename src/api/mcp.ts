@@ -1,5 +1,5 @@
 /**
- * MCP API for the web app: managed tokens, and read access to recorded MCP
+ * MCP API for the web app: managed tokens, get_updates checkpoints, and read access to recorded MCP
  * sessions and tool calls, which the MCP HTTP and stdio transports write.
  */
 
@@ -7,7 +7,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { type Context, Hono } from "hono";
+import { getAppStateDb } from "../db/app-state";
+import type { QueryExecutor } from "../db/pool";
 import { renderMcpSessionMarkdown } from "../mcp/render";
+import { deleteCheckpoint, listCheckpoints, NEW_CHECKPOINT_DAYS } from "../mcp/updates";
 import { getMcpSession, getMcpSessionStats, listMcpSessions, listMcpToolCalls } from "../mcp/recording";
 import { createMcpToken, envTokens, listMcpTokens, revokeMcpToken } from "./mcp-tokens";
 import { clampLimit, clampOffset } from "./query-params";
@@ -64,7 +67,7 @@ export function readPublicAccess(now = Date.now()): PublicAccess {
   return { state: "on", until: new Date(end * 1000).toISOString() };
 }
 
-export const createMcpRoutes = (options: { publicUrl?: string }) => new Hono()
+export const createMcpRoutes = (options: { db: QueryExecutor; publicUrl?: string }) => new Hono()
   // What the page needs to tell a client where to connect; never a token.
   .get("/api/mcp/connect", (c) => c.json({
     public_url: options.publicUrl ?? null,
@@ -98,6 +101,16 @@ export const createMcpRoutes = (options: { publicUrl?: string }) => new Hono()
   .delete("/api/mcp/tokens/:id{[0-9]+}", (c) => {
     if (crossSite(c)) return c.json({ error: "Revoke tokens from the MCP page." }, 403);
     if (!revokeMcpToken(c.req.param("id"))) return c.json({ error: "No live MCP token with that id" }, 404);
+    return c.json({ ok: true });
+  })
+
+  // get_updates checkpoints, with when the event each stands at was added, and how far back a name new again starts.
+  .get("/api/mcp/checkpoints", async (c) => c.json({ checkpoints: await listCheckpoints(options.db, getAppStateDb()), new_checkpoint_days: NEW_CHECKPOINT_DAYS }))
+
+  // Forgets one bookmark; no event is touched.
+  .delete("/api/mcp/checkpoints/:name", (c) => {
+    if (crossSite(c)) return c.json({ error: "Delete checkpoints from the MCP page." }, 403);
+    if (!deleteCheckpoint(getAppStateDb(), c.req.param("name"))) return c.json({ error: "No checkpoint with that name" }, 404);
     return c.json({ ok: true });
   })
 

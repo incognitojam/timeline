@@ -8,6 +8,7 @@ import { MCP_SESSION_LIMIT } from "../lib/query-params";
 import { buildMcpSessionUrl } from "../lib/routes";
 import McpConnectGuide from "./McpConnectGuide";
 import McpTokensPanel from "./McpTokensPanel";
+import McpCheckpointsPanel from "./McpCheckpointsPanel";
 
 function clientLabel(session: McpSessionSummary): string {
   const name = session.client_name ?? "Unknown client";
@@ -46,6 +47,7 @@ export default function McpSessionsView() {
         <McpConnectGuide />
 
         <McpTokensPanel />
+        <McpCheckpointsPanel />
 
         <h2 class="font-display text-lg font-medium mb-4">Sessions</h2>
 

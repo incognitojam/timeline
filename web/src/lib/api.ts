@@ -2266,6 +2266,25 @@ export async function revokeMcpToken(id: number): Promise<void> {
   await parseApiJson<{ ok: true }>(res, "Failed to revoke MCP token");
 }
 
+export interface McpCheckpoint {
+  name: string;
+  position: number;
+  /** When the event at position was added to Timeline. */
+  added_at: string | null;
+  used_at: string;
+  expires_at: string;
+}
+
+export async function fetchMcpCheckpoints(signal: AbortSignal): Promise<{ checkpoints: McpCheckpoint[]; new_checkpoint_days: number }> {
+  const res = await apiFetch(`${API_BASE}/api/mcp/checkpoints`, { signal });
+  return parseApiJson(res, "Failed to load checkpoints");
+}
+
+export async function deleteMcpCheckpoint(name: string): Promise<void> {
+  const res = await apiFetch(`${API_BASE}/api/mcp/checkpoints/${encodeURIComponent(name)}`, { method: "DELETE" });
+  await parseApiJson<{ ok: true }>(res, "Failed to delete checkpoint");
+}
+
 export async function fetchMcpSessions(options: {
   limit?: number;
   offset?: number;

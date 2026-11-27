@@ -6,7 +6,7 @@ import { initDb } from "../db/schema";
 import { Database } from "../db/sqlite";
 import { countTokens } from "../export/tokens";
 import { seed } from "../testing/seed";
-import { CHECKPOINT_IDLE_DAYS, getUpdates, runGetUpdates } from "./updates";
+import { CHECKPOINT_IDLE_DAYS, deleteCheckpoint, getUpdates, listCheckpoints, runGetUpdates } from "./updates";
 
 let db: Database;
 let sequence = 0;
@@ -536,5 +536,23 @@ describe("checkpoints", () => {
     // Creating a checkpoint, as moving one does, deletes those idle too long.
     await at(day(CHECKPOINT_IDLE_DAYS + 5), { checkpoint: "fresh" });
     expect(["forgotten", "in-use", "fresh"].map(position).map((p) => p !== undefined)).toEqual([false, true, true]);
+  });
+
+  test("the list says when each checkpoint's event was added and when it expires; deleting one leaves the rest and the events", async () => {
+    const first = message("hello", "2026-03-09T09:00:00Z");
+    for (const name of ["morning-brief", "weekly.review"]) await at(NOW, { checkpoint: name });
+    expect(await listCheckpoints(wrapDatabase(db), appState)).toEqual(["morning-brief", "weekly.review"].map((name) => ({
+      name,
+      position: first,
+      added_at: "2026-03-10 12:00:00",
+      used_at: NOW.toISOString(),
+      expires_at: new Date(NOW.getTime() + CHECKPOINT_IDLE_DAYS * 86_400_000).toISOString(),
+    })));
+    for (const name of ["weekly", "%", "' OR 1=1 --", ""]) expect(deleteCheckpoint(appState, name)).toBe(false);
+    expect(deleteCheckpoint(appState, "morning-brief")).toBe(true);
+    expect(deleteCheckpoint(appState, "morning-brief")).toBe(false);
+    expect([position("morning-brief"), position("weekly.review")]).toEqual([undefined, first]);
+    expect(db.query("SELECT COUNT(*) AS n FROM events").get()).toEqual({ n: 1 });
+    expect(await at(NOW, { checkpoint: "morning-brief" })).toContain('Checkpoint "morning-brief" is new, so this starts 7 days back');
   });
 });
