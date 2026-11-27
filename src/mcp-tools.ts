@@ -2,11 +2,12 @@
  * MCP Tools Registration
  *
  * Shared tool definitions for both stdio and HTTP MCP transports.
- * 17 tools: list_mcp_sessions, get_mcp_session, search_mcp_tool_calls,
+ * 18 tools: list_mcp_sessions, get_mcp_session, search_mcp_tool_calls,
  *           query_events, get_context, get_summary, get_schema, run_sql,
  *           list_contacts, get_contact_info, remember_contact_fact,
  *           semantic_search, export_conversation, list_memory,
- *           get_memory_note, save_memory_note, delete_memory_note
+ *           get_memory_note, save_memory_note, delete_memory_note,
+ *           get_updates
  */
 
 import type { Database } from "bun:sqlite";
@@ -73,6 +74,7 @@ import {
   searchMcpToolCalls,
 } from "./mcp/recording";
 import { renderMemoryIndex, renderMemoryNote } from "./mcp/memory";
+import { GET_UPDATES_DESCRIPTION, GET_UPDATES_SCHEMA, runGetUpdates } from "./mcp/updates";
 import { getDiscordComponentsText } from "./platforms/discord/shared/components";
 import { discordMentionsToPlainText, extractUserMentionIds } from "./platforms/discord/shared/mentions";
 
@@ -1539,5 +1541,13 @@ ${idHint}`,
         return memoryError(error);
       }
     }),
+  );
+
+  tool(
+    "get_updates",
+    GET_UPDATES_DESCRIPTION,
+    GET_UPDATES_SCHEMA,
+    READS,
+    async (params, extra) => instrumentToolCall("get_updates", params, extra, () => runGetUpdates(db, params)),
   );
 }
