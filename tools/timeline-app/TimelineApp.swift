@@ -120,7 +120,10 @@ struct TimelineApp: App {
             }
         }
 
-        Button("Quit Timeline", systemImage: "xmark.rectangle") { NSApplication.shared.terminate(nil) }
+        Button("Quit Timeline", systemImage: "xmark.rectangle") {
+            remoteAccess.prepareForOwnerQuit()
+            NSApplication.shared.terminate(nil)
+        }
             .keyboardShortcut("q")
     }
 
@@ -172,6 +175,11 @@ struct TimelineApp: App {
         case .unconfirmed:
             Text("Remote Access: could not confirm it is tailnet only")
             Text("Turn Remote Access off if this persists.")
+        }
+
+        if remoteAccess.resumingPublicAccess {
+            Text("Public access resumes after the update")
+            Button("Stop Public Access", systemImage: "stop.circle") { remoteAccess.endPublicAccess() }
         }
 
         switch remoteAccess.publicAccessFailure {

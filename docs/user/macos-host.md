@@ -230,7 +230,13 @@ at the same address, the menu shows "Remote Access: public until" the time it
 ends, and the menu bar icon becomes a globe. It goes back to tailnet only when
 that time comes, when you choose **Stop Public Access**, when you turn Remote
 Access off, when you quit Timeline, and whenever `tailscaled` starts, such as
-after the Mac restarts. Each `tailscaled` start resets the node's serve config,
+after the Mac restarts. An update that relaunches Timeline pauses it instead:
+Funnel goes off while the update installs, and the reopened Timeline shows
+"Public access resumes after the update" with **Stop Public Access**, then
+"making public…", and resumes with the same end time. It resumes only within
+5 minutes of the quit, before the end time, and if neither the Mac nor
+`tailscaled` restarted in between. Quitting Timeline yourself, even while an
+update waits, ends it for good. Each `tailscaled` start resets the node's serve config,
 so after a restart the service is not reachable even from the tailnet until
 Timeline is running again; enable **Launch at Login** (under **Settings**) to
 keep Remote Access available.
@@ -271,8 +277,8 @@ other requirements.
 
 If Timeline is force-quit or crashes while the service is public and
 `tailscaled` keeps running, or is quit within a second or two of choosing
-**Make Public on the Internet**, Funnel can stay on until Timeline next runs or
-`tailscaled` restarts, or until you turn it off with
+**Make Public on the Internet**, Funnel can stay on until Timeline next runs,
+which starts tailnet only, or `tailscaled` restarts, or until you turn it off with
 `tailscale --socket=~/.local/share/timeline/tailscale/tailscaled.sock serve reset`.
 
 ## Stopping the service for maintenance
