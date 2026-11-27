@@ -101,8 +101,10 @@ export function refreshTargetOf(job: Pick<Job, "id" | "payload">): RefreshTarget
   ) {
     throw new Error(`Job #${job.id} has a malformed refresh target`);
   }
-  const { account, conversationId } = target as RefreshTarget;
-  return { account, conversationId };
+  const { account, conversationId, nativeId } = target as RefreshTarget;
+  if (nativeId === undefined) return { account, conversationId };
+  if (typeof nativeId !== "string" || !nativeId) throw new Error(`Job #${job.id} has a malformed native conversation ID`);
+  return { account, conversationId, nativeId };
 }
 
 /**
@@ -128,7 +130,9 @@ export async function runRefreshJob(
   try {
     check = await refresher.resolve({
       conversationId: target.conversationId,
-      accounts: [target.account],
+      accounts: target.nativeId
+        ? db.query<{ account: string }, [string, string]>(ACCOUNTS_SQL).all(refresher.source, target.conversationId).map(row => row.account)
+        : [target.account],
       settings: sync.settings,
       db: wrapDatabase(db),
     });
@@ -136,6 +140,7 @@ export async function runRefreshJob(
     db.close();
   }
   if (!check.ok) return failed(check.reason);
+  if (target.account !== check.target.account || target.nativeId !== check.target.nativeId) return failed("The conversation now maps to a different native conversation");
   return refresher.run(check.target, {
     verbose: false,
     config: { sources: { [syncSourceName]: sync.settings ?? {} } },
