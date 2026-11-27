@@ -12,7 +12,7 @@
  * - Incremental sync via per-channel snowflake cursors
  */
 
-import { getAppStateDb, getSyncState } from "../../db/app-state";
+import { getAppStateDb, getSyncState, setSyncState } from "../../db/app-state";
 import { getDb, initDb } from "../../db/schema";
 import type { SyncOptions, SyncResult, SyncSource } from "../../sync/types";
 import {
@@ -1489,7 +1489,7 @@ export const discordSyncSource: SyncSource = {
       finishAttachmentRecoveryPhase();
 
       // ========== Finalize ==========
-      finishMessageStore(db, appDb, state, store);
+      finishMessageStore(db, store, () => setSyncState(appDb, "discord-api", state));
 
       log(options.verbose, `Done: +${store.totals.added} events, ${totalAttachments.stored} attachments stored, ${totalAttachments.failed} failed`);
       const clientStats = client.getStats();
@@ -1524,7 +1524,7 @@ export const discordSyncSource: SyncSource = {
       foldIncidentalMetrics();
       // Always finalize (upsert identities, save state, close db) even on error
       try {
-        finishMessageStore(db, appDb, state, store);
+        finishMessageStore(db, store, () => setSyncState(appDb, "discord-api", state));
       } catch (finalizeErr) {
         console.error("[discord] Error during finalization:", finalizeErr);
       }

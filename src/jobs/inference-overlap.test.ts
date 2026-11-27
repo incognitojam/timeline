@@ -233,7 +233,7 @@ describe("scheduled inference overlap", () => {
       const deadline = Date.now() + 60_000;
       const observedDescriptions: number[] = [];
       const runner = new JobRunner({
-        overlapSyncSource: "vision", pollIdleMs: 1, pollActiveMs: 1,
+        overlapSyncSources: ["vision"], pollIdleMs: 1, pollActiveMs: 1,
         handlers: {
           sync: async (job, signal, gate) => {
             if (job.source === "vision") {
@@ -359,7 +359,7 @@ describe("scheduled inference overlap", () => {
     const started: number[] = [];
     const completed: number[] = [];
     const runner = new JobRunner({
-      overlapSyncSource: "vision", pollIdleMs: 1, pollActiveMs: 1,
+      overlapSyncSources: ["vision"], pollIdleMs: 1, pollActiveMs: 1,
       handlers: {
         sync: async (job, signal) => {
           if (restarted) { completed.push(job.id); return; }
@@ -400,7 +400,7 @@ describe("scheduled inference overlap", () => {
     const restoreStarted = Promise.withResolvers<void>();
     const finishRestore = Promise.withResolvers<void>();
     const runner = new JobRunner({
-      overlapSyncSource: "vision", pollIdleMs: 1, pollActiveMs: 1,
+      overlapSyncSources: ["vision"], pollIdleMs: 1, pollActiveMs: 1,
       handlers: {
         sync: async (job, signal, localWork) => {
           if (job.source !== "vision") return;
@@ -467,7 +467,7 @@ describe("scheduled inference overlap", () => {
     const finishRestore = Promise.withResolvers<void>();
     const handlerFinished = Promise.withResolvers<void>();
     const runner = new JobRunner({
-      overlapSyncSource: "vision", pollIdleMs: 1, pollActiveMs: 1,
+      overlapSyncSources: ["vision"], pollIdleMs: 1, pollActiveMs: 1,
       handlers: {
         sync: async (_job, signal, localWork) => {
           try {
@@ -508,7 +508,7 @@ describe("scheduled inference overlap", () => {
       const finish = Promise.withResolvers<void>();
       let calls = 0;
       const runner = new JobRunner({
-        overlapSyncSource: "vision", pollIdleMs: 1, pollActiveMs: 1,
+        overlapSyncSources: ["vision"], pollIdleMs: 1, pollActiveMs: 1,
         handlers: {
           sync: async () => {
             calls++;

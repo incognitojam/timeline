@@ -594,6 +594,9 @@ export function normalizeMessage(msg: DiscordMessage): NormalizedMessage {
   };
 }
 
+/** Most messages `fetchMessages` yields per page. */
+export const MESSAGE_PAGE_SIZE = 100;
+
 export class DiscordClient {
   private headers: Record<string, string>;
   private lastRequestTime = 0;
@@ -844,7 +847,7 @@ export class DiscordClient {
 
     while (true) {
       this.checkAborted();
-      const url = `${API_BASE}/channels/${channelId}/messages?limit=100&after=${currentAfter}`;
+      const url = `${API_BASE}/channels/${channelId}/messages?limit=${MESSAGE_PAGE_SIZE}&after=${currentAfter}`;
       const res = await this.fetchWithRetry(url);
 
       if (!res.ok) {
@@ -1053,7 +1056,7 @@ export class DiscordClient {
 
   async fetchDMChannels(): Promise<DiscordChannel[]> {
     const res = await this.fetchWithRetry(`${API_BASE}/users/@me/channels`);
-    if (!res.ok) return [];
+    if (!res.ok) throw new Error(`Failed to list DM channels: ${res.status}`);
     return res.json() as Promise<DiscordChannel[]>;
   }
 

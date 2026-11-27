@@ -233,7 +233,7 @@ export interface ClaimOptions {
   leaseMs: number;
   kinds?: JobKind[];
   syncSource?: string;
-  excludeSyncSource?: string;
+  excludeSyncSources?: readonly string[];
 }
 
 /**
@@ -250,9 +250,11 @@ export function claimNextJob(opts: ClaimOptions, db: Database = getAppStateDb())
     sourceFilters.push("AND kind = 'sync' AND source = ?");
     params.push(opts.syncSource);
   }
-  if (opts.excludeSyncSource !== undefined) {
-    sourceFilters.push("AND NOT (kind = 'sync' AND source IS ?)");
-    params.push(opts.excludeSyncSource);
+  if (opts.excludeSyncSources !== undefined && opts.excludeSyncSources.length > 0) {
+    sourceFilters.push(
+      `AND (kind != 'sync' OR source IS NULL OR source NOT IN (${opts.excludeSyncSources.map(() => "?").join(",")}))`,
+    );
+    params.push(...opts.excludeSyncSources);
   }
 
   const leaseUntil = toSqliteTimestamp(new Date(Date.now() + opts.leaseMs));

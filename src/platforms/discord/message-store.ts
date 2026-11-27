@@ -5,7 +5,6 @@
  * channel cursor.
  */
 
-import { setSyncState } from "../../db/app-state";
 import { type UpsertIdentityOptions, upsertIdentities } from "../../db/identities";
 import { onImportComplete } from "../../db/import-hooks";
 import { downloadAndStoreAttachments } from "./attachment-downloader";
@@ -208,18 +207,20 @@ function prepareStatements(db: Db) {
 }
 
 /**
- * Finish a run: write identities, run import hooks, save `discord-api` state,
- * close the database. Called on success and error paths alike, so the state
- * saved is whatever the store has actually stored.
+ * Finish a run: write identities, run import hooks, save state, close the
+ * database. Called on success and error paths alike, so the cursors saved are
+ * only as far as the store has actually stored.
  */
-export function finishMessageStore(db: Db, appDb: Db, state: DiscordApiSyncState, store: MessageStore): void {
-  store.flushIdentities();
+export function finishMessageStore(db: Db, store: MessageStore, saveState: () => void): void {
+  try {
+    store.flushIdentities();
 
-  if (store.totals.added > 0) {
-    onImportComplete(db);
+    if (store.totals.added > 0) {
+      onImportComplete(db);
+    }
+
+    saveState();
+  } finally {
+    db.close();
   }
-
-  setSyncState(appDb, "discord-api", state);
-
-  db.close();
 }
