@@ -314,6 +314,23 @@ test("a conversation without a title can be passed back by the id its heading sh
   db.prepare("UPDATE events SET title = NULL WHERE id = ?").run(id);
   expect(await updates("id:0")).toContain('## discord: (untitled) · conversation_id="c-untitled"');
   expect(await updates("id:0", { conversationId: "c-untitled" })).toContain("untitled hello");
+  // With nothing new it is quiet, not unknown, in any source and account.
+  insert({ source: "google-messages", type: "sms:received", timestamp: "2026-03-09T10:00:00Z", content: "other", conversation: "+15550100" });
+  const quiet = await updates(`id:${id + 1}`, { conversationId: "c-untitled" });
+  expect(quiet).toContain("No new messages.");
+  // A NULL account, an empty one, and a later account on a later source.
+  const insertIn = (source: string, account: string | null, conversation: string) => Number(db.prepare(`
+    INSERT INTO events (source, source_id, source_account, type, timestamp, people, raw_data, conversation_id)
+    VALUES (?, ?, ?, 'message:dm', '2026-03-09T11:00:00Z', '[]', '{}', ?)
+  `).run(source, conversation, account, conversation).lastInsertRowid);
+  insertIn("discord", null, "c-null-account");
+  insertIn("discord", "", "c-empty-account");
+  insertIn("skype", "a", "c-skype-a");
+  const last = insertIn("skype", "b", "c-skype-b");
+  for (const conversationId of ["c-null-account", "c-empty-account", "c-skype-b"]) {
+    expect(await updates(`id:${last}`, { conversationId })).toContain("No new messages.");
+  }
+  expect((await runGetUpdates(wrapDatabase(db), { since: `id:${id + 1}`, conversation_id: "c-missing" })).isError).toBe(true);
 });
 
 test("a conversation with a huge title still fits the cap when pointed to", async () => {

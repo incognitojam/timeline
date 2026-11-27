@@ -158,11 +158,32 @@ async function resolveWindow(db: QueryExecutor, params: UpdatesParams, now: Date
 
 /**
  * An id that matches nothing would otherwise read as a quiet conversation.
- * Only asked when the window has none of its events; conversation_summaries
- * has a row per titled conversation, and no index on events leads with conversation_id.
+ * Only asked when the window has none of its events. No index leads with
+ * conversation_id, so this skip-scans idx_events_conversation_id: one seek per
+ * source and account, then one probe each. conversation_summaries would be one
+ * query, but it leaves out conversations without a title.
  */
 async function requireConversation(db: QueryExecutor, conversationId: string): Promise<void> {
-  if (await db.get("SELECT 1 FROM conversation_summaries WHERE conversation_id = ? LIMIT 1", conversationId)) return;
+  const conversation = `conversation_id IS NOT NULL AND ${conversationTypeClause()}`;
+  const next = async (sql: string, ...args: unknown[]) => (await db.get<{ next: string | null }>(sql, ...args))?.next ?? null;
+  const probe = async (source: string, account: string | null) => await db.get(
+    `SELECT 1 FROM events WHERE source = ? AND source_account IS ? AND conversation_id = ? AND ${conversation} LIMIT 1`,
+    source, account, conversationId,
+  );
+  for (
+    let source = await next(`SELECT MIN(source) AS next FROM events WHERE ${conversation}`);
+    source !== null;
+    source = await next(`SELECT MIN(source) AS next FROM events WHERE source > ? AND ${conversation}`, source)
+  ) {
+    if (await probe(source, null)) return;
+    for (
+      let account = await next(`SELECT MIN(source_account) AS next FROM events WHERE source = ? AND source_account IS NOT NULL AND ${conversation}`, source);
+      account !== null;
+      account = await next(`SELECT MIN(source_account) AS next FROM events WHERE source = ? AND source_account > ? AND ${conversation}`, source, account)
+    ) {
+      if (await probe(source, account)) return;
+    }
+  }
   throw new UpdatesInputError(`No conversation has conversation_id "${conversationId}". Pass the conversation_id="…" a heading shows, not a chat name or event_id.`);
 }
 
