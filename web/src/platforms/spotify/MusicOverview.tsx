@@ -522,8 +522,18 @@ function ListeningStats(props: { overview: MusicRankingsOverview }) {
 }
 
 function RankedTrackRow(props: { track: MusicRankedTrack; share: number }) {
+  const options = () => [
+    ...trackOptions(props.track),
+    ...props.track.playlists.map((playlist): ExcludeOption => ({
+      label: quoted("Playlist", playlist.playlistName),
+      request: { kind: "playlist", playlistUri: playlist.playlistUri },
+    })),
+  ];
   return (
-    <ExcludableRow options={trackOptions(props.track)}>
+    <ExcludableRow
+      options={options()}
+      note={props.track.playlists.length > 0 ? undefined : "No playlist recorded for these plays."}
+    >
       <A
         href={buildEventUrl(props.track.eventId)}
         class={LISTENING_ROW_CLASS}

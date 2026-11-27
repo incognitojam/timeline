@@ -10,11 +10,16 @@ import {
   type MusicRankingsOverview,
   type MusicRankedArtist,
   type MusicRankedTrack,
+  type MusicRankedTrackPlaylist,
   type MusicRecentPlay,
   type MusicTopListFilter,
 } from "./shared/music";
 
-type TrackAggregateRow = Omit<MusicRankedTrack, "rank">;
+type TrackAggregateRow = Omit<MusicRankedTrack, "rank" | "playlists"> & { playlists: string };
+
+/** Share of a top track's plays that earns a playlist other than the most played one a place in its menu. */
+const OFFERED_PLAYLIST_SHARE = 0.2;
+const MAX_OFFERED_PLAYLISTS = 2;
 type ArtistAggregateRow = Omit<MusicRankedArtist, "rank">;
 interface SummaryRow {
   totalPlays: number;
@@ -217,6 +222,11 @@ export function setExcludePrivateSessions(appDb: Database, excluded: boolean): v
   `).run(EXCLUDE_PRIVATE_SESSIONS_KEY, JSON.stringify(excluded));
 }
 
+/** The last resort for naming a playlist: the id at the end of its URI. */
+function playlistId(uri: string): string {
+  return uri.slice(uri.lastIndexOf(":") + 1);
+}
+
 /**
  * Playlists the live sync recorded plays from, most played first, or only the
  * one given. Each is named by its cached current name, else its latest play's
@@ -267,8 +277,7 @@ export function getPlayedPlaylists(
       const resource = cached(playlist.playlistUri);
       return {
         playlistUri: playlist.playlistUri,
-        name: resource?.name ?? playlist.tagName
-          ?? playlist.playlistUri.slice(playlist.playlistUri.lastIndexOf(":") + 1),
+        name: resource?.name ?? playlist.tagName ?? playlistId(playlist.playlistUri),
         imageUrl: resource?.image_url ?? null,
         plays: playlist.plays,
         lastPlayedAt: playlist.lastPlayedAt,
@@ -419,7 +428,10 @@ export function getMusicRankings(
         ${ALBUM_NAME_SQL} AS albumName,
         ${TRACK_URI_SQL} AS trackUri,
         ${IMAGE_URL_SQL} AS imageUrl,
-        ${LISTENING_MS_SQL} AS listeningMs
+        ${LISTENING_MS_SQL} AS listeningMs,
+        ${PLAYLIST_URI_SQL} AS playlistUri,
+        -- Only plays with a playlist pay for reading their tags.
+        CASE WHEN ${PLAYLIST_URI_SQL} IS NOT NULL THEN ${PLAYLIST_NAME_SQL} END AS playlistName
       FROM events e
       WHERE e.source = 'spotify'
         AND e.type = 'listen:track'
@@ -434,21 +446,52 @@ export function getMusicRankings(
         PARTITION BY trackKey ORDER BY lastPlayedAt DESC, eventId DESC
       ) AS latestRank
       FROM keyed
+    ), top_tracks AS (
+      SELECT
+        trackKey,
+        MAX(CASE WHEN latestRank = 1 THEN trackName END) AS trackName,
+        MAX(CASE WHEN latestRank = 1 THEN artistName END) AS artistName,
+        MAX(CASE WHEN latestRank = 1 THEN albumName END) AS albumName,
+        MAX(CASE WHEN latestRank = 1 THEN trackUri END) AS trackUri,
+        MAX(CASE WHEN latestRank = 1 THEN imageUrl END) AS imageUrl,
+        COUNT(*) AS playCount,
+        SUM(listeningMs) AS listeningMs,
+        MAX(lastPlayedAt) AS lastPlayedAt,
+        MAX(CASE WHEN latestRank = 1 THEN eventId END) AS eventId
+      FROM ranked
+      GROUP BY trackKey
+      ORDER BY playCount DESC, listeningMs DESC, lastPlayedAt DESC
+      LIMIT ?
+    ), top_playlist_listens AS (
+      -- The latest play that tags the playlist names it when the cache cannot.
+      SELECT trackKey, playlistUri, playlistName, lastPlayedAt, ROW_NUMBER() OVER (
+        PARTITION BY trackKey, playlistUri ORDER BY playlistName IS NULL, julianday(lastPlayedAt) DESC
+      ) AS nameRank
+      FROM ranked
+      WHERE playlistUri IS NOT NULL AND trackKey IN (SELECT trackKey FROM top_tracks)
+    ), top_playlists AS MATERIALIZED (
+      -- Materialized so the per-track subquery below reads it rather than re-aggregating it per row.
+      SELECT
+        trackKey,
+        playlistUri,
+        MAX(CASE WHEN nameRank = 1 THEN playlistName END) AS playlistName,
+        COUNT(*) AS plays,
+        MAX(julianday(lastPlayedAt)) AS lastPlayedDay
+      FROM top_playlist_listens
+      GROUP BY trackKey, playlistUri
     )
     SELECT
-      MAX(CASE WHEN latestRank = 1 THEN trackName END) AS trackName,
-      MAX(CASE WHEN latestRank = 1 THEN artistName END) AS artistName,
-      MAX(CASE WHEN latestRank = 1 THEN albumName END) AS albumName,
-      MAX(CASE WHEN latestRank = 1 THEN trackUri END) AS trackUri,
-      MAX(CASE WHEN latestRank = 1 THEN imageUrl END) AS imageUrl,
-      COUNT(*) AS playCount,
-      SUM(listeningMs) AS listeningMs,
-      MAX(lastPlayedAt) AS lastPlayedAt,
-      MAX(CASE WHEN latestRank = 1 THEN eventId END) AS eventId
-    FROM ranked
-    GROUP BY trackKey
+      trackName, artistName, albumName, trackUri, imageUrl, playCount, listeningMs, lastPlayedAt, eventId,
+      (
+        SELECT json_group_array(json_object(
+          'playlistUri', p.playlistUri, 'playlistName', p.playlistName, 'plays', p.plays, 'lastPlayedDay', p.lastPlayedDay
+        ))
+        FROM top_playlists p
+        -- Unary + keeps SQLite from building an automatic index over these few rows.
+        WHERE +p.trackKey = t.trackKey
+      ) AS playlists
+    FROM top_tracks t
     ORDER BY playCount DESC, listeningMs DESC, lastPlayedAt DESC
-    LIMIT ?
   `).all(...listedParams, limit) as TrackAggregateRow[];
 
   const artistRows = db.prepare(`
@@ -517,10 +560,31 @@ export function getMusicRankings(
     period,
     periodStart,
     ...summary,
-    topTracks: trackRows.map((row, index) => ({ ...row, rank: index + 1 })),
+    topTracks: trackRows.map((row, index) => ({
+      ...row,
+      rank: index + 1,
+      playlists: offeredPlaylists(row.playCount, JSON.parse(row.playlists)),
+    })),
     topArtists: artistRows.map((row, index) => ({ ...row, rank: index + 1 })),
     filter: publicTopListFilter(filter),
   };
+}
+
+/**
+ * The playlists a top track offers to exclude: the most played (ties
+ * included) and any holding a meaningful share of the row's plays, most
+ * played first, few enough to keep the menu on one line.
+ */
+function offeredPlaylists(
+  playCount: number,
+  playlists: { playlistUri: string; playlistName: string | null; plays: number; lastPlayedDay: number }[],
+): MusicRankedTrackPlaylist[] {
+  const mostPlays = Math.max(0, ...playlists.map((playlist) => playlist.plays));
+  return playlists
+    .filter((playlist) => playlist.plays === mostPlays || playlist.plays >= playCount * OFFERED_PLAYLIST_SHARE)
+    .sort((a, b) => b.plays - a.plays || b.lastPlayedDay - a.lastPlayedDay)
+    .slice(0, MAX_OFFERED_PLAYLISTS)
+    .map(({ playlistUri, playlistName }) => ({ playlistUri, playlistName: playlistName ?? playlistId(playlistUri) }));
 }
 
 export function getRecentMusicPlays(db: Database, requestedLimit = 10): MusicRecentPlay[] {

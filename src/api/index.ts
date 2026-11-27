@@ -931,12 +931,19 @@ app.get("/api/music/rankings", (c) => {
     return c.json({ error: "Invalid music period. Expected 4w, 6m, 12m, or all." }, 400);
   }
 
-  const overview = getMusicRankings(db, periodParam, { filter: getTopListFilter(getAppStateDb()) });
+  const appDb = getAppStateDb();
+  const overview = getMusicRankings(db, periodParam, { filter: getTopListFilter(appDb) });
   const uris = Array.from(new Set([
     ...overview.topTracks.map((track) => track.trackUri),
     ...overview.topArtists.map((artist) => artist.latestTrackUri),
   ].filter((uri): uri is string => uri !== null)));
-  const cachedImages = getTrackImageUrls(getAppStateDb(), uris);
+  const cachedImages = getTrackImageUrls(appDb, uris);
+  // Top tracks mostly share a handful of playlists: look each up once.
+  const playlistNames = new Map<string, string | null>();
+  const cachedPlaylistName = (uri: string) => {
+    if (!playlistNames.has(uri)) playlistNames.set(uri, getSpotifyResource(appDb, uri)?.name ?? null);
+    return playlistNames.get(uri);
+  };
   const withCachedImage = <T extends { imageUrl: string | null }>(item: T, uri: string | null): T => ({
     ...item,
     imageUrl: item.imageUrl ?? (uri ? cachedImages.get(uri) ?? null : null),
@@ -944,7 +951,13 @@ app.get("/api/music/rankings", (c) => {
 
   return c.json({
     ...overview,
-    topTracks: overview.topTracks.map((track) => withCachedImage(track, track.trackUri)),
+    topTracks: overview.topTracks.map((track) => ({
+      ...withCachedImage(track, track.trackUri),
+      playlists: track.playlists.map((playlist) => ({
+        ...playlist,
+        playlistName: cachedPlaylistName(playlist.playlistUri) ?? playlist.playlistName,
+      })),
+    })),
     topArtists: overview.topArtists.map((artist) => withCachedImage(artist, artist.latestTrackUri)),
   });
 });

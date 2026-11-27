@@ -788,6 +788,7 @@ function buildMusic() {
     listeningMs: t.plays * t.durationMs,
     lastPlayedAt: new Date(Date.UTC(2025, 2, 7, 16, 47) - i * 9 * 3_600_000).toISOString(),
     eventId: 9100 + i,
+    playlists: [],
   }));
 
   const artistTotals = new Map<
