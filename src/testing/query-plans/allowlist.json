@@ -144,14 +144,6 @@
     },
     {
       "database": "timeline",
-      "sql": "SELECT 1 FROM conversation_summaries WHERE conversation_id = ? LIMIT 1",
-      "reason": "get_updates checks that a conversation_id it is given exists, so a wrong id is an error rather than an empty reply. conversation_summaries has one row per conversation, and no index on either table leads with conversation_id; the walk is of that small table's primary key, not of events, and runs only when conversation_id is passed.",
-      "findings": [
-        "conversation_summaries:index-scan"
-      ]
-    },
-    {
-      "database": "timeline",
       "sql": "SELECT source , source_account , CASE WHEN ( type LIKE '%message%' OR type LIKE 'sms:%' OR type LIKE 'mms:%' OR type LIKE 'rcs:%' OR type LIKE 'call:%' ) THEN conversation_id END AS conversation_id , MAX ( title ) AS title , COUNT ( * ) AS count , MIN ( timestamp ) AS first_ts , MAX ( timestamp ) AS last_ts FROM events WHERE id > ? AND id <= ? AND source NOT IN ( ? , ? ) AND id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) GROUP BY 1 , 2 , 3",
       "reason": "get_updates leaves out hidden contacts' events with the shared hiddenEventIdsSubquery (src/db/events.ts), as the API does; it runs once per query, only while a contact is hidden, and walks identities and contacts, not events, which stay on a primary key, (source, id) or conversation index range.",
       "findings": [
