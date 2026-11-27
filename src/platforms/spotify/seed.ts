@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { setSpotifyResource } from "../../db/app-state";
 import { importSpotifyData } from "./parser";
 import { insertRecentlyPlayed, type SpotifyPlayHistoryItem } from "./parser-api";
+import { recordPlaylistCreatedAt, recordPlaylistObservation } from "./playlist-follows";
 import type { SeedContext, SeedDay, SeedSource } from "../../seed/context";
 import { Rng } from "../../seed/rng";
 import { albumArt, CATALOGUE, type CatalogueTrack, spotifyId } from "./seed-data";
@@ -19,8 +20,13 @@ const LIVE_SYNC_DAYS = 14;
  * Alex's own playlists, played on shuffle. Sunday Kitchen has no cover, as a
  * playlist cached before the sync stored covers would.
  */
-const PLAYLISTS = ["Morning Commute", "Deep Work", "Sunday Kitchen"].map((name) => ({
+const PLAYLISTS = [
+  { name: "Morning Commute", followers: 140 },
+  { name: "Deep Work", followers: 55 },
+  { name: "Sunday Kitchen", followers: 9 },
+].map(({ name, followers }) => ({
   name,
+  followers,
   uri: `spotify:playlist:${spotifyId(`playlist:alex:${name}`)}`,
   imageUrl: name === "Sunday Kitchen" ? null : albumArt(`playlist:${name}`),
 }));
@@ -409,8 +415,44 @@ export const spotifySeed: SeedSource = {
     }
     await importSpotifyData(ctx.db, ctx.stage("spotify"), ACCOUNT);
     insertRecentlyPlayed(ctx.db, live, ACCOUNT, `spotify-api-${ACCOUNT}-seed`, new Map(PLAYLISTS.map((p) => [p.uri, p.name])));
+    seedPlaylistFollows(ctx);
   },
 };
+
+/**
+ * Follower counts for Alex's playlists, as the spotify-playlists sync records
+ * them: a weekly hand-kept log backfilled as 'seed' rows, then daily readings
+ * since the live sync started.
+ */
+function seedPlaylistFollows(ctx: SeedContext): void {
+  const rng = new Rng("spotify:playlist-follows");
+  const liveDays = new Set(ctx.recentDays(LIVE_SYNC_DAYS).map((day) => day.date));
+  for (const playlist of PLAYLISTS) {
+    const playlistId = playlist.uri.slice("spotify:playlist:".length);
+    const created = ctx.days[rng.int(0, Math.floor(ctx.days.length / 3))];
+    recordPlaylistCreatedAt(ctx.db, {
+      playlistId,
+      createdAt: ctx.localDate(created.date, 12, 0).toISOString(),
+      checkedAt: ctx.localDate(ctx.anchorDate, 6, 0).toISOString(),
+    });
+    // Tracking starts a few months after creation, already a little followed.
+    const tracked = ctx.days.filter((day) => day.index >= created.index + 120);
+    tracked.forEach((day, i) => {
+      const live = liveDays.has(day.date);
+      if (!live && day.weekday !== 0) return;
+      const progress = (i + 1) / tracked.length;
+      const followerCount = Math.max(0, Math.round(playlist.followers * progress ** 1.4) + rng.int(-1, 1));
+      recordPlaylistObservation(ctx.db, {
+        playlistId,
+        observedDate: day.date,
+        observedAt: ctx.localDate(day.date, 6, 0).toISOString(),
+        followerCount,
+        name: playlist.name,
+        origin: live ? "api" : "seed",
+      });
+    });
+  }
+}
 
 /** A Web API recently-played item, with the fields the sync stores. */
 function livePlay(entry: StreamingEntry, track: CatalogueTrack, context: PlayContext): SpotifyPlayHistoryItem {
