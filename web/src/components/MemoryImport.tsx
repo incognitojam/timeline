@@ -3,8 +3,6 @@ import { createSignal, For, Show } from "solid-js";
 import { KIND_LABELS, scopeLabel } from "../lib/memory";
 import { useClaudeMemoryImport, usePreviewClaudeMemoryImport } from "../lib/queries";
 
-export const MEMORY_IMPORT_INPUT_ID = "memory-import-file";
-
 const BUTTON = "rounded-sm border border-border px-3 py-1.5 text-sm text-foreground transition-colors enabled:hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
 const PRIMARY_BUTTON = "rounded-sm bg-primary px-3.5 py-1.5 text-sm font-medium text-primary-foreground transition-colors enabled:hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
 
@@ -76,18 +74,14 @@ function Summary(props: { result: MemoryImportResult }) {
 }
 
 /**
- * Import from claude.ai's data export: a preview of what memories-000.zip
- * would add, then the import. Opened by a label for MEMORY_IMPORT_INPUT_ID.
+ * Import from claude.ai's memory: what to upload and where to get it, then a
+ * preview of what the file would add, then the import.
  */
-export default function MemoryImport() {
+export default function MemoryImport(props: { onClose: () => void }) {
+  let input: HTMLInputElement | undefined;
   const [file, setFile] = createSignal<File | null>(null);
   const preview = usePreviewClaudeMemoryImport();
   const run = useClaudeMemoryImport();
-  const close = () => {
-    setFile(null);
-    preview.reset();
-    run.reset();
-  };
   const error = () => preview.error ?? run.error;
   const result = () => run.data ?? preview.data;
   const canImport = () => {
@@ -96,9 +90,13 @@ export default function MemoryImport() {
   };
 
   return (
-    <>
+    <section aria-label="Import from Claude" class="mb-8 rounded-lg border border-border bg-card p-4">
+      <h2 class="text-sm font-medium text-foreground">Import from Claude</h2>
+      <p class="mt-1 text-sm text-muted-foreground">
+        In claude.ai, open <span class="text-foreground">Settings → Your Claude → Memory</span> and choose <span class="text-foreground">Export memory</span>, then choose the <span class="font-mono text-xs">claude-memory-&lt;date&gt;.zip</span> it downloads. <span class="font-mono text-xs">memories-000.zip</span> from the full data export works too.
+      </p>
       <input
-        id={MEMORY_IMPORT_INPUT_ID}
+        ref={input}
         type="file"
         accept=".zip,.json,application/zip,application/json"
         class="sr-only"
@@ -115,30 +113,35 @@ export default function MemoryImport() {
       />
       <Show when={file()}>
         {(chosen) => (
-          <section aria-label="Import from Claude" class="mb-8 rounded-lg border border-border bg-card p-4">
-            <h2 class="text-sm font-medium text-foreground">Import from Claude</h2>
-            <p class="mt-0.5 mb-3 break-all text-xs text-muted-foreground">{chosen().name}</p>
+          <div class="mt-4 border-t border-border pt-3">
+            <p class="mb-3 break-all text-xs text-muted-foreground">{chosen().name}</p>
             <Show when={preview.isPending}>
               <p class="text-sm text-muted-foreground">Reading the export…</p>
             </Show>
             <Show when={error()}>{(e) => <p role="alert" class="text-sm text-destructive">{e().message}</p>}</Show>
             <Show when={error() ? undefined : result()}>{(data) => <Summary result={data()} />}</Show>
-            <div class="mt-4 flex justify-end gap-2">
-              <button type="button" class={BUTTON} disabled={run.isPending} onClick={close}>
-                {run.data ? "Done" : "Cancel"}
-              </button>
-              <Show when={canImport()}>
-                <button type="button" class={PRIMARY_BUTTON} disabled={run.isPending} onClick={() => {
-                  const planId = preview.data?.planId;
-                  if (planId) run.mutate({ file: chosen(), planId });
-                }}>
-                  {run.isPending ? "Importing…" : "Import"}
-                </button>
-              </Show>
-            </div>
-          </section>
+          </div>
         )}
       </Show>
-    </>
+      <div class="mt-4 flex justify-end gap-2">
+        <button type="button" class={BUTTON} disabled={run.isPending} onClick={() => props.onClose()}>
+          {run.data ? "Done" : "Cancel"}
+        </button>
+        <Show when={!run.data}>
+          <button type="button" class={canImport() ? BUTTON : PRIMARY_BUTTON} disabled={run.isPending} onClick={() => input?.click()}>
+            {file() ? "Choose another file" : "Choose file"}
+          </button>
+        </Show>
+        <Show when={canImport()}>
+          <button type="button" class={PRIMARY_BUTTON} disabled={run.isPending} onClick={() => {
+            const chosen = file();
+            const planId = preview.data?.planId;
+            if (chosen && planId) run.mutate({ file: chosen, planId });
+          }}>
+            {run.isPending ? "Importing…" : "Import"}
+          </button>
+        </Show>
+      </div>
+    </section>
   );
 }

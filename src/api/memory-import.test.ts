@@ -22,7 +22,7 @@ const note = (path: string, name: string, description: string, body = "", aliase
 
 const LONG_BODY = `## Suppliers\n${"- Meter readings go in the shared sheet\n".repeat(230)}`;
 
-function exportJson(memoryFiles: object[]) {
+function exportJson(memoryFiles: ReturnType<typeof file>[]) {
   return {
     account_uuid: ACCOUNT,
     conversations_memory: "Older prose summary, not imported.",
@@ -61,6 +61,56 @@ async function zipOf(value: unknown): Promise<Uint8Array> {
   const proc = Bun.spawn(["zip", "-q", "-r", "memories-000.zip", "memories"], { cwd: root });
   if ((await proc.exited) !== 0) throw new Error("zip failed");
   return new Uint8Array(await Bun.file(join(root, "memories-000.zip")).arrayBuffer());
+}
+
+/** A zip of these entries, stored uncompressed and named exactly as given, so tests can add names zip(1) would not. */
+function storedZip(entries: [string, string][]): Uint8Array {
+  const parts: Uint8Array[] = [];
+  const central: Uint8Array[] = [];
+  let offset = 0;
+  for (const [name, content] of entries) {
+    const nameBytes = Buffer.from(name);
+    const data = Buffer.from(content);
+    const header = (signature: number, size: number) => {
+      const out = Buffer.alloc(size);
+      out.writeUInt32LE(signature, 0);
+      return out;
+    };
+    const local = header(0x04034b50, 30);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0x0800, 6); // UTF-8 names
+    local.writeUInt32LE(Bun.hash.crc32(data), 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(nameBytes.length, 26);
+    const entry = header(0x02014b50, 46);
+    entry.writeUInt16LE(20, 4);
+    entry.writeUInt16LE(20, 6);
+    entry.writeUInt16LE(0x0800, 8);
+    local.copy(entry, 16, 14, 26);
+    entry.writeUInt16LE(nameBytes.length, 28);
+    entry.writeUInt32LE(offset, 42);
+    parts.push(local, nameBytes, data);
+    central.push(entry, nameBytes);
+    offset += local.length + nameBytes.length + data.length;
+  }
+  const size = central.reduce((sum, part) => sum + part.length, 0);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(size, 12);
+  end.writeUInt32LE(offset, 16);
+  return new Uint8Array(Buffer.concat([...parts, ...central, end]));
+}
+
+/**
+ * claude-memory-<date>.zip as claude.ai's Export memory downloads it: the
+ * data export's memory files as Markdown below one dated folder, each project
+ * folder named by the project's title.
+ */
+function memoryExportZip(files: { path: string; content: string }[], titles: Record<string, string> = { [GARDEN]: "Garden Planner", [READING]: "Reading List" }, root = "claude-memory-2026-11-27/"): Uint8Array {
+  return storedZip([[root, ""], ...files.map((file): [string, string] => [`${root}${file.path.slice(1).replace(/^projects\/([^/]+)/, (_, id: string) => `projects/${titles[id] ?? id}`)}`, file.content])]);
 }
 
 type Response = { status: number; body: MemoryImportResult & { error?: string } };
@@ -148,6 +198,48 @@ describe("import from claude.ai's memory export", () => {
     expect(liveNotes()).toBe(12);
   });
 
+  test("takes claude.ai's memory export zip, dating notes by the export, into the same scopes as the data export", async () => {
+    const zip = memoryExportZip(EXPORT.memory_files);
+    const result = await importAll(zip);
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ imported: true, existing: 0, problems: [], links: [{ project: "", name: "alice-b", contact: "alice brown" }] });
+    expect(liveNotes()).toBe(12);
+    expect(getMemoryNote(appDb, "garden-planner", "soil")).toMatchObject({ kind: "topic", created_at: "2026-11-27T00:00:00.000Z" });
+    expect(getMemoryNote(appDb, "garden-planner", "overview")).toMatchObject({ title: "Garden Planner", summary: "Watering and planting planner" });
+    expect(getMemoryNote(appDb, "reading-list", "overview")).toMatchObject({ summary: "What the reading list is for" });
+
+    expect((await importAll(zip)).body).toMatchObject({ imported: true, add: [], existing: 12 });
+    // The data export of the same memory names the same notes, so it adds nothing either.
+    expect((await importAll(await zipOf(EXPORT))).body).toMatchObject({ imported: true, add: [], existing: 12 });
+    expect(liveNotes()).toBe(12);
+  });
+
+  test("reads only the memory export's Markdown files at safe paths, listing the rest", async () => {
+    const odd = "Shed [v2.0] *build*?";
+    const result = await importAll(memoryExportZip([
+      note("/topics/climbing.md", "climbing", "Fine"),
+      file(`/projects/${odd}/index.md`, 'name: "Shed Build"\ndescription: Shed'),
+      note(`/projects/${odd}/topics/wood.md`, "wood", "Timber"),
+      { path: "/topics/notes.txt", content: "not markdown" },
+      { path: "/topics/inner.zip", content: "PK" },
+      note("/topics/../people/sneaky.md", "sneaky", "Traversal"),
+      note("/topics//double.md", "double", "Empty segment"),
+    ]));
+    expect(result.status).toBe(200);
+    expect(result.body.problems).toEqual([
+      { path: "/topics/notes.txt", reason: "Not a Markdown memory file." },
+      { path: "/topics/inner.zip", reason: "Not a Markdown memory file." },
+      { path: "/topics/../people/sneaky.md", reason: "Not a path claude.ai's memory uses." },
+      { path: "/topics//double.md", reason: "Not a path claude.ai's memory uses." },
+    ]);
+    expect(result.body.add).toEqual([
+      { project: "", kind: "topic", count: 1 },
+      { project: "shed-build", kind: "project", count: 1 },
+      { project: "shed-build", kind: "topic", count: 1 },
+    ]);
+    expect(liveNotes()).toBe(3);
+  });
+
   test("takes the JSON inside the zip too, and leaves an existing note of the same name as it was", async () => {
     saveMemoryNote(appDb, { project: "", name: "bob", kind: "person", title: "Bob Stone", summary: "Saved by an agent" });
     const before = getMemoryNote(appDb, "", "bob");
@@ -204,7 +296,8 @@ describe("import from claude.ai's memory export", () => {
   test("refuses an upload that is not the export, writing nothing", async () => {
     expect((await upload(JSON.stringify(EXPORT), undefined, { "Sec-Fetch-Site": "same-site" })).status).toBe(403);
     expect((await upload(JSON.stringify(EXPORT), undefined, { "Content-Type": "text/plain" })).status).toBe(403);
-    expect(await upload("hello")).toEqual({ status: 400, body: { error: "Upload memories-000.zip from the claude.ai export, or the JSON file inside it." } as never });
+    const unsupported = "Upload claude-memory-<date>.zip from claude.ai's Export memory, or memories-000.zip from its full data export.";
+    expect(await upload("hello")).toEqual({ status: 400, body: { error: unsupported } as never });
     const notExport = await upload(JSON.stringify({ memory_files: "nope" }), "any");
     expect(notExport.body.error).toStartWith("This is not claude.ai's memories export");
 
@@ -212,7 +305,12 @@ describe("import from claude.ai's memory export", () => {
     writeFileSync(join(root, "conversations.json"), "[]");
     await Bun.spawn(["zip", "-q", "other.zip", "conversations.json"], { cwd: root }).exited;
     const otherZip = await upload(new Uint8Array(await Bun.file(join(root, "other.zip")).arrayBuffer()));
-    expect(otherZip.body.error).toContain("The zip should hold just memories/<account-id>.json");
+    expect(otherZip.body.error).toBe(`This zip is not a claude.ai memory export. ${unsupported}`);
+    // Memory files outside the dated folder, as if unzipped and zipped again, are not the export either.
+    const rezipped = await upload(memoryExportZip([note("/topics/climbing.md", "climbing", "Fine")], {}, "my-memory/"));
+    expect(rezipped.body.error).toBe(`This zip is not a claude.ai memory export. ${unsupported}`);
+    const crowded = memoryExportZip(Array.from({ length: 2001 }, (_, i) => note(`/topics/t${i}.md`, `t${i}`, "Many")));
+    expect((await upload(crowded)).body.error).toBe("The zip lists more than 2000 files.");
 
     const corrupt = await zipOf(EXPORT);
     corrupt.fill(0, 40, 400);

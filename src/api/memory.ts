@@ -136,7 +136,7 @@ export function createMemoryRoutes(contacts: QueryExecutor, db: () => Database =
       }
     })
 
-    // An upload of claude.ai's memories-000.zip (or its JSON): a preview, or with ?plan=<planId> from that preview, the import.
+    // An upload of claude.ai's claude-memory-<date>.zip or memories-000.zip (or its JSON): a preview, or with ?plan=<planId> from that preview, the import.
     .post(
       "/api/memory/import",
       bodyLimit({
@@ -151,7 +151,10 @@ export function createMemoryRoutes(contacts: QueryExecutor, db: () => Database =
         }
         const expected = c.req.query("plan");
         try {
-          const { notes, problems } = mapClaudeMemory(await readClaudeMemoryUpload(new Uint8Array(await c.req.arrayBuffer())));
+          const upload = await readClaudeMemoryUpload(new Uint8Array(await c.req.arrayBuffer()));
+          const mapped = mapClaudeMemory(upload.files);
+          const notes = mapped.notes;
+          const problems = [...upload.problems, ...mapped.problems];
           const contactNames = await linkContacts(contacts, notes);
           if (expected === undefined) return c.json(importResult(planMemoryImport(db(), notes), problems, contactNames, false));
           const plan = importMemoryNotes(db(), notes, (fresh) => {
