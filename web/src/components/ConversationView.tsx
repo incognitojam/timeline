@@ -36,6 +36,7 @@ import { AIEventRow } from "./conversation/AIEventRow";
 import { AISidebarPanel } from "./conversation/AISidebarPanel";
 import { ConversationMessage } from "./conversation/ConversationMessage";
 import { ConversationRangeExportControls, ExportSelectionIcon } from "./conversation/ConversationRangeExportControls";
+import { ConversationRefreshButton } from "./conversation/ConversationRefreshButton";
 import { ConversationTranscript } from "./conversation/ConversationTranscript";
 import { SubAgentGroup, type SubagentGroup } from "./conversation/SubAgentGroup";
 import MediaGallery from "./MediaGallery";
@@ -636,6 +637,18 @@ export default function ConversationView() {
             </div>
           </div>
           <div class="flex items-center gap-2 shrink-0">
+            {/* Keyed so a sync in flight stays with the conversation it was started from. */}
+            <Show when={conversationKey()} keyed>
+              <ConversationRefreshButton
+                source={source()}
+                countMessages={async () =>
+                  (await queryClient.fetchQuery({
+                    ...queryOptions.conversationStats({ conversationId: conversationId(), source: source() }),
+                    staleTime: 0,
+                  })).totalMessages}
+                onSynced={scroller.fetchNewest}
+              />
+            </Show>
             <button
               class={`inline-flex items-center gap-2 rounded-md px-2.5 py-2 text-sm transition-colors ${
                 rangeMode() ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-accent hover:text-foreground"

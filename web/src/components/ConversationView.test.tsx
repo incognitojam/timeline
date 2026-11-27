@@ -130,6 +130,7 @@ describe("ConversationView", () => {
           tokenUsage: null,
         });
       }
+      if (url.includes("/api/sync/sources")) return jsonResponse({ sources: [] });
       return jsonResponse({});
     });
     vi.stubGlobal("fetch", fetchMock);

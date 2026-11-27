@@ -99,6 +99,8 @@ export interface MessageScroller<T> {
   scrollToStart: (behavior?: ScrollBehavior) => void;
   /** Scroll a rendered message into view. Returns false if it is not loaded. */
   scrollToMessage: (id: string | number, behavior?: ScrollBehavior, block?: ScrollLogicalPosition) => boolean;
+  /** Run one auto-refetch poll now instead of waiting for the next interval. */
+  fetchNewest: () => Promise<void>;
 }
 
 // rAF where available (browser), falling back to a macrotask under jsdom so
@@ -395,6 +397,7 @@ export function createMessageScroller<T>(options: MessageScrollerOptions<T>): Me
     scrollToEnd,
     scrollToStart,
     scrollToMessage,
+    fetchNewest: autoRefetchAfterNewest,
   };
 
   return scroller;
