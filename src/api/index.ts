@@ -57,6 +57,7 @@ import {
 import { getDiscordServer, listDiscordServers } from "../platforms/discord/servers";
 import { getWakaTimeProject, getWakaTimeProjectSessions, getWakaTimeStats } from "../platforms/wakatime/stats";
 import { createMcpRoutes } from "./mcp";
+import { listContactMemoryNotes, releaseContactMemoryNotes } from "../db/memory-notes";
 import { createMemoryRoutes } from "./memory";
 import { createConversationRefreshRoutes } from "./conversation-refresh";
 import { generateStatusMarkdown, renderMarkdownToHtml } from "./status-md";
@@ -1921,7 +1922,8 @@ app.get("/api/contacts/:id", async (c) => {
   const identities = await getIdentitiesForContact(readDb, contact.id);
   const avatarUrl = pickBestAvatar(identities);
   const memories = await getContactMemories(readDb, contact.id);
-  return c.json({ contact, identities, avatarUrl, memories });
+  const memoryNoteCount = listContactMemoryNotes(getAppStateDb(), contact.id).length;
+  return c.json({ contact, identities, avatarUrl, memories, memoryNoteCount });
 });
 
 app.post("/api/contacts", async (c) => {
@@ -1970,12 +1972,30 @@ app.delete("/api/contacts/:id", async (c) => {
   if (!existing) {
     return c.json({ error: "Contact not found" }, 404);
   }
+  // What happens to the memory notes linked to the contact: kept, unlinked, or
+  // deleted. When there are any, the choice must name the count and visibility
+  // the owner was shown; otherwise the current ones come back to choose again.
+  const notes = c.req.query("notes");
+  if (notes !== undefined && notes !== "keep" && notes !== "delete") return c.json({ error: 'notes must be "keep" or "delete"' }, 400);
+  const memoryNoteCount = listContactMemoryNotes(getAppStateDb(), id).length;
+  const hidden = existing.hidden === 1;
+  if (memoryNoteCount > 0 && (notes === undefined
+    || c.req.query("count") !== String(memoryNoteCount) || c.req.query("hidden") !== String(hidden))) {
+    return c.json({ error: "Choose again what happens to the memory notes linked to this contact.", memoryNoteCount, hidden }, 409);
+  }
+  const deleteNotes = notes === "delete";
+  // Deleted notes go first, so a failed contact delete leaves them deleted, not
+  // readable. Kept notes are unlinked after, so a failed contact delete leaves
+  // a hidden contact's notes still hidden.
+  if (deleteNotes) releaseContactMemoryNotes(getAppStateDb(), id, true);
   deleteContact(db, id);
   invalidateContactMappingCaches();
   // Deleting a hidden contact makes its events visible again.
-  if (existing.hidden) {
+  if (hidden) {
     invalidateHiddenVisibilityCaches();
   }
+  // Also takes a note linked while the contact was being deleted.
+  releaseContactMemoryNotes(getAppStateDb(), id, deleteNotes);
   return c.json({ success: true });
 });
 

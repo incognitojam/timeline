@@ -194,3 +194,4 @@ describe("memory API", () => {
     expect(getMemoryNote(appDb, "", "tone")?.contact_id).toBeNull();
   });
 });
+

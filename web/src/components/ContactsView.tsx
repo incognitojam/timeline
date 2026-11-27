@@ -33,6 +33,7 @@ import type { Contact, ContactIdentity, ContactMemory as ContactMemoryType, Cont
 import Avatar from "./Avatar";
 import ContactConversations from "./ContactConversations";
 import ContactSpotifySummary from "../platforms/spotify/ContactSpotifySummary";
+import Dialog from "../ui/Dialog";
 import { IconBolt, IconCheck, IconChevronRight, IconClose, IconEdit, IconProgress, IconRefresh } from "../ui/icons";
 
 // Virtual scrolling constants for suggestions list
@@ -382,9 +383,45 @@ export default function ContactsView() {
     }
   }
 
-  async function handleDeleteContact(id: number) {
+  // A contact with linked memory notes asks what happens to them, in a dialog.
+  // `changed` when the server found a different count or visibility than shown.
+  const [deletingContact, setDeletingContact] = createSignal<{ contact: Contact; noteCount: number; hidden: boolean; changed: boolean } | null>(null);
+
+  async function handleDeleteContact(contact: Contact, noteCount: number) {
+    if (noteCount > 0) {
+      deleteContactMutation.reset();
+      setDeletingContact({ contact, noteCount, hidden: contact.hidden === 1, changed: false });
+      return;
+    }
     if (!confirm("Delete this contact and all identities?")) return;
-    await deleteContactMutation.mutateAsync(id);
+    setContactUpdateError(null);
+    let refused: { memoryNoteCount: number; hidden: boolean } | null;
+    try {
+      refused = await deleteContactMutation.mutateAsync({ id: contact.id });
+    } catch (error) {
+      setContactUpdateError(error instanceof Error ? error.message : "Failed to delete contact");
+      return;
+    }
+    // Refused when notes were linked since the contact loaded.
+    if (refused) {
+      setDeletingContact({ contact, noteCount: refused.memoryNoteCount, hidden: refused.hidden, changed: true });
+      return;
+    }
+    selectContact(null);
+  }
+
+  async function confirmDeleteContact(notes: "keep" | "delete") {
+    const deleting = deletingContact();
+    if (!deleting) return;
+    const refused = await deleteContactMutation.mutateAsync({
+      id: deleting.contact.id,
+      choice: { notes, count: deleting.noteCount, hidden: deleting.hidden },
+    });
+    if (refused) {
+      setDeletingContact({ ...deleting, noteCount: refused.memoryNoteCount, hidden: refused.hidden, changed: true });
+      return;
+    }
+    setDeletingContact(null);
     selectContact(null);
   }
 
@@ -1201,7 +1238,7 @@ export default function ContactsView() {
                   </button>
                   <button
                     class="px-3 py-1 text-sm border border-red-500 text-red-500 rounded hover:bg-red-500/10"
-                    onClick={() => handleDeleteContact(selected().contact.id)}
+                    onClick={() => void handleDeleteContact(selected().contact, selected().memoryNoteCount)}
                   >
                     Delete
                   </button>
@@ -1563,6 +1600,21 @@ export default function ContactsView() {
         </Show>
       </div>
 
+      <Show when={deletingContact()}>
+        {(deleting) => (
+          <DeleteContactDialog
+            name={deleting().contact.display_name}
+            noteCount={deleting().noteCount}
+            hidden={deleting().hidden}
+            changed={deleting().changed}
+            pending={deleteContactMutation.isPending}
+            error={deleteContactMutation.error?.message}
+            onCancel={() => setDeletingContact(null)}
+            onDelete={(notes) => void confirmDeleteContact(notes).catch(() => {})}
+          />
+        )}
+      </Show>
+
       {/* Create Contact Modal */}
       <Show when={showCreateForm()}>
         <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -1720,6 +1772,72 @@ const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
 ];
+
+const BUTTON = "rounded-sm border border-border px-3 py-1.5 text-sm text-foreground transition-colors enabled:hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
+const DESTRUCTIVE_BUTTON = "rounded-sm bg-destructive px-3.5 py-1.5 text-sm font-medium text-destructive-foreground transition-colors enabled:hover:bg-destructive/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
+
+/** Confirms deleting a contact that has memory notes linked to it, and what happens to those notes. */
+function DeleteContactDialog(props: {
+  name: string;
+  noteCount: number;
+  hidden: boolean;
+  /** The count or visibility changed since the owner last saw them. */
+  changed: boolean;
+  pending: boolean;
+  error: string | undefined;
+  onCancel: () => void;
+  onDelete: (notes: "keep" | "delete") => void;
+}) {
+  const [notes, setNotes] = createSignal<"keep" | "delete">("keep");
+  const one = () => props.noteCount === 1;
+  return (
+    <Dialog open onClose={props.onCancel} title={`Delete ${props.name}?`} class="max-w-[440px]">
+      <Show when={props.changed}>
+        <p role="status" class="mb-3 text-sm text-foreground">The linked notes or the contact changed since this opened. Check and confirm again.</p>
+      </Show>
+      <p class="text-sm text-muted-foreground">
+        The contact is deleted and its identities are unlinked. {props.noteCount} memory {one() ? "note is" : "notes are"} linked to this contact.
+      </p>
+      <fieldset class="mt-4 space-y-2 text-sm">
+        <legend class="sr-only">Linked memory notes</legend>
+        <label class="flex items-start gap-2">
+          <input type="radio" name="contact-notes" class="mt-1" checked={notes() === "keep"} onChange={() => setNotes("keep")} />
+          <span>
+            Keep the {one() ? "note" : "notes"}, unlinked
+            <Show when={props.hidden}>
+              <span class="block text-xs text-muted-foreground">
+                This contact is hidden, so {one() ? "its note is" : "its notes are"} kept from agents. Once unlinked, agents will be able to read {one() ? "this note" : "these notes"}.
+              </span>
+            </Show>
+          </span>
+        </label>
+        <label class="flex items-start gap-2">
+          <input type="radio" name="contact-notes" class="mt-1" checked={notes() === "delete"} onChange={() => setNotes("delete")} />
+          <span>
+            Delete the {one() ? "note" : "notes"} too
+            <span class="block text-xs text-muted-foreground">
+              <Show
+                when={props.hidden}
+                fallback={<>Agents will no longer see {one() ? "it" : "them"}. {one() ? "It stays" : "They stay"} under Recently deleted on the Memory page, where you can restore {one() ? "it" : "them"}, unlinked.</>}
+              >
+                {one() ? "It stays" : "They stay"} under Recently deleted on the Memory page. Restored, {one() ? "it comes" : "they come"} back unlinked, where agents can read {one() ? "it" : "them"}.
+              </Show>
+            </span>
+          </span>
+        </label>
+      </fieldset>
+      <Show when={props.error}>
+        {(error) => <p role="alert" class="mt-3 text-xs text-destructive">{error()}</p>}
+      </Show>
+      <div class="mt-5 flex justify-end gap-2">
+        <button type="button" class={BUTTON} onClick={() => props.onCancel()}>Cancel</button>
+        <button type="button" class={DESTRUCTIVE_BUTTON} disabled={props.pending} onClick={() => props.onDelete(notes())}>
+          Delete contact
+        </button>
+      </div>
+    </Dialog>
+  );
+}
 
 function parseBirthday(value: string): { year: number | null; month: number; day: number } {
   if (value.startsWith("--")) {

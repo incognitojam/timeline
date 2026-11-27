@@ -259,6 +259,23 @@ export function deleteMemoryNote(db: Database, project: string, name: string): M
   }).immediate();
 }
 
+/**
+ * For a contact being deleted: delete its live linked notes when asked (kept as
+ * previous versions, so they can be restored), then clear the link on every
+ * row, versions included, so nothing points at the contact and a restored note
+ * comes back unlinked. Returns how many live notes were linked.
+ */
+export function releaseContactMemoryNotes(db: Database, contactId: number, deleteNotes: boolean): number {
+  return db.transaction(() => {
+    const notes = listContactMemoryNotes(db, contactId);
+    if (deleteNotes) {
+      for (const note of notes) deleteMemoryNote(db, note.project, note.name);
+    }
+    db.prepare("UPDATE memory_notes SET contact_id = NULL WHERE contact_id = ?").run(contactId);
+    return notes.length;
+  }).immediate();
+}
+
 /** Every live note and, per project, whether it uses the account's notes, plus the notes now deleted. */
 export function memoryIndex(db: Database): MemoryIndex {
   const live = db
