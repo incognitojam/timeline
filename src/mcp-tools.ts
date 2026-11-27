@@ -778,8 +778,21 @@ export interface ToolCallRecord {
   durationMs: number;
 }
 
-const READS = { readOnlyHint: true };
-const WRITES = { readOnlyHint: false };
+/**
+ * What a client shows for a tool and decides approval by. A tool that writes
+ * says whether it can overwrite or delete (destructiveHint) and whether
+ * repeating a call changes nothing more (idempotentHint). A tool is
+ * open-world only if it sends something outside Timeline.
+ */
+type ToolLabels = {
+  title: string;
+  readOnlyHint: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+};
+
+const reads = (title: string): ToolLabels => ({ title, readOnlyHint: true });
 
 type ToolCallExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 
@@ -802,10 +815,10 @@ export function registerTools(
     name: string,
     description: string,
     schema: Args,
-    annotations: { readOnlyHint: boolean },
+    annotations: ToolLabels,
     cb: ToolCallback<Args>,
   ): void {
-    const registered = server.tool(name, description, schema, annotations, cb);
+    const registered = server.tool(name, description, schema, { openWorldHint: false, ...annotations }, cb);
     if (options.readOnly && !annotations.readOnlyHint) registered.disable();
   }
   const mcpTranscriptExcerptHint = `Arguments are excerpted to ${DEFAULT_MCP_ARGS_EXCERPT_CHARS} chars and results to ${DEFAULT_MCP_RESULT_EXCERPT_CHARS} chars.`;
@@ -896,7 +909,7 @@ export function registerTools(
       limit: z.number().int().min(1).max(200).optional().default(100).describe("Max calls or sessions to return (default 100, max 200)"),
       offset: z.number().int().min(0).optional().default(0).describe("Number to skip for paging"),
     },
-    READS,
+    reads("Search MCP tool calls"),
     async (params, extra) => instrumentToolCall("search_mcp_tool_calls", params, extra, async () => {
       const errorsOnly = params.errors_only ?? false;
       const limit = params.limit ?? 100;
@@ -976,7 +989,7 @@ Examples:
       full_content: z.boolean().optional().default(false).describe("Return full content instead of truncated previews"),
       group_by_conversation: groupParam,
     },
-    READS,
+    reads("Search events"),
     async (params, extra) => instrumentToolCall("query_events", params, extra, async () => {
       const { query, source, contact, date, location, latitude, longitude, radius_km, cursor, full_content } = params;
       const limit = params.limit ?? 50;
@@ -1094,7 +1107,7 @@ Examples:
       end_date: z.string().optional().describe("Inclusive ISO 8601 upper timestamp bound. Any date bound overrides event_id centering."),
       cursor: cursorParam,
     },
-    READS,
+    reads("Export a conversation"),
     async (params, extra) => instrumentToolCall("export_conversation", params, extra, async () => {
       const { conversation_id, event_id, cursor } = params;
       const limit = params.limit ?? MCP_EXPORT_LIMIT;
@@ -1226,7 +1239,7 @@ Examples:
       cursor: cursorParam,
       full_content: z.boolean().optional().default(false).describe("Return full content instead of truncated previews"),
     },
-    READS,
+    reads("Events around a moment"),
     async (params, extra) => instrumentToolCall("get_context", params, extra, async () => {
       const { event_id, timestamp, hours_window, source, exclude_source, cursor, full_content } = params;
       const limit = params.limit ?? 50;
@@ -1280,7 +1293,7 @@ Examples:
       source: z.string().optional().describe("Source to inspect raw_data JSON structure (spotify, discord, monzo, etc.)"),
       type: z.string().optional().describe("Optional type filter when inspecting raw_data"),
     },
-    READS,
+    reads("SQL guide"),
     async (params, extra) => instrumentToolCall("get_schema", params, extra, async () => {
       const source = params.source?.trim();
       const inputError = filterError(
@@ -1360,7 +1373,7 @@ Tips:
     {
       sql: z.string().describe("SQL SELECT query to execute"),
     },
-    READS,
+    reads("Run SQL"),
     async (params, extra) => instrumentToolCall("run_sql", params, extra, async () => {
       const { sql } = params;
       const result = await runReadOnlySql(db, sql, 150);
@@ -1405,7 +1418,7 @@ Tips:
     {
       search: z.string().optional().describe("Filter by name; also accepts a platform identifier (e.g. discord:123…, phone:+44…, or a bare Discord snowflake) to look up the linked contact"),
     },
-    READS,
+    reads("List contacts"),
     async (params, extra) => instrumentToolCall("list_contacts", params, extra, async () => {
       const { search } = params;
       let contacts = await listContacts(db, { search });
@@ -1453,7 +1466,7 @@ Tips:
     {
       contact: z.string().describe("Contact ID, display name, or platform identifier (e.g. discord:123…, phone:+44…, or a bare Discord snowflake)"),
     },
-    READS,
+    reads("Contact details"),
     async (params, extra) => instrumentToolCall("get_contact_info", params, extra, async () => {
       const { contact } = params;
       const resolved = await resolveContact(db, contact);
@@ -1545,7 +1558,8 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
       full_content: z.boolean().optional().default(false).describe("Return full content instead of truncated previews"),
       group_by_conversation: groupParam,
     },
-    READS,
+    // The query goes to the configured embeddings endpoint, which may be remote.
+    { ...reads("Search by meaning"), openWorldHint: true },
     async (params, extra) => instrumentToolCall("semantic_search", params, extra, async () => {
       const { query, limit, full_content } = params;
       if (!options.semanticSearch) {
@@ -1656,7 +1670,7 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
     "list_memory",
     "Index of the user's shared memory: each note's name, title, summary and update date, by kind. With project, that project's notes come first, then the account's, which apply everywhere.",
     { project: projectParam },
-    READS,
+    reads("List memory"),
     async (params, extra) => instrumentToolCall("list_memory", params, extra, async () => {
       try {
         const project = projectScope(params.project);
@@ -1675,7 +1689,7 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
     "get_memory_note",
     "Read a memory note in full. [[name]] in its details links to another note, in the same project or the account; it may not exist.",
     { name: nameParam, project: projectParam },
-    READS,
+    reads("Read a memory note"),
     async (params, extra) => instrumentToolCall("get_memory_note", params, extra, async () => {
       try {
         const project = projectScope(params.project);
@@ -1702,7 +1716,7 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
       details: z.string().optional().describe("Markdown, usually bullets"),
       contact: z.string().optional().describe("The contact a note about a person is linked to, as get_contact_info takes, which then lists the note; \"\" unlinks"),
     },
-    WRITES,
+    { title: "Save a memory note", readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     async (params, extra) => instrumentToolCall("save_memory_note", params, extra, async () => {
       try {
         let contactId: number | null | undefined;
@@ -1746,7 +1760,7 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
     "delete_memory_note",
     "Delete a memory note. Its last version is kept for a time, so the user can restore it.",
     { name: nameParam, project: projectParam },
-    WRITES,
+    { title: "Delete a memory note", readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     async (params, extra) => instrumentToolCall("delete_memory_note", params, extra, async () => {
       try {
         const project = projectScope(params.project);
@@ -1765,7 +1779,7 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
     "get_updates",
     GET_UPDATES_DESCRIPTION,
     GET_UPDATES_SCHEMA,
-    READS,
+    reads("What's new"),
     async (params, extra) => instrumentToolCall("get_updates", params, extra, () =>
       filterError(
         unknownSource(params.sources, "sources"),

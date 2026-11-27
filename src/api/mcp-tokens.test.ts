@@ -153,11 +153,16 @@ describe("managed MCP tokens", () => {
 
   test("every tool declares whether it writes, and a full token is offered the writing ones", async () => {
     const session = await open(create("writer"));
-    const tools: { name: string; annotations?: { readOnlyHint?: boolean } }[] =
+    const tools: { name: string; annotations?: Record<string, unknown> }[] =
       data(await (await session.call("tools/list")).text()).result.tools;
     expect(tools.filter(t => typeof t.annotations?.readOnlyHint !== "boolean")).toEqual([]);
-    expect(tools.filter(t => !t.annotations?.readOnlyHint).map(t => t.name).sort())
-      .toEqual(["delete_memory_note", "save_memory_note"]);
+    expect(tools.filter(t => typeof t.annotations?.title !== "string")).toEqual([]);
+    expect(tools.filter(t => t.annotations?.openWorldHint !== false).map(t => t.name)).toEqual(["semantic_search"]);
+    const writers = Object.fromEntries(tools.filter(t => !t.annotations?.readOnlyHint).map(t => [t.name, t.annotations]));
+    expect(writers).toEqual({
+      save_memory_note: { title: "Save a memory note", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      delete_memory_note: { title: "Delete a memory note", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    });
   });
 
   test("a session belongs to the token that opened it", async () => {
