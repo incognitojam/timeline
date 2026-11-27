@@ -36,6 +36,11 @@ export interface MemoryIndex {
   deleted: MemoryVersion[];
 }
 
+/** The index as the web page gets it: with the contact each linked live note names, by id; a contact since deleted is missing. */
+export interface MemoryIndexWithContacts extends MemoryIndex {
+  contacts: Record<number, MemoryImportContact>;
+}
+
 /** A note an import from claude.ai's memory export adds, or found already in memory. */
 export interface MemoryImportNote {
   /** "" for the account scope. */

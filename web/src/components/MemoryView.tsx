@@ -13,6 +13,14 @@ export const LIST = "divide-y divide-border overflow-hidden rounded-lg border bo
 const SECONDARY_BUTTON = "shrink-0 rounded-sm border border-border px-3 py-1.5 text-sm text-foreground transition-colors enabled:hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
 
 export function NoteRow(props: { note: MemoryNote }) {
+  const index = useMemoryIndex();
+  // A person's note says it is not linked, so those stand out, or names its contact when the title does not.
+  const contact = () => {
+    const linked = props.note.contact_id === null ? undefined : index.data?.contacts[props.note.contact_id];
+    if (!linked) return null;
+    const name = linked.name.toLowerCase() === props.note.title.toLowerCase() ? [] : [linked.name];
+    return [...name, ...(linked.hidden ? ["hidden contact"] : [])].join(" · ");
+  };
   return (
     <li>
       <A
@@ -20,7 +28,12 @@ export function NoteRow(props: { note: MemoryNote }) {
         class="flex flex-col gap-1 px-4 py-3 transition-colors sm:flex-row sm:items-start sm:gap-3 hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
       >
         <div class="min-w-0 flex-1">
-          <div class="text-sm font-medium text-foreground">{props.note.title}</div>
+          <div class="flex flex-wrap items-baseline gap-x-2">
+            <span class="text-sm font-medium text-foreground">{props.note.title}</span>
+            <Show when={props.note.kind === "person" && (props.note.contact_id === null ? "Not linked" : contact())}>
+              {(marker) => <span class="text-xs text-muted-foreground">{marker()}</span>}
+            </Show>
+          </div>
           <div class="mt-0.5 text-sm text-muted-foreground">{props.note.summary}</div>
         </div>
         <div class="shrink-0 text-xs text-muted-foreground sm:pt-0.5">Updated {formatMemoryDate(props.note.updated_at)}</div>

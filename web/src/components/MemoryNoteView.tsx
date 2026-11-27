@@ -1,9 +1,9 @@
-import { MEMORY_KINDS, type MemoryKind, type MemoryNote, type MemoryVersion } from "@shared/memory";
+import { MEMORY_KINDS, type MemoryImportContact, type MemoryKind, type MemoryNote, type MemoryVersion } from "@shared/memory";
 import { A, useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import { createEffect, createSignal, For, Show, Suspense } from "solid-js";
 import { formatMemoryDate, KINDS, linkMemoryNotes, scopeLabel } from "../lib/memory";
 import {
-  useContact,
+  useContacts,
   useDeleteMemoryNote,
   useMemoryIndex,
   useMemoryNote,
@@ -16,12 +16,14 @@ import { normalizeRouteParam } from "../lib/route-params";
 import { APP_NAME, buildContactsUrl, buildMemoryProjectUrl, ROUTES } from "../lib/routes";
 import Dialog from "../ui/Dialog";
 import { IconChevronLeft, IconChevronRight } from "../ui/icons";
+import ContactSelector from "./ContactSelector";
 import { Markdown } from "./Markdown";
 
 const BUTTON = "rounded-sm border border-border px-3 py-1.5 text-sm text-foreground transition-colors enabled:hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
 const PRIMARY_BUTTON = "rounded-sm bg-primary px-3.5 py-1.5 text-sm font-medium text-primary-foreground transition-colors enabled:hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
 const DESTRUCTIVE_BUTTON = "rounded-sm bg-destructive px-3.5 py-1.5 text-sm font-medium text-destructive-foreground transition-colors enabled:hover:bg-destructive/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
 const FIELD = "mt-1 w-full rounded-sm border border-border bg-background px-2 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50";
+const LINK_BUTTON = "rounded-sm text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
 const HEADING = "font-mono text-[0.625rem] uppercase tracking-[0.16em] text-muted-foreground";
 
 function formatDateTime(iso: string): string {
@@ -104,6 +106,125 @@ function EditForm(props: { note: MemoryNote; onDone: () => void }) {
   );
 }
 
+/**
+ * The contact a person note is linked to, and the owner's way to change it.
+ * A change is chosen, then saved, so whether agents can read the note after it shows first.
+ */
+function NoteContact(props: { note: MemoryNote; disabled: boolean }) {
+  const update = useUpdateMemoryNote();
+  const index = useMemoryIndex();
+  const [showHidden, setShowHidden] = createSignal(false);
+  const contacts = useContacts(() => ({ includeHidden: showHidden() }));
+  const [picking, setPicking] = createSignal(false);
+  /** The contact to save: one chosen, null to unlink, undefined while nothing is chosen. */
+  const [chosen, setChosen] = createSignal<MemoryImportContact | null | undefined>(undefined);
+  // A contact since deleted is missing from the index; agents treat it as not hidden.
+  const current = () => (props.note.contact_id === null ? null : (index.data?.contacts[props.note.contact_id] ?? null));
+  let section: HTMLDivElement | undefined;
+  const focusFirstButton = () => queueMicrotask(() => section?.querySelector("button")?.focus());
+  const cancel = () => {
+    setPicking(false);
+    setChosen(undefined);
+    update.reset();
+    focusFirstButton();
+  };
+  const choose = (ids: number[]) => {
+    // Only a pick changes the choice; removing the chip in the search (Backspace) does not: "Remove link" does that.
+    const id = ids.at(-1);
+    const found = id === undefined || id === props.note.contact_id ? undefined : contacts.data?.find((contact) => contact.id === id);
+    if (!found) return;
+    setChosen({ id: found.id, name: found.display_name, hidden: found.hidden === 1 });
+    setPicking(false);
+    focusFirstButton();
+  };
+  async function save(contact: MemoryImportContact | null) {
+    // What the page says agents can read, before and after; the server refuses the change if either is no longer true.
+    const edit = { contactId: contact?.id ?? null, agentsCouldRead: !current()?.hidden, agentsCanRead: !contact?.hidden };
+    await update.mutateAsync({ project: props.note.project, name: props.note.name, edit });
+    setChosen(undefined);
+    focusFirstButton();
+  }
+  const isPerson = () => props.note.kind === "person";
+  const next = () => chosen() ?? null;
+
+  return (
+    <div ref={section} class="mb-4 text-sm text-muted-foreground" onKeyDown={(event) => {
+      if (event.key === "Escape" && (picking() || chosen() !== undefined)) cancel();
+    }}>
+      <p>
+        <Show when={props.note.contact_id !== null} fallback="Not linked to a contact">
+          Linked to{" "}
+          <A href={buildContactsUrl({ id: props.note.contact_id ?? undefined })} class="text-foreground underline underline-offset-2 hover:text-primary">
+            {index.data ? (current()?.name ?? "a contact no longer in your contacts") : "a contact"}
+          </A>
+          <Show when={current()?.hidden}> · hidden contact, so this note is kept from agents</Show>
+          <Show when={index.data && !current()}> · agents can read this note</Show>
+        </Show>
+      </p>
+      <Show
+        when={chosen() !== undefined}
+        fallback={
+          <Show
+            when={picking()}
+            fallback={
+              <div class="mt-1 flex flex-wrap gap-x-3">
+                <Show when={isPerson()}>
+                  <button type="button" class={LINK_BUTTON} disabled={props.disabled} onClick={() => setPicking(true)}>
+                    {props.note.contact_id === null ? "Choose a contact" : "Choose another contact"}
+                  </button>
+                </Show>
+                <Show when={props.note.contact_id !== null}>
+                  <button type="button" class={LINK_BUTTON} disabled={props.disabled} onClick={() => setChosen(null)}>Remove link</button>
+                </Show>
+              </div>
+            }
+          >
+            <div class="mt-1.5 space-y-2">
+              <label class="flex w-fit items-center gap-2">
+                <input type="checkbox" checked={showHidden()} onChange={(event) => setShowHidden(event.currentTarget.checked)} />
+                Show hidden contacts when choosing
+              </label>
+              <div class="flex items-start gap-2">
+                <div class="min-w-0 flex-1">
+                  <ContactSelector
+                    selectedContactIds={props.note.contact_id === null ? [] : [props.note.contact_id]}
+                    onChange={choose}
+                    label={`Contact for ${props.note.title}`}
+                    placeholder={`Search contacts for ${props.note.title}`}
+                    includeHidden={showHidden()}
+                    autofocus
+                  />
+                </div>
+                <button type="button" class={BUTTON} onClick={cancel}>Cancel</button>
+              </div>
+            </div>
+          </Show>
+        }
+      >
+        <div class="mt-2 rounded-lg border border-border bg-card p-3">
+          <p class="text-foreground">
+            <Show when={next()} fallback="Remove the link to this contact?">
+              {(contact) => <>Link to {contact().name}?</>}
+            </Show>
+            <Show when={next()?.hidden}> · hidden contact, so this note will be kept from agents</Show>
+            {/* Agents read a note unless its contact is hidden. */}
+            <Show when={current()?.hidden && !next()?.hidden}> · agents will be able to read this note</Show>
+          </p>
+          <div class="mt-2 flex flex-wrap items-center justify-end gap-2">
+            <Show when={update.error}>
+              {(error) => <p role="alert" class="mr-auto text-xs text-destructive">{error().message}</p>}
+            </Show>
+            <button type="button" class={BUTTON} disabled={update.isPending} onClick={cancel}>Cancel</button>
+            <button type="button" class={PRIMARY_BUTTON} disabled={update.isPending} onClick={() => void save(next()).catch(() => {})}>
+              {update.isPending ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
 function VersionRow(props: { version: MemoryVersion }) {
   const restore = useRestoreMemoryVersion();
   const [open, setOpen] = createSignal(false);
@@ -155,7 +276,6 @@ function NotePage(props: { project: string; name: string }) {
   const scope = () => ({ project: props.project, name: props.name });
   const noteQuery = useMemoryNote(scope);
   const versions = useMemoryVersions(scope);
-  const contact = useContact(() => noteQuery.data?.contact_id ?? undefined);
   const remove = useDeleteMemoryNote();
   const [editing, setEditing] = createSignal(false);
   const [confirming, setConfirming] = createSignal(false);
@@ -214,23 +334,14 @@ function NotePage(props: { project: string; name: string }) {
                   <span>{KINDS[note().kind].label}</span>
                   <span aria-hidden>·</span>
                   <span>{scopeLabel(note().project)}</span>
-                  <Show when={note().contact_id}>
-                    {(contactId) => (
-                      <>
-                        <span aria-hidden>·</span>
-                        <A href={buildContactsUrl({ id: contactId() })} class="text-foreground underline underline-offset-2 hover:text-primary">
-                          {/* The contact loads after the note; it must not hold the note's page back. */}
-                          <Suspense fallback="Linked contact">
-                            {contact.data?.contact.display_name ?? "Linked contact"}
-                          </Suspense>
-                        </A>
-                      </>
-                    )}
-                  </Show>
                   <span aria-hidden>·</span>
                   <span>Updated {formatMemoryDate(note().updated_at)}</span>
                 </p>
               </header>
+
+              <Show when={note().kind === "person" || note().contact_id !== null}>
+                <NoteContact note={note()} disabled={isPlaceholder()} />
+              </Show>
 
               <Show
                 when={editing()}
