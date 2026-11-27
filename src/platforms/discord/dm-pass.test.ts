@@ -21,7 +21,13 @@ const id = (n: number) => String(BASE + BigInt(n));
 /** Fake Discord: the DM listing and each channel's messages, oldest first. */
 function fakeDiscord(
   messages: Record<string, string[]>,
-  opts: { failAfter?: string; listing429Once?: boolean; forbidden?: string; onMessages?: () => void; on429?: () => void } = {},
+  opts: {
+    failAfter?: string; listing429Once?: boolean; forbidden?: string; onMessages?: () => void; on429?: () => void;
+    /** Answer `after=` wrongly: pages sent oldest first, or the newest page instead of the oldest. */
+    paging?: "oldest-first" | "newest-page";
+    /** Answer `before=` requests with 403. */
+    forbidBefore?: boolean;
+  } = {},
 ) {
   const calls: string[] = [];
   let listing429 = opts.listing429Once ?? false;
@@ -49,9 +55,14 @@ function fakeDiscord(
       opts.onMessages?.();
       const after = BigInt(url.searchParams.get("after") ?? "0");
       if (opts.failAfter && after >= BigInt(opts.failAfter)) return new Response("{}", { status: 400 });
-      const page = ids.filter((m) => BigInt(m) > after).slice(0, 100);
+      const before = url.searchParams.get("before");
+      if (before && opts.forbidBefore) return new Response("{}", { status: 403 });
+      const newer = ids.filter((m) => BigInt(m) > after);
+      const page = before
+        ? ids.filter((m) => BigInt(m) < BigInt(before)).slice(-Number(url.searchParams.get("limit")))
+        : opts.paging === "newest-page" ? newer.slice(-100) : newer.slice(0, 100);
       // Discord returns a page newest first.
-      return Response.json(page.reverse().map((m) => message(m, channelId)));
+      return Response.json((opts.paging === "oldest-first" ? page : page.reverse()).map((m) => message(m, channelId)));
     }
     return new Response("{}", { status: 404 });
   }) as unknown as typeof fetch;
@@ -141,6 +152,34 @@ describe("Discord DM pass", () => {
     const next = await runSourceOnce("discord-dms");
     expect(next.result).toMatchObject({ skipped: true, metadata: { skipReason: "Backing off after a failed or rate-limited pass" } });
     expect(calls).toEqual([]);
+  });
+
+  test.each([
+    ["oldest-first", [id(3), id(4)], `expected newest first, saw ${id(3)} before ${id(4)}`],
+    ["newest-page", Array.from({ length: 150 }, (_, i) => id(10 + i)), `saw a page starting at ${id(60)} with ${id(59)} skipped`],
+  ] as const)("fails without storing anything when Discord pages %s", async (paging, ids, problem) => {
+    const calls = fakeDiscord({ [QUIET]: [id(1)], [BUSY]: [...ids] }, { paging });
+
+    const run = await runSourceOnce("discord-dms", { state: { "discord-api": discordState({ [QUIET]: id(0), [BUSY]: id(2) }) } });
+
+    expect(run.result?.success).toBe(false);
+    expect(run.result?.error).toStartWith(`discord-dms: Discord paged DM channel ${BUSY} after ${id(2)} out of order: `);
+    expect(run.result?.error).toEndWith(problem);
+    // QUIET came first in the listing and paged correctly, so it was stored.
+    expect(storedIds()).toEqual([id(1)]);
+    expect(cursors()).toEqual({ [QUIET]: id(1), [BUSY]: id(2) });
+    expect(messageFetches(calls)).toHaveLength(paging === "newest-page" ? 3 : 2);
+  });
+
+  test("fails without storing anything when the paging check itself is refused", async () => {
+    const ids = Array.from({ length: 150 }, (_, i) => id(10 + i));
+    fakeDiscord({ [BUSY]: ids }, { forbidBefore: true });
+
+    const run = await runSourceOnce("discord-dms", { state: { "discord-api": discordState({ [BUSY]: id(2) }) } });
+
+    expect(run.result).toMatchObject({ success: false, error: `Failed to fetch the message before ${id(10)}: 403` });
+    expect(storedIds()).toEqual([]);
+    expect(cursors()?.[BUSY]).toBe(id(2));
   });
 
   test("backs off after a 429 even when the retry succeeded, and resumes once the back-off ends", async () => {

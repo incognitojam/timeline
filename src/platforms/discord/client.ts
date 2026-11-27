@@ -932,6 +932,15 @@ export class DiscordClient {
     return result.message ? { kind: "found", message: result.message } : { kind: "missing" };
   }
 
+  /** The id of the newest message before `beforeId`, or null if there is none. Throws on any error, 403 and 404 included. */
+  async fetchMessageIdBefore(channelId: string, beforeId: string): Promise<string | null> {
+    this.checkAborted();
+    const res = await this.fetchWithRetry(`${API_BASE}/channels/${channelId}/messages?limit=1&before=${beforeId}`);
+    if (!res.ok) throw new Error(`Failed to fetch the message before ${beforeId}: ${res.status}`);
+    const [message]: DiscordMessage[] = await res.json();
+    return message?.id ?? null;
+  }
+
   async fetchMessagesBefore(
     channelId: string,
     beforeSnowflake: string,

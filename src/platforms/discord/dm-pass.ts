@@ -168,6 +168,7 @@ async function storeChannels(
         forbidden[channelId] = new Date().toISOString();
       };
       for await (const batch of client.fetchMessages(channel.id, state.channelCursors[channel.id], { onForbidden })) {
+        await checkPage(client, channel.id, state.channelCursors[channel.id], batch, pages === 0);
         await store.storeBatch(batch, ctx);
         pages++;
         // A short page is the last one; stopping saves the empty page after it.
@@ -197,6 +198,32 @@ async function storeChannels(
       attachmentsFailed: store.totals.attachments.failed,
     },
   };
+}
+
+/**
+ * Throw, before anything in the page is stored, unless Discord answered
+ * `after=` as the paging relies on: only messages after the cursor, newest
+ * first, and the ones right after the cursor rather than the newest ones. The
+ * last needs one extra request, made only when a channel's first page is full.
+ */
+async function checkPage(client: DiscordClient, channelId: string, after: string | undefined, page: { id: string }[], first: boolean) {
+  const fail = (problem: string): never => {
+    throw new Error(`discord-dms: Discord paged DM channel ${channelId} after ${after ?? 0} out of order: ${problem}`);
+  };
+  const floor = BigInt(after ?? 0);
+  page.forEach(({ id }, i) => {
+    if (BigInt(id) <= floor) fail(`expected only ids after ${after ?? 0}, saw ${id}`);
+    // fetchMessages reversed the page, so the one before this was sent after it.
+    const sentAfter = page[i - 1]?.id;
+    if (sentAfter && BigInt(id) <= BigInt(sentAfter)) fail(`expected newest first, saw ${id} before ${sentAfter}`);
+  });
+  const oldest = page[0];
+  if (first && oldest && page.length === MESSAGE_PAGE_SIZE) {
+    const before = await client.fetchMessageIdBefore(channelId, oldest.id);
+    if (before && BigInt(before) > floor) {
+      fail(`expected the oldest messages after ${after ?? 0} first, saw a page starting at ${oldest.id} with ${before} skipped`);
+    }
+  }
 }
 
 /**
