@@ -241,9 +241,13 @@ export async function resolveAlias(
 function addContactEventFilters(
   conditions: string[],
   params: (string | number)[],
-  { query, source, type, chat }: Pick<SearchOptions, "query" | "source" | "type" | "chat">,
+  { query, source, type, chat, excludeSources }: Pick<SearchOptions, "query" | "source" | "type" | "chat" | "excludeSources">,
 ): void {
   if (query) addTextSearch(conditions, params, query, "e");
+  if (excludeSources && excludeSources.length > 0) {
+    conditions.push(`e.source NOT IN (${excludeSources.map(() => "?").join(", ")})`);
+    params.push(...excludeSources);
+  }
   if (source) {
     const sources = source.split(',').map(s => s.trim()).filter(Boolean);
     conditions.push(sources.length > 0
@@ -284,7 +288,7 @@ async function contactEventBranches(
   const allIdentifiers: string[] = identities.map(i => formatIdentifier(i.platform, i.platform_id));
   allIdentifiers.push(`contact:${contactId}`);
 
-  const { query, source, type, startDate, endDate, chat, cursor, sort } = options;
+  const { query, source, type, startDate, endDate, chat, cursor, sort, excludeSources } = options;
   // Use explicit sort if provided, otherwise: ASC for date range (chronological), DESC otherwise (recent first)
   const sortOrder = sort === 'asc' ? "ASC" : sort === 'desc' ? "DESC" : (startDate || endDate) ? "ASC" : "DESC";
 
@@ -303,7 +307,7 @@ async function contactEventBranches(
 
   if (cursor) addCursorCondition(conditions, params, cursor, sortOrder, "ep.timestamp", "ep.event_id");
 
-  addContactEventFilters(conditions, params, { query, source, type, chat });
+  addContactEventFilters(conditions, params, { query, source, type, chat, excludeSources });
   const filterClause = conditions.length > 0 ? ` AND ${conditions.join(" AND ")}` : "";
 
   // Use IN (...) instead of per-identifier UNION ALL to avoid SQLite compound SELECT limit

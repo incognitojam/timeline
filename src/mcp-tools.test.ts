@@ -940,15 +940,40 @@ describe("query_events — group_by_conversation", () => {
     db.prepare(`INSERT INTO events (source, source_id, type, timestamp, title, raw_data) VALUES ('google-search', 's1', 'search', '2026-07-02T11:00:00.000Z', 'pizza near me', '{}')`).run();
 
     const handlers = captureHandlers(db);
-    const all = (await handlers.get("query_events")!({ query: "pizza", group_by_conversation: true })).content[0].text;
+    const all = (await handlers.get("query_events")!({ query: "pizza", group_by_conversation: true, exclude_source: "" })).content[0].text;
     expect(all.split("\n").slice(1)).toEqual([
       "[discord] Game night: 2 hits, 2026-07-01 to 2026-07-03, newest #2",
       "[google-search/search] 1 hit, 2026-07-02, newest #4",
       "[discord] Climbing: 1 hit, 2026-07-02, newest #3",
     ]);
 
-    const top = (await handlers.get("query_events")!({ query: "pizza", group_by_conversation: true, limit: 1 })).content[0].text;
+    const top = (await handlers.get("query_events")!({ query: "pizza", group_by_conversation: true, limit: 1, exclude_source: "" })).content[0].text;
     expect(top).toContain("4 hits in 3 groups, most hits first. Showing the 1 with most hits; raise limit for the rest.");
+  });
+});
+
+describe("query_events — exclude_source", () => {
+  beforeEach(setup);
+  afterEach(teardown);
+
+  test("a keyword search over all sources leaves out AI sessions and recall, and says so", async () => {
+    insertEvent({ source: "claude-code", type: "claude-code:message:user", timestamp: "2026-07-03T09:00:00.000Z", content: "plan the hike" });
+    insertEvent({ source: "discord", type: "message:dm", timestamp: "2026-07-03T08:00:00.000Z", content: "hike on saturday?" });
+    const handlers = captureHandlers(db);
+
+    const plain = (await handlers.get("query_events")!({ query: "hike" })).content[0].text;
+    expect(plain).toStartWith("Not searched: claude-code,");
+    expect(plain).toContain('pass exclude_source: "" to include them');
+    expect(plain).toContain("hike on saturday?");
+    expect(plain).not.toContain("plan the hike");
+
+    const all = (await handlers.get("query_events")!({ query: "hike", exclude_source: "" })).content[0].text;
+    expect(all).not.toContain("Not searched");
+    expect(all).toContain("plan the hike");
+
+    const named = (await handlers.get("query_events")!({ query: "hike", exclude_source: "discord" })).content[0].text;
+    expect(named).toContain("plan the hike");
+    expect(named).not.toContain("hike on saturday?");
   });
 });
 

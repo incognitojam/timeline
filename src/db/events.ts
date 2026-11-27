@@ -493,9 +493,9 @@ export async function searchTimeline(db: QueryExecutor, options: SearchOptions):
  */
 export async function getEvents(
   db: QueryExecutor,
-  options: { date?: string; startDate?: string; endDate?: string; source?: string; type?: string; limit?: number; cursor?: string; includeHiddenContacts?: boolean }
+  options: { date?: string; startDate?: string; endDate?: string; source?: string; type?: string; limit?: number; cursor?: string; includeHiddenContacts?: boolean; excludeSources?: string[] }
 ): Promise<TimelineEvent[]> {
-  const { date, startDate, endDate, source, type, limit = 100, cursor, includeHiddenContacts = false } = options;
+  const { date, startDate, endDate, source, type, limit = 100, cursor, includeHiddenContacts = false, excludeSources } = options;
 
   const conditions: string[] = [];
   const params: (string | number)[] = [];
@@ -529,6 +529,8 @@ export async function getEvents(
     conditions.push(`type LIKE ?`);
     params.push(type + '%');
   }
+
+  addSourceExclusion(conditions, params, excludeSources);
 
   // ASC when browsing a specific date/range (chronological), DESC otherwise
   const sortOrder = (date || startDate || endDate) ? "ASC" : "DESC";

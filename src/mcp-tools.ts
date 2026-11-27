@@ -79,6 +79,7 @@ import { renderSchemaOverview } from "./mcp/schema";
 import { GET_UPDATES_DESCRIPTION, GET_UPDATES_SCHEMA, runGetUpdates } from "./mcp/updates";
 import { getDiscordComponentsText } from "./platforms/discord/shared/components";
 import { isConversationEventType } from "./shared/grouping";
+import { NOISY_MACHINE_SOURCES } from "./shared/noisy-sources";
 import { discordMentionsToPlainText, extractUserMentionIds } from "./platforms/discord/shared/mentions";
 
 const MONTH_NAMES = [
@@ -365,15 +366,55 @@ function groupByConversation(events: TimelineEvent[]): HitGroup[] {
 
 const READ_GROUP = "Read a conversation with export_conversation(event_id: <#id>); see around any other #id with get_context.";
 
+/** query_events for a contact: their events, counted, with the cursor for the next page. */
+async function contactQueryEvents(
+  db: QueryExecutor,
+  contact: string,
+  params: {
+    query?: string; source?: string; type?: string; location?: string; cursor?: string; limit: number;
+    order: PageOrder; excludeSources?: string[]; startDate?: string; endDate?: string;
+  },
+  respond: (page: { events: TimelineEvent[]; header: string }, prefix: string) => Promise<CallToolResult>,
+): Promise<CallToolResult> {
+  const { query, source, type, location, cursor, limit, order, excludeSources, startDate, endDate } = params;
+  const resolved = await resolveContact(db, contact);
+  if (resolved.error) {
+    return { content: resolved.error, isError: true };
+  }
+
+  const aliases = await getAliasesForContact(db, resolved.contact.id);
+  const filters = { query, source, type, startDate, endDate, excludeSources };
+  const fetched = await searchByContact(db, resolved.contact.id, { ...filters, cursor, limit: limit + 1 });
+  // The location filter runs after the fetch, so the count would not match it.
+  const total = location
+    ? undefined
+    : await countContactEvents(db, resolved.contact.id, filters, CONTACT_COUNT_CAP + 1);
+  const lowerLoc = location?.toLowerCase();
+  const page = pageOf(fetched, limit, order, {
+    total,
+    untimedCursor: true,
+    filter: lowerLoc ? (e) => e.location_name?.toLowerCase().includes(lowerLoc) ?? false : undefined,
+  });
+
+  const header = [
+    `Contact: ${resolved.contact.display_name} (ID: ${resolved.contact.id})`,
+    `Aliases: ${aliases.map((a) => a.source ? `${a.alias} (${a.source})` : a.alias).join(", ") || "none"}`,
+    "",
+  ].join("\n");
+
+  return respond(page, header);
+}
+
 /** query_events with group_by_conversation: its matches grouped in SQL, most hits first. */
 async function groupedQueryEvents(
   db: QueryExecutor,
   params: {
     query?: string; source?: string; type?: string; contact?: string; location?: string; latitude?: number;
     longitude?: number; cursor?: string; startDate?: string; endDate?: string; limit: number;
+    excludeSources?: string[]; notice: string;
   },
 ): Promise<CallToolResult> {
-  const { query, source, type, contact, startDate, endDate, limit } = params;
+  const { query, source, type, contact, startDate, endDate, excludeSources, limit } = params;
   const refuse = (text: string): CallToolResult => ({ isError: true, content: [{ type: "text" as const, text: `Error: ${text}` }] });
   if (params.location || params.latitude !== undefined || params.longitude !== undefined) {
     return refuse("group_by_conversation does not combine with location or coordinates.");
@@ -382,13 +423,13 @@ async function groupedQueryEvents(
   if (!query && !source && !type && !contact && !startDate && !endDate) {
     return refuse("group_by_conversation needs a query, contact, source, type or date filter.");
   }
-  const filters = { query, source, type, startDate, endDate };
-  let prefix = "";
+  const filters = { query, source, type, startDate, endDate, excludeSources };
+  let prefix = params.notice;
   let groups: EventGroup[];
   if (contact) {
     const resolved = await resolveContact(db, contact);
     if (resolved.error) return { content: resolved.error, isError: true };
-    prefix = `Contact: ${resolved.contact.display_name} (ID: ${resolved.contact.id})\n`;
+    prefix = `Contact: ${resolved.contact.display_name} (ID: ${resolved.contact.id})\n${prefix}`;
     groups = await contactEventGroups(db, resolved.contact.id, filters, limit);
   } else {
     // MCP is an agent data-access seam and remains intentionally unfiltered.
@@ -579,6 +620,23 @@ function locationSearchFilter(filters: {
   const endValue = expandEndDateToEndOfDay(filters.end_date);
   if (endValue) checks.push((e) => !!e.timestamp && e.timestamp <= endValue);
   return (e) => checks.every((check) => check(e));
+}
+
+/**
+ * The sources a query_events call leaves out: those it names, or for a keyword
+ * search over every source, the noisy machine sources (AI-assistant sessions,
+ * screen recall), with a line saying so. "" leaves nothing out.
+ */
+function excludedSources(
+  excludeSource: string | undefined,
+  keywordSearchOfAll: boolean,
+): { excludeSources?: string[]; notice: string } {
+  if (excludeSource !== undefined) return { excludeSources: splitSources(excludeSource), notice: "" };
+  if (!keywordSearchOfAll) return { notice: "" };
+  return {
+    excludeSources: [...NOISY_MACHINE_SOURCES],
+    notice: `Not searched: ${NOISY_MACHINE_SOURCES.join(", ")} (pass exclude_source: "" to include them).\n`,
+  };
 }
 
 /** Date-bounded queries list oldest first; the rest newest first. */
@@ -808,6 +866,7 @@ Examples:
       longitude: z.number().optional().describe("Longitude for coordinate search"),
       radius_km: z.number().optional().describe("Search radius in km when latitude/longitude are given (default 1; ignored otherwise)"),
       limit: z.number().int().min(1).optional().default(50).describe("Max results (default 50)"),
+      exclude_source: z.string().optional().describe('Leave out these sources (comma-separated). A keyword search over all sources leaves out AI-assistant sessions and screen recall unless given; "" keeps them'),
       cursor: cursorParam,
       full_content: z.boolean().optional().default(false).describe("Return full content instead of truncated previews"),
       group_by_conversation: groupParam,
@@ -821,10 +880,11 @@ Examples:
       // One more than asked for tells whether more exist without counting them all.
       const fetchLimit = limit + 1;
       const order: PageOrder = rangeOrder(date, start_date, end_date);
+      const { excludeSources, notice } = excludedSources(params.exclude_source, Boolean(query && !source && !contact));
       const respond = async (page: { events: TimelineEvent[]; header: string }, prefix = "") => ({
         content: [{
           type: "text" as const,
-          text: prefix + page.header + (await formatEvents(db, page.events, full_content)),
+          text: prefix + notice + page.header + (await formatEvents(db, page.events, full_content)),
         }],
       });
 
@@ -834,37 +894,15 @@ Examples:
       const rangeEnd = date ?? end_date;
 
       if (params.group_by_conversation) {
-        return groupedQueryEvents(db, { ...params, limit, startDate: rangeStart, endDate: rangeEnd });
+        return groupedQueryEvents(db, { ...params, limit, startDate: rangeStart, endDate: rangeEnd, excludeSources, notice });
       }
 
       // Strategy 1: Contact-based search
       if (contact) {
-        const resolved = await resolveContact(db, contact);
-        if (resolved.error) {
-          return { content: resolved.error, isError: true };
-        }
-
-        const aliases = await getAliasesForContact(db, resolved.contact.id);
-        const filters = { query, source, type, startDate: rangeStart, endDate: rangeEnd };
-        const fetched = await searchByContact(db, resolved.contact.id, { ...filters, cursor, limit: fetchLimit });
-        // The location filter runs after the fetch, so the count would not match it.
-        const total = location
-          ? undefined
-          : await countContactEvents(db, resolved.contact.id, filters, CONTACT_COUNT_CAP + 1);
-        const lowerLoc = location?.toLowerCase();
-        const page = pageOf(fetched, limit, order, {
-          total,
-          untimedCursor: true,
-          filter: lowerLoc ? (e) => e.location_name?.toLowerCase().includes(lowerLoc) ?? false : undefined,
-        });
-
-        const header = [
-          `Contact: ${resolved.contact.display_name} (ID: ${resolved.contact.id})`,
-          `Aliases: ${aliases.map((a) => a.source ? `${a.alias} (${a.source})` : a.alias).join(", ") || "none"}`,
-          "",
-        ].join("\n");
-
-        return respond(page, header);
+        return contactQueryEvents(db, contact, {
+          query, source, type, location, cursor, limit, order, excludeSources,
+          startDate: rangeStart, endDate: rangeEnd,
+        }, respond);
       }
 
       // Strategy 2: Location-based search (name or coordinates)
@@ -875,6 +913,7 @@ Examples:
           longitude,
           radiusKm: radius_km,
           limit: fetchLimit,
+          excludeSources,
         });
         if (cursor) {
           return { isError: true, content: [{ type: "text" as const, text: "Error: a location search has no next page; raise limit instead." }] };
@@ -894,6 +933,7 @@ Examples:
           type,
           startDate: rangeStart,
           endDate: rangeEnd,
+          excludeSources,
           cursor,
           limit: fetchLimit,
         });
@@ -910,6 +950,7 @@ Examples:
           endDate: end_date,
           source,
           type,
+          excludeSources,
           cursor,
           limit: fetchLimit,
         });
@@ -918,7 +959,7 @@ Examples:
 
       // Strategy 5: Fallback — recent events (filtered by source/type)
       // MCP is an agent data-access seam and remains intentionally unfiltered.
-      const fetched = await getRecentEvents(db, { source, type, cursor, limit: fetchLimit, includeHiddenContacts: true });
+      const fetched = await getRecentEvents(db, { source, type, excludeSources, cursor, limit: fetchLimit, includeHiddenContacts: true });
       return respond(pageOf(fetched, limit, "newest first"));
     })
   );
