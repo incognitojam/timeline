@@ -12,7 +12,8 @@
 
 import type { Database } from "bun:sqlite";
 import { getAppStateDb } from "../db/app-state";
-import type { QueryExecutor } from "../db/pool";
+import { type QueryExecutor, wrapDatabase } from "../db/pool";
+import { getDb } from "../db/schema";
 import { enqueueOrJoinJob } from "../jobs/store";
 import type { Job } from "../jobs/types";
 import { PLATFORMS } from "../platforms";
@@ -57,7 +58,12 @@ export async function checkConversationRefresh(
   const sync = await syncSettings(refresher, appDb);
   if (!sync.ok) return sync;
   const rows = await readDb.query<{ account: string }>(ACCOUNTS_SQL, source, conversationId);
-  const check = refresher.resolve({ conversationId, accounts: rows.map((row) => row.account ?? ""), settings: sync.settings });
+  const check = await refresher.resolve({
+    conversationId,
+    accounts: rows.map((row) => row.account ?? ""),
+    settings: sync.settings,
+    db: readDb,
+  });
   return check.ok ? { ...check, refresher } : check;
 }
 
@@ -117,11 +123,18 @@ export async function runRefreshJob(
   });
   const sync = await syncSettings(refresher, appDb);
   if (!sync.ok) return failed(sync.reason);
-  const check = refresher.resolve({
-    conversationId: target.conversationId,
-    accounts: [target.account],
-    settings: sync.settings,
-  });
+  const db = getDb();
+  let check: Awaited<ReturnType<ConversationRefresh["resolve"]>>;
+  try {
+    check = await refresher.resolve({
+      conversationId: target.conversationId,
+      accounts: [target.account],
+      settings: sync.settings,
+      db: wrapDatabase(db),
+    });
+  } finally {
+    db.close();
+  }
   if (!check.ok) return failed(check.reason);
   return refresher.run(check.target, {
     verbose: false,

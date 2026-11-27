@@ -2,6 +2,7 @@
 
 import type { SyncConfig } from "./config";
 import type { LocalWorkGate } from "../jobs/local-work";
+import type { QueryExecutor } from "../db/pool";
 
 export interface SyncOptions {
   verbose: boolean;
@@ -133,7 +134,9 @@ export interface ConversationRefresh {
     /** Distinct accounts with stored events in the conversation (at most two). */
     accounts: string[];
     settings: Record<string, unknown> | undefined;
-  }): RefreshCheck;
+    /** timeline.db, for what the stored conversation says about itself. */
+    db: QueryExecutor;
+  }): Promise<RefreshCheck>;
   /** Runs in the worker's serial lane, which holds the local-work gate throughout. */
   run(target: RefreshTarget, options: SyncOptions): Promise<SyncResult>;
 }
