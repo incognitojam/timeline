@@ -6,6 +6,11 @@ import Sparkle
 final class UpdateController: NSObject, ObservableObject, NSApplicationDelegate, SPUUpdaterDelegate {
     @Published private(set) var canCheck = false
     @Published private(set) var issue: String?
+    // Follow Sparkle's settings, which it keeps in user defaults.
+    @Published private(set) var settingsAvailable = false
+    @Published private(set) var automaticallyChecks = false
+    @Published private(set) var automaticallyDownloads = false
+    @Published private(set) var allowsAutomaticDownloads = false
     private var serviceAgent: ServiceAgentController?
     private var controller: SPUStandardUpdaterController?
     private let maintenance = UpdateMaintenance(directory: timelineDataDirectory())
@@ -31,9 +36,15 @@ final class UpdateController: NSObject, ObservableObject, NSApplicationDelegate,
         guard self.serviceAgent == nil else { return }
         self.serviceAgent = serviceAgent
         let installed = ServiceAgentController.isRunningFromInstalledLocation()
-        controller = SPUStandardUpdaterController(startingUpdater: installed, updaterDelegate: self, userDriverDelegate: nil)
+        let controller = SPUStandardUpdaterController(startingUpdater: installed, updaterDelegate: self, userDriverDelegate: nil)
+        self.controller = controller
         if installed {
-            controller?.updater.publisher(for: \.canCheckForUpdates).assign(to: &$canCheck)
+            let updater = controller.updater
+            updater.publisher(for: \.canCheckForUpdates).assign(to: &$canCheck)
+            updater.publisher(for: \.automaticallyChecksForUpdates).assign(to: &$automaticallyChecks)
+            updater.publisher(for: \.automaticallyDownloadsUpdates).assign(to: &$automaticallyDownloads)
+            updater.publisher(for: \.allowsAutomaticUpdates).assign(to: &$allowsAutomaticDownloads)
+            settingsAvailable = true
         } else {
             issue = "Install Timeline in Applications to enable updates."
         }
@@ -48,6 +59,14 @@ final class UpdateController: NSObject, ObservableObject, NSApplicationDelegate,
         } else {
             controller?.checkForUpdates(nil)
         }
+    }
+
+    func setAutomaticallyChecks(_ enabled: Bool) {
+        controller?.updater.automaticallyChecksForUpdates = enabled
+    }
+
+    func setAutomaticallyDownloads(_ enabled: Bool) {
+        controller?.updater.automaticallyDownloadsUpdates = enabled
     }
 
     func updater(_ updater: SPUUpdater, willInstallUpdate item: SUAppcastItem) {

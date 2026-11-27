@@ -601,7 +601,7 @@ remove it.
 
 ## Updating
 
-Every installed build checks for updates automatically and offers **Check for Updates…** in the menu's **Settings** submenu. Installation asks for confirmation unless you opt into automatic downloads. **Install Update and Relaunch…** resumes a staged update. Any normal quit while an update is staged first holds and stops the service. Quitting from the menu while the ready-to-install window is open, or after choosing **Install on Quit** when offered, leaves the service stopped until Timeline is opened again; opening the app recovers its update hold. A manual maintenance hold refuses the update and stays in place.
+Every installed build checks for updates automatically and offers **Check for Updates…** in the menu's **Settings** submenu. Installation asks for confirmation unless you opt into automatic downloads. The same submenu shows and changes both choices at any time: **Check for Updates Automatically** and **Download and Install Updates Automatically**, which is greyed out while automatic checks are off. The second is the same setting as the checkbox in Sparkle's update window. **Install Update and Relaunch…** resumes a staged update. Any normal quit while an update is staged first holds and stops the service. Quitting from the menu while the ready-to-install window is open, or after choosing **Install on Quit** when offered, leaves the service stopped until Timeline is opened again; opening the app recovers its update hold. A manual maintenance hold refuses the update and stays in place.
 
 Updates replace `Timeline.app`; the running service never pulls or builds a git
 checkout. For signed downloads, follow [macOS distribution](../operations/macos-distribution.md).

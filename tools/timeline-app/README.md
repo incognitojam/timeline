@@ -47,7 +47,7 @@ The app owns and surfaces the Timeline service and recall capture jobs:
   the maintenance hold is active, then re-checks health every few seconds until
   it comes back or the restart window expires. If kickstart fails, the app
   requests the same guarded service-agent reconcile used by the background poll.
-- **Check for Updates…** (under **Settings**) checks the release feed in every installed build; automatic checks are enabled and installation asks first. **Install Update and Relaunch…** resumes a staged update. Any normal quit while one is staged, including from the ready-to-install window, holds and stops the service until Timeline is reopened. Opting into automatic downloads installs and relaunches when ready.
+- **Check for Updates…** (under **Settings**) checks the release feed in every installed build; automatic checks are enabled and installation asks first; **Check for Updates Automatically** and **Download and Install Updates Automatically** beside it change that. **Install Update and Relaunch…** resumes a staged update. Any normal quit while one is staged, including from the ready-to-install window, holds and stops the service until Timeline is reopened. Opting into automatic downloads installs and relaunches when ready.
 - Updates are app replacements rather than mutations of a live checkout. Update a development installation by
   pulling/building in any checkout and running `./build.sh --install` again.
   The web Settings page reports the running release/build/commit but does not offer
