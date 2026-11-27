@@ -2,6 +2,8 @@
 
 Timeline exposes its data to AI assistants over the [Model Context Protocol](https://modelcontextprotocol.io). Tools include `get_updates` (what was added since the agent last checked: new messages by conversation, daily health lines and counts of everything else), `query_events`, `get_context`, `get_schema`, `export_conversation`, `list_contacts`, `get_contact_info`, `run_sql`, and `semantic_search` (which needs [embeddings](embeddings.md)), plus the shared [memory](#memory) tools.
 
+Contacts marked hidden, and the events filed under them, are left out of the named tools, as on the web app's timeline pages: a DM with a hidden contact disappears, and in a group chat only their own messages do. A tool asked for a hidden contact by name, id or identifier answers as it does for someone unknown, and memory notes linked to one are left out too. This filters the tools rather than guarding the data: `run_sql` still reads every row. Some things the filter does not catch: `search_mcp_tool_calls` replays what earlier calls returned, including from before a contact was hidden; a hidden contact's name can still appear in plain text, such as a visible message's own words or a calendar event's title; and a phone or Google Messages group thread's `conversation_id` is made of its members' numbers, theirs included.
+
 ## Local (stdio)
 
 From a checkout, `bun run mcp` serves the tools over stdio against `./timeline.db`, or the database named by `TIMELINE_DB_PATH`. The repository's `.mcp.json` registers it for Claude Code; other clients can run the same command.

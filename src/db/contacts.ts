@@ -3,7 +3,7 @@ import type { QueryExecutor } from "./pool";
 import type { TimelineEvent, Contact, ContactAlias, Platform } from "./schema";
 import { isValidPlatform } from "./schema";
 import { conversationTypeClause } from "./conversations";
-import { addCursorCondition, addTextSearch, groupEvents, transformEvents, parseCursor, createCursor } from "./events";
+import { addCursorCondition, addTextSearch, buildHiddenEventClause, groupEvents, transformEvents, parseCursor, createCursor } from "./events";
 import type { EventGroup, SearchOptions } from "./events";
 import { parseIdentifier, formatIdentifier, getIdentitiesForContact } from "./identities";
 import { notSupersededClause } from "./superseded-conversations";
@@ -268,7 +268,10 @@ function addContactEventFilters(
   }
 }
 
-type ContactEventOptions = Omit<SearchOptions, "includeHiddenContacts">;
+type ContactEventOptions = Omit<SearchOptions, "includeHiddenContacts"> & {
+  /** Leave out events filed under a hidden contact (buildHiddenEventClause). */
+  excludeHidden?: boolean;
+};
 
 /**
  * The three ways an event involves a contact, as SELECTs of (event_id, timestamp)
@@ -308,7 +311,8 @@ async function contactEventBranches(
   if (cursor) addCursorCondition(conditions, params, cursor, sortOrder, "ep.timestamp", "ep.event_id");
 
   addContactEventFilters(conditions, params, { query, source, type, chat, excludeSources });
-  const filterClause = conditions.length > 0 ? ` AND ${conditions.join(" AND ")}` : "";
+  const hiddenClause = options.excludeHidden ? await buildHiddenEventClause(db, "e") : "";
+  const filterClause = (conditions.length > 0 ? ` AND ${conditions.join(" AND ")}` : "") + hiddenClause;
 
   // Use IN (...) instead of per-identifier UNION ALL to avoid SQLite compound SELECT limit
   const placeholders = allIdentifiers.map(() => "?").join(", ");

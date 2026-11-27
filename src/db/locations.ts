@@ -1,17 +1,18 @@
 import type { QueryExecutor } from "./pool";
 import type { TimelineEvent } from "./schema";
-import { transformEvents } from "./events";
+import { buildHiddenEventClause, transformEvents } from "./events";
 
 /**
  * Search events by location
  */
 export async function searchByLocation(
   db: QueryExecutor,
-  options: { latitude?: number; longitude?: number; radiusKm?: number; locationName?: string; limit?: number; excludeSources?: string[] }
+  options: { latitude?: number; longitude?: number; radiusKm?: number; locationName?: string; limit?: number; excludeSources?: string[]; excludeHidden?: boolean }
 ): Promise<TimelineEvent[]> {
   const { latitude, longitude, radiusKm = 1, locationName, limit = 50, excludeSources = [] } = options;
   // Before LIMIT, so left-out sources don't use up the page.
   const exclusion = excludeSources.length > 0 ? `AND source NOT IN (${excludeSources.map(() => "?").join(", ")})` : "";
+  const hiddenClause = options.excludeHidden ? await buildHiddenEventClause(db, "events") : "";
 
   if (locationName) {
     // Search by location name using FTS
@@ -22,6 +23,7 @@ export async function searchByLocation(
       WHERE id IN (SELECT rowid FROM events_fts WHERE events_fts MATCH ?)
         AND location_name IS NOT NULL
         ${exclusion}
+        ${hiddenClause}
       ORDER BY timestamp DESC
       LIMIT ?
     `;
@@ -40,6 +42,7 @@ export async function searchByLocation(
       WHERE latitude BETWEEN ? AND ?
         AND longitude BETWEEN ? AND ?
         ${exclusion}
+        ${hiddenClause}
       ORDER BY timestamp ASC
       LIMIT ?
     `;

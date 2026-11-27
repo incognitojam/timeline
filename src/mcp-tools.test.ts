@@ -650,6 +650,7 @@ describe("MCP tool handlers — identity-aware contact lookup workflow", () => {
       import { join } from "node:path";
       import { DbPool, wrapDatabase } from "./src/db/pool.ts";
       import { initDb } from "./src/db/schema.ts";
+      import { invalidateHiddenClauseCaches } from "./src/db/queries.ts";
       import { contentHash, EVENT_LEAN_PROFILE } from "./src/embeddings/content.ts";
       import {
         ensureContentProfile,
@@ -739,7 +740,14 @@ describe("MCP tool handlers — identity-aware contact lookup workflow", () => {
           });
           const result = await handlers.get("semantic_search")({ query: "coffee", limit: 1, full_content: false });
           const grouped = await handlers.get("semantic_search")({ query: "coffee", limit: 1, group_by_conversation: true });
+          // With its only hit filed under a hidden contact, the reply reads as an empty index.
+          const hana = timelineDb.prepare("INSERT INTO contacts (display_name, hidden) VALUES ('Hana Hidden', 1)").run().lastInsertRowid;
+          timelineDb.prepare("INSERT INTO identities (platform, platform_id, display_name, contact_id) VALUES ('facebook', 'hana', 'Hana Hidden', ?)").run(hana);
+          timelineDb.prepare("INSERT INTO event_people (event_id, person, source, timestamp, is_sender) VALUES (42, 'facebook:hana', 'facebook', '2026-05-06T08:09:53.525Z', 1)").run();
+          invalidateHiddenClauseCaches();
+          const hiddenOnly = await handlers.get("semantic_search")({ query: "coffee", limit: 1 });
           await vectorPool.closeAndWait();
+          if (!hiddenOnly.content[0].text.startsWith('No events found near "coffee". The index may be empty')) throw new Error(hiddenOnly.content[0].text);
           if (!grouped.content[0].text.includes("[facebook/post] 1 hit, 2026-05-06, closest #42")) throw new Error(grouped.content[0].text);
           const text = result.content[0].text;
           if (!text.includes("1 event(s) most similar")) throw new Error(text);

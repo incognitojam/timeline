@@ -20,6 +20,7 @@ import {
   upsertMcpSession,
   type RecordToolCallInput,
 } from "../mcp/recording";
+import { hiddenContactIds } from "../mcp/hidden-contacts";
 import { mcpInstructions, registerTools } from "../mcp-tools";
 import { PRODUCT_VERSION } from "../product-version";
 import { getMcpBearerToken, isMcpEnabled, type McpAccess, mcpAccess, mcpAccessForHash, touchMcpToken } from "./mcp-tokens";
@@ -128,13 +129,19 @@ export function createMcpHandler(
     }
   }, CLEANUP_INTERVAL_MS);
 
-  function createSession(access: McpAccess): {
+  function createSession(access: McpAccess, hiddenContacts: ReadonlySet<number>): {
     transport: WebStandardStreamableHTTPServerTransport;
     server: McpServer;
   } {
     const server = new McpServer(
       { name: "timeline", version: PRODUCT_VERSION },
-      { instructions: mcpInstructions(getAppStateDb(), { publicUrl: options.publicUrl, readOnly: access.readOnly }) },
+      {
+        instructions: mcpInstructions(getAppStateDb(), {
+          publicUrl: options.publicUrl,
+          readOnly: access.readOnly,
+          hiddenContactIds: hiddenContacts,
+        }),
+      },
     );
     function recordSession(sessionId: string): void {
       const client = server.server.getClientVersion();
@@ -316,7 +323,7 @@ export function createMcpHandler(
         });
       }
 
-      const { transport } = createSession(access);
+      const { transport } = createSession(access, await hiddenContactIds(readDb));
       return transport.handleRequest(req);
     },
 

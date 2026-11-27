@@ -16,6 +16,7 @@ import type { CallToolResult, RequestId, ServerNotification, ServerRequest } fro
 import { z } from "zod";
 import { getAppStateDb } from "./db/app-state";
 import {
+  checkNewMemoryNote,
   deleteMemoryNote,
   getMemoryNote,
   listContactMemoryNotes,
@@ -40,7 +41,10 @@ import {
   getIdentitiesForContact,
   getRawDataSchema,
   getRecentEvents,
+  hasHiddenContacts,
+  hiddenEventIdsSubquery,
   hydrateEventsById,
+  invalidateHiddenClauseCaches,
   listContacts,
   listSources,
   parseCursor,
@@ -55,6 +59,7 @@ import type { TimelineEvent } from "./db/schema";
 import { notConfiguredMessage } from "./embeddings/config";
 import { formatWindowHit, type SemanticSearch, searchEmbeddingsWithWindows } from "./embeddings/search";
 import { exportConversation } from "./export/export";
+import { maskForwardsOfHiddenEvents } from "./export/hidden-forwards";
 import {
   getAttachmentDescription,
   getMessageMarkers,
@@ -76,6 +81,13 @@ import {
 } from "./mcp/recording";
 import { memoryInstructions, renderMemoryIndex, renderMemoryNote } from "./mcp/memory";
 import { renderSchemaOverview } from "./mcp/schema";
+import {
+  HIDDEN_CONTACT_NAME,
+  HIDDEN_CONTACTS_NOTE,
+  hiddenContactIds,
+  withoutHiddenContactEvents,
+  withoutHiddenWindows,
+} from "./mcp/hidden-contacts";
 import { GET_UPDATES_DESCRIPTION, GET_UPDATES_SCHEMA, runGetUpdates } from "./mcp/updates";
 import { getDiscordComponentsText } from "./platforms/discord/shared/components";
 import { isConversationEventType } from "./shared/grouping";
@@ -218,12 +230,13 @@ function preview(text: string, max: number, full: boolean): string {
  */
 export async function formatEvents(
   db: QueryExecutor,
-  events: TimelineEvent[],
+  listed: TimelineEvent[],
   fullContent = false
 ): Promise<string> {
-  if (events.length === 0) {
+  if (listed.length === 0) {
     return "No events found.";
   }
+  const { events } = await maskForwardsOfHiddenEvents(db, listed);
 
   // Collect every identifier we may need to resolve.
   const identifiers = new Set<string>();
@@ -246,8 +259,9 @@ export async function formatEvents(
     ? await resolveIdentities(db, [...identifiers])
     : {};
 
+  // A hidden contact's name is not shown, even where a visible message mentions them.
   const discordUserResolver = (id: string): string | null =>
-    resolved[`discord:${id}`]?.name ?? null;
+    resolved[`discord:${id}`]?.hidden ? HIDDEN_CONTACT_NAME : resolved[`discord:${id}`]?.name ?? null;
 
   const lines = ["Times in UTC."];
   let day: string | undefined;
@@ -383,7 +397,7 @@ async function contactQueryEvents(
   }
 
   const aliases = await getAliasesForContact(db, resolved.contact.id);
-  const filters = { query, source, type, startDate, endDate, excludeSources };
+  const filters = { query, source, type, startDate, endDate, excludeSources, excludeHidden: true };
   const fetched = await searchByContact(db, resolved.contact.id, { ...filters, cursor, limit: limit + 1 });
   // The location filter runs after the fetch, so the count would not match it.
   const total = location
@@ -430,10 +444,9 @@ async function groupedQueryEvents(
     const resolved = await resolveContact(db, contact);
     if (resolved.error) return { content: resolved.error, isError: true };
     prefix = `Contact: ${resolved.contact.display_name} (ID: ${resolved.contact.id})\n${prefix}`;
-    groups = await contactEventGroups(db, resolved.contact.id, filters, limit);
+    groups = await contactEventGroups(db, resolved.contact.id, { ...filters, excludeHidden: true }, limit);
   } else {
-    // MCP is an agent data-access seam and remains intentionally unfiltered.
-    groups = await searchTimelineGroups(db, { ...filters, includeHiddenContacts: true }, limit);
+    groups = await searchTimelineGroups(db, filters, limit);
   }
   if (groups.length === 0) return { content: [{ type: "text" as const, text: `${prefix}No events found.` }] };
 
@@ -487,9 +500,8 @@ async function resolveContactByIdentity(
   // Form 1: explicit "platform:platform_id" (e.g. "discord:900…", "phone:+44…").
   // Uses the existing composite (platform, platform_id) unique index.
   if (input.includes(":")) {
-    const map = await resolveIdentities(db, [input]);
-    const cid = map[input]?.contactId;
-    return cid != null ? { contactId: cid } : null;
+    const identity = (await resolveIdentities(db, [input]))[input];
+    return identity?.contactId != null && !identity.hidden ? { contactId: identity.contactId } : null;
   }
 
   // Form 2: bare platform_id (e.g. "900000000000000001"). Probes the
@@ -503,7 +515,7 @@ async function resolveContactByIdentity(
     `SELECT i.platform, i.platform_id, i.contact_id, c.display_name AS contact_name
      FROM identities i
      JOIN contacts c ON c.id = i.contact_id
-     WHERE i.platform_id = ?
+     WHERE i.platform_id = ? AND c.hidden = 0
      LIMIT 10`,
     input,
   );
@@ -535,12 +547,15 @@ export async function resolveContact(
   // Round-tripping through String catches lossy parseInt outcomes (e.g. a
   // Discord snowflake exceeding MAX_SAFE_INTEGER) — those should fall through
   // to identity lookup rather than match a phantom contact.
+  // A hidden contact matches nothing here, so asking for one reads exactly as
+  // asking for someone unknown.
   if (!isNaN(contactId) && String(contactId) === contact) {
-    contactObj = await getContact(db, contactId);
+    const byId = await getContact(db, contactId);
+    if (byId && !byId.hidden) contactObj = byId;
   }
 
   if (!contactObj) {
-    const contacts = await listContacts(db, { includeHidden: true, search: contact });
+    const contacts = await listContacts(db, { search: contact });
     if (contacts.length === 1) {
       contactObj = contacts[0];
     } else if (contacts.length > 1) {
@@ -576,7 +591,6 @@ export async function resolveContact(
       error: [{ type: "text" as const, text: `Contact "${contact}" not found.` }],
     };
   }
-
   return { contact: contactObj };
 }
 
@@ -584,14 +598,17 @@ export async function resolveContact(
  * The instructions an MCP server returns at initialise: what the event ids in
  * tool output are for, then the shared memory.
  */
-export function mcpInstructions(appStateDb: Database, options: { publicUrl?: string; readOnly?: boolean } = {}): string {
+export function mcpInstructions(
+  appStateDb: Database,
+  options: { publicUrl?: string; readOnly?: boolean; hiddenContactIds?: ReadonlySet<number> } = {},
+): string {
   const url = options.publicUrl?.replace(/\/$/, "");
   const open = url
     ? `${url}/event/<id> opens it in the timeline, scrolled to and highlighting the event (for a chat message, with its conversation open).`
     : "<your-host>/event/<id> opens it in the timeline web app.";
-  return `Timeline tools list events with \`#<id>\`, the stable timeline event id (events.id in run_sql). Pass it to get_context or export_conversation as event_id. ${open}
+  return `Timeline tools list events with \`#<id>\`, the stable timeline event id (events.id in run_sql). Pass it to get_context or export_conversation as event_id. ${open} ${HIDDEN_CONTACTS_NOTE}
 
-${memoryInstructions(appStateDb, { readOnly: options.readOnly })}`;
+${memoryInstructions(appStateDb, { readOnly: options.readOnly, hiddenContactIds: options.hiddenContactIds })}`;
 }
 
 /**
@@ -637,6 +654,15 @@ function excludedSources(
     excludeSources: [...NOISY_MACHINE_SOURCES],
     notice: `Not searched: ${NOISY_MACHINE_SOURCES.join(", ")} (pass exclude_source: "" to include them).\n`,
   };
+}
+
+/** The same JSON with each leaf replaced by its type name. */
+function valueTypes(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(valueTypes);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, valueTypes(inner)]));
+  }
+  return value === null ? null : typeof value;
 }
 
 /** Date-bounded queries list oldest first; the rest newest first. */
@@ -737,6 +763,9 @@ export function registerTools(
     extra: ToolCallExtra | undefined,
     handler: () => CallToolResult | Promise<CallToolResult>,
   ): Promise<CallToolResult> {
+    // Read hidden contacts afresh for every call: a stdio server is a separate
+    // process the web app's invalidation never reaches.
+    invalidateHiddenClauseCaches();
     if (!recordToolCall) return handler();
 
     const start = performance.now();
@@ -914,6 +943,7 @@ Examples:
           radiusKm: radius_km,
           limit: fetchLimit,
           excludeSources,
+          excludeHidden: true,
         });
         if (cursor) {
           return { isError: true, content: [{ type: "text" as const, text: "Error: a location search has no next page; raise limit instead." }] };
@@ -926,8 +956,6 @@ Examples:
       // Strategy 3: Text search (FTS)
       if (query) {
         const fetched = await searchTimeline(db, {
-          // MCP is an agent data-access seam and remains intentionally unfiltered.
-          includeHiddenContacts: true,
           query,
           source,
           type,
@@ -943,8 +971,6 @@ Examples:
       // Strategy 4: Date-based browsing
       if (date || start_date || end_date) {
         const fetched = await getEvents(db, {
-          // MCP is an agent data-access seam and remains intentionally unfiltered.
-          includeHiddenContacts: true,
           date,
           startDate: start_date,
           endDate: end_date,
@@ -958,8 +984,7 @@ Examples:
       }
 
       // Strategy 5: Fallback — recent events (filtered by source/type)
-      // MCP is an agent data-access seam and remains intentionally unfiltered.
-      const fetched = await getRecentEvents(db, { source, type, excludeSources, cursor, limit: fetchLimit, includeHiddenContacts: true });
+      const fetched = await getRecentEvents(db, { source, type, excludeSources, cursor, limit: fetchLimit });
       return respond(pageOf(fetched, limit, "newest first"));
     })
   );
@@ -999,7 +1024,7 @@ Examples:
           "SELECT conversation_id, source FROM events WHERE id = ?",
           event_id,
         );
-        if (!event) {
+        if (!event || (await withoutHiddenContactEvents(db, [{ id: event_id }])).length === 0) {
           return {
             isError: true,
             content: [{ type: "text" as const, text: `Times in UTC.\nTranscript tokens: 0.\nError: No event found with id ${event_id}.` }],
@@ -1030,6 +1055,8 @@ Examples:
       }, {
         limit,
         source: conversationSource,
+        excludeHidden: true,
+        hiddenContactName: HIDDEN_CONTACT_NAME,
         mostRecent: true,
         includeTotal: true,
         aroundEventId: event_id !== undefined && start_date === undefined && end_date === undefined
@@ -1088,7 +1115,8 @@ Examples:
             "SELECT source, source_account, conversation_id FROM events WHERE id = ?",
             event_id,
           );
-        if (!anchor?.conversation_id || !anchor.source_account) {
+        if (!anchor?.conversation_id || !anchor.source_account || event_id === undefined
+          || (await withoutHiddenContactEvents(db, [{ id: event_id }])).length === 0) {
           return {
             isError: true,
             content: [{ type: "text" as const, text: "Error: same_conversation needs an event_id of an event in a conversation." }],
@@ -1103,6 +1131,7 @@ Examples:
         sources: splitSources(source),
         excludeSources: splitSources(exclude_source),
         conversation,
+        excludeHidden: true,
         cursor,
         limit: limit + 1,
       });
@@ -1132,7 +1161,7 @@ Examples:
       const { source, type } = params;
       // Source specified → raw_data JSON schema
       if (source) {
-        const schema = await getRawDataSchema(db, { source, type });
+        const schema = await getRawDataSchema(db, { source, type, excludeHidden: true });
 
         if (schema.sampleCount === 0) {
           return {
@@ -1143,8 +1172,9 @@ Examples:
           };
         }
 
+        const anyHidden = await hasHiddenContacts(db);
         const types = await db.query<{ type: string; n: number }>(
-          "SELECT type, count(*) AS n FROM events WHERE source = ? GROUP BY type ORDER BY n DESC",
+          `SELECT type, count(*) AS n FROM events WHERE source = ?${anyHidden ? ` AND id NOT IN (${hiddenEventIdsSubquery()})` : ""} GROUP BY type ORDER BY n DESC`,
           source,
         );
         const lines = [
@@ -1155,8 +1185,11 @@ Examples:
           "JSON paths (use with json_extract):",
           ...schema.paths.map(p => `  ${p}`),
           "",
-          "Sample (truncated):",
-          JSON.stringify(schema.sample, null, 2),
+          // A visible event's raw_data can embed a hidden contact's message
+          // (a Discord reply's referenced_message), so with any hidden, the
+          // sample shows each value's type, not the value.
+          anyHidden ? "Sample (value types):" : "Sample (truncated):",
+          JSON.stringify(anyHidden ? valueTypes(schema.sample) : schema.sample, null, 2),
         ];
 
         return {
@@ -1165,7 +1198,7 @@ Examples:
       }
 
       // No params → what a model needs to write SQL, and the sources.
-      // MCP is an agent data-access seam and remains intentionally unfiltered.
+      // Counts, no content: hidden contacts' events count, which spares a NOT IN over every event.
       const sources = await listSources(db, { includeHiddenContacts: true });
       // One index seek per source (idx_events_source_timestamp), not a scan.
       const latest = new Map<string, string | null>();
@@ -1238,16 +1271,12 @@ Tips:
     "list_contacts",
     "List all contacts in the timeline. Contacts link people across platforms (e.g., same person on Discord, Skype, Facebook).",
     {
-      include_hidden: z.boolean().optional().default(false).describe("Include hidden contacts"),
       search: z.string().optional().describe("Filter by name; also accepts a platform identifier (e.g. discord:123…, phone:+44…, or a bare Discord snowflake) to look up the linked contact"),
     },
     READS,
     async (params, extra) => instrumentToolCall("list_contacts", params, extra, async () => {
-      const { include_hidden, search } = params;
-      let contacts = await listContacts(db, {
-        includeHidden: include_hidden,
-        search,
-      });
+      const { search } = params;
+      let contacts = await listContacts(db, { search });
 
       // Identity-aware fallback: if the name search came up empty, the search
       // term might be a platform identifier (e.g. a Discord snowflake the
@@ -1258,10 +1287,7 @@ Tips:
           const ids = "ambiguous" in identity
             ? identity.ambiguous.map((r) => r.contact_id)
             : [identity.contactId];
-          contacts = await listContacts(db, {
-            includeHidden: include_hidden,
-            ids,
-          });
+          contacts = await listContacts(db, { ids });
         }
       }
 
@@ -1272,12 +1298,11 @@ Tips:
       }
 
       const lines = contacts.map((c) => {
-        const hiddenTag = c.hidden ? " [HIDDEN]" : "";
         const notesTag = c.notes ? ` - ${c.notes}` : "";
         const detailsTag = c.date_of_birth ? ` [DOB: ${formatBirthdayForDisplay(c.date_of_birth)}]` : "";
         const platformLabel = c.platformCount === 1 ? "platform" : "platforms";
         const activeIdentityLabel = c.activeIdentityCount === 1 ? "active identity" : "active identities";
-        return `${c.id}. ${c.display_name}${hiddenTag}${detailsTag} (${c.platformCount} ${platformLabel} · ${c.activeIdentityCount} ${activeIdentityLabel} · ${c.eventCount} events)${notesTag}`;
+        return `${c.id}. ${c.display_name}${detailsTag} (${c.platformCount} ${platformLabel} · ${c.activeIdentityCount} ${activeIdentityLabel} · ${c.eventCount} events)${notesTag}`;
       });
 
       return {
@@ -1414,16 +1439,20 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
         };
       }
 
+      windows = await withoutHiddenWindows(db, windows);
+
       // Present only once a conversation-window pilot has indexed some windows.
       const windowSection = windows.length > 0
         ? `\n\n${windows.length} conversation window(s) most similar, closest first; each is a stretch of one conversation, and its #id opens it with export_conversation:\n${windows.map(formatWindowHit).join("\n")}`
         : windowsError ? `\n\nConversation windows could not be searched: ${windowsError}` : "";
 
+      // All hits hidden reads as no hits.
+      const noHits = `No events found near "${query}". The index may be empty for this model — run \`bun run embeddings index\` first.${windowSection}`;
       if (hits.length === 0) {
         return {
           content: [{
             type: "text" as const,
-            text: `No events found near "${query}". The index may be empty for this model — run \`bun run embeddings index\` first.${windowSection}`,
+            text: noHits,
           }],
         };
       }
@@ -1432,12 +1461,13 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
       // KNN bounds documents, not events, so dedupe to unique events in that
       // order and cap to the requested count after dropping any whose row no
       // longer exists in timeline.db.
-      const { events, missingCount } = await hydrateEventsById(
-        db,
-        hits.map((hit) => hit.event_id),
-        { limit },
-      );
+      const hydrated = await hydrateEventsById(db, hits.map((hit) => hit.event_id));
+      const missingCount = hydrated.missingCount;
+      const events = (await withoutHiddenContactEvents(db, hydrated.events)).slice(0, limit);
 
+      if (events.length === 0 && hydrated.events.length > 0) {
+        return { content: [{ type: "text" as const, text: noHits }] };
+      }
       if (events.length === 0) {
         return {
           content: [{
@@ -1478,6 +1508,13 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
     isError: true,
     content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
   });
+  /** A note linked to a hidden contact reads here as no note at all. */
+  const isHiddenLinkedNote = async (project: string, name: string): Promise<boolean> => {
+    const note = getMemoryNote(getMcpHistoryDb(), project, name);
+    return note?.contact_id != null && (await hiddenContactIds(db)).has(note.contact_id);
+  };
+  const noNote = (project: string, name: string) =>
+    memoryError(`No note named "${name}" in ${project ? `project ${project}` : "the account"}.`);
   const projectParam = z.string().optional().describe("Repository name; omit for account notes");
   const nameParam = z.string().max(MEMORY_LIMITS.name).describe("Lowercase slug, unique in its scope");
 
@@ -1489,8 +1526,10 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
     async (params, extra) => instrumentToolCall("list_memory", params, extra, async () => {
       try {
         const project = projectScope(params.project);
-        const db = getMcpHistoryDb();
-        const index = renderMemoryIndex(listMemoryNotes(db, project), project, projectUsesAccountMemory(db, project));
+        const appDb = getMcpHistoryDb();
+        const hidden = await hiddenContactIds(db);
+        const notes = listMemoryNotes(appDb, project).filter((note) => note.contact_id === null || !hidden.has(note.contact_id));
+        const index = renderMemoryIndex(notes, project, projectUsesAccountMemory(appDb, project));
         return { content: [{ type: "text" as const, text: index }] };
       } catch (error) {
         return memoryError(error);
@@ -1507,8 +1546,8 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
       try {
         const project = projectScope(params.project);
         const note = getMemoryNote(getMcpHistoryDb(), project, params.name);
-        if (!note) {
-          return memoryError(`No note named "${params.name}" in ${project ? `project ${project}` : "the account"}.`);
+        if (!note || (note.contact_id !== null && (await hiddenContactIds(db)).has(note.contact_id))) {
+          return noNote(project, params.name);
         }
         return { content: [{ type: "text" as const, text: renderMemoryNote(note) }] };
       } catch (error) {
@@ -1541,6 +1580,12 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
           contactId = resolved.contact.id;
         }
         const project = projectScope(params.project);
+        // Checked as a new note would be, so a call that could not create one
+        // fails the same way; one that could is refused, since the name is taken.
+        if (await isHiddenLinkedNote(project, params.name)) {
+          checkNewMemoryNote(getMcpHistoryDb(), { ...params, project });
+          return memoryError(`Note "${params.name}" can't be saved: the name is taken.`);
+        }
         const { note, created } = saveMemoryNote(getMcpHistoryDb(), {
           project,
           name: params.name,
@@ -1571,10 +1616,9 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
     async (params, extra) => instrumentToolCall("delete_memory_note", params, extra, async () => {
       try {
         const project = projectScope(params.project);
+        if (await isHiddenLinkedNote(project, params.name)) return noNote(project, params.name);
         const note = deleteMemoryNote(getMcpHistoryDb(), project, params.name);
-        if (!note) {
-          return memoryError(`No note named "${params.name}" in ${project ? `project ${project}` : "the account"}.`);
-        }
+        if (!note) return noNote(project, params.name);
         const scope = project ? `project ${project}` : "account";
         return { content: [{ type: "text" as const, text: `Deleted memory: ${note.title} (${note.name}, ${scope})` }] };
       } catch (error) {

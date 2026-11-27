@@ -46,6 +46,8 @@ export function collectRenderedIdentifiers(event: TimelineEvent): string[] {
 export async function resolveRenderIdentities(
   db: QueryExecutor,
   events: TimelineEvent[],
+  /** Name a hidden contact this instead, even where a visible event mentions them. */
+  options: { hiddenName?: string } = {},
 ): Promise<RenderIdentityOptions> {
   const identifiers = new Set<string>();
   for (const event of events) {
@@ -54,9 +56,13 @@ export async function resolveRenderIdentities(
     for (const identifier of collectRenderedIdentifiers(event)) identifiers.add(identifier);
   }
 
-  const resolved = identifiers.size > 0
+  const all = identifiers.size > 0
     ? await resolveIdentities(db, [...identifiers])
     : {};
+  const { hiddenName } = options;
+  const resolved = hiddenName === undefined
+    ? all
+    : Object.fromEntries(Object.entries(all).map(([id, identity]) => [id, identity.hidden ? { ...identity, name: hiddenName } : identity]));
   const displayNames: Record<string, string> = {};
   for (const [identifier, identity] of Object.entries(resolved)) {
     if (identity.name) displayNames[identifier] = identity.name;
