@@ -3,12 +3,13 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { wrapDatabase } from "../../db/pool";
 import { getDb, initDb } from "../../db/schema";
 import { runSourceOnce } from "../../sync/once";
 import { existingMediaManifest, mediaCopyUri } from "./existing-media";
 import { EVENT_SOURCE } from "./parser";
 import { deleteSyncState, getAppStateDb, getSyncState, setSyncState } from "../../db/app-state";
-import { FULL_LISTING_INTERVAL_MS, resolveGoogleMessagesConfig, DEFAULT_STATE_DIR, googleMessagesSyncSource, MEDIA_STAGING_PREFIX, REACTION_REFRESH_MS, SYNC_OVERLAP_MS, type GoogleMessagesSyncState } from "./sync";
+import { googleMessagesRefresh, FULL_LISTING_INTERVAL_MS, resolveGoogleMessagesConfig, DEFAULT_STATE_DIR, googleMessagesSyncSource, MEDIA_STAGING_PREFIX, REACTION_REFRESH_MS, SYNC_OVERLAP_MS, type GoogleMessagesSyncState } from "./sync";
 
 // Ofcom drama-range numbers, one per fixture conversation.
 const CONTACT_NUMBERS: Record<string, string> = { "1": "+447700900001", "2": "+447700900002" };
@@ -143,6 +144,40 @@ describe("google-messages sync source", () => {
     expect(cached).toMatchObject({ success: true, eventsAdded: 0, metadata: { attachmentsCached: 1, attachmentsStored: 0, attachmentsFailed: 0 } });
     expect(JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8"))).toEqual(first);
     expect(readFileSync(first["101"].m1.path, "utf8")).toBe("jpeg bytes");
+  });
+
+  it("refreshes one archived group through an interrupted page and hides an ambiguous group", async () => {
+    writeFileSync(join(dir, "session.json"), "{}");
+    const group = { ...CONVERSATION("1"), is_group: true, folder: "ARCHIVE", participants: [
+      ...CONVERSATION("1").participants, { participant_id: "3", number: "+15550100", is_me: false, visible: true },
+    ] };
+    const replay = (...records: unknown[]) => writeFileSync(join(dir, "fixture.jsonl"), records.map(r => JSON.stringify(r)).join("\n"));
+    const done = { kind: "conversation_done", id: "1", messages: 1 };
+    replay(group, MMS_WITH_PHOTO, done);
+    expect((await runSourceOnce(googleMessagesSyncSource, { config: config() })).result?.success).toBe(true);
+    const initial = state()!;
+    const db = getDb();
+    try {
+      const conversationId = db.query<{ key: string }, []>("SELECT conversation_id AS key FROM events WHERE source = 'google-messages' LIMIT 1").get()!.key;
+      const resolve = () => googleMessagesRefresh.resolve({ accounts: ["Owner"], settings: config(), conversationId, db: wrapDatabase(db) });
+      const check = await resolve();
+      if (!check.ok) throw new Error(check.reason);
+      replay(group, MESSAGE("102", "1"));
+      expect((await googleMessagesRefresh.run(check.target, options())).success).toBe(false);
+      expect(state()).toEqual(initial);
+      const cached = { ...MMS_WITH_PHOTO, media: [{ media_id: "m1", status: "cached" }] };
+      replay(group, MESSAGE("102", "1"), cached, done);
+      expect(await googleMessagesRefresh.run(check.target, options())).toMatchObject({ success: true, eventsAdded: 0, metadata: { attachmentsCached: 1 } });
+      expect(sentCursors()).toEqual({ "1": initial.conversations["1"] - SYNC_OVERLAP_MS });
+      expect(readFileSync(argsLog, "utf8")).toContain("-conversation 1");
+      expect(state()).toEqual({ ...initial, conversations: { "1": expect.any(Number) } });
+      expect(state()!.conversations["1"]).toBeGreaterThan(initial.conversations["1"]);
+      replay({ ...group, id: "2" }, MESSAGE("103", "2"), { ...done, id: "2" });
+      expect((await googleMessagesSyncSource.sync(options())).success).toBe(true);
+      expect((await resolve()).ok).toBe(false);
+    } finally {
+      db.close();
+    }
   });
 
   it("repairs a corrupt stored attachment after the sidecar fetches it again", async () => {

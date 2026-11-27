@@ -160,3 +160,10 @@ func TestMessageRecordReactions(t *testing.T) {
 		t.Fatalf("a message with no reactions should omit the field: %s", line)
 	}
 }
+
+func TestTargetArchivedConversation(t *testing.T) {
+	record, err := targetConversationRecord(&gmproto.Conversation{ConversationID: "123", Status: gmproto.ConversationStatus_KEEP_ARCHIVED, IsGroupChat: true})
+	if err != nil || record.ID != "123" || record.Folder != "ARCHIVE" || !record.IsGroup {
+		t.Fatalf("unexpected metadata: %+v, %v", record, err)
+	}
+}

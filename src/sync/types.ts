@@ -112,6 +112,8 @@ export interface SyncLogEntry {
 
 /** One stored conversation a {@link ConversationRefresh} can sync on its own. */
 export interface RefreshTarget {
+  /** Pins the underlying thread when its ID differs from the displayed conversation key. */
+  nativeId?: string;
   account: string;
   conversationId: string;
 }

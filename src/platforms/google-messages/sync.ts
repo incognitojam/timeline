@@ -15,8 +15,9 @@ import { createInterface } from "node:readline";
 import { getGoogleMessagesBinaryPath, GOOGLE_MESSAGES_STATE_DIR } from "../../runtime-paths";
 import { expandPath } from "../../config";
 import { getAppStateDb, getSyncState, setSyncState } from "../../db/app-state";
+import { conversationTypeClause } from "../../db/conversation-types";
 import { getDb, initDb } from "../../db/schema";
-import type { SyncOptions, SyncResult, SyncSource } from "../../sync/types";
+import type { ConversationRefresh, SyncOptions, SyncResult, SyncSource } from "../../sync/types";
 import { EVENT_SOURCE, importGoogleMessages, type ImportStats } from "./parser";
 import { existingMediaManifest } from "./existing-media";
 import { backgroundCommand } from "../../lib/background-priority";
@@ -120,10 +121,12 @@ async function runSidecar<T>(
   listUntil: number | undefined,
   mediaDir: string,
   signal: AbortSignal | undefined,
+  nativeId: string | undefined,
   consume: (lines: AsyncIterable<string>) => Promise<T>,
 ): Promise<SidecarRun<T>> {
+  const scope = nativeId ? ["-conversation", nativeId] : ["-folder", "all"];
   const listUntilArgs = listUntil === undefined ? [] : ["-list-until", String(listUntil)];
-  const [command, ...args] = backgroundCommand([config.binary, "dump", "-folder", "all", "-cursors", "-", "-media", mediaDir, "-existing-media", join(mediaDir, "existing-media.json"), ...listUntilArgs]);
+  const [command, ...args] = backgroundCommand([config.binary, "dump", ...scope, "-cursors", "-", "-media", mediaDir, "-existing-media", join(mediaDir, "existing-media.json"), ...listUntilArgs]);
   const proc = spawn(command, args, {
     cwd: config.stateDir,
     stdio: ["pipe", "pipe", "pipe"],
@@ -213,72 +216,107 @@ export const googleMessagesSyncSource: SyncSource = {
     return null;
   },
 
-  async sync(options: SyncOptions): Promise<SyncResult> {
-    const startTime = Date.now();
-    const fail = (error: string, stats?: ImportStats): SyncResult => ({
-      source: EVENT_SOURCE,
-      success: false,
-      eventsAdded: stats?.imported ?? 0,
-      eventsUpdated: stats?.reactionsUpdated ?? 0,
-      error,
-      durationMs: Date.now() - startTime,
-      ...(stats ? { metadata: metadataFor(stats) } : {}),
-    });
+  sync: (options) => syncMessages(options),
+};
 
-    const resolved = resolveGoogleMessagesConfig(options.config.sources[EVENT_SOURCE]);
-    if (typeof resolved === "string") return fail(resolved);
+export const googleMessagesRefresh: ConversationRefresh = {
+  source: EVENT_SOURCE,
+  syncSource: googleMessagesSyncSource,
+  async resolve({ conversationId, accounts, settings, db }) {
+    const config = resolveGoogleMessagesConfig(settings);
+    if (typeof config === "string" || accounts.length !== 1 || accounts[0] !== config.account) {
+      return { ok: false, reason: "Conversation does not resolve to the paired account" };
+    }
+    const rows = await db.query<{ id: unknown }>(
+      `SELECT DISTINCT json_extract(raw_data, '$.conversation_id') AS id
+       FROM events WHERE source = ? AND source_account = ? AND conversation_id = ?
+         AND ${conversationTypeClause()} LIMIT 2`, EVENT_SOURCE, config.account, conversationId,
+    );
+    const row = rows[0];
+    if (rows.length !== 1 || typeof row?.id !== "string" || !row.id.trim()) {
+      return { ok: false, reason: "Conversation does not resolve to one phone thread" };
+    }
+    return { ok: true, target: { account: config.account, conversationId, nativeId: row.id } };
+  },
+  run(target, options) {
+    if (!target.nativeId) throw new Error("Missing native conversation ID");
+    return syncMessages(options, { nativeId: target.nativeId, conversationId: target.conversationId });
+  },
+};
 
-    const appState = getAppStateDb();
-    const state = loadState();
-    const listUntil = listUntilFor(state, startTime);
-    const cursors = cursorsFor(state, listUntil === undefined ? REACTION_REFRESH_MS : SYNC_OVERLAP_MS);
+async function syncMessages(options: SyncOptions, target?: { nativeId: string; conversationId: string }): Promise<SyncResult> {
+  const nativeId = target?.nativeId;
+  const startTime = Date.now();
+  const fail = (error: string, stats?: ImportStats): SyncResult => ({
+    source: EVENT_SOURCE,
+    success: false,
+    eventsAdded: stats?.imported ?? 0,
+    eventsUpdated: stats?.reactionsUpdated ?? 0,
+    error,
+    durationMs: Date.now() - startTime,
+    ...(stats ? { metadata: metadataFor(stats) } : {}),
+  });
 
-    const db = getDb();
-    initDb(db);
-    let mediaDir: string | undefined;
-    try {
-      mediaDir = createMediaStaging(resolved.stateDir);
-      writeFileSync(join(mediaDir, "existing-media.json"), JSON.stringify(await existingMediaManifest(db, resolved.account)), { mode: 0o600 });
-      const run = await runSidecar<ImportStats>(resolved, cursors, listUntil, mediaDir, options.signal, (lines) =>
-        importGoogleMessages(db, lines, {
-          sourceAccount: resolved.account,
-          importBatch: `${EVENT_SOURCE}-${resolved.account}-${startTime}`,
-          mediaDir,
-          onConversationDone: (conversationId) => {
-            state.conversations[conversationId] = startTime;
-            setSyncState(appState, EVENT_SOURCE, state);
-          },
-        }),
+  const resolved = resolveGoogleMessagesConfig(options.config.sources[EVENT_SOURCE]);
+  if (typeof resolved === "string") return fail(resolved);
+
+  const appState = getAppStateDb();
+  const state = loadState();
+  const listUntil = nativeId ? undefined : listUntilFor(state, startTime);
+  const cursors = nativeId
+    ? { [nativeId]: Math.max(0, (state.conversations[nativeId] ?? 0) - SYNC_OVERLAP_MS) }
+    : cursorsFor(state, listUntil === undefined ? REACTION_REFRESH_MS : SYNC_OVERLAP_MS);
+
+  const db = getDb();
+  initDb(db);
+  let mediaDir: string | undefined;
+  try {
+    mediaDir = createMediaStaging(resolved.stateDir);
+    writeFileSync(join(mediaDir, "existing-media.json"), JSON.stringify(await existingMediaManifest(db, resolved.account, target?.conversationId)), { mode: 0o600 });
+    const run = await runSidecar<ImportStats>(resolved, cursors, listUntil, mediaDir, options.signal, nativeId, (lines) =>
+      importGoogleMessages(db, lines, {
+        sourceAccount: resolved.account,
+        importBatch: `${EVENT_SOURCE}-${resolved.account}-${startTime}`,
+        mediaDir,
+        onConversationDone: (conversationId) => {
+          if (nativeId && nativeId !== conversationId) throw new Error("Unexpected conversation completion");
+          state.conversations[conversationId] = startTime;
+          setSyncState(appState, EVENT_SOURCE, state);
+        },
+      }),
+    );
+    const stats = run.result;
+    if (run.exitCode !== 0) {
+      return fail(`timeline-gmessages exited with code ${run.exitCode}: ${run.stderrTail.trim()}`, stats);
+    }
+    if (stats.conversationsFailed.length > 0) {
+      return fail(
+        `${stats.conversationsFailed.length} conversation(s) could not be fully paged (will retry next run): ${stats.conversationsFailed.join(", ")}`,
+        stats,
       );
-      const stats = run.result;
-      if (run.exitCode !== 0) {
-        return fail(`timeline-gmessages exited with code ${run.exitCode}: ${run.stderrTail.trim()}`, stats);
-      }
-      if (stats.conversationsFailed.length > 0) {
-        return fail(
-          `${stats.conversationsFailed.length} conversation(s) could not be fully paged (will retry next run): ${stats.conversationsFailed.join(", ")}`,
-          stats,
-        );
-      }
+    }
+    if (nativeId) {
+      if (stats.conversationsDone !== 1) return fail("Missing conversation completion", stats);
+    } else {
       state.listedThrough = startTime;
       if (listUntil === undefined) state.fullListingAt = startTime;
       setSyncState(appState, EVENT_SOURCE, state);
-      return {
-        source: EVENT_SOURCE,
-        success: true,
-        eventsAdded: stats.imported,
-        eventsUpdated: stats.reactionsUpdated,
-        durationMs: Date.now() - startTime,
-        metadata: { ...metadataFor(stats), resumedConversations: Object.keys(cursors).length },
-      };
-    } catch (error) {
-      return fail(error instanceof Error ? error.message : String(error));
-    } finally {
-      db.close();
-      if (mediaDir) rmSync(mediaDir, { recursive: true, force: true });
     }
-  },
-};
+    return {
+      source: EVENT_SOURCE,
+      success: true,
+      eventsAdded: stats.imported,
+      eventsUpdated: stats.reactionsUpdated,
+      durationMs: Date.now() - startTime,
+      metadata: { ...metadataFor(stats), resumedConversations: Object.keys(cursors).length },
+    };
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : String(error));
+  } finally {
+    db.close();
+    if (mediaDir) rmSync(mediaDir, { recursive: true, force: true });
+  }
+}
 
 function metadataFor(stats: ImportStats): Record<string, unknown> {
   const { imported: _imported, conversationsFailed, ...rest } = stats;

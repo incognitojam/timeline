@@ -93,6 +93,7 @@ dump flags:
   -max-messages N   Stop paging each conversation after ~N messages (0 = all, default 0)
   -media DIR        Download message media into DIR (default: skip media)
   -existing-media PATH  JSON manifest of stored attachments to verify and reuse
+  -conversation ID  Read one native conversation with its current participants and folder
   -folder inbox|archive|spam|all   Which folders to dump (default all, including spam & blocked)
 
 Files (in the working directory):
@@ -176,6 +177,7 @@ func runDump(log zerolog.Logger, args []string) error {
 	maxMessages := fs.Int("max-messages", 0, "stop paging each conversation after ~N messages (0 = all)")
 	mediaDir := fs.String("media", "", "download media into this directory (default: skip)")
 	existingMediaPath := fs.String("existing-media", "", "JSON file of stored full-size media candidates by message ID and media ID")
+	target := fs.String("conversation", "", "read only this native conversation ID")
 	folderArg := fs.String("folder", "all", "inbox|archive|spam|all")
 	sinceMs := fs.Int64("since", 0, "only emit messages at/after this Unix-ms timestamp; skip conversations idle before it (0 = everything)")
 	cursorsPath := fs.String("cursors", "", "JSON object of conversation id -> Unix-ms cursor, overriding -since per conversation (\"-\" = stdin)")
@@ -213,6 +215,34 @@ func runDump(log zerolog.Logger, args []string) error {
 	}()
 
 	enc := json.NewEncoder(os.Stdout)
+
+	if *target != "" {
+		conv, err := withRetries(log, "GetConversation", func() (*gmproto.Conversation, error) {
+			return cli.GetConversation(ctx, *target)
+		})
+		if err != nil {
+			return err
+		}
+		if conv.GetConversationID() != *target {
+			return fmt.Errorf("requested conversation was not returned")
+		}
+		rec, err := targetConversationRecord(conv)
+		if err != nil {
+			return err
+		}
+		if err := enc.Encode(rec); err != nil {
+			return err
+		}
+		since := *sinceMs
+		if cursor, ok := cursors[*target]; ok {
+			since = cursor
+		}
+		n, err := dumpMessages(ctx, log, cli, enc, *target, 0, since, *mediaDir, knownMedia)
+		if err != nil {
+			return err
+		}
+		return enc.Encode(conversationDoneT{Kind: "conversation_done", ID: *target, Messages: n})
+	}
 
 	// Contacts first — cheap, and useful for mapping participant IDs to names.
 	if contacts, err := cli.ListContacts(ctx); err != nil {
@@ -400,7 +430,9 @@ func dumpMessages(ctx context.Context, log zerolog.Logger, cli *libgm.Client, en
 			if mediaDir != "" {
 				rec.Media = downloadMedia(ctx, log, cli.DownloadMedia, mediaDir, msg, knownMedia)
 			}
-			_ = enc.Encode(rec)
+			if err := enc.Encode(rec); err != nil {
+				return count, err
+			}
 			count++
 		}
 		if reachedSince || (maxMessages > 0 && count >= maxMessages) {
@@ -698,6 +730,21 @@ type contactRecordT struct {
 	ContactID string `json:"contact_id,omitempty"`
 	Name      string `json:"name,omitempty"`
 	Number    string `json:"number,omitempty"`
+}
+
+func targetConversationRecord(conv *gmproto.Conversation) (conversationRecordT, error) {
+	var folder gmproto.ListConversationsRequest_Folder
+	switch conv.GetStatus() {
+	case gmproto.ConversationStatus_ACTIVE:
+		folder = gmproto.ListConversationsRequest_INBOX
+	case gmproto.ConversationStatus_ARCHIVED, gmproto.ConversationStatus_KEEP_ARCHIVED:
+		folder = gmproto.ListConversationsRequest_ARCHIVE
+	case gmproto.ConversationStatus_SPAM_FOLDER, gmproto.ConversationStatus_BLOCKED_FOLDER:
+		folder = gmproto.ListConversationsRequest_SPAM_BLOCKED
+	default:
+		return conversationRecordT{}, fmt.Errorf("unsupported conversation status: %v", conv.GetStatus())
+	}
+	return conversationRecord(conv, folder), nil
 }
 
 func conversationRecord(c *gmproto.Conversation, folder gmproto.ListConversationsRequest_Folder) conversationRecordT {
