@@ -40,6 +40,9 @@ extension Notification.Name {
     static let timelineServiceAgentReconcileRequested = Notification.Name("timelineServiceAgentReconcileRequested")
     // Posted when the app registers the service agent, which starts the service.
     static let timelineServiceAgentRegistered = Notification.Name("timelineServiceAgentRegistered")
+    // Posted when UpdateController lets the app quit for Sparkle to install
+    // an update and relaunch it.
+    static let timelineQuittingForUpdate = Notification.Name("timelineQuittingForUpdate")
 }
 
 func timelineDataDirectory() -> URL {

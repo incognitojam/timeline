@@ -23,6 +23,9 @@ final class ServiceAgentController: ObservableObject {
     // Set when the running app is installed and the other Applications
     // folder also holds a copy, which would register its own agents.
     @Published private(set) var otherInstalledCopy: URL?
+    // True once a reconcile has confirmed the bundled agent is loaded,
+    // including any reload it needed, such as after an update.
+    @Published private(set) var settled = false
     let config: LaunchAgentConfig
     private var scheduler: RefreshScheduler?
     private var reconcileObserver: NSObjectProtocol?
@@ -108,6 +111,7 @@ final class ServiceAgentController: ObservableObject {
                 self.reconcileInFlight = false
                 if let next {
                     self.apply(next)
+                    if next.issue == nil { self.settled = true }
                 }
             }
         }

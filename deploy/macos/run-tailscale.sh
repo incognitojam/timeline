@@ -38,10 +38,11 @@ fi
 
 # Public access (Funnel) is enforced by the app, which may not be running when
 # tailscaled starts, so it ends whenever tailscaled starts: drop the app's
-# record and reset the persisted serve config; the app serves to the tailnet
-# again on its next check. tailscaled loads the serve config, and accepts a
+# record, and any record an update quit paused, and reset the persisted serve
+# config; the app serves to the tailnet again on its next check. tailscaled loads the serve config, and accepts a
 # reset, only once it has a netmap, so retry until the reset succeeds.
-rm -f "$HOME/.local/share/timeline/tailscale-public-access"
+rm -f "$HOME/.local/share/timeline/tailscale-public-access" \
+  "$HOME/.local/share/timeline/tailscale-public-access.paused"
 (
   until "$TAILSCALE" --socket="$STATE_DIR/tailscaled.sock" serve reset 2>/dev/null; do
     sleep 1

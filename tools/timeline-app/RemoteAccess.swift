@@ -20,6 +20,7 @@ import Foundation
 import SwiftUI
 import AppKit
 import ServiceManagement
+import Combine
 
 // Config for the tailscale agent — no maintenance hold, no legacy migration.
 let tailscaleLaunchAgentConfig = LaunchAgentConfig(
@@ -54,6 +55,28 @@ private func tailscaleDisabledMarkerURL() -> URL {
 private func publicAccessRecordURL() -> URL {
     FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".local/share/timeline/tailscale-public-access")
+}
+
+// Written only by a quit for an update and consumed by the next launch (see
+// PublicAccess.paused).
+private func pausedPublicAccessURL() -> URL {
+    FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".local/share/timeline/tailscale-public-access.paused")
+}
+
+// Identifies this boot of the Mac, so a pause never outlives a restart.
+private func bootSession() -> String? {
+    var size = 0
+    guard sysctlbyname("kern.bootsessionuuid", nil, &size, nil, 0) == 0, size > 0 else { return nil }
+    var buffer = [CChar](repeating: 0, count: size)
+    guard sysctlbyname("kern.bootsessionuuid", &buffer, &size, nil, 0) == 0 else { return nil }
+    let session = String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    return session.isEmpty ? nil : session
+}
+
+// Seconds since boot, counting sleep; unaffected by setting the clock.
+private func uptime() -> Int {
+    Int(clock_gettime_nsec_np(CLOCK_MONOTONIC) / 1_000_000_000)
 }
 
 private func isRemoteAccessEnabled() -> Bool {
@@ -119,6 +142,19 @@ final class RemoteAccessController: ObservableObject {
     // change to public access is never left to the next poll.
     private var refreshQueued = false
     private var terminationObserver: NSObjectProtocol?
+    private var updateQuitObserver: NSObjectProtocol?
+    private var agentSettled: AnyCancellable?
+    // Set by UpdateController once it lets the app quit for Sparkle to
+    // install and relaunch, and by the owner's Quit, which always wins.
+    private var quittingForUpdate = false
+    private var ownerQuitting = false
+    // Public access paused by the update that relaunched this app, held only
+    // in memory until refresh writes it back as the record, at the latest by
+    // resumeDeadline (uptime). Any owner action on public access or Remote
+    // Access drops it.
+    @Published private var pausedRecord: String?
+    private var resumeDeadline = 0
+    var resumingPublicAccess: Bool { pausedRecord != nil }
     // Latched at logIn() and cleared only when the backend reaches Running (or
     // the feature is turned off / the login never started). While latched the
     // poll renders .loggingIn instead of .needsLogin, so the login button can't
@@ -130,12 +166,21 @@ final class RemoteAccessController: ObservableObject {
 
     init(endpoint: TimelineServiceEndpoint = loadTimelineServiceEndpoint()) {
         servicePort = endpoint.port
+        if let paused = Self.takePausedPublicAccess() {
+            pausedRecord = paused.record
+            resumeDeadline = paused.deadline
+        }
         adoptAgentIfEnabled()
         scheduler = RefreshScheduler { [weak self] in Task { @MainActor in self?.refresh() } }
         terminationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.endPublicAccessOnQuit() }
+        }
+        updateQuitObserver = NotificationCenter.default.addObserver(
+            forName: .timelineQuittingForUpdate, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.quittingForUpdate = true }
         }
         refresh()
     }
@@ -176,8 +221,10 @@ final class RemoteAccessController: ObservableObject {
         guard agent != nil else { return }
         FileManager.default.createFile(atPath: tailscaleDisabledMarkerURL().path, contents: nil)
         removePublicAccessRecord()
+        pausedRecord = nil
         publicAccessFailure = nil
         attemptRecord = nil
+        agentSettled = nil
         agent = nil
         loginPendingSince = nil
         agentIssueText = nil
@@ -240,6 +287,7 @@ final class RemoteAccessController: ObservableObject {
     // Records when public access ends, then lets refresh turn Funnel on.
     func makePublic(for duration: TimeInterval) {
         guard case .running = state, !makingPublic else { return }
+        pausedRecord = nil
         publicAccessFailure = nil
         let record = PublicAccess.record(start: Date(), duration: duration)
         do {
@@ -278,15 +326,39 @@ final class RemoteAccessController: ObservableObject {
     }
 
     func endPublicAccess() {
+        pausedRecord = nil
         removePublicAccessRecord()
         refresh()
     }
 
+    // The owner's Quit ends public access even if an update is also quitting.
+    func prepareForOwnerQuit() {
+        ownerQuitting = true
+    }
+
     // Public access needs the app to watch its expiry, so it ends when the app
-    // quits. This blocks the quit for as long as one CLI call takes.
+    // quits: Funnel goes off, and only a quit for an update leaves a paused
+    // record for the relaunched app. This blocks the quit for as long as one
+    // CLI call takes.
     private func endPublicAccessOnQuit() {
+        let record = try? String(contentsOf: publicAccessRecordURL(), encoding: .utf8)
         guard removePublicAccessRecord() else { return }
+        if let paused = PublicAccess.paused(
+            record: record, forUpdate: quittingForUpdate && !ownerQuitting,
+            boot: bootSession(), uptime: uptime(), now: Date()) {
+            try? paused.write(to: pausedPublicAccessURL(), atomically: true, encoding: .utf8)
+        }
         _ = Self.runTailscale(socket: tailscaleSocketPath(), ["serve", "reset"])
+    }
+
+    // Removes what an earlier run left on disk and returns the record an
+    // update quit paused, if it may resume now. Any other record left on disk
+    // (the app crashed or was force-quit) is dropped, so it means tailnet only.
+    private static func takePausedPublicAccess() -> (record: String, deadline: Int)? {
+        let paused = try? String(contentsOf: pausedPublicAccessURL(), encoding: .utf8)
+        try? FileManager.default.removeItem(at: pausedPublicAccessURL())
+        try? FileManager.default.removeItem(at: publicAccessRecordURL())
+        return PublicAccess.resumable(paused, boot: bootSession(), uptime: uptime(), now: Date())
     }
 
     // Returns whether there was a record to remove.
@@ -298,7 +370,10 @@ final class RemoteAccessController: ObservableObject {
     // Register (own) the agent only while the user's opt-in is active.
     private func adoptAgentIfEnabled() {
         guard agent == nil, isRemoteAccessEnabled() else { return }
-        agent = ServiceAgentController(config: tailscaleLaunchAgentConfig)
+        let agent = ServiceAgentController(config: tailscaleLaunchAgentConfig)
+        self.agent = agent
+        agentSettled = agent.$settled.removeDuplicates().filter { $0 }
+            .sink { [weak self] _ in Task { @MainActor in self?.refresh() } }
     }
 
     func refresh() {
@@ -315,6 +390,10 @@ final class RemoteAccessController: ObservableObject {
         let loginPending = loginPendingSince != nil
         let port = servicePort
         let attemptAtStart = attemptRecord
+        // A reload of the agent restarts tailscaled, whose start drops the
+        // record, so resume only after a refresh that started after the
+        // agent settled finds the node running.
+        let resumeReady = agent?.settled == true
 
         Task.detached(priority: .utility) {
             // Fail closed: any record that doesn't allow public access now is
@@ -360,6 +439,41 @@ final class RemoteAccessController: ObservableObject {
                         if let failed { self.showMakePublicFailure(failed) }
                     }
                 }
+                if let paused = self.pausedRecord {
+                    if !enabled || PublicAccess.end(of: paused, now: Date()) == nil {
+                        self.pausedRecord = nil
+                    } else if uptime() > self.resumeDeadline {
+                        self.giveUpResume("Remote Access was not ready in time")
+                    } else if resumeReady {
+                        switch shown {
+                        case .starting:
+                            // tailscaled may still be restarting.
+                            break
+                        case .running:
+                            // Written as a Make Public click would be, so the
+                            // next refresh shows making public, then public.
+                            self.pausedRecord = nil
+                            do {
+                                try paused.write(to: publicAccessRecordURL(), atomically: true, encoding: .utf8)
+                                self.attemptRecord = paused
+                                self.refreshQueued = true
+                                // The restarted tailscaled's own serve reset
+                                // can land just after; check again soon.
+                                Task { @MainActor [weak self] in
+                                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                                    self?.refresh()
+                                }
+                            } catch {
+                                writeError("Timeline remote access: could not resume public access: \(error)\n")
+                                let failure = PublicAccessFailure.other(reason: "could not record when it ends.")
+                                self.publicAccessFailure = failure
+                                self.showMakePublicFailure(failure)
+                            }
+                        default:
+                            self.giveUpResume("Remote Access is not running")
+                        }
+                    }
+                }
                 if case .publicAccess(_, let until) = shown, until.timeIntervalSinceNow < 30 {
                     self.scheduler?.scheduleNextPoll(at: until)
                 }
@@ -369,6 +483,14 @@ final class RemoteAccessController: ObservableObject {
                 }
             }
         }
+    }
+
+    // Drops a paused share that can't resume, saying why, as a failed Make
+    // Public click would.
+    private func giveUpResume(_ why: String) {
+        pausedRecord = nil
+        writeError("Timeline remote access: did not resume public access after the update: \(why).\n")
+        publicAccessFailure = .other(reason: "did not resume after the update: \(why).")
     }
 
     private func apply(_ next: RemoteAccessState) {

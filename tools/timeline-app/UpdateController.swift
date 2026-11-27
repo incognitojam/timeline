@@ -11,6 +11,8 @@ final class UpdateController: NSObject, ObservableObject, NSApplicationDelegate,
     private let maintenance = UpdateMaintenance(directory: timelineDataDirectory())
     @Published private var installation = UpdateInstallation()
     private var immediateInstall: (() -> Void)?
+    // Sparkle announced it will relaunch the app after installing.
+    private var relaunchAnnounced = false
 
     var updateStaged: Bool { installation.staged }
     var canInstallStagedUpdate: Bool {
@@ -39,6 +41,9 @@ final class UpdateController: NSObject, ObservableObject, NSApplicationDelegate,
 
     func checkForUpdates() {
         if let immediateInstall {
+            // Sparkle announces a relaunch only once, and the immediate
+            // handler installs and relaunches.
+            relaunchAnnounced = true
             immediateInstall()
         } else {
             controller?.checkForUpdates(nil)
@@ -60,6 +65,10 @@ final class UpdateController: NSObject, ObservableObject, NSApplicationDelegate,
         immediateInstall = immediateInstallHandler
         immediateInstallHandler()
         return true
+    }
+
+    func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
+        relaunchAnnounced = true
     }
 
     func updater(_ updater: SPUUpdater, userDidMake choice: SPUUserUpdateChoice,
@@ -103,14 +112,20 @@ final class UpdateController: NSObject, ObservableObject, NSApplicationDelegate,
                     try maintenance.recover()
                     installation.resetPreparation()
                     serviceAgent.resumeAfterUpdate()
+                    relaunchAnnounced = false
                     sender.reply(toApplicationShouldTerminate: false)
                     return
+                }
+                if relaunchAnnounced {
+                    NotificationCenter.default.post(name: .timelineQuittingForUpdate, object: nil)
                 }
                 sender.reply(toApplicationShouldTerminate: true)
             } catch {
                 installation.resetPreparation()
                 serviceAgent.resumeAfterUpdate()
                 issue = "Update paused: \(error.localizedDescription)"
+                // A later quit is not this relaunch; a retry announces again.
+                relaunchAnnounced = false
                 sender.reply(toApplicationShouldTerminate: false)
                 let alert = NSAlert()
                 alert.messageText = "Timeline could not prepare the update"
@@ -133,6 +148,7 @@ final class UpdateController: NSObject, ObservableObject, NSApplicationDelegate,
 
     private func recoverAfterCycle() {
         immediateInstall = nil
+        relaunchAnnounced = false
         guard !installation.staged, installation.prepared else { return }
         do {
             try maintenance.recover()
