@@ -68,7 +68,7 @@ export const CHECKPOINT_IDLE_DAYS = 90;
 /** Moves a checkpoint remembers, so a retry can reach back past more than one lost reply. */
 const MOVES_KEPT = 3;
 /** Where a new checkpoint's first catch-up starts. */
-const NEW_CHECKPOINT_DAYS = 7;
+export const NEW_CHECKPOINT_DAYS = 7;
 const MAX_TOKENS_MIN = 1000;
 const MAX_TOKENS_MAX = 50000;
 
@@ -238,6 +238,34 @@ function moveCheckpoint(db: Database, name: string, window: Window, now: Date): 
     db.query("DELETE FROM mcp_checkpoints WHERE used_at < ?").run(new Date(now.getTime() - CHECKPOINT_IDLE_DAYS * DAY_MS).toISOString());
     return window.untilId;
   }).immediate();
+}
+
+/** A checkpoint as the MCP page lists it. */
+export interface CheckpointSummary {
+  name: string;
+  /** The event id it stands at. */
+  position: number;
+  /** When the event at position was added to Timeline; null if none is left at or below it. */
+  added_at: string | null;
+  used_at: string;
+  /** When it is deleted unless a call uses it first. */
+  expires_at: string;
+}
+
+/** Every checkpoint, most recently used first. */
+export async function listCheckpoints(db: QueryExecutor, store: Database): Promise<CheckpointSummary[]> {
+  const rows = store.query("SELECT name, position, used_at FROM mcp_checkpoints ORDER BY used_at DESC, name").all() as { name: string; position: number; used_at: string }[];
+  return Promise.all(rows.map(async (row) => {
+    const added = await db.get<{ imported_at: string }>("SELECT imported_at FROM events WHERE id <= ? AND id > 0 ORDER BY id DESC LIMIT 1", row.position);
+    const expires = new Date(Date.parse(row.used_at) + CHECKPOINT_IDLE_DAYS * DAY_MS).toISOString();
+    return { ...row, added_at: added?.imported_at ?? null, expires_at: expires };
+  }));
+}
+
+/** Deletes the checkpoint with exactly this name; false when there is none. The next call with that name starts afresh. */
+export function deleteCheckpoint(store: Database, name: string): boolean {
+  if (!CHECKPOINT_NAME.test(name)) return false;
+  return store.query("DELETE FROM mcp_checkpoints WHERE name = ?").run(name).changes > 0;
 }
 
 async function resolveWindow(db: QueryExecutor, params: Page, now: Date, windowIdsOverride?: number): Promise<Window> {

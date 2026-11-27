@@ -92,6 +92,8 @@ import {
   fetchMcpSession,
   fetchMcpSessions,
   fetchMcpTokens,
+  fetchMcpCheckpoints,
+  deleteMcpCheckpoint,
   revokeMcpToken,
   fetchPlaylistDetail,
   fetchRecentMusicPlays,
@@ -246,6 +248,7 @@ export const queryKeys = {
     ["mcpSession", id, params] as const,
   mcpTokens: () => ["mcpTokens"] as const,
   mcpConnect: () => ["mcpConnect"] as const,
+  mcpCheckpoints: () => ["mcpCheckpoints"] as const,
   evalCasesRoot: () => ["evalCases"] as const,
   evalCases: () => ["evalCases", "list"] as const,
   evalCase: (id: number | undefined) => ["evalCases", "detail", id] as const,
@@ -1299,6 +1302,21 @@ export function useRevokeMcpToken() {
   return createMutation(() => ({
     mutationFn: (id: number) => revokeMcpToken(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.mcpTokens() }),
+  }));
+}
+
+export function useMcpCheckpoints() {
+  return createQuery(() => ({
+    queryKey: queryKeys.mcpCheckpoints(),
+    queryFn: ({ signal }) => fetchMcpCheckpoints(signal),
+  }));
+}
+
+export function useDeleteMcpCheckpoint() {
+  const queryClient = useQueryClient();
+  return createMutation(() => ({
+    mutationFn: (name: string) => deleteMcpCheckpoint(name),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.mcpCheckpoints() }),
   }));
 }
 

@@ -439,7 +439,7 @@ app.use("*", cors());
 app.route("/", authRoutes);
 app.route("/", statusRoutes);
 app.route("/", jobsRoutes);
-app.route("/", createMcpRoutes({ publicUrl: apiConfig.server.public_url }));
+app.route("/", createMcpRoutes({ db: readDb, publicUrl: apiConfig.server.public_url }));
 app.route("/", createMemoryRoutes(readDb));
 app.route("/", createConversationRefreshRoutes(readDb));
 app.route("/", evalRoutes);

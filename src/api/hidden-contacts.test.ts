@@ -73,6 +73,7 @@ const exempt = {
   "/api/journal/:date": "Journal-specific access is outside contact filtering.",
   "/api/location": "Location filtering is a documented later audit.",
   "/api/map/day/:date": "Map filtering is a documented later audit.",
+  "/api/mcp/checkpoints": "Returns get_updates checkpoint names and positions only.",
   "/api/mcp/sessions": "Returns MCP session metadata only.",
   "/api/mcp/tokens": "Returns MCP token metadata only.",
   "/api/mcp/connect": "Returns the public URL and public access state, no events.",
