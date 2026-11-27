@@ -57,3 +57,119 @@ enum PublicAccess {
         return end(of: record, now: now) == nil ? nil : (record, quit + Int(resumeWindow))
     }
 }
+
+// Whether the public address answers from the internet. Funnel being on in
+// the serve config does not mean it does: Tailscale's public DNS record for
+// the node can take minutes to appear. The app checks from its own end by
+// asking ts.net's authoritative name servers for the node's public address
+// (the node name never goes to a shared recursive resolver, whose negative
+// cache would then hold "no such name" for other clients), then making an HTTPS request with
+// no credentials to that address. Only a Funnel relay answers there for the
+// node's name, with a certificate only the node holds, so an answer proves
+// the path a hosted client takes. These helpers are the pure parts.
+enum PublicReachability: Equatable {
+    case checking
+    case reachable
+    // The last check's reason, once every check has failed.
+    case unconfirmed(reason: String)
+
+    // Seconds after Funnel came on at which to check, stopping at the first
+    // answer. Tailscale says the public record can take up to 10 minutes.
+    static let checkTimes: [TimeInterval] = [5, 15, 30, 60, 120, 240, 420, 600, 900]
+
+    // Only a node name under ts.net, in characters a DNS name can hold, is
+    // looked up, so the name can never be read as a dig or curl option.
+    static func isCheckable(_ name: String) -> Bool {
+        name.hasSuffix(".ts.net") && isHostName(name)
+    }
+
+    // Name servers from `dig +short NS <zone>`: host names only.
+    static func nameServers(inShortOutput output: String) -> [String] {
+        output.split(whereSeparator: \.isNewline).compactMap { line in
+            var host = line.trimmingCharacters(in: .whitespaces).lowercased()
+            if host.hasSuffix(".") { host.removeLast() }
+            return isHostName(host) ? host : nil
+        }
+    }
+
+    enum Answer: Equatable {
+        case addresses([String])
+        // The name's zone is delegated to these servers.
+        case referral([String])
+        case alias(String)
+        // No such name, or no address for it, yet.
+        case missing
+    }
+
+    // Reads `dig +norecurse +noall +answer +authority <name> A` from an
+    // authoritative server. Only public IPv4 addresses count: a tailnet or
+    // private address would not leave the Mac's networks.
+    static func answer(for name: String, inDigOutput output: String) -> Answer {
+        var addresses: [String] = []
+        var alias: String?
+        var servers: [String] = []
+        for line in output.split(whereSeparator: \.isNewline) where !line.hasPrefix(";") {
+            let fields = line.split(whereSeparator: \.isWhitespace).map(String.init)
+            guard fields.count >= 5, fields[2] == "IN" else { continue }
+            let owner = trimmedName(fields[0])
+            let value = trimmedName(fields[4])
+            switch fields[3] {
+            case "A" where owner == name || owner == alias:
+                if isPublicIPv4(value) { addresses.append(value) }
+            case "CNAME" where owner == name && isHostName(value):
+                alias = value
+            case "NS" where name.hasSuffix("." + owner) && owner.hasSuffix(".ts.net") && isHostName(value):
+                servers.append(value)
+            default:
+                break
+            }
+        }
+        if !addresses.isEmpty { return .addresses(addresses) }
+        if let alias { return .alias(alias) }
+        if !servers.isEmpty { return .referral(servers) }
+        return .missing
+    }
+
+    // From `dig +short <name> A`.
+    static func addresses(inShortOutput output: String) -> [String] {
+        output.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter(isPublicIPv4)
+    }
+
+    // curl's `%{http_code}`: any answer below 500 came from the service
+    // (MCP without a token is 401). 5xx means the service is not answering
+    // MCP: tailscaled could not reach it, or no MCP token exists (503).
+    static func isAnswered(httpCode: String) -> Bool {
+        guard let code = Int(httpCode.trimmingCharacters(in: .whitespacesAndNewlines)) else { return false }
+        return (200..<500).contains(code)
+    }
+
+    static func isPublicIPv4(_ text: String) -> Bool {
+        let parts = text.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4 else { return false }
+        var octets: [Int] = []
+        for part in parts {
+            guard (1...3).contains(part.count), part.allSatisfy({ ("0"..."9").contains($0) }), let value = Int(part),
+                  (0...255).contains(value) else { return false }
+            octets.append(value)
+        }
+        let (a, b) = (octets[0], octets[1])
+        return !(a == 0 || a == 10 || a == 127 || a >= 224
+            || (a == 100 && (64...127).contains(b))
+            || (a == 169 && b == 254)
+            || (a == 172 && (16...31).contains(b))
+            || (a == 192 && b == 168))
+    }
+
+    private static func trimmedName(_ text: String) -> String {
+        let lower = text.lowercased()
+        return lower.hasSuffix(".") ? String(lower.dropLast()) : lower
+    }
+
+    private static func isHostName(_ text: String) -> Bool {
+        let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789-.")
+        return text.contains(".") && !text.hasPrefix("-") && !text.hasPrefix(".")
+            && text.allSatisfy { allowed.contains($0) }
+    }
+}

@@ -45,6 +45,40 @@ struct PublicAccessTests {
         precondition(PublicAccess.paused(record: nil, forUpdate: true, boot: boot, uptime: quit, now: now) == nil, "update quit while tailnet only")
         precondition(PublicAccess.paused(record: "garbage", forUpdate: true, boot: boot, uptime: quit, now: now) == nil, "update quit with a malformed record")
         precondition(PublicAccess.paused(record: hour, forUpdate: true, boot: nil, uptime: quit, now: now) == nil, "update quit with boot unknown")
+
+        // Reachability: what the check reads from dig and curl.
+        let node = "node.example.ts.net"
+        precondition(PublicReachability.isCheckable(node), "a ts.net node name")
+        precondition(!PublicReachability.isCheckable("node.example.com"), "not under ts.net")
+        precondition(!PublicReachability.isCheckable("-p.example.ts.net"), "reads as an option")
+        precondition(!PublicReachability.isCheckable("node x.example.ts.net"), "space")
+        precondition(PublicReachability.nameServers(inShortOutput: "ns1.example.com.\nns2.example.net.\n;; junk\n")
+            == ["ns1.example.com", "ns2.example.net"], "name servers")
+        let answered = "\(node).\t300\tIN\tA\t203.0.113.7\n\(node).\t300\tIN\tA\t100.101.102.103\n"
+        precondition(PublicReachability.answer(for: node, inDigOutput: answered) == .addresses(["203.0.113.7"]), "public address, tailnet address dropped")
+        precondition(PublicReachability.answer(for: node, inDigOutput: "\(node).\t300\tIN\tA\t100.101.102.103\n") == .missing, "tailnet address only")
+        let missing = "ts.net.\t300\tIN\tSOA\tns1.example.com. admin.example.com. 1 86400 7200 604800 300\n"
+        precondition(PublicReachability.answer(for: node, inDigOutput: missing) == .missing, "no such name yet")
+        precondition(PublicReachability.answer(for: node, inDigOutput: "") == .missing, "empty")
+        let referral = "example.ts.net.\t300\tIN\tNS\tns.example.org.\n"
+        precondition(PublicReachability.answer(for: node, inDigOutput: referral) == .referral(["ns.example.org"]), "delegated zone")
+        precondition(PublicReachability.answer(for: node, inDigOutput: "ts.net.\t300\tIN\tNS\tns1.example.com.\n") == .missing, "ts.net itself is not a referral")
+        precondition(PublicReachability.answer(for: node, inDigOutput: "net.\t172800\tIN\tNS\ta.gtld-servers.net.\n") == .missing, "a referral above ts.net is not followed")
+        precondition(PublicReachability.answer(for: node, inDigOutput: "other.example.ts.net.\t300\tIN\tA\t203.0.113.7\n") == .missing, "another name's address")
+        let alias = "\(node).\t300\tIN\tCNAME\trelay.example.net.\n"
+        precondition(PublicReachability.answer(for: node, inDigOutput: alias) == .alias("relay.example.net"), "alias out of zone")
+        precondition(PublicReachability.answer(for: node, inDigOutput: alias + "relay.example.net.\t300\tIN\tA\t198.51.100.9\n")
+            == .addresses(["198.51.100.9"]), "alias with its address")
+        precondition(PublicReachability.addresses(inShortOutput: "relay.example.net.\n198.51.100.9\n10.0.0.1\n") == ["198.51.100.9"], "short addresses")
+        for address in ["10.1.2.3", "100.64.0.1", "100.127.255.255", "127.0.0.1", "169.254.1.1", "172.16.0.1", "192.168.1.1", "0.1.2.3", "224.0.0.1", "1.2.3", "1.2.3.256", "01.2.3.4x", "+1.2.3.4", "-0.2.3.4"] {
+            precondition(!PublicReachability.isPublicIPv4(address), "not public: \(address)")
+        }
+        precondition(PublicReachability.isPublicIPv4("100.128.0.1") && PublicReachability.isPublicIPv4("203.0.113.7"), "public")
+        precondition(PublicReachability.isAnswered(httpCode: "401"), "MCP without a token")
+        precondition(PublicReachability.isAnswered(httpCode: "403\n"), "forbidden path")
+        precondition(!PublicReachability.isAnswered(httpCode: "000"), "no answer")
+        precondition(!PublicReachability.isAnswered(httpCode: "502"), "service down behind Funnel")
+        precondition(!PublicReachability.isAnswered(httpCode: ""), "curl printed nothing")
         print("PublicAccessTests: ok")
     }
 }
