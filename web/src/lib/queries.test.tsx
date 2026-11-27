@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { cleanup, render, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { MemoryNote } from "@shared/memory";
 import type { ConversationStats } from "./api";
 import type { Contact, ContactWithStats } from "./types";
 import {
@@ -10,6 +11,7 @@ import {
   useConversationStats,
   useDeleteContact,
   useLinkIdentity,
+  useMemoryNote,
   useUnlinkIdentity,
   useUpdateContact,
 } from "./queries";
@@ -249,5 +251,45 @@ describe("conversation stats query", () => {
     await Promise.resolve();
 
     expect(statsQuery?.data?.totalMessages).toBe(22);
+  });
+});
+
+describe("memory note query", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the note as the cached index lists it until the note itself arrives, without caching it as the note", async () => {
+    const listed: MemoryNote = {
+      id: 7, project: "garden-app", name: "watering", kind: "topic", title: "Watering", summary: "Listed summary",
+      details: "", contact_id: null, created_at: "2026-11-01T10:00:00.000Z", updated_at: "2026-11-20T10:00:00.000Z",
+    };
+    let respond: (response: Response) => void = () => {};
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { respond = resolve; })));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(queryKeys.memoryIndex(), {
+      account: [],
+      projects: [{ key: "garden-app", useAccountMemory: true, notes: [listed] }],
+      deleted: [],
+    });
+    let note: ReturnType<typeof useMemoryNote> | undefined;
+    function NoteHarness() {
+      note = useMemoryNote(() => ({ project: "garden-app", name: "watering" }));
+      return null;
+    }
+    render(() => (
+      <QueryClientProvider client={client}>
+        <NoteHarness />
+      </QueryClientProvider>
+    ));
+
+    expect(note?.data?.title).toBe("Watering");
+    expect(note?.isPlaceholderData).toBe(true);
+    expect(client.getQueryData(queryKeys.memoryNote("garden-app", "watering"))).toBeUndefined();
+
+    respond(Response.json({ note: { ...listed, summary: "Saved summary" } }));
+    await waitFor(() => expect(note?.isPlaceholderData).toBe(false));
+    expect(note?.data?.summary).toBe("Saved summary");
   });
 });

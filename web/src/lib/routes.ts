@@ -19,6 +19,7 @@ export const ROUTES = {
   EVAL: "/eval",
   MCP_SESSION: "/mcp-sessions/:id",
   MEMORY: "/memory",
+  MEMORY_PROJECT: "/memory/project/:key",
   MEMORY_NOTE: "/memory/note/:name",
   CONVERSATIONS: "/conversations",
   AI_CHATS: "/ai-chats",
@@ -320,6 +321,10 @@ export function buildCodingConversationsUrl(params?: {
   if (params?.unassigned) searchParams.set("unassigned", "1");
   const query = searchParams.toString();
   return `${ROUTES.CODING_CONVERSATIONS}${query ? `?${query}` : ""}`;
+}
+
+export function buildMemoryProjectUrl(key: string): string {
+  return `/memory/project/${encodeURIComponent(key)}`;
 }
 
 /** A memory note's page; `project` is "" for the account's notes. */

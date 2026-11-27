@@ -3,10 +3,12 @@ import { render, screen, within } from "@solidjs/testing-library";
 import type { ParentProps } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import MemoryNoteView from "./MemoryNoteView";
+import MemoryProjectView from "./MemoryProjectView";
 import MemoryView from "./MemoryView";
 
 vi.mock("@solidjs/router", () => ({
-  useParams: () => ({ name: "overview" }),
+  useParams: () => ({ name: "overview", key: "garden-app" }),
+  useLocation: () => ({ pathname: "/memory", search: "" }),
   useSearchParams: () => [{ project: "garden-app" }],
   useNavigate: () => vi.fn(),
   A: (props: ParentProps<{ href: string; class?: string }>) => (
@@ -69,21 +71,39 @@ vi.mock("../lib/queries", () => ({
 }));
 
 describe("Memory page", () => {
-  it("groups account notes by kind, then projects with their overview first, then deleted notes", () => {
+  it("groups account notes by kind, then links to each project, then deleted notes", () => {
     render(() => <MemoryView />);
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
     expect(headings).toEqual(["You", "Topics", "People", "Projects", "Recently deleted"]);
 
-    const project = screen.getByText("garden-app").closest("details");
-    if (!project) throw new Error("project group missing");
-    expect(within(project).getByText(/account memory off/)).toBeTruthy();
-    expect((within(project).getByRole("checkbox", { name: /Use account memory/ }) as HTMLInputElement).checked).toBe(false);
-    const rows = within(project).getAllByRole("link").map((link) => link.textContent);
-    expect(rows[0]).toContain("Garden app");
-    expect(rows[1]).toContain("Watering");
+    const project = screen.getByRole("link", { name: /garden-app/ });
+    expect(project.getAttribute("href")).toBe("/memory/project/garden-app");
+    expect(project.textContent).toContain("2 notes · account memory off");
+    expect(screen.queryByRole("link", { name: /Watering/ })).toBeNull();
 
     expect(screen.getByRole("link", { name: /Tone \[draft\]/ }).getAttribute("href")).toBe("/memory/note/tone");
     expect(screen.getByRole("button", { name: "Restore" })).toBeTruthy();
+  });
+
+  it("shows a project's account-memory setting and its notes, overview first, under a way back to Memory", () => {
+    render(() => <MemoryProjectView />);
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("garden-app");
+    expect(document.title).toBe("garden-app · Memory · Timeline");
+    expect(screen.getByRole("link", { name: "Memory" }).getAttribute("href")).toBe("/memory");
+    expect((screen.getByRole("checkbox", { name: /Use account memory/ }) as HTMLInputElement).checked).toBe(false);
+    const rows = within(screen.getByRole("list")).getAllByRole("link").map((link) => link.textContent);
+    expect(rows[0]).toContain("Garden app");
+    expect(rows[1]).toContain("Watering");
+  });
+
+  it("leads a project's note back through its project", () => {
+    render(() => <MemoryNoteView />);
+    const crumbs = within(screen.getByRole("navigation", { name: "Breadcrumb" })).getAllByRole("link");
+    expect(crumbs.map((link) => [link.textContent?.trim(), link.getAttribute("href")])).toEqual([
+      ["Memory", "/memory"],
+      ["garden-app", "/memory/project/garden-app"],
+    ]);
+    expect(document.title).toBe("Garden app · Memory · Timeline");
   });
 
   it("says which file Import from Claude takes before offering the picker", () => {
