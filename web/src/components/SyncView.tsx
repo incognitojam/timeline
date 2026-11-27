@@ -19,7 +19,7 @@ import { getSourceColorStyle } from "../lib/source-styles";
 import { syncAuthStatusBadge, syncStatusBadgeClass } from "../lib/sync-auth-status";
 import { historyStatusLabel } from "../lib/sync-history";
 import { summarizeSyncJob } from "../lib/sync-jobs";
-import { IconWarning } from "../ui/icons";
+import { IconChevronRight, IconWarning } from "../ui/icons";
 import SourceIcon from "./SourceIcon";
 
 type ActivityEntry =
@@ -385,6 +385,10 @@ export default function SyncView() {
 
   const queuedJobs = () => status()?.queue.filter((job) => job.status === "queued") ?? [];
   const isSyncSource = (source: string) => syncSourcesQuery.data?.sources.some((entry) => entry.name === source) ?? false;
+  const notSetUp = () =>
+    (syncSourcesQuery.data?.sources ?? [])
+      .filter((source) => !source.configured)
+      .sort((a, b) => sourceLabel(a.name).localeCompare(sourceLabel(b.name)));
 
   const filteredActivity = (): ActivityEntry[] => {
     const filter = historyFilter();
@@ -638,6 +642,45 @@ export default function SyncView() {
             </Show>
           </Show>
         </div>
+
+        {/* Registered sources with no saved settings; the scheduler has no card for them. */}
+        <Show when={notSetUp().length > 0 || (syncSourcesQuery.isError && !syncSourcesQuery.data)}>
+          <div class="mb-8">
+            <h3 id="sync-not-set-up" class="flex items-center gap-2 mb-4">
+              <span class="text-xs font-medium text-muted-foreground uppercase tracking-wider">Not set up</span>
+              <span class="h-px flex-1 bg-border" />
+            </h3>
+            <Show
+              when={notSetUp().length > 0}
+              fallback={
+                <p class="text-sm text-muted-foreground">
+                  Couldn't load the sources that are not set up.{" "}
+                  <button type="button" class="text-primary hover:underline" onClick={() => void syncSourcesQuery.refetch()}>
+                    Retry
+                  </button>
+                </p>
+              }
+            >
+              <ul aria-labelledby="sync-not-set-up" class="rounded-lg bg-card divide-y divide-border">
+                <For each={notSetUp()}>
+                  {(source) => (
+                    <li>
+                      <A
+                        href={`/sync/${encodeURIComponent(source.name)}`}
+                        class="flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm text-inherit no-underline transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <SourceIcon source={source.name} />
+                        <span class="font-medium">{sourceLabel(source.name)}</span>
+                        <span class="min-w-0 flex-1 truncate text-muted-foreground">{source.description}</span>
+                        <IconChevronRight class="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                      </A>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </Show>
+          </div>
+        </Show>
 
         {/* File Upload */}
         <div class="mb-8">
