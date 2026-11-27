@@ -2,9 +2,9 @@
 """Name edge builds, check their update feed, and choose old DMGs to remove.
 
 Every edge build lives in one rolling prerelease: its `appcast.xml` and the
-DMGs of the newest builds. Removing old DMGs is the only deletion; the plan
-reads that one release and refuses the whole plan (raising Refusal, so the
-caller deletes nothing) on anything it does not fully recognise.
+DMGs of the newest builds. Removing old DMGs and patches is the only
+deletion; the plan reads that one release and refuses the whole plan (raising
+Refusal, so the caller deletes nothing) on anything it does not fully recognise.
 """
 
 import argparse
@@ -24,8 +24,11 @@ DELTA = re.compile(r"Timeline([1-9][0-9]*)-([1-9][0-9]*)\.delta")
 CHECKSUM = ".sha256"
 FEED_FILE = "appcast.xml"
 KEEP_BUILDS = 5
-# A normal build removes one DMG and its checksum; far more means something is wrong.
+# A normal build removes one DMG and its checksum and the previous build's
+# patches. A backlog, after a missed cleanup or fewer kept builds, is removed
+# oldest first over several runs rather than refused.
 MAX_EXPIRED_BUILDS = 5
+MAX_SUPERSEDED_PATCHES = 50
 SPARKLE = "{http://www.andymatuschak.org/xml-namespaces/sparkle}"
 
 
@@ -177,7 +180,10 @@ def prune_plan(release: object, release_tag: str, current: int) -> list[str]:
     `release` is the GitHub release object for `release_tag`, read after the
     feed was switched to build `current`. It must be that published
     prerelease and hold the feed plus edge DMGs, each with its checksum, the
-    newest being `current`. The newest `KEEP_BUILDS` DMGs and their checksums stay.
+    newest being `current`. The newest `KEEP_BUILDS` DMGs and their checksums
+    stay, as do the patches to `current`, the only ones the feed offers. At
+    most `MAX_EXPIRED_BUILDS` DMGs and `MAX_SUPERSEDED_PATCHES` patches go per
+    run, oldest first.
     """
     names = _asset_names(release, release_tag)
     if FEED_FILE not in names:
@@ -186,9 +192,10 @@ def prune_plan(release: object, release_tag: str, current: int) -> list[str]:
     old_patches = []
     for name in names:
         patch = DELTA.fullmatch(name)
-        if patch and int(patch[1]) in builds.values() and int(patch[2]) < int(patch[1]):
+        # A patch to a build whose DMG an earlier run removed is superseded too.
+        if patch and int(patch[2]) < int(patch[1]) and (int(patch[1]) in builds.values() or int(patch[1]) < current):
             if int(patch[1]) != current:
-                old_patches.append(name)
+                old_patches.append((int(patch[1]), int(patch[2]), name))
             continue
         if name != FEED_FILE and name not in builds and name.removesuffix(CHECKSUM) not in builds:
             raise Refusal(f"unexpected asset {name!r}")
@@ -198,12 +205,10 @@ def prune_plan(release: object, release_tag: str, current: int) -> list[str]:
     if max(builds.values(), default=None) != current:
         raise Refusal(f"the newest DMG on {release_tag} is not build {current}")
     kept = sorted(builds.values(), reverse=True)[:KEEP_BUILDS]
-    doomed = sorted(old_patches)
-    for build, dmg in sorted((build, dmg) for dmg, build in builds.items()):
-        if build not in kept:
-            doomed += [dmg, dmg + CHECKSUM]
-    if len(builds) - len(kept) > MAX_EXPIRED_BUILDS or len(old_patches) > MAX_EXPIRED_BUILDS * KEEP_BUILDS:
-        raise Refusal("cleanup exceeds five builds of expired images or superseded patches")
+    doomed = [name for _, _, name in sorted(old_patches)[:MAX_SUPERSEDED_PATCHES]]
+    expired = sorted((build, dmg) for dmg, build in builds.items() if build not in kept)
+    for _, dmg in expired[:MAX_EXPIRED_BUILDS]:
+        doomed += [dmg, dmg + CHECKSUM]
     return doomed
 
 
