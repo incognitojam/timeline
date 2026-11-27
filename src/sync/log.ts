@@ -1,6 +1,7 @@
 import { Database } from "../db/sqlite";
 import { getAppStateDb } from "../db/app-state";
 import type { AttachmentDescriptionHistoryPoint } from "../shared/attachments";
+import { foundNothingNew } from "../shared/sync-outcome";
 import type { SyncLogEntry, SyncResult } from "./types";
 
 /**
@@ -281,6 +282,7 @@ export function formatSyncResult(result: SyncResult): string {
 
   if (result.skipped) {
     const reason = (result.metadata?.skipReason as string | undefined) ?? "guard deferred";
+    if (foundNothingNew(true, result.metadata)) return `\x1b[32m✓\x1b[0m ${result.source}: no changes — ${reason} (${duration})`;
     return `\x1b[33m⤼\x1b[0m ${result.source}: deferred — ${reason} (${duration})`;
   }
 

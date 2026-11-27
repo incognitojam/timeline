@@ -1,3 +1,4 @@
+import { foundNothingNew } from "@shared/sync-outcome";
 import { formatTime } from "./format";
 import type { SyncHistoryEntry } from "./api";
 
@@ -48,9 +49,10 @@ export function historyStatusLabel(entry: SyncHistoryEntry): { label: string; cl
     const reason = metadata && typeof metadata === "object" && !Array.isArray(metadata)
       ? (metadata as Record<string, unknown>).skipReason
       : undefined;
+    const nothingNew = foundNothingNew(true, metadata);
     return {
-      label: `Deferred${span}`,
-      className: "text-yellow-400",
+      label: nothingNew ? `No changes${span && `, checked${span}`}` : `Deferred${span}`,
+      className: nothingNew ? "text-muted-foreground" : "text-yellow-400",
       ...(typeof reason === "string" ? { title: reason } : {}),
     };
   }

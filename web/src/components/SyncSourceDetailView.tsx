@@ -1,5 +1,6 @@
 import { A, useParams } from "@solidjs/router";
 import { sourceLabel } from "@shared/sources";
+import { foundNothingNew } from "@shared/sync-outcome";
 import type { EChartsOption } from "echarts";
 import { EChartsAutoSize } from "../ui/echarts";
 import { createEffect, createMemo, createSignal, For, on, onCleanup, Show } from "solid-js";
@@ -178,12 +179,14 @@ export default function SyncSourceDetailView() {
     // A collapsed skip row counts once per scheduled skip it stands for.
     const runs = (rows: typeof finished) => rows.reduce((sum, e) => sum + (e.repeat_count ?? 1), 0);
     const total = runs(finished);
-    const deferred = runs(finished.filter((e) => e.skipped === 1));
+    const deferred = runs(finished.filter((e) => e.skipped === 1 && !foundNothingNew(e.skipped, e.metadata)));
     const blocked = runs(finished.filter((e) => e.skipped === 1 && e.error !== null));
     const completed = finished.filter((e) => e.skipped !== 1);
-    const succeeded = completed.filter((e) => e.success === 1).length;
-    const failed = completed.filter((e) => e.success === 0).length;
-    const successRate = completed.length > 0 ? (succeeded / completed.length) * 100 : null;
+    // A run that found nothing new ran and succeeded.
+    const ran = finished.filter((e) => e.skipped !== 1 || foundNothingNew(e.skipped, e.metadata));
+    const succeeded = runs(ran.filter((e) => e.success === 1));
+    const failed = runs(ran.filter((e) => e.success === 0));
+    const successRate = succeeded + failed > 0 ? (succeeded / (succeeded + failed)) * 100 : null;
 
     const durations = completed
       .map((e) => e.duration_ms)

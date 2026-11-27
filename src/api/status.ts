@@ -23,6 +23,7 @@ import { SYNC_SOURCES } from "../sync/sources";
 import { loadSyncSourcesConfig } from "../sync/config";
 import { getRecentSyncLogs } from "../sync/log";
 import type { SyncLogEntry } from "../sync/types";
+import { foundNothingNew } from "../shared/sync-outcome";
 import { runningVersionInfo } from "../version";
 import { getSourceFreshness } from "./source-freshness";
 import { getStorageStatus } from "./storage-status";
@@ -89,6 +90,7 @@ export function setServiceComponents(options: {
 export interface LastSyncRun {
   time: string;
   success: boolean;
+  /** Deferred; a run that found nothing new is not (see foundNothingNew). */
   skipped: boolean;
   isRunning: boolean;
   eventsAdded: number;
@@ -205,7 +207,7 @@ export function getLastSyncForSource(source: string): LastSyncRun | null {
   return {
     time: time + "Z",
     success: entry.success === 1,
-    skipped: entry.skipped === 1,
+    skipped: entry.skipped === 1 && !foundNothingNew(entry.skipped, entry.metadata),
     isRunning: entry.finished_at === null,
     eventsAdded: entry.events_added,
     eventsUpdated: entry.events_updated,
