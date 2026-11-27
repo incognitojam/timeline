@@ -59,7 +59,7 @@
     "hono": "^4.13.21",
     "jose": "^6.2.18",
     "js-tiktoken": "^1.0.21",
-    "marked": "^18.2.1",
+    "marked": "^18.3.0",
     "sharp": "^0.35.5",
     "sqlite-vec": "^0.1.9",
     "thumbhash": "^0.1.1",
