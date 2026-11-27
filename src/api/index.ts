@@ -497,7 +497,7 @@ app.get("/api/search", async (c) => {
 
   // Generate next cursor from last event
   const lastEvent = events[events.length - 1];
-  const nextCursor = events.length === limit && lastEvent ? createCursor(lastEvent) : null;
+  const nextCursor = events.length === limit && lastEvent ? createCursor(lastEvent, { allowNullTimestamp: true }) : null;
 
   return c.json({ events, count: events.length, nextCursor });
 });
@@ -1473,7 +1473,7 @@ app.get("/api/recent", async (c) => {
   });
 
   const lastEvent = events[events.length - 1];
-  const nextCursor = events.length === limit && lastEvent ? createCursor(lastEvent) : null;
+  const nextCursor = events.length === limit && lastEvent ? createCursor(lastEvent, { allowNullTimestamp: true }) : null;
 
   return c.json({ events, count: events.length, nextCursor });
 });
@@ -2032,7 +2032,7 @@ app.get("/api/contacts/:id/events", async (c) => {
   });
 
   const lastEvent = events[events.length - 1];
-  const nextCursor = events.length === limit && lastEvent ? createCursor(lastEvent) : null;
+  const nextCursor = events.length === limit && lastEvent ? createCursor(lastEvent, { allowNullTimestamp: true }) : null;
 
   return c.json({ events, count: events.length, nextCursor });
 });

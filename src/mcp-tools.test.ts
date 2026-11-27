@@ -874,6 +874,32 @@ describe("query_events — date filter with query/contact", () => {
   });
 });
 
+describe("query_events — cut-off notice", () => {
+  beforeEach(setup);
+  afterEach(teardown);
+
+  test("says how many matched and pages on with the cursor it gives", async () => {
+    const alice = makeContact("Alice");
+    linkIdentity("discord", "111", alice);
+    for (const day of ["01", "02", "03"]) {
+      insertEvent({ source: "discord", type: "message:dm", timestamp: `2026-07-${day}T10:00:00.000Z`, content: `hello on the ${day}`, people: ["discord:111"] });
+    }
+    const handlers = captureHandlers(db);
+    const args = { contact: "Alice", start_date: "2026-07-01", end_date: "2026-07-31", limit: 2 };
+
+    const first = (await handlers.get("query_events")!(args)).content[0].text;
+    expect(first).toContain("Showing 2 of 3 events, oldest first. Next page: the same arguments with cursor:");
+    expect(first).toContain("hello on the 02");
+    const cursor = first.match(/cursor: "([^"]+)"/)?.[1];
+
+    const second = (await handlers.get("query_events")!({ ...args, cursor })).content[0].text;
+    expect(second).toContain("Showing 1 of 3 events, oldest first; this is the last page.");
+    expect(second).not.toContain("Next page");
+    expect(second).toContain("hello on the 03");
+    expect(second).not.toContain("hello on the 02");
+  });
+});
+
 describe("get_context — source filters", () => {
   beforeEach(setup);
   afterEach(teardown);

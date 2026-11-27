@@ -128,6 +128,34 @@ export function parseCursor(
   return { timestamp: match[1], id };
 }
 
+/**
+ * Continue after `cursor` in a `ORDER BY <timestamp> <order>, <id> <order>`
+ * listing, including the untimed rows SQLite sorts first ascending and last
+ * descending. A cursor that does not parse adds nothing.
+ */
+export function addCursorCondition(
+  conditions: string[],
+  params: (string | number)[],
+  cursor: string,
+  sortOrder: "ASC" | "DESC",
+  timestamp: string,
+  id: string,
+): void {
+  const parsed = parseCursor(cursor, { allowNullTimestamp: true });
+  if (!parsed) return;
+  const op = sortOrder === "DESC" ? "<" : ">";
+  if (parsed.timestamp === null) {
+    conditions.push(sortOrder === "DESC"
+      ? `(${timestamp} IS NULL AND ${id} < ?)`
+      : `((${timestamp} IS NULL AND ${id} > ?) OR ${timestamp} IS NOT NULL)`);
+    params.push(parsed.id);
+    return;
+  }
+  const untimed = sortOrder === "DESC" ? ` OR ${timestamp} IS NULL` : "";
+  conditions.push(`(${timestamp} ${op} ? OR (${timestamp} = ? AND ${id} ${op} ?)${untimed})`);
+  params.push(parsed.timestamp, parsed.timestamp, parsed.id);
+}
+
 /** Create a cursor from an event. */
 export function createCursor(event: TimelineEvent): string | null;
 /** Create a cursor that can represent a null timestamp with the shared sentinel. */
@@ -376,20 +404,7 @@ export async function searchTimeline(db: QueryExecutor, options: SearchOptions):
   const sortOrder = sort === 'asc' ? "ASC" : sort === 'desc' ? "DESC" : (startDate || endDate) ? "ASC" : "DESC";
 
   // Cursor-based pagination
-  if (cursor) {
-    const parsed = parseCursor(cursor);
-    if (parsed) {
-      if (sortOrder === "DESC") {
-        // For DESC, get events before the cursor (older)
-        conditions.push(`(e.timestamp < ? OR (e.timestamp = ? AND e.id < ?))`);
-        params.push(parsed.timestamp, parsed.timestamp, parsed.id);
-      } else {
-        // For ASC, get events after the cursor (newer)
-        conditions.push(`(e.timestamp > ? OR (e.timestamp = ? AND e.id > ?))`);
-        params.push(parsed.timestamp, parsed.timestamp, parsed.id);
-      }
-    }
-  }
+  if (cursor) addCursorCondition(conditions, params, cursor, sortOrder, "e.timestamp", "e.id");
 
   const whereClause = conditions.length > 0 ? `AND ${conditions.join(" AND ")}` : "";
   const hiddenClause = includeHiddenContacts ? "" : await buildHiddenEventClause(db, "e");
@@ -412,9 +427,9 @@ export async function searchTimeline(db: QueryExecutor, options: SearchOptions):
  */
 export async function getEvents(
   db: QueryExecutor,
-  options: { date?: string; startDate?: string; endDate?: string; source?: string; type?: string; limit?: number; includeHiddenContacts?: boolean }
+  options: { date?: string; startDate?: string; endDate?: string; source?: string; type?: string; limit?: number; cursor?: string; includeHiddenContacts?: boolean }
 ): Promise<TimelineEvent[]> {
-  const { date, startDate, endDate, source, type, limit = 100, includeHiddenContacts = false } = options;
+  const { date, startDate, endDate, source, type, limit = 100, cursor, includeHiddenContacts = false } = options;
 
   const conditions: string[] = [];
   const params: (string | number)[] = [];
@@ -449,18 +464,25 @@ export async function getEvents(
     params.push(type + '%');
   }
 
-  const whereClause = conditions.length > 0 ? `AND ${conditions.join(" AND ")}` : "";
-  const hiddenClause = includeHiddenContacts ? "" : await buildHiddenEventClause(db, "e");
-
   // ASC when browsing a specific date/range (chronological), DESC otherwise
   const sortOrder = (date || startDate || endDate) ? "ASC" : "DESC";
+
+  const parsedCursor = cursor ? parseCursor(cursor) : null;
+  if (parsedCursor) {
+    const op = sortOrder === "DESC" ? "<" : ">";
+    conditions.push(`(timestamp ${op} ? OR (timestamp = ? AND id ${op} ?))`);
+    params.push(parsedCursor.timestamp, parsedCursor.timestamp, parsedCursor.id);
+  }
+
+  const whereClause = conditions.length > 0 ? `AND ${conditions.join(" AND ")}` : "";
+  const hiddenClause = includeHiddenContacts ? "" : await buildHiddenEventClause(db, "e");
 
   const sql = `
     SELECT * FROM events e
     WHERE 1=1
     ${whereClause}
     ${hiddenClause}
-    ORDER BY timestamp ${sortOrder}
+    ORDER BY timestamp ${sortOrder}, id ${sortOrder}
     LIMIT ?
   `;
   params.push(limit);
@@ -478,11 +500,13 @@ export async function getEventContext(
     timestamp?: string;
     hoursWindow?: number;
     limit?: number;
+    /** Continue after this event (a createCursor value from the previous page). */
+    cursor?: string;
     sources?: string[];
     excludeSources?: string[];
   }
 ): Promise<TimelineEvent[]> {
-  const { eventId, timestamp, hoursWindow = 2, limit = 50, sources, excludeSources } = options;
+  const { eventId, timestamp, hoursWindow = 2, limit = 50, cursor, sources, excludeSources } = options;
 
   let centerTimestamp = timestamp;
 
@@ -510,11 +534,16 @@ export async function getEventContext(
     conditions.push(`source NOT IN (${excludeSources.map(() => "?").join(", ")})`);
     params.push(...excludeSources);
   }
+  const parsedCursor = cursor ? parseCursor(cursor) : null;
+  if (parsedCursor) {
+    conditions.push("(timestamp > ? OR (timestamp = ? AND id > ?))");
+    params.push(parsedCursor.timestamp, parsedCursor.timestamp, parsedCursor.id);
+  }
 
   const sql = `
     SELECT * FROM events
     WHERE ${conditions.join(" AND ")}
-    ORDER BY timestamp
+    ORDER BY timestamp, id
     LIMIT ?
   `;
   params.push(limit);
