@@ -2,12 +2,10 @@
  * MCP Tools Registration
  *
  * Shared tool definitions for both stdio and HTTP MCP transports.
- * 18 tools: list_mcp_sessions, get_mcp_session, search_mcp_tool_calls,
- *           query_events, get_context, get_summary, get_schema, run_sql,
- *           list_contacts, get_contact_info, remember_contact_fact,
- *           semantic_search, export_conversation, list_memory,
- *           get_memory_note, save_memory_note, delete_memory_note,
- *           get_updates
+ * Tools: get_updates, search_mcp_tool_calls, query_events,
+ *        export_conversation, get_context, get_schema, run_sql, list_contacts,
+ *        get_contact_info, semantic_search, list_memory, get_memory_note,
+ *        save_memory_note, delete_memory_note
  */
 
 import type { Database } from "bun:sqlite";
@@ -20,6 +18,7 @@ import { getAppStateDb } from "./db/app-state";
 import {
   deleteMemoryNote,
   getMemoryNote,
+  listContactMemoryNotes,
   listMemoryNotes,
   MEMORY_LIMITS,
   projectScope,
@@ -32,7 +31,6 @@ import type { QueryExecutor } from "./db/pool";
 import {
   contactEventGroups,
   countContactEvents,
-  createContactMemory,
   createCursor,
   getAliasesForContact,
   getContact,
@@ -42,8 +40,6 @@ import {
   getIdentitiesForContact,
   getRawDataSchema,
   getRecentEvents,
-  getStats,
-  getSummary,
   hydrateEventsById,
   listContacts,
   listSources,
@@ -67,14 +63,13 @@ import {
   DEFAULT_MCP_ARGS_EXCERPT_CHARS,
   DEFAULT_MCP_RESULT_EXCERPT_CHARS,
   renderMcpCallSearchMarkdown,
+  renderMcpSessionHeader,
   renderMcpSessionListMarkdown,
-  renderMcpSessionMarkdown,
 } from "./mcp/render";
 import {
   getMcpSession,
   getMcpSessionStats,
   listMcpSessions,
-  listMcpToolCalls,
   MCP_TOOL_CALL_SINCE_ERROR,
   normalizeMcpToolCallSince,
   searchMcpToolCalls,
@@ -632,7 +627,6 @@ type ToolCallExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 export function registerTools(
   server: McpServer,
   db: QueryExecutor,
-  writeDb?: Database,
   options: RegisterToolsOptions = {},
 ): void {
   const recordToolCall = options.recordToolCall;
@@ -652,6 +646,32 @@ export function registerTools(
     if (options.readOnly && !annotations.readOnlyHint) registered.disable();
   }
   const mcpTranscriptExcerptHint = `Arguments are excerpted to ${DEFAULT_MCP_ARGS_EXCERPT_CHARS} chars and results to ${DEFAULT_MCP_RESULT_EXCERPT_CHARS} chars.`;
+
+  /**
+   * The session a search is scoped to ("current" is the caller's) and the
+   * session's own facts to lead its calls; an unknown id is an error.
+   */
+  function sessionScope(
+    requested: string | undefined,
+    extra: ToolCallExtra | undefined,
+    historyDb: Database,
+  ): { sessionId?: string; sessionHeader: string; error?: never } | { error: CallToolResult } {
+    if (requested === undefined) return { sessionHeader: "" };
+    const sessionId = requested === "current" ? getCallerSessionId(extra) : requested;
+    if (!sessionId) {
+      return {
+        error: {
+          isError: true,
+          content: [{ type: "text" as const, text: "Error: this MCP request has no session id, so \"current\" names no session. List sessions with sessions: true." }],
+        },
+      };
+    }
+    const session = getMcpSession(sessionId, historyDb);
+    if (!session) {
+      return { error: { isError: true, content: [{ type: "text" as const, text: `Error: MCP session not found: ${sessionId}` }] } };
+    }
+    return { sessionId, sessionHeader: `${renderMcpSessionHeader(session, getMcpSessionStats(sessionId, historyDb)).join("\n")}\n\n` };
+  }
 
   async function instrumentToolCall(
     name: string,
@@ -694,88 +714,19 @@ export function registerTools(
   }
 
   // ========================================================================
-  // 1. list_mcp_sessions — recent MCP session history
-  // ========================================================================
-  tool(
-    "list_mcp_sessions",
-    `List recently recorded MCP sessions as markdown, including transport, client, call count, error count, and last activity.
-
-Use this to find previous sessions before calling get_mcp_session. Results are paged. ${mcpTranscriptExcerptHint}`,
-    {
-      limit: z.number().int().min(1).max(100).optional().default(20).describe("Max sessions to return (default 20, max 100)"),
-      offset: z.number().int().min(0).optional().default(0).describe("Number of sessions to skip for paging"),
-    },
-    READS,
-    async (params, extra) => instrumentToolCall("list_mcp_sessions", params, extra, async () => {
-      const limit = params.limit ?? 20;
-      const offset = params.offset ?? 0;
-      const sessions = listMcpSessions({ limit, offset }, getMcpHistoryDb());
-      return {
-        content: [{ type: "text" as const, text: renderMcpSessionListMarkdown(sessions) }],
-      };
-    }),
-  );
-
-  // ========================================================================
-  // 2. get_mcp_session — one MCP session transcript
-  // ========================================================================
-  tool(
-    "get_mcp_session",
-    `Render one recorded MCP session transcript as markdown.
-
-If session_id is omitted, this defaults to the caller's own recorded MCP session when available. For stdio clients, sessions are per process, so a fresh stdio process may have little or no own transcript; use list_mcp_sessions or search_mcp_tool_calls for older history. Results are paged. ${mcpTranscriptExcerptHint}`,
-    {
-      session_id: z.string().min(1).optional().describe("MCP session id to render. Omit to inspect the caller's own session when available."),
-      limit: z.number().int().min(1).max(200).optional().default(100).describe("Max tool calls to include (default 100, max 200)"),
-      offset: z.number().int().min(0).optional().default(0).describe("Number of tool calls to skip for paging"),
-    },
-    READS,
-    async (params, extra) => instrumentToolCall("get_mcp_session", params, extra, async () => {
-      const sessionId = params.session_id ?? getCallerSessionId(extra);
-      const limit = params.limit ?? 100;
-      const offset = params.offset ?? 0;
-      if (!sessionId) {
-        return {
-          isError: true,
-          content: [{
-            type: "text" as const,
-            text: "Error: session_id is required because this MCP request did not include a caller session id. Use list_mcp_sessions or search_mcp_tool_calls to inspect recorded history.",
-          }],
-        };
-      }
-
-      const historyDb = getMcpHistoryDb();
-      const session = getMcpSession(sessionId, historyDb);
-      if (!session) {
-        return {
-          isError: true,
-          content: [{ type: "text" as const, text: `Error: MCP session not found: ${sessionId}` }],
-        };
-      }
-
-      const calls = listMcpToolCalls(sessionId, { limit, offset }, historyDb);
-      const stats = getMcpSessionStats(sessionId, historyDb);
-      return {
-        content: [{ type: "text" as const, text: renderMcpSessionMarkdown(session, calls, stats) }],
-      };
-    }),
-  );
-
-  // ========================================================================
-  // 3. search_mcp_tool_calls — cross-session MCP call search
+  // 1. search_mcp_tool_calls — cross-session MCP call search
   // ========================================================================
   tool(
     "search_mcp_tool_calls",
-    `Search recorded MCP tool calls across sessions and render matching calls as markdown.
-
-Filters are composable: session_id scopes to one session, tool_name scopes to one tool, errors_only keeps failed calls, and since accepts an ISO timestamp with timezone. Results are paged, newest first. ${mcpTranscriptExcerptHint}`,
+    `Search recorded MCP tool calls across sessions, newest first, as markdown. Filters compose: session_id ("current" for this session), tool_name, errors_only, and since (an ISO timestamp with timezone). With sessions: true, lists recorded sessions instead (transport, client, call and error counts, last activity). Paged with limit and offset. ${mcpTranscriptExcerptHint}`,
     {
-      session_id: z.string().min(1).optional().describe("Optional session id to scope the search"),
+      sessions: z.boolean().optional().default(false).describe("List sessions instead of calls; other filters are ignored"),
+      session_id: z.string().min(1).optional().describe('Scope to one session; "current" is this one'),
       tool_name: z.string().min(1).optional().describe("Optional exact tool name filter"),
       errors_only: z.boolean().optional().default(false).describe("Only return tool calls recorded as errors"),
       since: z.string().optional().describe("Only return calls created at or after this ISO timestamp with timezone"),
-      limit: z.number().int().min(1).max(200).optional().default(100).describe("Max tool calls to return (default 100, max 200)"),
-      offset: z.number().int().min(0).optional().default(0).describe("Number of tool calls to skip for paging"),
+      limit: z.number().int().min(1).max(200).optional().default(100).describe("Max calls or sessions to return (default 100, max 200)"),
+      offset: z.number().int().min(0).optional().default(0).describe("Number to skip for paging"),
     },
     READS,
     async (params, extra) => instrumentToolCall("search_mcp_tool_calls", params, extra, async () => {
@@ -783,6 +734,14 @@ Filters are composable: session_id scopes to one session, tool_name scopes to on
       const limit = params.limit ?? 100;
       const offset = params.offset ?? 0;
       const historyDb = getMcpHistoryDb();
+      if (params.sessions) {
+        return {
+          content: [{ type: "text" as const, text: renderMcpSessionListMarkdown(listMcpSessions({ limit, offset }, historyDb)) }],
+        };
+      }
+      const scope = sessionScope(params.session_id, extra, historyDb);
+      if (scope.error) return scope.error;
+      const { sessionId, sessionHeader } = scope;
       let since: string | undefined;
       if (params.since !== undefined) {
         const normalizedSince = normalizeMcpToolCallSince(params.since, historyDb);
@@ -796,7 +755,7 @@ Filters are composable: session_id scopes to one session, tool_name scopes to on
       }
 
       const calls = searchMcpToolCalls({
-        sessionId: params.session_id,
+        sessionId,
         toolName: params.tool_name,
         isError: errorsOnly,
         since,
@@ -806,8 +765,8 @@ Filters are composable: session_id scopes to one session, tool_name scopes to on
       return {
         content: [{
           type: "text" as const,
-          text: renderMcpCallSearchMarkdown(calls, {
-            sessionId: params.session_id,
+          text: sessionHeader + renderMcpCallSearchMarkdown(calls, {
+            sessionId,
             toolName: params.tool_name,
             errorsOnly,
             since: params.since,
@@ -820,7 +779,7 @@ Filters are composable: session_id scopes to one session, tool_name scopes to on
   );
 
   // ========================================================================
-  // 4. query_events — unified search/browse/filter
+  // 2. query_events — unified search/browse/filter
   // ========================================================================
   tool(
     "query_events",
@@ -965,7 +924,7 @@ Examples:
   );
 
   // ========================================================================
-  // 5. export_conversation — full untruncated conversation transcript
+  // 3. export_conversation — full untruncated conversation transcript
   // ========================================================================
   tool(
     "export_conversation",
@@ -1058,7 +1017,7 @@ Examples:
   );
 
   // ========================================================================
-  // 6. get_context — events around a specific time
+  // 4. get_context — events around a specific time
   // ========================================================================
   tool(
     "get_context",
@@ -1100,100 +1059,7 @@ Examples:
   );
 
   // ========================================================================
-  // 7. get_summary — period summary or global stats
-  // ========================================================================
-  tool(
-    "get_summary",
-    `Get a summary of timeline data. With date params, returns an aggregated breakdown for that period. Without date params, returns global stats (total events, date range, source counts). Source filters apply to both.`,
-    {
-      date: z.string().optional().describe("Single date (YYYY-MM-DD)"),
-      start_date: z.string().optional().describe("Start of range (ISO 8601)"),
-      end_date: z.string().optional().describe("End of range (ISO 8601)"),
-      source: z.string().optional().describe("Only include these sources (comma-separated, e.g. \"discord,spotify\")"),
-      exclude_source: z.string().optional().describe("Drop these sources from the summary (comma-separated) — e.g. \"claude-code,conductor,t3code,codex\" to hide AI agent-session noise, or \"spotify-friends\" to hide friends' activity"),
-    },
-    READS,
-    async (params, extra) => instrumentToolCall("get_summary", params, extra, async () => {
-      const { date, start_date, end_date, source, exclude_source } = params;
-      const includeSources = splitSources(source);
-      const excludeSources = splitSources(exclude_source);
-      // No date params → global stats overview (source filters applied to the cached stats)
-      if (!date && !start_date && !end_date) {
-        const stats = await getStats(db, writeDb);
-        const visibleSources = stats.sources.filter(
-          (s) =>
-            (!includeSources || includeSources.includes(s.source)) &&
-            !excludeSources?.includes(s.source)
-        );
-        const filtered = includeSources !== undefined || excludeSources !== undefined;
-        const totalEvents = filtered
-          ? visibleSources.reduce((sum, s) => sum + s.count, 0)
-          : stats.total_events;
-
-        const lines = [
-          `Total events: ${totalEvents}`,
-          `Date range: ${stats.date_range.earliest || "N/A"} to ${stats.date_range.latest || "N/A"}`,
-          "",
-          "Events by source:",
-        ];
-
-        const grouped: Record<string, Record<string, number>> = {};
-        for (const s of visibleSources) {
-          if (!grouped[s.source]) grouped[s.source] = {};
-          grouped[s.source][s.type] = s.count;
-        }
-
-        for (const [source, types] of Object.entries(grouped)) {
-          const total = Object.values(types).reduce((a, b) => a + b, 0);
-          lines.push(`  ${source}: ${total}`);
-          for (const [type, count] of Object.entries(types)) {
-            lines.push(`    - ${type}: ${count}`);
-          }
-        }
-
-        return {
-          content: [{ type: "text" as const, text: lines.join("\n") }],
-        };
-      }
-
-      // Date params → period summary
-      const summary = await getSummary(db, {
-        date,
-        startDate: start_date,
-        endDate: end_date,
-        sources: includeSources,
-        excludeSources,
-      });
-
-      if (summary.length === 0) {
-        return {
-          content: [{ type: "text" as const, text: "No events found for this time period." }],
-        };
-      }
-
-      const lines: string[] = [];
-      for (const s of summary) {
-        if (s.conversations && s.conversations.length > 0) {
-          // Message types: show per-conversation breakdown
-          lines.push(`${s.source}/${s.type}: ${s.count}`);
-          for (const conv of s.conversations) {
-            lines.push(`  - ${conv.name}: ${conv.count}`);
-          }
-        } else {
-          // Non-message types: show sample titles
-          const samples = s.sample_titles.length > 0 ? ` (e.g., ${s.sample_titles.slice(0, 3).join(", ")})` : "";
-          lines.push(`${s.source}/${s.type}: ${s.count}${samples}`);
-        }
-      }
-
-      return {
-        content: [{ type: "text" as const, text: lines.join("\n") }],
-      };
-    })
-  );
-
-  // ========================================================================
-  // 8. get_schema — DB schema + source catalog, or raw_data JSON paths
+  // 5. get_schema — DB schema + source catalog, or raw_data JSON paths
   // ========================================================================
   tool(
     "get_schema",
@@ -1255,7 +1121,7 @@ Examples:
   );
 
   // ========================================================================
-  // 9. run_sql — raw SELECT queries
+  // 6. run_sql — raw SELECT queries
   // ========================================================================
   tool(
     "run_sql",
@@ -1307,7 +1173,7 @@ Tips:
   );
 
   // ========================================================================
-  // 10. list_contacts — unchanged
+  // 7. list_contacts
   // ========================================================================
   tool(
     "list_contacts",
@@ -1362,11 +1228,11 @@ Tips:
   );
 
   // ========================================================================
-  // 11. get_contact_info — unchanged
+  // 8. get_contact_info
   // ========================================================================
   tool(
     "get_contact_info",
-    "Get detailed profile information for a contact including structured fields (birthday, location, email, phone), notes, identities, and AI memories. Accepts a contact ID, display name, or platform identifier (e.g. discord:123…, phone:+44…, or a bare snowflake from a Discord <@id> mention).",
+    "Get detailed profile information for a contact including structured fields (birthday, location, email, phone), notes, identities, saved facts and linked memory notes. Accepts a contact ID, display name, or platform identifier (e.g. discord:123…, phone:+44…, or a bare snowflake from a Discord <@id> mention).",
     {
       contact: z.string().describe("Contact ID, display name, or platform identifier (e.g. discord:123…, phone:+44…, or a bare Discord snowflake)"),
     },
@@ -1430,6 +1296,15 @@ Tips:
         }
       }
 
+      const notes = listContactMemoryNotes(getMcpHistoryDb(), contactObj.id);
+      if (notes.length > 0) {
+        lines.push("");
+        lines.push(`Memory notes (${notes.length}, read with get_memory_note):`);
+        for (const n of notes) {
+          lines.push(`  - ${n.name}${n.project ? ` (project ${n.project})` : ""}: ${n.title} — ${n.summary}`);
+        }
+      }
+
       return {
         content: [{ type: "text" as const, text: lines.join("\n") }],
       };
@@ -1437,46 +1312,7 @@ Tips:
   );
 
   // ========================================================================
-  // 12. remember_contact_fact — unchanged
-  // ========================================================================
-  tool(
-    "remember_contact_fact",
-    "Store a fact or memory about a contact. Use this when you learn something about a person during conversation that would be useful to remember for future interactions.",
-    {
-      contact: z.string().describe("Contact ID, display name, or platform identifier (e.g. discord:123…, phone:+44…)"),
-      fact: z.string().describe("The fact or memory to store (e.g., 'Prefers tea over coffee', 'Works at Acme Corp', 'Has a dog named Max')"),
-    },
-    WRITES,
-    async (params, extra) => instrumentToolCall("remember_contact_fact", params, extra, async () => {
-      const { contact, fact } = params;
-      if (!writeDb) {
-        return {
-          isError: true,
-          content: [{
-            type: "text" as const,
-            text: "Storing memories requires a writable database connection.",
-          }],
-        };
-      }
-
-      const resolved = await resolveContact(db, contact);
-      if (resolved.error) {
-        return { content: resolved.error, isError: true };
-      }
-
-      const contactObj = resolved.contact;
-      const memory = createContactMemory(writeDb, contactObj.id, fact);
-      return {
-        content: [{
-          type: "text" as const,
-          text: `Stored memory for ${contactObj.display_name}: "${fact}" (ID: ${memory.id})`,
-        }],
-      };
-    })
-  );
-
-  // ========================================================================
-  // 13. semantic_search — vector similarity search over indexed events
+  // 9. semantic_search — vector similarity search over indexed events
   //     Both server entries configure sqlite-vec before opening any DB, so this
   //     can run on either transport; it still gates on options.embeddings at
   //     call time and reports a clear error if sqlite-vec can't load.
@@ -1577,7 +1413,7 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
   );
 
   // ========================================================================
-  // 14-17. Shared memory: notes any connected agent can read and write
+  // 10-13. Shared memory: notes any connected agent can read and write
   // ========================================================================
   const memoryError = (error: unknown): CallToolResult => ({
     isError: true,
@@ -1632,7 +1468,7 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
       title: z.string().optional(),
       summary: z.string().optional().describe("One line, shown in the index"),
       details: z.string().optional().describe("Markdown, usually bullets"),
-      contact: z.string().optional().describe("Contact to link, as get_contact_info takes; \"\" unlinks"),
+      contact: z.string().optional().describe("The contact a note about a person is linked to, as get_contact_info takes, which then lists the note; \"\" unlinks"),
     },
     WRITES,
     async (params, extra) => instrumentToolCall("save_memory_note", params, extra, async () => {

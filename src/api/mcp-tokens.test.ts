@@ -80,8 +80,8 @@ describe("managed MCP tokens", () => {
   test("a created token works by header and by path, and is recorded by label", async () => {
     const token = create("laptop");
     const header = await open(token);
-    const summary = await header.call("tools/call", { name: "get_summary", arguments: {} });
-    expect(data(await summary.text()).result.content[0].text).toContain("Total events:");
+    const summary = await header.call("tools/call", { name: "get_schema", arguments: {} });
+    expect(data(await summary.text()).result.content[0].text).toContain("Sources (event count, latest date):");
 
     const path = await open(token, `/mcp/${token}`);
     expect((await path.call("tools/list")).status).toBe(200);
@@ -138,7 +138,7 @@ describe("managed MCP tokens", () => {
     const names = tools.map(t => t.name);
     expect(names).toContain("list_memory");
     expect(names).toContain("run_sql");
-    for (const name of ["save_memory_note", "delete_memory_note", "remember_contact_fact"]) {
+    for (const name of ["save_memory_note", "delete_memory_note"]) {
       expect(names).not.toContain(name);
     }
     expect(tools.every(t => t.annotations.readOnlyHint)).toBe(true);
@@ -157,7 +157,7 @@ describe("managed MCP tokens", () => {
       data(await (await session.call("tools/list")).text()).result.tools;
     expect(tools.filter(t => typeof t.annotations?.readOnlyHint !== "boolean")).toEqual([]);
     expect(tools.filter(t => !t.annotations?.readOnlyHint).map(t => t.name).sort())
-      .toEqual(["delete_memory_note", "remember_contact_fact", "save_memory_note"]);
+      .toEqual(["delete_memory_note", "save_memory_note"]);
   });
 
   test("a session belongs to the token that opened it", async () => {

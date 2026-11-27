@@ -44,7 +44,7 @@ beforeEach(() => {
   const fakeServer = {
     tool: (name: string, _description: string, _schema: unknown, _annotations: unknown, handler: ToolHandler) => tools.set(name, handler),
   } as unknown as McpServer;
-  registerTools(fakeServer, wrapDatabase(timelineDb), timelineDb, { appStateDb: appDb });
+  registerTools(fakeServer, wrapDatabase(timelineDb), { appStateDb: appDb });
 });
 
 afterEach(() => {
@@ -128,6 +128,11 @@ describe("memory tools", () => {
     const contactId = Number(timelineDb.prepare("INSERT INTO contacts (display_name) VALUES ('Alice Example')").run().lastInsertRowid);
     await text("save_memory_note", { name: "alice", kind: "person", title: "Alice", summary: "Climbing partner", contact: "Alice Example" });
     expect(await text("get_memory_note", { name: "alice" })).toContain(`contact: ${contactId}`);
+    // A fact saved on the contact before notes existed stays beside the note.
+    timelineDb.prepare("INSERT INTO contact_memories (contact_id, content) VALUES (?, 'Prefers tea')").run(contactId);
+    const info = await text("get_contact_info", { contact: "Alice Example" });
+    expect(info).toContain("- Prefers tea");
+    expect(info).toContain("- alice: Alice — Climbing partner");
     expect(await errorText("save_memory_note", { name: "alice", contact: "Nobody" })).toContain('Contact "Nobody" not found.');
   });
 

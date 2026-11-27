@@ -51,13 +51,9 @@ export function renderMcpSessionListMarkdown(sessions: McpSessionSummary[]): str
   return lines.join("\n");
 }
 
-export function renderMcpSessionMarkdown(
-  session: McpSessionRow,
-  calls: McpToolCallRow[],
-  stats: McpSessionStats,
-  opts: RenderMcpExcerptOptions = {},
-): string {
-  const lines = [
+/** A session's heading and facts: transport, client, token, times and call stats. */
+export function renderMcpSessionHeader(session: McpSessionRow, stats: McpSessionStats): string[] {
+  return [
     `# MCP session \`${session.id}\``,
     "",
     `- Transport: ${session.transport}`,
@@ -69,10 +65,16 @@ export function renderMcpSessionMarkdown(
     `- Calls: ${stats.call_count}`,
     `- Errors: ${stats.error_count}`,
     `- Average duration: ${formatAverageDuration(stats.avg_duration_ms)}`,
-    "",
-    "## Tool calls",
-    "",
   ];
+}
+
+export function renderMcpSessionMarkdown(
+  session: McpSessionRow,
+  calls: McpToolCallRow[],
+  stats: McpSessionStats,
+  opts: RenderMcpExcerptOptions = {},
+): string {
+  const lines = [...renderMcpSessionHeader(session, stats), "", "## Tool calls", ""];
 
   if (calls.length === 0) {
     lines.push("No tool calls recorded for this session.");

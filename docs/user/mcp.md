@@ -1,6 +1,6 @@
 # MCP server
 
-Timeline exposes its data to AI assistants over the [Model Context Protocol](https://modelcontextprotocol.io). Tools include `get_updates` (what was added since the agent last checked: new messages by conversation, daily health lines and counts of everything else), `query_events`, `get_context`, `get_summary`, `export_conversation`, `list_contacts`, `get_contact_info`, `run_sql`, and `semantic_search` (which needs [embeddings](embeddings.md)), plus the shared [memory](#memory) tools.
+Timeline exposes its data to AI assistants over the [Model Context Protocol](https://modelcontextprotocol.io). Tools include `get_updates` (what was added since the agent last checked: new messages by conversation, daily health lines and counts of everything else), `query_events`, `get_context`, `get_schema`, `export_conversation`, `list_contacts`, `get_contact_info`, `run_sql`, and `semantic_search` (which needs [embeddings](embeddings.md)), plus the shared [memory](#memory) tools.
 
 ## Local (stdio)
 
@@ -16,7 +16,7 @@ timeline-service mcp-token list
 timeline-service mcp-token revoke claude-ai
 ```
 
-- `--read-only`: the client is not offered the tools that change anything (`save_memory_note`, `delete_memory_note`, `remember_contact_fact`), and a call to one is refused. Its calls are still recorded with their arguments, like every client's, and other agents can read them with the MCP session tools, so treat what a read-only client sends as untrusted text. Every tool declares whether it writes, so a new writing tool is never offered to a read-only token by mistake. The connect-time instructions tell the agent it cannot save.
+- `--read-only`: the client is not offered the tools that change anything (`save_memory_note`, `delete_memory_note`), and a call to one is refused. Its calls are still recorded with their arguments, like every client's, and other agents can read them with `search_mcp_tool_calls`, so treat what a read-only client sends as untrusted text. Every tool declares whether it writes, so a new writing tool is never offered to a read-only token by mistake. The connect-time instructions tell the agent it cannot save.
 - `--tailnet-only`: the token is refused over Funnel ([public access](macos-host.md#public-access)), with the same answer as an unknown token; it works from the Mac and the tailnet.
 
 A token's flags are fixed when it is created; to change them, create a new token and revoke the old one. The page and `list` show each token's label, flags, creation time, when it was last used and the last client name it connected with, never the token; the page also counts the `MCP_TOKENS` values without showing them. Revoke from the page, or with `revoke` and the label or the id from `list`; revoking takes effect on the next request, including requests in sessions the token already opened. The MCP sessions page shows the label of the token each session used.
@@ -39,7 +39,7 @@ Each MCP request refused before it reaches a session (401, 403, 429, and 404 on 
 
 Timeline keeps one memory that every connected agent shares, whichever harness or machine it runs on. Agents write it during a turn, as they learn facts, preferences and corrections.
 
-A note has a name (a lowercase slug such as `coffee-order`), a title, a one-line summary, Markdown details and a kind: `you` (preferences and profile), `topic`, `area`, `person` or `project` (about the project itself, such as an `overview`). A person note can link a Timeline contact. Details can mention another note as `[[name]]`; the link is kept as written, and the note it names need not exist yet.
+A note has a name (a lowercase slug such as `coffee-order`), a title, a one-line summary, Markdown details and a kind: `you` (preferences and profile), `topic`, `area`, `person` or `project` (about the project itself, such as an `overview`). A person note can link a Timeline contact; `get_contact_info` then lists it beside the facts saved on the contact. Details can mention another note as `[[name]]`; the link is kept as written, and the note it names need not exist yet.
 
 A note belongs to the account or to one project. A project is named by the key the agent passes, normally the repository name, normalised to a slug such as `my-app`. Names are unique within a scope, so the account and each project can each have their own `bob`.
 

@@ -31,7 +31,7 @@ function captureHandlers(
       handlers.set(name, handler);
     },
   } as unknown as McpServer;
-  registerTools(fakeServer, queryExecutor, database, options);
+  registerTools(fakeServer, queryExecutor, options);
   return handlers;
 }
 
@@ -731,7 +731,7 @@ describe("MCP tool handlers — identity-aware contact lookup workflow", () => {
           };
           // The service's path: vector search on its own pool worker.
           const vectorPool = await DbPool.create(embeddingsDbPath, { workers: 1, vectorSearch: true });
-          registerTools(fakeServer, wrapDatabase(timelineDb), timelineDb, {
+          registerTools(fakeServer, wrapDatabase(timelineDb), {
             semanticSearch: {
               config: { base_url: server.url + "v1", model: "test-model", dimensions: 3, query_prefix: "query: " },
               embeddingsDb: async () => vectorPool,
@@ -988,54 +988,6 @@ describe("get_context — source filters", () => {
   });
 });
 
-describe("get_summary — source filters", () => {
-  beforeEach(setup);
-  afterEach(teardown);
-
-  function seedDay(): void {
-    insertEvent({ source: "conductor", type: "conductor:message:assistant", timestamp: "2026-07-07T10:00:00.000Z", title: "workspace: Do the thing" });
-    insertEvent({ source: "discord", type: "message:guild", timestamp: "2026-07-07T11:00:00.000Z", title: "General", content: "F1 chat" });
-    insertEvent({ source: "spotify-friends", type: "listen:track:friend", timestamp: "2026-07-07T12:00:00.000Z", title: "Some Track" });
-  }
-
-  test("exclude_source drops the listed sources from a day summary", async () => {
-    seedDay();
-
-    const handlers = captureHandlers(db);
-    const result = await handlers.get("get_summary")!({ date: "2026-07-07", exclude_source: "conductor,spotify-friends" });
-
-    const text = result.content[0].text;
-    expect(text).toContain("discord/message:guild");
-    expect(text).not.toContain("conductor");
-    expect(text).not.toContain("spotify-friends");
-  });
-
-  test("source restricts a day summary to the listed sources", async () => {
-    seedDay();
-
-    const handlers = captureHandlers(db);
-    const result = await handlers.get("get_summary")!({ date: "2026-07-07", source: "discord" });
-
-    const text = result.content[0].text;
-    expect(text).toContain("discord/message:guild");
-    expect(text).not.toContain("conductor");
-    expect(text).not.toContain("spotify-friends");
-  });
-
-  test("exclude_source applies to global stats and recomputes the total", async () => {
-    seedDay();
-
-    const handlers = captureHandlers(db);
-    const result = await handlers.get("get_summary")!({ exclude_source: "conductor" });
-
-    const text = result.content[0].text;
-    expect(text).toContain("Total events: 2");
-    expect(text).toContain("discord");
-    expect(text).toContain("spotify-friends");
-    expect(text).not.toContain("conductor");
-  });
-});
-
 describe("MCP tool handlers — MCP session history", () => {
   let appDb: Database;
 
@@ -1084,86 +1036,52 @@ describe("MCP tool handlers — MCP session history", () => {
     );
   }
 
-  test("list_mcp_sessions lists summaries and get_mcp_session defaults to caller session", async () => {
+  test("search_mcp_tool_calls lists sessions, and \"current\" scopes to the caller's session", async () => {
     insertSession("history-session-1", "http", "Test Client");
+    insertSession("stdio-self-session", "stdio", "Stdio Client");
     insertCall({
       sessionId: "history-session-1",
-      toolName: "get_summary",
-      argsJson: "{\"date\":\"2026-07-03\"}",
-      resultText: "summary",
+      toolName: "get_context",
+      argsJson: "{\"event_id\":7}",
+      resultText: "context",
       isError: false,
       createdAt: "2026-07-03 10:04:00",
     });
-
-    const handlers = captureHandlers(db, { appStateDb: appDb });
-    const listResult = await handlers.get("list_mcp_sessions")!({});
-    expect(listResult.content[0].text).toContain("`history-session-1`");
-    expect(listResult.content[0].text).toContain("calls: 1");
-    expect(listResult.content[0].text).toContain("errors: 0");
-
-    const detailResult = await handlers.get("get_mcp_session")!(
-      {},
-      { sessionId: "history-session-1", requestId: "req-1" },
-    );
-    expect(detailResult.content[0].text).toContain("# MCP session `history-session-1`");
-    expect(detailResult.content[0].text).toContain("`get_summary`");
-    expect(detailResult.content[0].text).toContain("\"date\": \"2026-07-03\"");
-  });
-
-  test("get_mcp_session reports missing session ids and unknown sessions as errors", async () => {
-    const handlers = captureHandlers(db, { appStateDb: appDb });
-
-    const missingId = await handlers.get("get_mcp_session")!({});
-    expect(missingId.isError).toBe(true);
-    expect(missingId.content[0].text).toContain("session_id is required");
-
-    const notFound = await handlers.get("get_mcp_session")!({ session_id: "missing-session" });
-    expect(notFound.isError).toBe(true);
-    expect(notFound.content[0].text).toContain("MCP session not found: missing-session");
-  });
-
-  test("get_mcp_session defaults to the configured stdio session id when SDK extra has none", async () => {
-    insertSession("stdio-self-session", "stdio", "Stdio Client");
     insertCall({
       sessionId: "stdio-self-session",
       toolName: "query_events",
       argsJson: "{\"query\":\"coffee\"}",
       resultText: "ok",
       isError: false,
-      createdAt: "2026-07-03 10:04:00",
+      createdAt: "2026-07-03 10:05:00",
     });
 
-    const handlers = captureHandlers(db, {
-      appStateDb: appDb,
-      defaultSessionId: () => "stdio-self-session",
-    });
-    const detailResult = await handlers.get("get_mcp_session")!(
-      {},
-      { requestId: "stdio-req-1" },
-    );
+    const handlers = captureHandlers(db, { appStateDb: appDb, defaultSessionId: () => "stdio-self-session" });
+    const list = (await handlers.get("search_mcp_tool_calls")!({ sessions: true })).content[0].text;
+    expect(list).toContain("`history-session-1`");
+    expect(list).toContain("calls: 1");
+    expect(list).toContain("errors: 0");
 
-    expect(detailResult.isError).toBeUndefined();
-    expect(detailResult.content[0].text).toContain("# MCP session `stdio-self-session`");
-    expect(detailResult.content[0].text).toContain("`query_events`");
+    const http = (await handlers.get("search_mcp_tool_calls")!(
+      { session_id: "current" },
+      { sessionId: "history-session-1", requestId: "req-1" },
+    )).content[0].text;
+    expect(http).toContain("# MCP session `history-session-1`");
+    expect(http).toContain("- Client: Test Client");
+    expect(http).toContain("`get_context`");
+    expect(http).not.toContain("`query_events`");
+
+    // stdio requests carry no session id; the transport's own one stands in.
+    const stdio = (await handlers.get("search_mcp_tool_calls")!({ session_id: "current" }, { requestId: "req-2" })).content[0].text;
+    expect(stdio).toContain("`query_events`");
+    expect(stdio).not.toContain("`get_context`");
   });
 
-  test("get_mcp_session can create the default stdio session before lookup", async () => {
-    const handlers = captureHandlers(db, {
-      appStateDb: appDb,
-      defaultSessionId: () => {
-        insertSession("stdio-new-session", "stdio", "Stdio Client");
-        return "stdio-new-session";
-      },
-    });
-
-    const detailResult = await handlers.get("get_mcp_session")!(
-      {},
-      { requestId: "stdio-req-2" },
-    );
-
-    expect(detailResult.isError).toBeUndefined();
-    expect(detailResult.content[0].text).toContain("# MCP session `stdio-new-session`");
-    expect(detailResult.content[0].text).toContain("No tool calls recorded for this session.");
+  test("search_mcp_tool_calls refuses \"current\" when the request names no session", async () => {
+    const handlers = captureHandlers(db, { appStateDb: appDb });
+    const result = await handlers.get("search_mcp_tool_calls")!({ session_id: "current" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('"current" names no session');
   });
 
   test("search_mcp_tool_calls filters across sessions", async () => {
@@ -1211,12 +1129,9 @@ describe("MCP tool handlers — MCP session history", () => {
     expect(scoped.content[0].text).toContain("`run_sql`");
     expect(scoped.content[0].text).not.toContain("`query_events`");
 
-    const emptySession = await handlers.get("search_mcp_tool_calls")!({
-      session_id: "",
-    });
-    expect(emptySession.content[0].text).toContain("No matching tool calls found.");
-    expect(emptySession.content[0].text).not.toContain("history-session-a");
-    expect(emptySession.content[0].text).not.toContain("history-session-b");
+    const unknown = await handlers.get("search_mcp_tool_calls")!({ session_id: "no-such-session" });
+    expect(unknown.isError).toBe(true);
+    expect(unknown.content[0].text).toContain("MCP session not found: no-such-session");
   });
 
   test("search_mcp_tool_calls rejects loose since values before querying", async () => {
