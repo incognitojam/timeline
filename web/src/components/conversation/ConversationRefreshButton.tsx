@@ -115,7 +115,7 @@ export function ConversationRefreshButton(props: {
           aria-label="Refresh"
           title={`Fetch new messages in this conversation from ${sourceLabel(props.source)}`}
         >
-          <IconSync class={`w-5 h-5 ${busy() ? "animate-spin" : ""}`} />
+          <IconSync class={`w-5 h-5 ${busy() ? "animate-spin [animation-direction:reverse]" : ""}`} />
         </button>
       </div>
     </Show>
