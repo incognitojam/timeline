@@ -185,6 +185,11 @@ function resolveProviderFromConfig(
   return { name: defaultName, provider: configuredProviders[defaultName], modelId: ref };
 }
 
+/** The name of the configured provider a model reference resolves to. */
+export function modelProviderName(config: LlmConfig, ref: string): string {
+  return resolveProviderFromConfig(config.providers, Object.keys(config.providers), ref).name;
+}
+
 function resolveProvider(ref: string): { name: string; provider: LlmProviderConfig; modelId: string } {
   return resolveProviderFromConfig(providers, providerOrder, ref);
 }

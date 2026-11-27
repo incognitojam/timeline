@@ -25,6 +25,14 @@ import {
   selectAttachmentsForDescriptionRun,
 } from "./attachment-descriptions";
 
+// The first provider is the default: a bare reference resolves to it.
+const providers = {
+  providers: {
+    lmstudio: { kind: "openai-compatible", base_url: "http://127.0.0.1:1234/v1" },
+    sol: { kind: "openai-compatible", base_url: "http://sol.example.com:1234/v1" },
+  },
+} as const;
+
 describe("attachmentDescriptionsSyncSource", () => {
   let db: Database;
 
@@ -231,7 +239,7 @@ describe("attachmentDescriptionsSyncSource", () => {
   it("chooses the first available or unknown model after unavailable and invalid candidates", async () => {
     const probed: string[] = [];
     const selection = await selectAttachmentDescriptionModel(
-      { providers: {} },
+      providers,
       ["offline/model", "unlisted/model", "not-vision/model", "fallback/model", "later/model"],
       async (_config, model) => {
         probed.push(model);
@@ -253,7 +261,7 @@ describe("attachmentDescriptionsSyncSource", () => {
         {
           model: "unlisted/model",
           availability: "not-listed",
-          message: "Configured model unlisted/model is not listed by its provider",
+          message: "Configured model unlisted/model is not listed by provider lmstudio",
         },
         {
           model: "not-vision/model",
@@ -264,7 +272,7 @@ describe("attachmentDescriptionsSyncSource", () => {
     });
 
     expect(await selectAttachmentDescriptionModel(
-      { providers: {} },
+      providers,
       ["available/model"],
       async () => "available",
     )).toEqual({ status: "selected", model: "available/model", warnings: [] });
@@ -272,22 +280,22 @@ describe("attachmentDescriptionsSyncSource", () => {
 
   it("reports all-unavailable models as a failure and distinguishes invalid candidates", async () => {
     const unavailable = await selectAttachmentDescriptionModel(
-      { providers: {} },
-      ["offline/one", "unlisted/two"],
-      async (_config, model) => model === "offline/one" ? "unavailable" : "not-listed",
+      providers,
+      ["google/one", "sol/google/two"],
+      async (_config, model) => model === "google/one" ? "unavailable" : "not-listed",
     );
     if (unavailable.status !== "unavailable") throw new Error(`Unexpected selection: ${unavailable.status}`);
     expect(unavailable).toEqual({
       status: "unavailable",
       unavailable: [
-        { model: "offline/one", availability: "unavailable" },
-        { model: "unlisted/two", availability: "not-listed" },
+        { model: "google/one", provider: "lmstudio", availability: "unavailable" },
+        { model: "sol/google/two", provider: "sol", availability: "not-listed" },
       ],
-      warnings: [{ model: "unlisted/two", availability: "not-listed", message: "Configured model unlisted/two is not listed by its provider" }],
+      warnings: [{ model: "sol/google/two", availability: "not-listed", message: "Configured model sol/google/two is not listed by provider sol" }],
     });
 
     const notVision = await selectAttachmentDescriptionModel(
-      { providers: {} },
+      providers,
       ["invalid/model", "offline/model"],
       async (_config, model) => model === "invalid/model" ? "not-vision" : "unavailable",
     );
@@ -298,8 +306,8 @@ describe("attachmentDescriptionsSyncSource", () => {
 
     expect(attachmentDescriptionAllUnavailableFailure(unavailable.unavailable, Date.now())).toMatchObject({
       success: false,
-      error: "Configured attachment description models are unavailable: the provider for offline/one is unavailable; " +
-        "unlisted/two is not listed by its provider (the machine serving it may be offline, or the model id may be wrong)",
+      error: "Configured attachment description models are unavailable: the provider lmstudio for google/one is unavailable; " +
+        "sol/google/two is not listed by provider sol (the machine serving it may be offline, or the model id may be wrong)",
     });
     if (notVision.status !== "not-vision") throw new Error(`Unexpected selection: ${notVision.status}`);
     expect(attachmentDescriptionNotVisionResult(notVision.warnings, [], Date.now())).toMatchObject({
@@ -311,7 +319,7 @@ describe("attachmentDescriptionsSyncSource", () => {
     expect(attachmentDescriptionNotVisionResult(notVision.warnings, notVision.unavailable, Date.now())).toMatchObject({
       success: false,
       error: "No configured attachment description model can run: invalid/model is not vision-capable; " +
-        "the provider for offline/model is unavailable",
+        "the provider lmstudio for offline/model is unavailable",
     });
   });
 

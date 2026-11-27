@@ -6,6 +6,7 @@ import { runLocalWork } from "../../jobs/local-work";
 import {
   getVisionAvailability,
   initProviders,
+  modelProviderName,
   resolveLanguageModel,
   type VisionAvailability,
 } from "../../llm";
@@ -37,6 +38,7 @@ export interface AttachmentDescriptionModelWarning {
 /** A configured model that cannot run now but may later, so a scheduled run waits for it. */
 export interface UnavailableAttachmentDescriptionModel {
   model: string;
+  provider: string;
   availability: Extract<VisionAvailability, "unavailable" | "not-listed">;
 }
 
@@ -49,9 +51,9 @@ export type AttachmentDescriptionModelSelection =
 export function unavailableAttachmentDescriptionModelsReason(
   unavailable: UnavailableAttachmentDescriptionModel[],
 ): string {
-  return unavailable.map(({ model, availability }) => availability === "not-listed"
-    ? `${model} is not listed by its provider (the machine serving it may be offline, or the model id may be wrong)`
-    : `the provider for ${model} is unavailable`).join("; ");
+  return unavailable.map(({ model, provider, availability }) => availability === "not-listed"
+    ? `${model} is not listed by provider ${provider} (the machine serving it may be offline, or the model id may be wrong)`
+    : `the provider ${provider} for ${model} is unavailable`).join("; ");
 }
 
 export const DEFAULT_ATTACHMENT_DESCRIPTION_TIME_BUDGET_MS = 5 * 60_000;
@@ -164,13 +166,14 @@ export async function selectAttachmentDescriptionModel(
         message: `Configured model ${model} is not vision-capable`,
       });
     } else {
-      unavailable.push({ model, availability });
+      const provider = modelProviderName(llmConfig, model);
+      unavailable.push({ model, provider, availability });
       // A fallback may run instead, so keep an unlisted preference visible.
       if (availability === "not-listed") {
         warnings.push({
           model,
           availability,
-          message: `Configured model ${model} is not listed by its provider`,
+          message: `Configured model ${model} is not listed by provider ${provider}`,
         });
       }
     }
