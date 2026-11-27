@@ -50,7 +50,7 @@ import {
   type TierCursors,
 } from "./tier-rescan";
 
-interface GuildConfig {
+export interface GuildConfig {
   name?: string;
   mode: "full" | "sparse";
   skip_discovery?: boolean;
@@ -1627,7 +1627,7 @@ export function migrateRescanCursors(state: DiscordApiSyncState): TierCursors {
  *   mode = "full"
  *   skip_discovery = false
  */
-function parseGuildConfigs(sourceConfig?: Record<string, unknown>): Record<string, GuildConfig> {
+export function parseGuildConfigs(sourceConfig?: Record<string, unknown>): Record<string, GuildConfig> {
   const guilds: Record<string, GuildConfig> = {};
   const guildsConfig = sourceConfig?.guilds;
 

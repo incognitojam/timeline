@@ -20,6 +20,16 @@ beforeAll(() => setDiscordClientSleepForTests(async () => {}));
 afterAll(() => setDiscordClientSleepForTests(null));
 
 const DM = "810000000000000001";
+const FULL_GUILD = "900000000000000001";
+const SPARSE_GUILD = "900000000000000002";
+const CHANNEL = "910000000000000001"; // a text channel in FULL_GUILD
+const THREAD = "910000000000000002"; // a thread under CHANNEL
+const EXCLUDED = "910000000000000003"; // excluded from FULL_GUILD
+const SPARSE_CHANNEL = "920000000000000001";
+const GUILDS = {
+  [FULL_GUILD]: { name: "Trail Club", mode: "full", exclude_channels: [EXCLUDED] },
+  [SPARSE_GUILD]: { name: "Big Server", mode: "sparse" },
+};
 const OTHER_DM = "810000000000000002";
 const BASE = 820000000000000000n;
 const id = (n: number) => String(BASE + BigInt(n));
@@ -101,13 +111,14 @@ function discordState(channelCursors: Record<string, string>, dms = Object.keys(
 const cursors = () => getSyncState<DiscordApiSyncState>(getAppStateDb(), "discord-api")?.channelCursors;
 
 /** A stored message, so the conversation exists the way the full sync left it. */
-function storeEvent(channelId: string, messageId: string, account = "user-1") {
+function storeEvent(channelId: string, messageId: string, account = "user-1", guildId?: string) {
   const db = getDb();
   initDb(db);
+  const channel = { id: channelId, name: guildId ? "general" : "Bob", guild_id: guildId ?? null, guild_name: guildId ? "Trail Club" : null, category: guildId ? "Chat" : null };
   db.prepare(
     `INSERT INTO events (source, source_id, source_account, type, timestamp, title, content, conversation_id, raw_data)
-     VALUES ('discord', ?, ?, 'message:dm', '2026-06-21T12:00:00.000Z', 'Bob', 'hi', ?, '{}')`,
-  ).run(messageId, account, channelId);
+     VALUES ('discord', ?, ?, ?, '2026-06-21T12:00:00.000Z', 'Bob', 'hi', ?, ?)`,
+  ).run(messageId, account, guildId ? "message:guild" : "message:dm", channelId, JSON.stringify({ _channel: channel }));
   db.close();
 }
 
@@ -212,7 +223,8 @@ beforeEach(() => {
   appDb.prepare("DELETE FROM jobs").run();
   appDb.prepare("DELETE FROM sync_log").run();
   appDb.prepare("DELETE FROM scheduler_state").run();
-  upsertSyncSourcePatch("discord", { enabled: true }, appDb);
+  appDb.prepare("DELETE FROM sync_sources").run();
+  upsertSyncSourcePatch("discord", { enabled: true, settings: { guilds: GUILDS } }, appDb);
   const db = getDb();
   initDb(db);
   db.prepare("DELETE FROM events WHERE source = 'discord'").run();
@@ -395,13 +407,11 @@ describe("Discord conversation refresh", () => {
     expect(calls).toEqual([]);
   });
 
-  test("refuses what isn't a stored, synced Discord DM", async () => {
-    setSyncState(getAppStateDb(), "discord-api", { ...discordState({ [DM]: id(1), "830000000000000001": id(1) }), knownDMChannelIds: [DM] });
-    storeEvent("830000000000000001", id(700));
+  test("refuses what isn't a stored conversation of the synced account", async () => {
+    setSyncState(getAppStateDb(), "discord-api", discordState({ [DM]: id(1) }));
     storeEvent("840000000000000001", id(800), "someone-else");
     storeEvent("840000000000000001", id(801), "user-1");
 
-    expect((await check("830000000000000001")).reason).toBe("Only Discord DMs and group DMs can be refreshed");
     expect((await check("999")).reason).toBe("Not a stored Discord conversation");
     expect((await check("840000000000000001")).reason).toBe("This conversation is stored under more than one Discord account");
     expect((await check(DM, "chatgpt")).reason).toBe("Conversations from this source can't be refreshed one at a time");
@@ -425,5 +435,117 @@ describe("Discord conversation refresh", () => {
     );
     expect(storedIds()).toEqual([id(1)]);
     expect(cursors()?.[DM]).toBe(id(1));
+  });
+
+  describe("server channels and threads", () => {
+    beforeEach(() => {
+      for (const [channel, n] of [[CHANNEL, 1000], [THREAD, 2000], [EXCLUDED, 3000]] as const) storeEvent(channel, id(n), "user-1", FULL_GUILD);
+      storeEvent(SPARSE_CHANNEL, id(4000), "user-1", SPARSE_GUILD);
+      setSyncState(getAppStateDb(), "discord-api", discordState(
+        { [DM]: id(1), [CHANNEL]: id(1000), [THREAD]: id(2000), [EXCLUDED]: id(3000), [SPARSE_CHANNEL]: id(4000) },
+        [DM],
+      ));
+    });
+
+    test("a channel in a fully synced server refreshes like a DM, stored under its server", async () => {
+      const calls = fakeDiscord({ [CHANNEL]: { type: CHANNEL_TYPE.GUILD_TEXT, guild_id: FULL_GUILD, messages: [id(1000), id(1001), id(1002)] } });
+      expect(await check(CHANNEL)).toEqual({ refreshable: true });
+
+      const job = await refreshOnce(CHANNEL);
+
+      expect(job).toMatchObject({ status: "succeeded", result: { eventsAdded: 2, metadata: { requests: 3 } } });
+      expect(calls.filter((call) => call.includes("/guilds/"))).toEqual([]);
+      const db = getDb();
+      const rows = db.prepare(
+        "SELECT type, title FROM events WHERE conversation_id = ? AND source_id IN (?, ?)",
+      ).all(CHANNEL, id(1001), id(1002));
+      db.close();
+      expect(rows).toEqual([
+        { type: "message:guild", title: "Trail Club #general" },
+        { type: "message:guild", title: "Trail Club #general" },
+      ]);
+      expect(cursors()?.[CHANNEL]).toBe(id(1002));
+    });
+
+    test("a thread refreshes, unless its channel is excluded", async () => {
+      fakeDiscord({
+        [THREAD]: { type: CHANNEL_TYPE.PUBLIC_THREAD, guild_id: FULL_GUILD, parent_id: CHANNEL, messages: [id(2000), id(2001)] },
+      });
+      expect(await refreshOnce(THREAD)).toMatchObject({ status: "succeeded", result: { eventsAdded: 1 } });
+
+      fakeDiscord({
+        [THREAD]: { type: CHANNEL_TYPE.PUBLIC_THREAD, guild_id: FULL_GUILD, parent_id: EXCLUDED, messages: [id(2000), id(2001), id(2002)] },
+      });
+      expect(await refreshOnce(THREAD)).toMatchObject({ status: "failed", error: "This thread's channel is excluded from the Discord sync" });
+      expect(cursors()?.[THREAD]).toBe(id(2001));
+    });
+
+    test("a thread in a server that skips thread discovery can't be refreshed", async () => {
+      const calls = fakeDiscord({
+        [THREAD]: { type: CHANNEL_TYPE.PUBLIC_THREAD, guild_id: FULL_GUILD, parent_id: CHANNEL, messages: [id(2000), id(2001)] },
+      });
+      const { body } = await click(THREAD);
+      if (!("jobId" in body)) throw new Error(body.error);
+      upsertSyncSourcePatch("discord", { settings: { guilds: { ...GUILDS, [FULL_GUILD]: { ...GUILDS[FULL_GUILD], skip_discovery: true } } } }, getAppStateDb());
+
+      // Accepted before the change: the worker sees a thread and refuses it before fetching messages.
+      const runner = startWorker();
+      try {
+        expect(await settled(body.jobId)).toMatchObject({ status: "failed", error: "The Discord sync doesn't follow threads in this server" });
+      } finally {
+        await runner.stop(1000);
+      }
+      expect(calls.filter((call) => call.includes("/messages"))).toEqual([]);
+
+      // Once the state knows it as a thread, the route refuses it too.
+      const state = getSyncState<DiscordApiSyncState>(getAppStateDb(), "discord-api");
+      if (!state) throw new Error("no state");
+      setSyncState(getAppStateDb(), "discord-api", { ...state, knownGuildThreadIds: { [FULL_GUILD]: [THREAD] } });
+      expect((await check(THREAD)).reason).toBe("The Discord sync doesn't follow threads in this server");
+    });
+
+    test("a channel in a sparse server can't be refreshed through the route, so nothing is queued or fetched", async () => {
+      const calls = fakeDiscord({ [SPARSE_CHANNEL]: { type: CHANNEL_TYPE.GUILD_TEXT, guild_id: SPARSE_GUILD, messages: [id(4000), id(4001)] } });
+      const reason = "This server is synced sparsely, so its channels can't be refreshed one at a time";
+
+      expect(await check(SPARSE_CHANNEL)).toEqual({ refreshable: false, reason });
+      expect(await click(SPARSE_CHANNEL)).toEqual({ status: 409, body: { error: reason } });
+      expect(getAppStateDb().prepare("SELECT COUNT(*) AS n FROM jobs").get()).toEqual({ n: 0 });
+      expect(calls).toEqual([]);
+    });
+
+    test("a refresh accepted before its server turned sparse fails without fetching messages", async () => {
+      const calls = fakeDiscord({ [CHANNEL]: { type: CHANNEL_TYPE.GUILD_TEXT, guild_id: FULL_GUILD, messages: [id(1000), id(1001)] } });
+      const { body } = await click(CHANNEL);
+      if (!("jobId" in body)) throw new Error(body.error);
+      upsertSyncSourcePatch("discord", { settings: { guilds: { ...GUILDS, [FULL_GUILD]: { mode: "sparse" } } } }, getAppStateDb());
+
+      const runner = startWorker();
+      try {
+        expect(await settled(body.jobId)).toMatchObject({
+          status: "failed", error: "This server is synced sparsely, so its channels can't be refreshed one at a time",
+        });
+      } finally {
+        await runner.stop(1000);
+      }
+      expect(calls).toEqual([]);
+    });
+
+    test("refuses excluded channels and servers the sync no longer follows", async () => {
+      expect((await check(EXCLUDED)).reason).toBe("This channel is excluded from the Discord sync");
+      upsertSyncSourcePatch("discord", { settings: { guilds: { [SPARSE_GUILD]: GUILDS[SPARSE_GUILD] } } }, getAppStateDb());
+      expect((await check(CHANNEL)).reason).toBe("The Discord sync no longer follows this server");
+    });
+
+    test("fails when Discord moved the channel to another server, and remembers a refused channel", async () => {
+      fakeDiscord({ [CHANNEL]: { type: CHANNEL_TYPE.GUILD_TEXT, guild_id: "999", messages: [id(1000), id(1001)] } });
+      expect(await refreshOnce(CHANNEL)).toMatchObject({ status: "failed", error: "Discord says this channel belongs to another server" });
+
+      globalThis.fetch = (async (input: RequestInfo | URL) =>
+        String(input).endsWith("/users/@me") ? Response.json({ id: "user-1", username: "alice" }) : new Response("{}", { status: 403 })
+      ) as typeof fetch;
+      expect(await refreshOnce(CHANNEL)).toMatchObject({ status: "failed", error: "Discord refused access to this conversation" });
+      expect((await check(CHANNEL)).reason).toBe("Discord refused access to this conversation recently");
+    });
   });
 });
