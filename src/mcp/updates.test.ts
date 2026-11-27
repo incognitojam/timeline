@@ -1,11 +1,12 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { initAppStateDb } from "../db/app-state";
 import { invalidateHiddenClauseCaches } from "../db/events";
 import { wrapDatabase } from "../db/pool";
 import { initDb } from "../db/schema";
 import { Database } from "../db/sqlite";
 import { countTokens } from "../export/tokens";
 import { seed } from "../testing/seed";
-import { getUpdates, runGetUpdates } from "./updates";
+import { CHECKPOINT_IDLE_DAYS, getUpdates, runGetUpdates } from "./updates";
 
 let db: Database;
 let sequence = 0;
@@ -38,6 +39,10 @@ const message = (content: string, timestamp: string, conversation = "general") =
 const updates = (since: string, extra: Partial<Parameters<typeof getUpdates>[1]> = {}) =>
   getUpdates(wrapDatabase(db), { since, now: NOW, healthDays: 0, ...extra });
 
+function cursorOf(text: string): string | undefined {
+  return /^More: call again with cursor="([^"]+)"\.$/m.exec(text)?.[1];
+}
+
 function nextMarker(text: string): string {
   const marker = /since="(id:\d+)"/.exec(text.split("\n").at(-1) ?? "")?.[1];
   if (!marker) throw new Error(`No marker in:\n${text}`);
@@ -69,7 +74,7 @@ test("a date since selects by event time, so an old late import waits for the ma
   expect(text).not.toContain("old");
 });
 
-test("over the size cap, following continue lines shows every conversation once, and only the last page gives a checkpoint", async () => {
+test("over the size cap, following cursors shows every conversation once, and only the last page gives a marker", async () => {
   seed(db, () => {
     for (let c = 0; c < 45; c += 1) {
       for (let m = 0; m < 12; m += 1) {
@@ -78,7 +83,7 @@ test("over the size cap, following continue lines shows every conversation once,
     }
   });
   const first = await updates("id:0", { maxTokens: 2000 });
-  const marker = /until="(id:\d+)"/.exec(first)?.[1];
+  const marker = /up to (id:\d+)/.exec(first)?.[1];
   if (!marker) throw new Error(first);
   message("added after the first reply", "2026-03-10T09:00:00Z", "chan-0");
 
@@ -88,17 +93,29 @@ test("over the size cap, following continue lines shows every conversation once,
     expect(countTokens(reply)).toBeLessThanOrEqual(2000);
     expect(reply).not.toContain("added after the first reply");
     seen.push(...[...reply.matchAll(/^## discord: (chan-\d+)/gm)].map((match) => match[1] ?? ""));
-    const more = /call again with since="id:0", until="(id:\d+)", skip=(\d+), max_tokens=(\d+)\./.exec(reply);
-    if (!more) {
+    const cursor = cursorOf(reply);
+    if (!cursor) {
       expect(nextMarker(reply)).toBe(marker);
       break;
     }
     expect(reply).not.toContain("Next check");
-    expect(more[1]).toBe(marker);
-    // Only the arguments the line prints.
-    reply = await updates("id:0", { until: more[1], skip: Number(more[2]), maxTokens: Number(more[3]) });
+    expect(reply.split("\n").at(-1)).toBe(`More: call again with cursor="${cursor}".`);
+    // Only the cursor the line prints.
+    reply = await getUpdates(wrapDatabase(db), { cursor, now: NOW });
   }
   expect(seen.sort()).toEqual(Array.from({ length: 45 }, (_, c) => `chan-${c}`).sort());
+});
+
+test("a cursor is refused once its catch-up has changed, so no conversation is skipped", async () => {
+  const hidden = Number(db.prepare("INSERT INTO contacts (display_name) VALUES ('Bob Example')").run().lastInsertRowid);
+  db.prepare("INSERT INTO identities (platform, platform_id, contact_id) VALUES ('discord', 'bob', ?)").run(hidden);
+  insert({ source: "discord", type: "message:guild", timestamp: "2026-03-09T10:00:00Z", content: "word ".repeat(2000), conversation: "long", people: ["discord:bob"] });
+  message("short and sweet", "2026-03-09T09:00:00Z", "short");
+  const cursor = cursorOf(await updates("id:0", { maxTokens: 1000 }));
+  if (!cursor) throw new Error("expected a second page");
+  db.prepare("UPDATE contacts SET hidden = 1 WHERE id = ?").run(hidden);
+  invalidateHiddenClauseCaches();
+  await expect(getUpdates(wrapDatabase(db), { cursor, now: NOW })).rejects.toThrow("This catch-up changed since its first page");
 });
 
 test("a conversation with more new messages than fit points to export_conversation for the rest", async () => {
@@ -124,11 +141,16 @@ test("health lines count against the cap, newest days kept", async () => {
   expect(text).toMatch(/\(\d+ older days cut to fit; pass a larger max_tokens\)/);
 });
 
-test("until cannot move the marker past the newest event or before since", async () => {
-  const last = message("only", "2026-03-09T09:00:00Z");
-  expect(nextMarker(await updates(`id:${last}`, { until: `id:${last + 100}` }))).toBe(`id:${last}`);
-  const result = await runGetUpdates(wrapDatabase(db), { since: `id:${last}`, until: "id:0" });
-  expect(result.isError).toBe(true);
+test("a cursor is passed alone, and one this tool did not print, or an edited one, is an error", async () => {
+  message("word ".repeat(2000), "2026-03-09T10:00:00Z", "long");
+  message("short and sweet", "2026-03-09T09:00:00Z", "short");
+  const cursor = cursorOf(await updates("id:0", { maxTokens: 1000 }));
+  if (!cursor) throw new Error("expected a second page");
+  const [payload] = cursor.split(".");
+  const edited = Buffer.from(Buffer.from(payload ?? "", "base64url").toString().replace('"skip":1', '"skip":9')).toString("base64url");
+  for (const params of [{ cursor: "bm90IGpzb24" }, { cursor, since: "id:0" }, { cursor: `${edited}.${cursor.split(".")[1]}` }, {}]) {
+    expect((await runGetUpdates(wrapDatabase(db), params)).isError).toBe(true);
+  }
 });
 
 test("one reply covers a bounded id window and its marker continues from there", async () => {
@@ -227,10 +249,9 @@ test("a conversation too long for the cap on its own is pointed to, and paging m
   const first = await updates("id:0", { maxTokens: 1000 });
   expect(countTokens(first)).toBeLessThanOrEqual(1000);
   expect(first).toContain('## discord: long · conversation_id="long"\n1 new, too long for max_tokens; read them with export_conversation conversation_id="long"');
-  const more = /until="(id:\d+)", skip=(\d+)/.exec(first);
-  if (!more) throw new Error(first);
-  expect(more[2]).toBe("1");
-  expect(await updates("id:0", { until: more[1], skip: 1, maxTokens: 1000 })).toContain("short and sweet");
+  const cursor = cursorOf(first);
+  if (!cursor) throw new Error(first);
+  expect(await getUpdates(wrapDatabase(db), { cursor, now: NOW })).toContain("short and sweet");
 });
 
 test("the not-shown list stays within the cap, however long the conversation ids", async () => {
@@ -259,9 +280,12 @@ test("a since past the newest event returns the newest id as the marker", async 
 });
 
 test("a page of a date window keeps working after the date passes the look-back limit", async () => {
-  const last = message("near the limit", "2026-02-08T13:00:00Z");
+  message("near the limit", "2026-02-08T13:00:00Z");
+  message("word ".repeat(2000), "2026-02-08T14:00:00Z", "long");
+  const cursor = cursorOf(await updates("2026-02-08T12:00:00Z", { maxTokens: 1000 }));
+  if (!cursor) throw new Error("expected a second page");
   const later = new Date("2026-03-12T12:00:00Z");
-  expect(await updates("2026-02-08T12:00:00Z", { until: `id:${last}`, skip: 0, now: later })).toContain("near the limit");
+  expect(await getUpdates(wrapDatabase(db), { cursor, now: later })).toContain("near the limit");
   await expect(updates("2026-02-08T12:00:00Z", { now: later })).rejects.toThrow("the earliest accepted now is 2026-02-09T12:00:00.000Z");
 });
 
@@ -290,7 +314,7 @@ test("events outside conversations are not headed as messages", async () => {
 });
 
 test("health shows the days its heading names, on broad checks unless health_days says otherwise", async () => {
-  const last = message("hello", "2026-03-09T09:00:00Z", "c-1");
+  message("hello", "2026-03-09T09:00:00Z", "c-1");
   seed(db, () => {
     insert({ source: "google-health", type: "sleep", timestamp: "2026-02-24T23:00:00Z", end: "2026-02-25T06:00:00Z", title: "Sleep: 7h 0m" });
     for (let d = 0; d < 20; d += 1) {
@@ -304,7 +328,11 @@ test("health shows the days its heading names, on broad checks unless health_day
   // A night that ends on the first day still counts there.
   expect(broad).toContain("2026-02-25: Sleep: 7h 0m · Resting HR");
   expect(await call({ conversationId: "c-1" })).not.toContain("# Health");
-  expect(await call({ until: `id:${last}`, skip: 0 })).not.toContain("# Health");
+  // The first page shows health; later pages do not repeat it.
+  message("word ".repeat(2000), "2026-03-09T08:00:00Z", "c-2");
+  const cursor = cursorOf(await call({ maxTokens: 2000 }));
+  if (!cursor) throw new Error("expected a second page");
+  expect(await call({ since: undefined, cursor })).not.toContain("# Health");
   expect(await call({ conversationId: "c-1", healthDays: 3 })).toContain("# Health, last 3 days");
   expect(await call({ healthDays: 0 })).not.toContain("# Health");
 });
@@ -348,9 +376,8 @@ test("with both the id window and the page full, only the last page names a chec
   });
   const text = await updates("id:0", { windowIds: 150, maxTokens: 1000 });
   expect(text).toContain("this stops at id:150");
-  expect(text).not.toContain("checkpoint below");
   expect(text).not.toContain("Next check");
-  expect(text).toContain("Take the checkpoint from the last page");
+  expect(cursorOf(text)).toBeDefined();
 });
 
 test("one day of health counts the night that ended today and nothing dated later", async () => {
@@ -359,4 +386,108 @@ test("one day of health counts the night that ended today and nothing dated late
   const text = await updates("id:0", { healthDays: 1 });
   expect(text).toContain("2026-03-10: Sleep: 7h 0m");
   expect(text).not.toContain("2026-03-11");
+});
+
+describe("checkpoints", () => {
+  let appState: Database;
+  beforeEach(() => {
+    appState = new Database(":memory:");
+    initAppStateDb(appState);
+  });
+  afterEach(() => appState.close());
+  const at = (now: Date, params: Parameters<typeof getUpdates>[1]) =>
+    getUpdates(wrapDatabase(db), { healthDays: 0, now, ...params }, () => appState);
+  const position = (name: string) => (appState.query("SELECT position FROM mcp_checkpoints WHERE name = ?").get(name) as { position: number } | null)?.position;
+  const later = (hours: number) => new Date(NOW.getTime() + hours * 3_600_000);
+
+  test("a new name starts a week back, and the last page moves it", async () => {
+    message("too old for a new checkpoint", "2026-03-01T09:00:00Z");
+    const first = message("this week", "2026-03-08T09:00:00Z");
+    const reply = await at(NOW, { checkpoint: "daily" });
+    expect(reply).toContain('Checkpoint "daily" is new, so this starts 7 days back');
+    expect(reply).toContain("this week");
+    expect(reply).not.toContain("too old");
+    expect(reply.split("\n").at(-1)).toBe(`Checkpoint "daily" is now at id:${first}. Next check: checkpoint="daily".`);
+
+    const quiet = await at(later(1), { checkpoint: "daily" });
+    expect(quiet).toContain("No new messages.");
+    expect(quiet).toContain(`Checkpoint "daily" is at id:${first}. The catch-ups that last moved it started at since="2026-03-03T12:00:00.000Z" (2026-03-10T12:00Z).`);
+    expect(position("daily")).toBe(first);
+    expect(await at(later(1), { checkpoint: "weekly" })).toContain("Existing checkpoints, most recently used first: daily.");
+  });
+
+  test("after two lost replies in a row, the next call still names where the first began", async () => {
+    const start = message("one", "2026-03-09T09:00:00Z");
+    await at(NOW, { checkpoint: "daily", since: `id:${start - 1}` });
+    const second = message("two", "2026-03-09T10:00:00Z");
+    expect(await at(later(1), { checkpoint: "daily" })).toContain("two"); // lost
+    message("three", "2026-03-09T11:00:00Z");
+    expect(await at(later(2), { checkpoint: "daily" })).toContain("three"); // lost too
+    const third = await at(later(3), { checkpoint: "daily" });
+    expect(third).toContain(`started at since="id:${start - 1}" (2026-03-10T12:00Z), since="id:${start}" (2026-03-10T13:00Z), since="id:${second}" (2026-03-10T14:00Z)`);
+    const replay = await at(later(3), { checkpoint: "daily", since: `id:${start}` });
+    expect(replay).toContain("two");
+    expect(replay).toContain("three");
+  });
+
+  test("a catch-up that may have left events out does not move a checkpoint, nor does a stale page", async () => {
+    const first = message("first", "2026-03-09T09:00:00Z");
+    await at(NOW, { checkpoint: "daily", since: "id:0" });
+    message("long", "2026-03-09T10:00:00Z", "long");
+    const skipped = message("skipped by a later since", "2026-03-09T11:00:00Z");
+    message("imported late", "2026-01-01T09:00:00Z");
+    const latest = message("latest", "2026-03-09T12:00:00Z");
+    for (const since of [`id:${skipped}`, "2026-03-09"]) {
+      expect(await at(NOW, { checkpoint: "daily", since })).toContain(`Checkpoint "daily" stays at id:${first}`);
+      expect(position("daily")).toBe(first);
+    }
+    // A stale cursor ends behind where the checkpoint now stands.
+    message("word ".repeat(2000), "2026-03-09T08:00:00Z", "huge");
+    const cursor = cursorOf(await at(NOW, { checkpoint: "daily", maxTokens: 1000 }));
+    if (!cursor) throw new Error("expected a second page");
+    await at(NOW, { checkpoint: "daily" });
+    const moved = position("daily");
+    message("newer", "2026-03-09T13:00:00Z");
+    await at(NOW, { checkpoint: "daily" });
+    expect(position("daily")).toBeGreaterThan(moved ?? Infinity);
+    await at(NOW, { cursor });
+    expect(position("daily")).toBeGreaterThan(latest);
+  });
+
+  test("only the last page of an unfiltered catch-up moves a checkpoint", async () => {
+    message("word ".repeat(2000), "2026-03-09T10:00:00Z", "long");
+    const last = message("short and sweet", "2026-03-09T09:00:00Z", "short");
+    const page = await at(NOW, { checkpoint: "daily", maxTokens: 1000 });
+    expect(page).toContain('Updates for checkpoint "daily"');
+    expect(position("daily")).toBeUndefined();
+    const cursor = cursorOf(page);
+    if (!cursor) throw new Error(page);
+    expect(await at(NOW, { cursor })).toContain('Checkpoint "daily" is now at id:');
+    expect(position("daily")).toBe(last);
+
+    message("more", "2026-03-09T11:00:00Z", "short");
+    expect(await at(NOW, { checkpoint: "daily", conversationId: "short" })).toContain('(checkpoint "daily" was not moved');
+    expect(await at(NOW, { checkpoint: "daily", sources: ["discord"] })).toContain('(checkpoint "daily" was not moved');
+    expect(position("daily")).toBe(last);
+  });
+
+  test("a checkpoint stores where a catch-up started in normal form, never the caller's text", async () => {
+    message("hello", "2026-03-09T09:00:00Z");
+    await at(NOW, { checkpoint: "daily", since: "Mar 9 2026 (from the agent)" });
+    expect(appState.query("SELECT moves FROM mcp_checkpoints").get()).toEqual({ moves: expect.stringContaining('"from":"2026-03-09T') });
+    expect(appState.query("SELECT moves FROM mcp_checkpoints").get()).not.toEqual({ moves: expect.stringContaining("agent") });
+    await expect(at(NOW, { checkpoint: "daily", since: `2026-03-09 (${"x".repeat(100)})` })).rejects.toThrow("at most 64 characters");
+  });
+
+  test("names are checked, and a checkpoint no call used for a while is cleaned up", async () => {
+    expect((await runGetUpdates(wrapDatabase(db), { checkpoint: "my checkpoint!" }, () => appState)).isError).toBe(true);
+    message("hello", "2026-03-09T09:00:00Z");
+    for (const name of ["forgotten", "in-use"]) await at(NOW, { checkpoint: name });
+    const day = (n: number) => later(n * 24);
+    await at(day(60), { checkpoint: "in-use" });
+    expect(await at(day(60), { checkpoint: "new-name" })).toContain("Existing checkpoints, most recently used first: in-use, forgotten.");
+    // Creating a checkpoint, as moving one does, deletes those idle too long.
+    await at(day(CHECKPOINT_IDLE_DAYS + 5), { checkpoint: "fresh" });
+    expect(["forgotten", "in-use", "fresh"].map(position).map((p) => p !== undefined)).toEqual([false, true, true]);
+  });
 });

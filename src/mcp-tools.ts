@@ -685,7 +685,7 @@ export interface RegisterToolsOptions {
   defaultSessionId?: () => string | undefined;
   /** Embedding model and index for semantic_search; unset leaves the tool returning a setup message. */
   semanticSearch?: SemanticSearch;
-  /** Leave out every tool that can change anything (a read-only MCP token). */
+  /** Leave out every tool that can change anything (a read-only MCP token); get_updates still writes checkpoints. */
   readOnly?: boolean;
 }
 
@@ -1627,11 +1627,15 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
     }),
   );
 
+  // READS although it writes checkpoints, so read-only connections create and
+  // move them too: its only writes are to mcp_checkpoints, a table of named
+  // bookmarks, never Timeline's data or notes, which read-only still cannot change.
   tool(
     "get_updates",
     GET_UPDATES_DESCRIPTION,
     GET_UPDATES_SCHEMA,
     READS,
-    async (params, extra) => instrumentToolCall("get_updates", params, extra, () => runGetUpdates(db, params)),
+    async (params, extra) => instrumentToolCall("get_updates", params, extra,
+      () => runGetUpdates(db, params, getMcpHistoryDb)),
   );
 }

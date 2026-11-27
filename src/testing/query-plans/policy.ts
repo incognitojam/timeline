@@ -22,6 +22,7 @@ export const SMALL_TABLES: Record<string, string> = {
   app_settings: "One row per application setting.",
   upload_tokens: "One row per operator-issued upload token.",
   "mcp_tokens": "One row per operator-issued MCP token.",
+  mcp_checkpoints: "One row per checkpoint name used in the last CHECKPOINT_IDLE_DAYS (src/mcp/updates.ts); older ones are deleted.",
   music_exclusions: "One row per track, album, artist or playlist the owner leaves out of the Music page's top lists.",
   scheduler_state: "One row per scheduled source.",
   sync_state: "One row per sync source.",
