@@ -349,8 +349,38 @@ describe("ConversationRangeExportControls", () => {
     fireEvent.click(getByLabelText("Close range preview"));
     fireEvent.click(getByText("Copy"));
 
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(response.text));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("```\nAlice: hello\nBob: hi\n```"));
     expect(mockExportConversationRange).toHaveBeenCalledTimes(1);
+  });
+
+  it("copies from the preview with a fence longer than any backtick run in the transcript", async () => {
+    const response = exportResponse("Alice: try ```ls``` or ````pwd````\nBob: ok");
+    mockExportConversationRange.mockResolvedValue(response);
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    const { container, getByRole, getByText } = renderWithQueryClient(() => (
+      <ConversationRangeExportControls
+        rangeMode={() => true}
+        startEventId={() => 11}
+        endEventId={() => 12}
+        selectedLoadedCount={() => 2}
+        conversationBounds={() => null}
+        sidebarOpen={() => false}
+        onSelectRange={vi.fn()}
+        onClearSelection={vi.fn()}
+      />
+    ));
+
+    fireEvent.click(getByText("Preview"));
+    await waitFor(() => expect(container.querySelector("textarea")?.textContent).toBe(response.text));
+    fireEvent.click(getByRole("dialog").querySelector("button") as HTMLButtonElement);
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(`\`\`\`\`\`\n${response.text}\n\`\`\`\`\``));
+    expect(container.querySelector("textarea")?.textContent).toBe(response.text);
   });
 });
 
