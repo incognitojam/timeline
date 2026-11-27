@@ -90,7 +90,10 @@ function CreateForm(props: { onCreated: (label: string, token: string) => void }
         <input type="checkbox" checked={tailnetOnly()} onChange={(event) => setTailnetOnly(event.currentTarget.checked)} />
         Tailnet only
       </label>
-      <button type="submit" class={PRIMARY_BUTTON} disabled={pending() || !label().trim()}>Create token</button>
+      <button type="submit" class={PRIMARY_BUTTON} disabled={pending() || !label().trim()} aria-describedby="mcp-token-label-hint">Create token</button>
+      <Show when={!label().trim()}>
+        <p id="mcp-token-label-hint" class="w-full -mt-1 text-xs text-muted-foreground">Enter a label to create a token, such as the client that will use it.</p>
+      </Show>
       <Show when={error()}>
         {(message) => <p role="alert" class="w-full text-xs text-destructive">{message()}</p>}
       </Show>

@@ -3,8 +3,12 @@ process.env.NODE_ENV = "test";
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { Database } from "../db/sqlite";
 import { getAppStateDb, initAppStateDb } from "../db/app-state";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { getDb } from "../db/schema";
 import { app } from "./index";
+import { readPublicAccess } from "./mcp";
 
 const HEADERS = { "Content-Type": "application/json", Accept: "application/json, text/event-stream" };
 const FUNNEL = { "Tailscale-Funnel-Request": "?1", "X-Forwarded-For": "198.51.100.7" };
@@ -285,4 +289,41 @@ test("an existing app-state database gains mcp_tokens and keeps its sessions", (
   expect(db.query("SELECT id, client_name, token_hash, token_label FROM mcp_sessions").all())
     .toEqual([{ id: "old", client_name: "Old Client", token_hash: "abc", token_label: null }]);
   expect(db.query("SELECT COUNT(*) AS n FROM mcp_tokens").get()).toEqual({ n: 0 });
+});
+
+describe("connect details", () => {
+  const dir = join(homedir(), ".local", "share", "timeline");
+  const connect = async (headers: Record<string, string> = {}) => app.request("/api/mcp/connect", { headers });
+
+  test("public access follows the menu bar app's record", async () => {
+    rmSync(join(dir, "tailscale"), { recursive: true, force: true });
+    expect(await (await connect()).json()).toEqual({ public_url: null, public_access: { state: "unavailable" } });
+
+    mkdirSync(join(dir, "tailscale"), { recursive: true });
+    const record = join(dir, "tailscale-public-access");
+    try {
+      expect(readPublicAccess()).toEqual({ state: "off" });
+      const now = Math.floor(Date.now() / 1000);
+      writeFileSync(record, `${now - 60} ${now + 3600}`);
+      expect(readPublicAccess()).toEqual({ state: "on", until: new Date((now + 3600) * 1000).toISOString() });
+      // Read as the menu bar app reads it: extra spaces are fine, a newline is not.
+      writeFileSync(record, `${now - 60}  ${now + 3600}`);
+      expect(readPublicAccess().state).toBe("on");
+      for (const stale of [`${now - 7200} ${now - 60}`, `${now + 60} ${now + 3600}`, `${now} ${now + 2 * 86400}`, `${now - 60} ${now + 3600}\n`, "garbage"]) {
+        writeFileSync(record, stale);
+        expect(readPublicAccess()).toEqual({ state: "off" });
+      }
+      writeFileSync(record, `${now - 60} ${now + 3600}`);
+      writeFileSync(join(dir, "tailscale.disabled"), "");
+      expect(readPublicAccess()).toEqual({ state: "unavailable" });
+    } finally {
+      rmSync(join(dir, "tailscale"), { recursive: true, force: true });
+      rmSync(record, { force: true });
+      rmSync(join(dir, "tailscale.disabled"), { force: true });
+    }
+  });
+
+  test("is refused over Funnel", async () => {
+    expect((await connect(FUNNEL)).status).toBe(403);
+  });
 });

@@ -2239,6 +2239,18 @@ export async function fetchMcpTokens(signal: AbortSignal): Promise<{ tokens: Mcp
   return parseApiJson(res, "Failed to load MCP tokens");
 }
 
+export interface McpConnectInfo {
+  /** `[server].public_url` from the service's config, when set. */
+  public_url: string | null;
+  /** What the menu bar app records: unavailable when Remote Access is not set up on the service's host. */
+  public_access: { state: "unavailable" } | { state: "off" } | { state: "on"; until: string };
+}
+
+export async function fetchMcpConnectInfo(signal: AbortSignal): Promise<McpConnectInfo> {
+  const res = await apiFetch(`${API_BASE}/api/mcp/connect`, { signal });
+  return parseApiJson(res, "Failed to load MCP connection details");
+}
+
 /** Create a token; the response is the only time its value is available. */
 export async function createMcpToken(input: { label: string; read_only: boolean; tailnet_only: boolean }): Promise<{ id: number; token: string }> {
   const res = await apiFetch(`${API_BASE}/api/mcp/tokens`, {

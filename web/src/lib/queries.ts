@@ -88,6 +88,7 @@ import {
   excludeFromTopLists,
   fetchMusicExclusions,
   fetchMusicRankings,
+  fetchMcpConnectInfo,
   fetchMcpSession,
   fetchMcpSessions,
   fetchMcpTokens,
@@ -244,6 +245,7 @@ export const queryKeys = {
   mcpSession: (id: string | undefined, params?: { limit?: number; offset?: number }) =>
     ["mcpSession", id, params] as const,
   mcpTokens: () => ["mcpTokens"] as const,
+  mcpConnect: () => ["mcpConnect"] as const,
   evalCasesRoot: () => ["evalCases"] as const,
   evalCases: () => ["evalCases", "list"] as const,
   evalCase: (id: number | undefined) => ["evalCases", "detail", id] as const,
@@ -1278,6 +1280,15 @@ export function useMcpTokens() {
   return createQuery(() => ({
     queryKey: queryKeys.mcpTokens(),
     queryFn: ({ signal }) => fetchMcpTokens(signal),
+  }));
+}
+
+// Public access is switched from the menu bar app, so check again now and then.
+export function useMcpConnectInfo() {
+  return createQuery(() => ({
+    queryKey: queryKeys.mcpConnect(),
+    queryFn: ({ signal }) => fetchMcpConnectInfo(signal),
+    refetchInterval: 30_000,
   }));
 }
 

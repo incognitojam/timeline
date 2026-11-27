@@ -3,6 +3,9 @@
  * sessions and tool calls, which the MCP HTTP and stdio transports write.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { type Context, Hono } from "hono";
 import { renderMcpSessionMarkdown } from "../mcp/render";
 import { getMcpSession, getMcpSessionStats, listMcpSessions, listMcpToolCalls } from "../mcp/recording";
@@ -26,7 +29,48 @@ function loadMcpSessionDetail(id: string, query: Record<string, string>) {
   return { session, calls, stats };
 }
 
-export const mcpRoutes = new Hono()
+/** Longest public access the menu bar app offers, matching `PublicAccess.durations` in tools/timeline-app. */
+const LONGEST_PUBLIC_ACCESS_S = 24 * 60 * 60;
+
+export type PublicAccess =
+  | { state: "unavailable" }
+  | { state: "off" }
+  | { state: "on"; until: string };
+
+/**
+ * What the menu bar app records about public access (see
+ * tools/timeline-app/PublicAccess.swift): Remote Access is set up when its
+ * state directory exists and it is not turned off, and public access is on
+ * while `tailscale-public-access` holds a current "<start> <end>" record. The
+ * app turns Funnel off whenever the record does not allow it, so this is what
+ * Funnel is meant to be, not a check that it is reachable.
+ */
+export function readPublicAccess(now = Date.now()): PublicAccess {
+  // The app writes these under the home directory whatever config.toml says.
+  const dir = join(homedir(), ".local", "share", "timeline");
+  if (!existsSync(join(dir, "tailscale")) || existsSync(join(dir, "tailscale.disabled"))) return { state: "unavailable" };
+  let record: string;
+  try {
+    record = readFileSync(join(dir, "tailscale-public-access"), "utf8");
+  } catch {
+    return { state: "off" };
+  }
+  // Parsed as Swift's split(separator: " ") and Int() do.
+  const parts = record.split(" ").filter(Boolean);
+  const [start, end] = parts.map(part => (/^[+-]?\d+$/.test(part) ? Number(part) : Number.NaN));
+  const seconds = now / 1000;
+  if (parts.length !== 2 || !Number.isInteger(start) || !Number.isInteger(end)
+    || start > seconds || seconds >= end || end - start > LONGEST_PUBLIC_ACCESS_S) return { state: "off" };
+  return { state: "on", until: new Date(end * 1000).toISOString() };
+}
+
+export const createMcpRoutes = (options: { publicUrl?: string }) => new Hono()
+  // What the page needs to tell a client where to connect; never a token.
+  .get("/api/mcp/connect", (c) => c.json({
+    public_url: options.publicUrl ?? null,
+    public_access: readPublicAccess(),
+  }))
+
   // Managed tokens, without their values; MCP_TOKENS values only as a count.
   .get("/api/mcp/tokens", (c) => {
     const tokens = listMcpTokens().map(row => ({ ...row, read_only: !!row.read_only, tailnet_only: !!row.tailnet_only }));

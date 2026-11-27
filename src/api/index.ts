@@ -56,7 +56,7 @@ import {
 } from "../platforms/discord/reply-references";
 import { getDiscordServer, listDiscordServers } from "../platforms/discord/servers";
 import { getWakaTimeProject, getWakaTimeProjectSessions, getWakaTimeStats } from "../platforms/wakatime/stats";
-import { mcpRoutes } from "./mcp";
+import { createMcpRoutes } from "./mcp";
 import { createMemoryRoutes } from "./memory";
 import { createConversationRefreshRoutes } from "./conversation-refresh";
 import { generateStatusMarkdown, renderMarkdownToHtml } from "./status-md";
@@ -439,7 +439,7 @@ app.use("*", cors());
 app.route("/", authRoutes);
 app.route("/", statusRoutes);
 app.route("/", jobsRoutes);
-app.route("/", mcpRoutes);
+app.route("/", createMcpRoutes({ publicUrl: apiConfig.server.public_url }));
 app.route("/", createMemoryRoutes(readDb));
 app.route("/", createConversationRefreshRoutes(readDb));
 app.route("/", evalRoutes);
