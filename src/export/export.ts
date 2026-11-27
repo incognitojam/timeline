@@ -16,6 +16,8 @@ export interface ExportRenderOptions {
   noSummaries: boolean;
   fullTimestamps: boolean;
   preferredDescriptionModels?: readonly string[];
+  /** Leave out reply quotes of hidden contacts' messages. */
+  omitHiddenReplyAuthors?: boolean;
 }
 
 export interface ContactExportParams {
@@ -86,6 +88,33 @@ export type ContactExportResult =
       tokenBreakdown: SourceTokenBreakdown[];
       tokenCount: number | null;
     };
+
+/** Render events as an export transcript, loading the attachment descriptions, names and reply quotes it shows. */
+export async function renderExportText(
+  db: QueryExecutor,
+  events: TimelineEvent[],
+  options: ExportRenderOptions,
+): Promise<string> {
+  const attachmentDescriptions = await loadAttachmentDescriptionsForEvents(
+    db,
+    events,
+    options.preferredDescriptionModels,
+  );
+  const renderIdentities = await resolveRenderIdentities(db, events);
+  const replyQuotes = await loadReplyQuotesForEvents(db, events, {
+    discordUserResolver: renderIdentities.discordUserResolver,
+    omitHiddenAuthors: options.omitHiddenReplyAuthors,
+  });
+  return renderEvents(events, {
+    compactAuthors: options.compactAuthors,
+    noSummaries: options.noSummaries,
+    fullTimestamps: options.fullTimestamps,
+    dateHeaders: !options.fullTimestamps,
+    attachmentDescriptions,
+    replyQuotes,
+    ...renderIdentities,
+  });
+}
 
 /**
  * Get sender from people JSON array (first element)
@@ -382,24 +411,7 @@ export async function exportRange(
     return { startDate, endDate, events, text: null, tokenCount: null };
   }
 
-  const attachmentDescriptions = await loadAttachmentDescriptionsForEvents(
-    db,
-    events,
-    options.preferredDescriptionModels,
-  );
-  const renderIdentities = await resolveRenderIdentities(db, events);
-  const replyQuotes = await loadReplyQuotesForEvents(db, events, {
-    discordUserResolver: renderIdentities.discordUserResolver,
-  });
-  const text = renderEvents(events, {
-    compactAuthors: options.compactAuthors,
-    noSummaries: options.noSummaries,
-    fullTimestamps: options.fullTimestamps,
-    dateHeaders: !options.fullTimestamps,
-    attachmentDescriptions,
-    replyQuotes,
-    ...renderIdentities,
-  });
+  const text = await renderExportText(db, events, options);
   const tokenCount = countTokens(text);
 
   return { startDate, endDate, events, text, tokenCount };
@@ -524,24 +536,7 @@ async function renderConversationResult(
     return { conversationId, events, text: null, tokenCount: null, totalEventCount };
   }
 
-  const attachmentDescriptions = await loadAttachmentDescriptionsForEvents(
-    db,
-    events,
-    options.preferredDescriptionModels,
-  );
-  const renderIdentities = await resolveRenderIdentities(db, events);
-  const replyQuotes = await loadReplyQuotesForEvents(db, events, {
-    discordUserResolver: renderIdentities.discordUserResolver,
-  });
-  const text = renderEvents(events, {
-    compactAuthors: options.compactAuthors,
-    noSummaries: options.noSummaries,
-    fullTimestamps: options.fullTimestamps,
-    dateHeaders: !options.fullTimestamps,
-    attachmentDescriptions,
-    replyQuotes,
-    ...renderIdentities,
-  });
+  const text = await renderExportText(db, events, options);
   const tokenCount = countTokens(text);
 
   return { conversationId, events, text, tokenCount, totalEventCount };

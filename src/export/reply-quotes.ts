@@ -43,6 +43,8 @@ export async function loadReplyQuotesForEvents(
     participantNameResolver?: (name: string, identifier?: string) => string;
     /** Zone for inline `<t:…>` timestamps, so a quote reads like the message it quotes. */
     timeZone?: string;
+    /** Leave out quotes of messages written by hidden contacts. */
+    omitHiddenAuthors?: boolean;
   } = {},
 ): Promise<Map<number, string>> {
   const targets = await resolveDiscordReplyTargets(db, events);
@@ -63,6 +65,7 @@ export async function loadReplyQuotesForEvents(
 
   const quotes = new Map<number, string>();
   for (const [eventId, target] of targets) {
+    if (options.omitHiddenAuthors && target.authorId && identities[`discord:${target.authorId}`]?.hidden) continue;
     const author = authorName(target, identities, options.participantNameResolver);
     const text = quotedText(target, resolver, options.timeZone);
     quotes.set(eventId, text ? `↪ (to ${author}: "${text}")` : `↪ (to ${author})`);

@@ -1,6 +1,6 @@
 # MCP server
 
-Timeline exposes its data to AI assistants over the [Model Context Protocol](https://modelcontextprotocol.io). Tools include `query_events`, `get_context`, `get_summary`, `export_conversation`, `list_contacts`, `get_contact_info`, `run_sql`, and `semantic_search` (which needs [embeddings](embeddings.md)), plus the shared [memory](#memory) tools.
+Timeline exposes its data to AI assistants over the [Model Context Protocol](https://modelcontextprotocol.io). Tools include `get_updates` (what was added since the agent last checked: new messages by conversation, daily health lines and counts of everything else), `query_events`, `get_context`, `get_summary`, `export_conversation`, `list_contacts`, `get_contact_info`, `run_sql`, and `semantic_search` (which needs [embeddings](embeddings.md)), plus the shared [memory](#memory) tools.
 
 ## Local (stdio)
 
