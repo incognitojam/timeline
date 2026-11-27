@@ -30,7 +30,9 @@ import { MEMORY_KINDS } from "./shared/memory";
 import { resolveIdentities } from "./db/identities";
 import type { QueryExecutor } from "./db/pool";
 import {
+  countContactEvents,
   createContactMemory,
+  createCursor,
   getAliasesForContact,
   getContact,
   getContactMemories,
@@ -44,6 +46,7 @@ import {
   hydrateEventsById,
   listContacts,
   listSources,
+  parseCursor,
   runReadOnlySql,
   searchByContact,
   searchByLocation,
@@ -84,6 +87,65 @@ const MONTH_NAMES = [
 ];
 
 const MCP_EXPORT_LIMIT = 500;
+
+/** A contact's events are counted up to here; past it the header says "more than". */
+const CONTACT_COUNT_CAP = 10_000;
+
+type PageOrder = "oldest first" | "newest first";
+
+/**
+ * Trim a fetch of `limit + 1` events to `limit` and describe the page in one
+ * line: how many are shown (and of how many, when counted), which end of the
+ * matches they are, and what to pass for the next page. `filter` drops events
+ * after the fetch; the cursor still continues from the last one fetched.
+ */
+function pageOf(
+  fetched: TimelineEvent[],
+  limit: number,
+  order: PageOrder,
+  options: {
+    total?: number;
+    pageable?: boolean;
+    /** The query pages past events with no timestamp (searchTimeline and searchByContact do). */
+    untimedCursor?: boolean;
+    filter?: (event: TimelineEvent) => boolean;
+  } = {},
+): { events: TimelineEvent[]; header: string } {
+  const kept = fetched.slice(0, limit);
+  const events = options.filter ? kept.filter(options.filter) : kept;
+  const more = fetched.length > limit;
+  if (events.length === 0 && !more) return { events, header: "" };
+  const { total } = options;
+  const of = total === undefined
+    ? ""
+    : total > CONTACT_COUNT_CAP
+      ? ` of more than ${CONTACT_COUNT_CAP.toLocaleString("en-US")}`
+      : ` of ${total.toLocaleString("en-US")}`;
+  const shown = `${events.length}${of} event${(total ?? events.length) === 1 ? "" : "s"}`;
+  if (!more) {
+    const header = total !== undefined && total > events.length
+      ? `Showing ${shown}, ${order}; this is the last page.`
+      : `${shown}, ${order}.`;
+    return { events, header: `${header}\n` };
+  }
+  const last = kept[kept.length - 1];
+  const cursor = options.pageable === false || !last
+    ? null
+    : options.untimedCursor ? createCursor(last, { allowNullTimestamp: true }) : createCursor(last);
+  // A filter after the fetch may have dropped every remaining match.
+  const next = cursor
+    ? `Next page: the same arguments with cursor: "${cursor}".`
+    : `More ${options.filter ? "may match" : "exist"}: narrow the filters or raise limit.`;
+  return { events, header: `Showing ${shown}, ${order}. ${next}\n` };
+}
+
+const cursorParam = z.string().optional().describe('From a "Next page" line');
+
+function invalidCursor(cursor: string | undefined): CallToolResult | null {
+  return cursor !== undefined && !parseCursor(cursor, { allowNullTimestamp: true })
+    ? { isError: true, content: [{ type: "text" as const, text: `Error: invalid cursor "${cursor}"; pass one exactly as a "Next page" line gave it.` }] }
+    : null;
+}
 
 function withTranscriptMetadata(metadata: string[], transcript: string | null): string {
   return ["Times in UTC.", ...metadata, "", transcript ?? "No events found."].join("\n");
@@ -393,6 +455,39 @@ function eventIdHint(publicUrl?: string): string {
   return `Each event line begins with \`#<id>\` (the stable timeline event id). ${linkLine} Pass an \`<id>\` to \`get_context\` via \`event_id\` to see surrounding events.`;
 }
 
+/**
+ * searchByLocation takes only the place, so the other query_events filters
+ * (text, source, type, date) apply to what it returns.
+ */
+function locationSearchFilter(filters: {
+  query?: string; source?: string; type?: string; date?: string; start_date?: string; end_date?: string;
+}): (event: TimelineEvent) => boolean {
+  const checks: ((e: TimelineEvent) => boolean)[] = [];
+  const lowerQuery = filters.query?.toLowerCase();
+  if (lowerQuery) {
+    checks.push((e) => !!(e.title?.toLowerCase().includes(lowerQuery) || e.content?.toLowerCase().includes(lowerQuery)));
+  }
+  if (filters.source) {
+    const sources = new Set(filters.source.split(",").map(s => s.trim()));
+    checks.push((e) => sources.has(e.source));
+  }
+  if (filters.type) {
+    const types = filters.type.split(",").map(t => t.trim());
+    checks.push((e) => types.some(t => e.type.startsWith(t)));
+  }
+  const { date, start_date } = filters;
+  if (date) checks.push((e) => !!e.timestamp?.startsWith(date));
+  if (start_date) checks.push((e) => !!e.timestamp && e.timestamp >= start_date);
+  const endValue = expandEndDateToEndOfDay(filters.end_date);
+  if (endValue) checks.push((e) => !!e.timestamp && e.timestamp <= endValue);
+  return (e) => checks.every((check) => check(e));
+}
+
+/** Date-bounded queries list oldest first; the rest newest first. */
+function rangeOrder(...bounds: (string | undefined)[]): PageOrder {
+  return bounds.some(Boolean) ? "oldest first" : "newest first";
+}
+
 /** Split a comma-separated source list param into trimmed names (undefined when absent/empty). */
 function splitSources(value: string | undefined): string[] | undefined {
   const sources = value?.split(",").map((s) => s.trim()).filter(Boolean);
@@ -655,13 +750,25 @@ Examples:
       latitude: z.number().optional().describe("Latitude for coordinate search"),
       longitude: z.number().optional().describe("Longitude for coordinate search"),
       radius_km: z.number().optional().describe("Search radius in km when latitude/longitude are given (default 1; ignored otherwise)"),
-      limit: z.number().optional().default(50).describe("Max results (default 50)"),
+      limit: z.number().int().min(1).optional().default(50).describe("Max results (default 50)"),
+      cursor: cursorParam,
       full_content: z.boolean().optional().default(false).describe("Return full content instead of truncated previews"),
     },
     READS,
     async (params, extra) => instrumentToolCall("query_events", params, extra, async () => {
-      const { query, source, type, contact, date, start_date, end_date, location, latitude, longitude, radius_km, limit, full_content } = params;
-      let events: TimelineEvent[];
+      const { query, source, type, contact, date, start_date, end_date, location, latitude, longitude, radius_km, cursor, full_content } = params;
+      const limit = params.limit ?? 50;
+      const cursorError = invalidCursor(cursor);
+      if (cursorError) return cursorError;
+      // One more than asked for tells whether more exist without counting them all.
+      const fetchLimit = limit + 1;
+      const order: PageOrder = rangeOrder(date, start_date, end_date);
+      const respond = async (page: { events: TimelineEvent[]; header: string }, prefix = "") => ({
+        content: [{
+          type: "text" as const,
+          text: prefix + page.header + (await formatEvents(db, page.events, full_content)),
+        }],
+      });
 
       // `date` narrows to that single day; like getEvents, it wins over start/end.
       // searchTimeline/searchByContact expand a bare YYYY-MM-DD endDate to end of day.
@@ -676,84 +783,48 @@ Examples:
         }
 
         const aliases = await getAliasesForContact(db, resolved.contact.id);
-        events = await searchByContact(db, resolved.contact.id, {
-          query,
-          source,
-          type,
-          startDate: rangeStart,
-          endDate: rangeEnd,
-          limit,
+        const filters = { query, source, type, startDate: rangeStart, endDate: rangeEnd };
+        const fetched = await searchByContact(db, resolved.contact.id, { ...filters, cursor, limit: fetchLimit });
+        // The location filter runs after the fetch, so the count would not match it.
+        const total = location
+          ? undefined
+          : await countContactEvents(db, resolved.contact.id, filters, CONTACT_COUNT_CAP + 1);
+        const lowerLoc = location?.toLowerCase();
+        const page = pageOf(fetched, limit, order, {
+          total,
+          untimedCursor: true,
+          filter: lowerLoc ? (e) => e.location_name?.toLowerCase().includes(lowerLoc) ?? false : undefined,
         });
-
-        // Post-filter for location if provided
-        if (location) {
-          const lowerLoc = location.toLowerCase();
-          events = events.filter(e => e.location_name?.toLowerCase().includes(lowerLoc));
-        }
 
         const header = [
           `Contact: ${resolved.contact.display_name} (ID: ${resolved.contact.id})`,
           `Aliases: ${aliases.map((a) => a.source ? `${a.alias} (${a.source})` : a.alias).join(", ") || "none"}`,
-          `Events found: ${events.length}`,
           "",
         ].join("\n");
 
-        return {
-          content: [{
-            type: "text" as const,
-            text: header + (await formatEvents(db, events, full_content)),
-          }],
-        };
+        return respond(page, header);
       }
 
       // Strategy 2: Location-based search (name or coordinates)
       if (location || (latitude !== undefined && longitude !== undefined)) {
-        events = await searchByLocation(db, {
+        const fetched = await searchByLocation(db, {
           locationName: location,
           latitude,
           longitude,
           radiusKm: radius_km,
-          limit,
+          limit: fetchLimit,
         });
-
-        // Post-filter for text, source, type, date
-        if (query) {
-          const lowerQuery = query.toLowerCase();
-          events = events.filter(e =>
-            e.title?.toLowerCase().includes(lowerQuery) ||
-            e.content?.toLowerCase().includes(lowerQuery)
-          );
+        if (cursor) {
+          return { isError: true, content: [{ type: "text" as const, text: "Error: a location search has no next page; raise limit instead." }] };
         }
-        if (source) {
-          const sources = new Set(source.split(",").map(s => s.trim()));
-          events = events.filter(e => sources.has(e.source));
-        }
-        if (type) {
-          const types = type.split(",").map(t => t.trim());
-          events = events.filter(e => types.some(t => e.type.startsWith(t)));
-        }
-        if (date) {
-          events = events.filter(e => e.timestamp?.startsWith(date));
-        }
-        if (start_date) {
-          events = events.filter(e => e.timestamp && e.timestamp >= start_date);
-        }
-        if (end_date) {
-          const endValue = expandEndDateToEndOfDay(end_date);
-          events = events.filter(e => e.timestamp && endValue && e.timestamp <= endValue);
-        }
-
-        return {
-          content: [{
-            type: "text" as const,
-            text: await formatEvents(db, events, full_content),
-          }],
-        };
+        const keep = locationSearchFilter({ query, source, type, date, start_date, end_date });
+        // searchByLocation has no cursor.
+        return respond(pageOf(fetched, limit, location ? "newest first" : "oldest first", { pageable: false, filter: keep }));
       }
 
       // Strategy 3: Text search (FTS)
       if (query) {
-        events = await searchTimeline(db, {
+        const fetched = await searchTimeline(db, {
           // MCP is an agent data-access seam and remains intentionally unfiltered.
           includeHiddenContacts: true,
           query,
@@ -761,20 +832,15 @@ Examples:
           type,
           startDate: rangeStart,
           endDate: rangeEnd,
-          limit,
+          cursor,
+          limit: fetchLimit,
         });
-
-        return {
-          content: [{
-            type: "text" as const,
-            text: await formatEvents(db, events, full_content),
-          }],
-        };
+        return respond(pageOf(fetched, limit, order, { untimedCursor: true }));
       }
 
       // Strategy 4: Date-based browsing
       if (date || start_date || end_date) {
-        events = await getEvents(db, {
+        const fetched = await getEvents(db, {
           // MCP is an agent data-access seam and remains intentionally unfiltered.
           includeHiddenContacts: true,
           date,
@@ -782,27 +848,16 @@ Examples:
           endDate: end_date,
           source,
           type,
-          limit,
+          cursor,
+          limit: fetchLimit,
         });
-
-        return {
-          content: [{
-            type: "text" as const,
-            text: await formatEvents(db, events, full_content),
-          }],
-        };
+        return respond(pageOf(fetched, limit, order));
       }
 
       // Strategy 5: Fallback — recent events (filtered by source/type)
       // MCP is an agent data-access seam and remains intentionally unfiltered.
-      events = await getRecentEvents(db, { source, type, limit, includeHiddenContacts: true });
-
-      return {
-        content: [{
-          type: "text" as const,
-          text: await formatEvents(db, events, full_content),
-        }],
-      };
+      const fetched = await getRecentEvents(db, { source, type, cursor, limit: fetchLimit, includeHiddenContacts: true });
+      return respond(pageOf(fetched, limit, "newest first"));
     })
   );
 
@@ -909,25 +964,31 @@ ${idHint}`,
       hours_window: z.number().optional().default(2).describe("Hours before and after to include (default 2)"),
       source: z.string().optional().describe("Only include these sources (comma-separated, e.g. \"discord,spotify\")"),
       exclude_source: z.string().optional().describe("Drop these sources from the window (comma-separated) — e.g. \"claude-code,conductor,t3code,codex\" to hide AI agent-session noise"),
-      limit: z.number().optional().default(50).describe("Max results (default 50)"),
+      limit: z.number().int().min(1).optional().default(50).describe("Max results (default 50)"),
+      cursor: cursorParam,
       full_content: z.boolean().optional().default(false).describe("Return full content instead of truncated previews"),
     },
     READS,
     async (params, extra) => instrumentToolCall("get_context", params, extra, async () => {
-      const { event_id, timestamp, hours_window, source, exclude_source, limit, full_content } = params;
-      const events = await getEventContext(db, {
+      const { event_id, timestamp, hours_window, source, exclude_source, cursor, full_content } = params;
+      const limit = params.limit ?? 50;
+      const cursorError = invalidCursor(cursor);
+      if (cursorError) return cursorError;
+      const fetched = await getEventContext(db, {
         eventId: event_id,
         timestamp,
         hoursWindow: hours_window,
         sources: splitSources(source),
         excludeSources: splitSources(exclude_source),
-        limit,
+        cursor,
+        limit: limit + 1,
       });
+      const page = pageOf(fetched, limit, "oldest first");
 
       return {
         content: [{
           type: "text" as const,
-          text: await formatEvents(db, events, full_content),
+          text: page.header + (await formatEvents(db, page.events, full_content)),
         }],
       };
     })

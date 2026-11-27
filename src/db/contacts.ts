@@ -3,7 +3,7 @@ import type { QueryExecutor } from "./pool";
 import type { TimelineEvent, Contact, ContactAlias, Platform } from "./schema";
 import { isValidPlatform } from "./schema";
 import { conversationTypeClause } from "./conversations";
-import { addTextSearch, transformEvents, parseCursor, createCursor } from "./events";
+import { addCursorCondition, addTextSearch, transformEvents, parseCursor, createCursor } from "./events";
 import type { SearchOptions } from "./events";
 import { parseIdentifier, formatIdentifier, getIdentitiesForContact } from "./identities";
 import { notSupersededClause } from "./superseded-conversations";
@@ -264,6 +264,68 @@ function addContactEventFilters(
   }
 }
 
+type ContactEventOptions = Omit<SearchOptions, "includeHiddenContacts">;
+
+/**
+ * The three ways an event involves a contact, as SELECTs of (event_id, timestamp)
+ * over event_people, each taking `params`:
+ * 1. Events where contact is sender (people[0]) - covers all event types
+ * 2. DM events where contact is recipient - direct participant even if not sender
+ * 3. Manual events where contact is any participant (notes associate people, no sender concept)
+ */
+async function contactEventBranches(
+  db: QueryExecutor,
+  contactId: number,
+  options: ContactEventOptions,
+): Promise<{ branches: string[]; params: (string | number)[]; sortOrder: "ASC" | "DESC" }> {
+  const identities = await getIdentitiesForContact(db, contactId);
+
+  // Build list of all identifiers for this contact: platform identities + "contact:N"
+  const allIdentifiers: string[] = identities.map(i => formatIdentifier(i.platform, i.platform_id));
+  allIdentifiers.push(`contact:${contactId}`);
+
+  const { query, source, type, startDate, endDate, chat, cursor, sort } = options;
+  // Use explicit sort if provided, otherwise: ASC for date range (chronological), DESC otherwise (recent first)
+  const sortOrder = sort === 'asc' ? "ASC" : sort === 'desc' ? "DESC" : (startDate || endDate) ? "ASC" : "DESC";
+
+  const conditions: string[] = [];
+  const params: (string | number)[] = [...allIdentifiers];
+
+  if (startDate) {
+    conditions.push(`ep.timestamp >= ?`);
+    params.push(startDate);
+  }
+
+  if (endDate) {
+    conditions.push(`ep.timestamp <= ?`);
+    params.push(endDate.length === 10 ? endDate + "T23:59:59.999Z" : endDate);
+  }
+
+  if (cursor) addCursorCondition(conditions, params, cursor, sortOrder, "ep.timestamp", "ep.event_id");
+
+  addContactEventFilters(conditions, params, { query, source, type, chat });
+  const filterClause = conditions.length > 0 ? ` AND ${conditions.join(" AND ")}` : "";
+
+  // Use IN (...) instead of per-identifier UNION ALL to avoid SQLite compound SELECT limit
+  const placeholders = allIdentifiers.map(() => "?").join(", ");
+  // DISTINCT: an event filed under two of the contact's identities counts once
+  // before each branch's LIMIT.
+  const branch = (match: string) => `
+        SELECT DISTINCT ep.event_id, ep.timestamp FROM event_people ep
+        JOIN events e ON e.id = ep.event_id
+        WHERE ep.person IN (${placeholders}) AND ${match}${filterClause}`;
+
+  return {
+    branches: [
+      branch("ep.is_sender = 1"),
+      branch("ep.is_sender = 0 AND (e.type LIKE 'message:dm%' OR e.source = 'phone')"),
+      branch("ep.is_sender = 0 AND e.source = 'manual'"),
+    ],
+    params,
+    sortOrder,
+  };
+}
+
 /**
  * Search events by contact - returns all events involving any of the contact's aliases
  * Uses the event_people index table with timestamp for fast sorted lookups
@@ -272,98 +334,21 @@ function addContactEventFilters(
 export async function searchByContact(
   db: QueryExecutor,
   contactId: number,
-  options?: Omit<SearchOptions, "includeHiddenContacts">
+  options: ContactEventOptions = {},
 ): Promise<TimelineEvent[]> {
-  const identities = await getIdentitiesForContact(db, contactId);
-
-  // Build list of all identifiers for this contact: platform identities + "contact:N"
-  const allIdentifiers: string[] = identities.map(i => formatIdentifier(i.platform, i.platform_id));
-  allIdentifiers.push(`contact:${contactId}`);
-
-  const { query, source, type, startDate, endDate, chat, limit = 50, cursor, sort } = options ?? {};
-  // Use explicit sort if provided, otherwise: ASC for date range (chronological), DESC otherwise (recent first)
-  const sortOrder = sort === 'asc' ? "ASC" : sort === 'desc' ? "DESC" : (startDate || endDate) ? "ASC" : "DESC";
-
-  // Build additional filter conditions
-  const filterConditions: string[] = [];
-  const filterParams: (string | number)[] = [];
-
-  if (startDate) {
-    filterConditions.push(`timestamp >= ?`);
-    filterParams.push(startDate);
-  }
-
-  if (endDate) {
-    const endDateValue = endDate.length === 10 ? endDate + "T23:59:59.999Z" : endDate;
-    filterConditions.push(`timestamp <= ?`);
-    filterParams.push(endDateValue);
-  }
-
-  if (cursor) {
-    const parsed = parseCursor(cursor);
-    if (parsed) {
-      if (sortOrder === "DESC") {
-        filterConditions.push(`(timestamp < ? OR (timestamp = ? AND event_id < ?))`);
-      } else {
-        filterConditions.push(`(timestamp > ? OR (timestamp = ? AND event_id > ?))`);
-      }
-      filterParams.push(parsed.timestamp, parsed.timestamp, parsed.id);
-    }
-  }
-
-  // Build filter clause with table prefix for JOINed queries
-  const filterConditionsWithPrefix = filterConditions.map(c =>
-    c.replace(/\btimestamp\b/g, "ep.timestamp").replace(/\bevent_id\b/g, "ep.event_id")
-  );
-  const queryParams: (string | number)[] = [];
-  addContactEventFilters(filterConditionsWithPrefix, queryParams, { query, source, type, chat });
-  const filterClauseWithPrefix = filterConditionsWithPrefix.length > 0
-    ? ` AND ${filterConditionsWithPrefix.join(" AND ")}`
-    : "";
-  const combinedFilterParams = [...filterParams, ...queryParams];
-
-  // Use IN (...) instead of per-identifier UNION ALL to avoid SQLite compound SELECT limit
-  const placeholders = allIdentifiers.map(() => "?").join(", ");
-
-  // Three branches:
-  // 1. Events where contact is sender (people[0]) - covers all event types
-  // 2. DM events where contact is recipient - direct participant even if not sender
-  // 3. Manual events where contact is any participant (notes associate people, no sender concept)
+  const limit = options.limit ?? 50;
+  const { branches, params, sortOrder } = await contactEventBranches(db, contactId, options);
   const unionQuery = `
     SELECT DISTINCT event_id FROM (
-      SELECT * FROM (
-        SELECT ep.event_id, ep.timestamp FROM event_people ep
-        JOIN events e ON e.id = ep.event_id
-        WHERE ep.person IN (${placeholders}) AND ep.is_sender = 1${filterClauseWithPrefix}
+      ${branches.map((b) => `SELECT * FROM (${b}
         ORDER BY ep.timestamp ${sortOrder}, ep.event_id ${sortOrder}
         LIMIT ?
-      )
-      UNION ALL
-      SELECT * FROM (
-        SELECT ep.event_id, ep.timestamp FROM event_people ep
-        JOIN events e ON e.id = ep.event_id
-        WHERE ep.person IN (${placeholders}) AND ep.is_sender = 0 AND (e.type LIKE 'message:dm%' OR e.source = 'phone')${filterClauseWithPrefix}
-        ORDER BY ep.timestamp ${sortOrder}, ep.event_id ${sortOrder}
-        LIMIT ?
-      )
-      UNION ALL
-      SELECT * FROM (
-        SELECT ep.event_id, ep.timestamp FROM event_people ep
-        JOIN events e ON e.id = ep.event_id
-        WHERE ep.person IN (${placeholders}) AND ep.is_sender = 0 AND e.source = 'manual'${filterClauseWithPrefix}
-        ORDER BY ep.timestamp ${sortOrder}, ep.event_id ${sortOrder}
-        LIMIT ?
-      )
+      )`).join(" UNION ALL ")}
     )
     ORDER BY timestamp ${sortOrder}, event_id ${sortOrder}
     LIMIT ?
   `;
-  const allParams: (string | number)[] = [
-    ...allIdentifiers, ...combinedFilterParams, limit,
-    ...allIdentifiers, ...combinedFilterParams, limit,
-    ...allIdentifiers, ...combinedFilterParams, limit,
-    limit,
-  ];
+  const allParams = [...branches.flatMap(() => [...params, limit]), limit];
 
   const eventRows = await db.query<{ event_id: number }>(unionQuery, ...allParams);
   if (eventRows.length === 0) return [];
@@ -377,6 +362,29 @@ export async function searchByContact(
   `, ...eventIds);
 
   return transformEvents(events);
+}
+
+/**
+ * Count the events searchByContact would return without a limit or cursor,
+ * stopping at `cap` so a contact with years of messages costs at most `cap`
+ * index rows per branch.
+ */
+export async function countContactEvents(
+  db: QueryExecutor,
+  contactId: number,
+  options: Omit<ContactEventOptions, "limit" | "cursor" | "sort">,
+  cap: number,
+): Promise<number> {
+  const { branches, params } = await contactEventBranches(db, contactId, options);
+  const row = await db.get<{ n: number }>(
+    `SELECT count(*) AS n FROM (
+      ${branches.map((b) => `SELECT event_id FROM (${b} LIMIT ?)`).join(" UNION ")}
+      LIMIT ?
+    )`,
+    ...branches.flatMap(() => [...params, cap]),
+    cap,
+  );
+  return row?.n ?? 0;
 }
 
 export interface ContactConversation {

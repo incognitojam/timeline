@@ -957,7 +957,7 @@
     },
     {
       "database": "timeline",
-      "sql": "SELECT * FROM events e WHERE 1 = 1 AND timestamp >= ? AND timestamp < ? AND source = ? AND e . id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) ORDER BY timestamp ASC LIMIT ?",
+      "sql": "SELECT * FROM events e WHERE 1 = 1 AND timestamp >= ? AND timestamp < ? AND source = ? AND e . id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) ORDER BY timestamp ASC , id ASC LIMIT ?",
       "reason": "found by the first run; under review",
       "findings": [
         "identities:table-scan"
