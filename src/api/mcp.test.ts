@@ -116,7 +116,8 @@ describe("MCP HTTP Transport", () => {
       });
       sessionId = init.headers.get("mcp-session-id");
       const instructions = (parseSSE(await init.text()) as any).result.instructions as string;
-      expect(instructions).toStartWith("Timeline holds this user's memory");
+      expect(instructions).toStartWith("Timeline tools list events with `#<id>`");
+      expect(instructions).toContain("Timeline holds this user's memory");
       expect(instructions).toContain("- No emoji");
 
       const save = await app.request(MCP_URL, {

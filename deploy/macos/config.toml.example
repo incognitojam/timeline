@@ -15,9 +15,9 @@
 # your network. Production service startup requires AUTH_PASSWORD in the env file.
 host = "127.0.0.1"
 port = 3001
-# Public URL the timeline web app is reachable at - used to embed clickable
-# event links (https://<public_url>/event/<id>) in MCP tool descriptions so
-# agents can hand the user a deep link to the highlighted event.
+# Public URL the timeline web app is reachable at - named in the MCP server's
+# instructions so agents can hand the user a deep link
+# (https://<public_url>/event/<id>) to the highlighted event.
 # Override with TIMELINE_PUBLIC_URL env var.
 # public_url = "https://timeline.example.ts.net"
 

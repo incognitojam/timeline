@@ -22,8 +22,7 @@ import {
   upsertMcpSession,
   type RecordToolCallInput,
 } from "./mcp/recording";
-import { memoryInstructions } from "./mcp/memory";
-import { registerTools } from "./mcp-tools";
+import { mcpInstructions, registerTools } from "./mcp-tools";
 import { PRODUCT_VERSION } from "./product-version";
 
 // The semantic_search tool loads sqlite-vec into embeddings.db, which requires
@@ -35,16 +34,16 @@ configureBunSqliteForSqliteVec();
 const db = getDb();
 initDb(db);
 
+// Resolve public URL from config + env override; used to explain clickable
+// /event/<id> links in the server instructions.
+const config = await loadConfig();
+
 // stdio clients start a process per connection, so this is read at connect time.
 const server = new McpServer(
   { name: "timeline", version: PRODUCT_VERSION },
-  { instructions: memoryInstructions(getAppStateDb()) },
+  { instructions: mcpInstructions(getAppStateDb(), { publicUrl: config.server.public_url }) },
 );
 const sessionId = `stdio:${process.pid}:${Date.now()}`;
-
-// Resolve public URL from config + env override; used to embed clickable
-// /event/<id> links in tool descriptions.
-const config = await loadConfig();
 let invalidRecorder: InvalidToolCallRecorder | undefined;
 
 function ensureStdioSession(): string {
@@ -80,7 +79,6 @@ function persistToolCall(rec: Omit<RecordToolCallInput, "sessionId"> & {
 
 // Register all tools from shared module.
 registerTools(server, wrapDatabase(db), db, {
-  publicUrl: config.server.public_url,
   // A single stdio client searches one query at a time, so it reads the index directly.
   semanticSearch: config.embeddings && {
     config: config.embeddings,
