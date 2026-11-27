@@ -79,6 +79,7 @@ import {
 import { renderMemoryIndex, renderMemoryNote } from "./mcp/memory";
 import { GET_UPDATES_DESCRIPTION, GET_UPDATES_SCHEMA, runGetUpdates } from "./mcp/updates";
 import { getDiscordComponentsText } from "./platforms/discord/shared/components";
+import { isConversationEventType } from "./shared/grouping";
 import { discordMentionsToPlainText, extractUserMentionIds } from "./platforms/discord/shared/mentions";
 
 const MONTH_NAMES = [
@@ -185,10 +186,35 @@ function messageContent(event: TimelineEvent): string | null {
     || (event.source === "discord" ? getDiscordComponentsText(event.raw_data) : null);
 }
 
+/** The UTC day and HH:MM an event is listed under; offset timestamps are converted. */
+function utcDayAndTime(timestamp: string | null): { day: string; time: string } {
+  if (!timestamp) return { day: "undated", time: "" };
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return { day: "undated", time: timestamp };
+  const iso = date.toISOString();
+  return { day: iso.slice(0, 10), time: iso.slice(11, 16) };
+}
+
+const oneLine = (text: string): string => text.replace(/\s*\n\s*/g, " / ");
+
 /**
- * Format events for display. Resolves the sender (people[0]) for every event
- * and Discord <@id> mentions in content via a single batched identities lookup,
- * so the LLM sees `<Alice Example>` and `@Alice Example` instead of raw IDs.
+ * Shorten a preview to `max` characters on one line, so every event stays one
+ * line. Full text keeps its lines, indented so none reads as an event or run.
+ */
+function preview(text: string, max: number, full: boolean): string {
+  if (full) return text.replace(/\n/g, "\n    ");
+  const line = oneLine(text);
+  return line.length > max ? `${line.slice(0, max)}...` : line;
+}
+
+/**
+ * Format events for display, grouped the way the export renderer groups a
+ * transcript: a `## <UTC day>` line, then a `[source/type]` line (for
+ * conversation events, `[source] <conversation>`) for each run of events that
+ * share it, then one `HH:MM #<id> ...` line per event. Resolves the sender
+ * (people[0]) for every conversation event and Discord <@id> mentions in
+ * content via a single batched identities lookup, so the LLM sees
+ * `<Alice Example>` and `@Alice Example` instead of raw IDs.
  */
 export async function formatEvents(
   db: QueryExecutor,
@@ -223,62 +249,84 @@ export async function formatEvents(
   const discordUserResolver = (id: string): string | null =>
     resolved[`discord:${id}`]?.name ?? null;
 
-  return events
-    .map((e) => {
-      const parts = [`#${e.id}`, `[${e.source}/${e.type}]`];
+  const lines = ["Times in UTC."];
+  let day: string | undefined;
+  let run: string | undefined;
+  for (const e of events) {
+    const { runLine, parts } = isConversationEventType(e.type)
+      ? conversationEventLine(e, resolved, discordUserResolver, fullContent)
+      : otherEventLine(e, fullContent);
+    if (e.location_name) {
+      parts.push(`@ ${e.location_name}`);
+    }
 
-      if (e.timestamp) {
-        parts.push(e.timestamp);
-      }
+    const at = utcDayAndTime(e.timestamp);
+    if (at.day !== day) {
+      lines.push(`## ${at.day}`);
+      day = at.day;
+      run = undefined;
+    }
+    if (runLine !== run) {
+      lines.push(runLine);
+      run = runLine;
+    }
+    lines.push([at.time, `#${e.id}`, ...parts].filter(Boolean).join(" "));
+  }
+  return lines.join("\n");
+}
 
-      // For messages: [title] <sender> content
-      if (e.type?.startsWith("message")) {
-        let people: string[] = [];
-        try {
-          if (e.people) people = JSON.parse(e.people);
-        } catch {}
+type EventLine = { runLine: string; parts: string[] };
 
-        const sender = people[0];
-        const attachments = getAttachmentDescription(e);
-        const markers = getMessageMarkers(e, attachments);
-        const content = messageContent(e);
-        const rawText = content && markers.length > 0
-          ? `${content} ${markers.join(" ")}`
-          : content || markers.join(" ");
-        // Resolve <@id> / <#id> / <:emoji:id> in Discord content before truncation.
-        const text = rawText && e.source === "discord"
-          ? discordMentionsToPlainText(rawText, e.raw_data, { user: discordUserResolver })
-          : rawText;
-        const truncated = fullContent || !text ? text : (text.length > 150 ? text.slice(0, 150) + "..." : text);
+/** A message, text or call: `[source] <conversation>` heads the run; the line is `<sender> text` (`<type> text` for texts and calls). */
+function conversationEventLine(
+  e: TimelineEvent,
+  resolved: Awaited<ReturnType<typeof resolveIdentities>>,
+  discordUserResolver: (id: string) => string | null,
+  fullContent: boolean,
+): EventLine {
+  let people: string[] = [];
+  try {
+    if (e.people) people = JSON.parse(e.people);
+  } catch {}
 
-        // [title] <sender> content
-        // Skip title if it matches content (legacy Facebook data stored message in title)
-        const titleIsContent = e.title && e.content &&
-          (e.title === e.content || e.content.startsWith(e.title.replace(/\.\.\.$/,'')) || e.title.startsWith(e.content.slice(0, 50)));
-        if (e.title && !titleIsContent) parts.push(`[${e.title}]`);
-        if (sender) {
-          const senderName = resolved[sender]?.name;
-          parts.push(senderName ? `<${senderName}>` : `<${sender}>`);
-        }
-        if (truncated) parts.push(truncated);
-      } else {
-        // Non-messages: show title and content separately
-        if (e.title) {
-          parts.push(e.title);
-        }
-        if (e.content && e.content !== e.title) {
-          const content = fullContent ? e.content : (e.content.length > 100 ? e.content.slice(0, 100) + "..." : e.content);
-          parts.push(`- ${content}`);
-        }
-      }
+  const sender = people[0];
+  const attachments = getAttachmentDescription(e);
+  const markers = getMessageMarkers(e, attachments);
+  const content = messageContent(e);
+  const rawText = content && markers.length > 0
+    ? `${content} ${markers.join(" ")}`
+    : content || markers.join(" ");
+  // Resolve <@id> / <#id> / <:emoji:id> in Discord content before truncation.
+  const text = rawText && e.source === "discord"
+    ? discordMentionsToPlainText(rawText, e.raw_data, { user: discordUserResolver })
+    : rawText;
 
-      if (e.location_name) {
-        parts.push(`@ ${e.location_name}`);
-      }
+  // The title names the conversation, except in legacy Facebook data that
+  // stored the message in title.
+  const titleIsContent = e.source === "facebook" && e.title && e.content &&
+    (e.title === e.content || e.content.startsWith(e.title.replace(/\.\.\.$/,'')) || e.title.startsWith(e.content.slice(0, 50)));
+  const parts: string[] = [];
+  // Only messages list their sender first; for texts and calls the type says
+  // which way it went (sms:sent, sms:failed, call:missed).
+  if (!e.type.includes("message")) {
+    parts.push(e.type);
+  } else if (sender) {
+    const senderName = resolved[sender]?.name;
+    parts.push(senderName ? `<${senderName}>` : `<${sender}>`);
+  }
+  if (text) parts.push(preview(text, 150, fullContent));
+  return { runLine: e.title && !titleIsContent ? `[${e.source}] ${e.title}` : `[${e.source}]`, parts };
+}
 
-      return parts.join(" ");
-    })
-    .join("\n");
+/** Anything else: `[source/type]` heads the run; the line is `title - content`. */
+function otherEventLine(e: TimelineEvent, fullContent: boolean): EventLine {
+  // Some sources (Spotify) repeat the title as the content's first words.
+  const content = e.content && e.content !== e.title ? e.content : null;
+  const title = e.title && !content?.startsWith(`${e.title} `) ? oneLine(e.title) : null;
+  const parts: string[] = [];
+  if (title) parts.push(title);
+  if (content) parts.push(`${title ? "- " : ""}${preview(content, 100, fullContent)}`);
+  return { runLine: `[${e.source}/${e.type}]`, parts };
 }
 
 // TSV helpers for run_sql output
@@ -452,7 +500,7 @@ function eventIdHint(publicUrl?: string): string {
   const linkLine = url
     ? `Open in browser at ${url}/event/<id> — the timeline scrolls to and highlights the event (for chat messages the conversation pane also auto-opens).`
     : "Open in the timeline web app at <your-host>/event/<id>.";
-  return `Each event line begins with \`#<id>\` (the stable timeline event id). ${linkLine} Pass an \`<id>\` to \`get_context\` via \`event_id\` to see surrounding events.`;
+  return `Each event line carries \`#<id>\` (the stable timeline event id). ${linkLine} Pass an \`<id>\` to \`get_context\` via \`event_id\` to see surrounding events.`;
 }
 
 /**
@@ -866,7 +914,7 @@ Examples:
   // ========================================================================
   tool(
     "export_conversation",
-    "Export a full conversation transcript in markdown. Unlike query_events, this returns untruncated message content in chronological order. Pass either a conversation_id or an event_id from the #<id> prefix in query_events output.",
+    "Export a full conversation transcript in markdown. Unlike query_events, this returns untruncated message content in chronological order. Pass either a conversation_id or an event_id from the #<id> in query_events output.",
     {
       conversation_id: z.string().min(1).optional().describe("Conversation id to export. Provide exactly one of conversation_id or event_id."),
       event_id: z.number().int().positive().optional().describe("Timeline event id from query_events output. Provide exactly one of conversation_id or event_id; without date bounds, centers the limited window on this event."),
