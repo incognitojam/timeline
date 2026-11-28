@@ -41,6 +41,7 @@ const EXPECTED_SYNC_ORDER = [
   "google-messages",
   "monzo",
   "trakt",
+  "jellyfin",
   "swarm",
   "wakatime",
   "github",
@@ -75,6 +76,7 @@ const EXPECTED_SEED_ORDER = [
   "google-messages",
   "monzo",
   "trakt",
+  "jellyfin",
   "swarm",
   "wakatime",
   "github",
@@ -175,6 +177,7 @@ const EXPECTED_SOURCES = [
   ["google-timeline", "Google Timeline", "#EA4335"],
   ["inbox-rclone", "Inbox Sync", "#3b82f6"],
   ["instagram", "Instagram", "#E4405F"],
+  ["jellyfin", "Jellyfin", "#7762C5"],
   ["journal", "Journal", "#8b5cf6"],
   ["linkedin", "LinkedIn", "#0A66C2"],
   ["live", "Microsoft Live", "#00AFF0"],
@@ -247,12 +250,13 @@ describe("source groups derived from traits", () => {
 
   test("keep session sources and their gaps", () => {
     expect(sorted(SESSION_SOURCES)).toEqual(
-      sorted(["spotify", "youtube", "trakt", "chrome", "google-search", "spotify-friends", "google-playstore", "steam", "minecraft", "recall", "swarm"]),
+      sorted(["spotify", "youtube", "trakt", "jellyfin", "chrome", "google-search", "spotify-friends", "google-playstore", "steam", "minecraft", "recall", "swarm"]),
     );
     expect(SESSION_GAP_MINUTES).toEqual({
       spotify: 10,
       youtube: 15,
       trakt: 30,
+      jellyfin: 30,
       chrome: 30,
       "google-search": 15,
       "spotify-friends": 15,

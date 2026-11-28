@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
+import { Database } from "../../db/sqlite";
 import { getDb } from "../../db/schema";
 import { runSourceOnce } from "../../sync/once";
 
