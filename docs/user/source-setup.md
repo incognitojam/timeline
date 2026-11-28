@@ -13,6 +13,7 @@
 | Reddit | Posts, comments, messages | File export |
 | Spotify | Listening history | File export + API sync |
 | Spotify Friends | Friends' activity | API sync (unofficial) |
+| Jellyfin | Movie and episode playback sessions | API sync |
 | Trakt | Watch history | API sync |
 | YouTube | Watch history, likes, searches | Takeout |
 | Steam | Games, playtime, achievements | API sync |
@@ -194,6 +195,12 @@ Google Health replaces the Fitbit Web API sync for current health metrics. Exist
    { "client_id": "YOUR_ID", "client_secret": "YOUR_SECRET" }
    ```
 3. Run `TIMELINE_DB_PATH=~/.local/share/timeline/timeline.db bun run src/platforms/google/health/parser.ts auth` to authorize access, then enable Google Health on the Sync page. Point to the service database so the token is stored in its `app-state.db`, rather than the checkout's.
+
+## Jellyfin Setup
+
+Install Playback Reporting on Jellyfin and create a dedicated dashboard API key. Add `JELLYFIN_TOKEN` to the Timeline service secrets environment and restart the service. In sync settings, enable Jellyfin, enter the reachable server URL (including its base path), the Jellyfin server’s IANA time zone, and the IDs of the users to import. The key has administrator privileges. Timeline requests sessions only for the selected users.
+
+Optionally restrict imports to library IDs; sessions whose library cannot be established are then skipped. Changing the selection applies to future syncs and retains previously imported history. Played seconds come from the plugin. Missing library items retain their recorded session title. Offsetless local times that fall in a daylight-saving gap or repeated hour are preserved in the raw session with an unknown timeline timestamp.
 
 ## Trakt Setup
 

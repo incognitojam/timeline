@@ -26,6 +26,7 @@ import { swarmDisplay } from "./swarm";
 import { t3codeDisplay } from "./t3code";
 import { thrivaDisplay } from "./thriva";
 import { traktDisplay } from "./trakt";
+import { jellyfinDisplay } from "./jellyfin";
 import { wakatimeDisplay } from "./wakatime";
 import type { PlatformDisplay } from "./types";
 
@@ -35,6 +36,7 @@ export const PLATFORM_DISPLAYS: readonly PlatformDisplay[] = [
   googleMessagesDisplay,
   monzoDisplay,
   traktDisplay,
+  jellyfinDisplay,
   swarmDisplay,
   wakatimeDisplay,
   githubDisplay,

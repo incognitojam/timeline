@@ -26,6 +26,7 @@ import { swarmPlatform } from "./swarm";
 import { t3codePlatform } from "./t3code";
 import { thrivaPlatform } from "./thriva";
 import { traktPlatform } from "./trakt";
+import { jellyfinPlatform } from "./jellyfin";
 import { wakatimePlatform } from "./wakatime";
 import type { PlatformModule } from "./registry";
 
@@ -35,6 +36,7 @@ export const PLATFORMS: readonly PlatformModule[] = [
   googleMessagesPlatform,
   monzoPlatform,
   traktPlatform,
+  jellyfinPlatform,
   swarmPlatform,
   wakatimePlatform,
   githubPlatform,
