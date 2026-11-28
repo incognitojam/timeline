@@ -707,15 +707,34 @@ test("scrolls a long conversation, jumps to latest, and downloads an export", as
   }).first();
   await expect.poll(() => viewport.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
 
-  await viewport.evaluate((element) => {
-    element.scrollTop = 0;
-    element.dispatchEvent(new Event("scroll"));
+  // Late layout in a message must keep the newest edge in view.
+  const endMarker = viewport.getByText("End of conversation");
+  await expect(endMarker).toBeInViewport();
+  await page.locator(`#event-${newest.id}`).evaluate((element) => {
+    element.style.paddingBottom = "200px";
   });
+  await expect(endMarker).toBeInViewport();
+
+  // Replay the native scroll-origin reset seen after list navigation.
+  await viewport.evaluate((element) => element.scrollTo(0, 0));
+  await expect(endMarker).toBeInViewport();
+
+  const firstLoaded = `#event-${messages[20].id}`;
+  const readerTop = await viewport.evaluate((element, selector) => {
+    element.scrollTop = -element.scrollHeight;
+    const row = element.querySelector(selector);
+    if (!row) throw new Error("Missing initial page");
+    return row.getBoundingClientRect().top;
+  }, firstLoaded);
+  await expect(page.locator(`#event-${oldest.id}`)).toBeAttached();
+  await expect(viewport.getByText("Loading older messages...")).toHaveCount(0);
+  await expect.poll(() => page.locator(firstLoaded).evaluate((row) => row.getBoundingClientRect().top))
+    .toBeCloseTo(readerTop, 0);
   const jumpToLatest = page.getByRole("button", { name: "Jump to latest messages" });
   await expect(jumpToLatest).toBeVisible();
   await jumpToLatest.click();
   await expect.poll(() => viewport.evaluate(
-    (element) => Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop),
+    (element) => Math.abs(element.scrollTop),
   )).toBeLessThanOrEqual(2);
 
   await page.getByRole("button", { name: "Select messages to export" }).click();

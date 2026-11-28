@@ -287,6 +287,7 @@ export default function ConversationView() {
   };
 
   const scroller = createMessageScroller<TimelineEvent>({
+    origin: "bottom",
     key: () => `${conversationKey()}\0${replyJump()?.generation ?? 0}`,
     loadInitial: async () => {
       const key = conversationKey();
@@ -720,158 +721,164 @@ export default function ConversationView() {
         </div>
 
         {/* Messages */}
-        <div ref={scroller.viewportRef} class="relative flex-1 overflow-auto">
-          <ConversationRangeExportControls
-            rangeMode={rangeMode}
-            startEventId={rangeStartId}
-            endEventId={rangeEndId}
-            selectedLoadedCount={selectedLoadedCount}
-            conversationBounds={conversationBounds}
-            sidebarOpen={sidebarOpen}
-            onSelectRange={setRangeSelection}
-            onClearSelection={clearRangeSelection}
-          />
-          <Show when={scroller.error()}>
-            <div class="text-center py-8 px-4 text-red-500">Error: {scroller.error()}</div>
-          </Show>
-
-          <Show when={scroller.isLoading()}>
-            <ConversationSkeleton />
-          </Show>
-
-          <Show when={!scroller.isLoading() && scroller.items().length > 0}>
-            {/* Top sentinel for loading older messages */}
-            <div ref={scroller.topSentinelRef} class="h-1" />
-
-            <Show when={scroller.isLoadingBefore()}>
-              <div class="text-center py-2 px-4 text-muted-foreground text-sm">Loading older messages...</div>
+        <div
+          ref={scroller.viewportRef}
+          class="relative flex flex-1 flex-col-reverse overflow-auto"
+          style={{ "overflow-anchor": scroller.isLoadingBefore() ? "none" : undefined }}
+        >
+          <div class="min-h-full shrink-0">
+            <ConversationRangeExportControls
+              rangeMode={rangeMode}
+              startEventId={rangeStartId}
+              endEventId={rangeEndId}
+              selectedLoadedCount={selectedLoadedCount}
+              conversationBounds={conversationBounds}
+              sidebarOpen={sidebarOpen}
+              onSelectRange={setRangeSelection}
+              onClearSelection={clearRangeSelection}
+            />
+            <Show when={scroller.error()}>
+              <div class="text-center py-8 px-4 text-red-500">Error: {scroller.error()}</div>
             </Show>
 
-            <Show when={!scroller.hasBefore() && !scroller.isLoadingBefore()}>
-              <div class="text-center py-2 px-4 text-muted-foreground text-sm">Beginning of conversation</div>
+            <Show when={scroller.isLoading()}>
+              <ConversationSkeleton />
             </Show>
 
-            <ConversationTranscript
-              events={visibleEvents()}
-              density="full"
-              renderMessage={(event) => {
-                        const isTargetEvent = () =>
-                          event.id === highlightEventId() || event.id === replyHighlightId();
-                        const renamedTo = () => titleTransitions().get(event.id);
-                        const userModel = () => userModelTransitions().get(event.id);
-                        const isAI = isAIEventSource(event.source);
-                        const rangeVisualPosition = () => rangeVisualPositions().get(event.id);
-                        const showSenderHeader = () => senderHeaderIds().has(event.id);
+            <Show when={!scroller.isLoading() && scroller.items().length > 0}>
+              {/* Top sentinel for loading older messages */}
+              <div ref={scroller.topSentinelRef} class="h-1" />
 
-                        return (
-                          <>
-                            <Show when={renamedTo()}>
-                              {(newTitle) => (
-                                <div class="flex items-center gap-2 py-2">
-                                  <div class="flex-1 h-px bg-border" />
-                                  <span class="text-sm font-medium text-muted-foreground px-2 bg-background rounded break-words text-center">
-                                    Renamed to {newTitle()}
-                                  </span>
-                                  <div class="flex-1 h-px bg-border" />
-                                </div>
-                              )}
-                            </Show>
-                            <Show when={userModel()}>
-                              {(model) => (
-                                <div class="flex items-center gap-2 py-2">
-                                  <div class="flex-1 h-px bg-border" />
-                                  <span class="text-xs font-medium text-muted-foreground px-2 bg-background rounded break-words text-center">
-                                    User selected <span class="font-mono">{model()}</span>
-                                  </span>
-                                  <div class="flex-1 h-px bg-border" />
-                                </div>
-                              )}
-                            </Show>
-                          <Show when={isAI} fallback={
-                            <ConversationMessage
-                              event={event}
-                              conversationSource={source()}
-                              attachments={attachmentsForEvent(event.id)}
-                              showSenderHeader={showSenderHeader()}
-                              density="full"
-                              highlighted={isTargetEvent()}
-                              rangeMode={rangeMode()}
-                              rangeVisualPosition={rangeVisualPosition()}
-                              onMessageClick={(e) => handleRangeMessageClick(event.id, e)}
-                              onPersonClick={handlePersonClick}
-                              onReplyJump={jumpToRepliedMessage}
-                            />
-                          }>
-                            <div onClick={(e) => handleRangeMessageClick(event.id, e)} class={rangeMode() ? "cursor-crosshair" : ""}>
-                            <AIEventRow
-                              event={event}
-                              showSenderHeader={senderHeaderIds().has(event.id)}
-                              isTargetEvent={isTargetEvent()}
-                              rangeVisualPosition={rangeVisualPosition()}
-                              conversationSource={source()}
-                              conversationTitle={displayTitle()}
-                              attachments={attachmentsForEvent(event.id)}
-                              resolveToolResult={resolveToolResult}
-                              onPersonClick={handlePersonClick}
-                            />
-                            </div>
-                          </Show>
-                          <For each={groupRecordsForParent(event.id)}>
-                            {(record) => (
-                              <SubAgentGroup
-                                group={record.value()}
-                                resolveToolResult={resolveToolResult}
-                                defaultExpandedFor={defaultSubagentExpanded}
-                                highlightEventId={highlightEventId}
-                                nestedGroupRecordsFor={groupRecordsForParent}
+              <Show when={scroller.isLoadingBefore()}>
+                <div class="text-center py-2 px-4 text-muted-foreground text-sm">Loading older messages...</div>
+              </Show>
+
+              <Show when={!scroller.hasBefore() && !scroller.isLoadingBefore()}>
+                <div class="text-center py-2 px-4 text-muted-foreground text-sm">Beginning of conversation</div>
+              </Show>
+
+              <ConversationTranscript
+                events={visibleEvents()}
+                density="full"
+                renderMessage={(event) => {
+                          const isTargetEvent = () =>
+                            event.id === highlightEventId() || event.id === replyHighlightId();
+                          const renamedTo = () => titleTransitions().get(event.id);
+                          const userModel = () => userModelTransitions().get(event.id);
+                          const isAI = isAIEventSource(event.source);
+                          const rangeVisualPosition = () => rangeVisualPositions().get(event.id);
+                          const showSenderHeader = () => senderHeaderIds().has(event.id);
+
+                          return (
+                            <>
+                              <Show when={renamedTo()}>
+                                {(newTitle) => (
+                                  <div class="flex items-center gap-2 py-2">
+                                    <div class="flex-1 h-px bg-border" />
+                                    <span class="text-sm font-medium text-muted-foreground px-2 bg-background rounded break-words text-center">
+                                      Renamed to {newTitle()}
+                                    </span>
+                                    <div class="flex-1 h-px bg-border" />
+                                  </div>
+                                )}
+                              </Show>
+                              <Show when={userModel()}>
+                                {(model) => (
+                                  <div class="flex items-center gap-2 py-2">
+                                    <div class="flex-1 h-px bg-border" />
+                                    <span class="text-xs font-medium text-muted-foreground px-2 bg-background rounded break-words text-center">
+                                      User selected <span class="font-mono">{model()}</span>
+                                    </span>
+                                    <div class="flex-1 h-px bg-border" />
+                                  </div>
+                                )}
+                              </Show>
+                            <Show when={isAI} fallback={
+                              <ConversationMessage
+                                event={event}
+                                conversationSource={source()}
+                                attachments={attachmentsForEvent(event.id)}
+                                showSenderHeader={showSenderHeader()}
+                                density="full"
+                                highlighted={isTargetEvent()}
+                                rangeMode={rangeMode()}
+                                rangeVisualPosition={rangeVisualPosition()}
+                                onMessageClick={(e) => handleRangeMessageClick(event.id, e)}
+                                onPersonClick={handlePersonClick}
+                                onReplyJump={jumpToRepliedMessage}
+                              />
+                            }>
+                              <div onClick={(e) => handleRangeMessageClick(event.id, e)} class={rangeMode() ? "cursor-crosshair" : ""}>
+                              <AIEventRow
+                                event={event}
+                                showSenderHeader={senderHeaderIds().has(event.id)}
+                                isTargetEvent={isTargetEvent()}
+                                rangeVisualPosition={rangeVisualPosition()}
                                 conversationSource={source()}
                                 conversationTitle={displayTitle()}
-                                attachmentsForEvent={attachmentsForEvent}
+                                attachments={attachmentsForEvent(event.id)}
+                                resolveToolResult={resolveToolResult}
+                                onPersonClick={handlePersonClick}
                               />
-                            )}
-                          </For>
-                          </>
-                        );
-              }}
-            />
+                              </div>
+                            </Show>
+                            <For each={groupRecordsForParent(event.id)}>
+                              {(record) => (
+                                <SubAgentGroup
+                                  group={record.value()}
+                                  resolveToolResult={resolveToolResult}
+                                  defaultExpandedFor={defaultSubagentExpanded}
+                                  highlightEventId={highlightEventId}
+                                  nestedGroupRecordsFor={groupRecordsForParent}
+                                  conversationSource={source()}
+                                  conversationTitle={displayTitle()}
+                                  attachmentsForEvent={attachmentsForEvent}
+                                />
+                              )}
+                            </For>
+                            </>
+                          );
+                }}
+              />
 
-            <Show when={orphanGroupRecords().length > 0}>
-              <div class="px-4 mt-4">
-                <div class="text-sm font-medium text-muted-foreground mb-2">
-                  Sub-agents whose parent message isn't loaded
+              <Show when={orphanGroupRecords().length > 0}>
+                <div class="px-4 mt-4">
+                  <div class="text-sm font-medium text-muted-foreground mb-2">
+                    Sub-agents whose parent message isn't loaded
+                  </div>
+                  <For each={orphanGroupRecords()}>
+                    {(record) => (
+                      <SubAgentGroup
+                        group={record.value()}
+                        resolveToolResult={resolveToolResult}
+                        defaultExpandedFor={defaultSubagentExpanded}
+                        highlightEventId={highlightEventId}
+                        nestedGroupRecordsFor={groupRecordsForParent}
+                        conversationSource={source()}
+                        conversationTitle={displayTitle()}
+                        attachmentsForEvent={attachmentsForEvent}
+                      />
+                    )}
+                  </For>
                 </div>
-                <For each={orphanGroupRecords()}>
-                  {(record) => (
-                    <SubAgentGroup
-                      group={record.value()}
-                      resolveToolResult={resolveToolResult}
-                      defaultExpandedFor={defaultSubagentExpanded}
-                      highlightEventId={highlightEventId}
-                      nestedGroupRecordsFor={groupRecordsForParent}
-                      conversationSource={source()}
-                      conversationTitle={displayTitle()}
-                      attachmentsForEvent={attachmentsForEvent}
-                    />
-                  )}
-                </For>
-              </div>
+              </Show>
+
+              {/* Bottom sentinel for loading newer messages */}
+              <div ref={scroller.bottomSentinelRef} class="h-1" />
+
+              <Show when={scroller.isLoadingAfter()}>
+                <div class="text-center py-2 px-4 text-muted-foreground text-sm">Loading newer messages...</div>
+              </Show>
+
+              <Show when={!scroller.hasAfter() && !scroller.isLoadingAfter()}>
+                <div class="text-center py-2 px-4 text-muted-foreground text-sm">End of conversation</div>
+              </Show>
             </Show>
 
-            {/* Bottom sentinel for loading newer messages */}
-            <div ref={scroller.bottomSentinelRef} class="h-1" />
-
-            <Show when={scroller.isLoadingAfter()}>
-              <div class="text-center py-2 px-4 text-muted-foreground text-sm">Loading newer messages...</div>
+            <Show when={!scroller.isLoading() && scroller.items().length === 0 && !scroller.error()}>
+              <div class="text-center py-8 px-4 text-muted-foreground">No messages found</div>
             </Show>
-
-            <Show when={!scroller.hasAfter() && !scroller.isLoadingAfter()}>
-              <div class="text-center py-2 px-4 text-muted-foreground text-sm">End of conversation</div>
-            </Show>
-          </Show>
-
-          <Show when={!scroller.isLoading() && scroller.items().length === 0 && !scroller.error()}>
-            <div class="text-center py-8 px-4 text-muted-foreground">No messages found</div>
-          </Show>
+          </div>
         </div>
 
         {/* Jump-to-latest control — shown when the reader has scrolled up off

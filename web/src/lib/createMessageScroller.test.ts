@@ -389,14 +389,11 @@ describe("createMessageScroller", () => {
     });
 
     it("keeps the viewport pinned to the end when auto-refetched messages arrive at the live edge", async () => {
-      let scrollHeight = 100;
       const viewport = makeViewport();
-      Object.defineProperty(viewport, "scrollHeight", { get: () => scrollHeight, configurable: true });
       Object.defineProperty(viewport, "clientHeight", { value: 100, configurable: true });
       viewport.scrollTop = 0;
       const loadAfter = vi.fn(async (cursor: string): Promise<MessagePageDelta<number>> => {
         if (cursor !== "c2") return { items: [], hasMore: false, nextCursor: null };
-        scrollHeight = 150;
         return { items: [3], hasMore: false, nextCursor: null };
       });
       const { result, cleanup } = renderHook(() =>
@@ -411,11 +408,12 @@ describe("createMessageScroller", () => {
           },
         })
       );
+      Object.defineProperty(viewport, "scrollHeight", { get: () => result.items().length * 50 });
       result.viewportRef(viewport);
 
       await vi.advanceTimersByTimeAsync(32);
       expect(result.items()).toEqual([1, 2, 3]);
-      expect(viewport.scrollTo).toHaveBeenCalledWith({ top: 150, behavior: "instant" });
+      expect(viewport.scrollTo).toHaveBeenCalledWith({ top: 50, behavior: "instant" });
 
       cleanup();
     });
@@ -429,7 +427,7 @@ describe("createMessageScroller", () => {
       const loadAfter = vi.fn(async (cursor: string): Promise<MessagePageDelta<number>> => {
         if (cursor !== "c2") return { items: [], hasMore: false, nextCursor: null };
         scrollHeight = 350;
-        viewport.scrollTop = 75; // Simulate layout moving the scroll position during append.
+        viewport.scrollTop = 75; // The reader moved while the request was in flight.
         return { items: [3], hasMore: false, nextCursor: null };
       });
       const { result, cleanup } = renderHook(() =>
@@ -450,7 +448,7 @@ describe("createMessageScroller", () => {
       expect(result.items()).toEqual([1, 2, 3]);
       await vi.advanceTimersByTimeAsync(32);
 
-      expect(viewport.scrollTop).toBe(50);
+      expect(viewport.scrollTop).toBe(75);
       expect(viewport.scrollTo).not.toHaveBeenCalled();
       cleanup();
     });

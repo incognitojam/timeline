@@ -39,6 +39,8 @@ export interface MessageScrollerOptions<T> {
    * `() => props.pane.id`.
    */
   key: Accessor<unknown>;
+  /** A column-reverse viewport measures scrollTop up from the bottom. */
+  origin?: "top" | "bottom";
   /** Load the initial window for the current key. */
   loadInitial: () => Promise<MessagePage<T>>;
   /** Load older items, prepended above the current window. */
@@ -141,9 +143,14 @@ export function createMessageScroller<T>(options: MessageScrollerOptions<T>): Me
   let loadGeneration = 0;
   let scrollRafScheduled = false;
 
+  const bottomOrigin = options.origin === "bottom";
+  const bottomOffset = (el: HTMLElement) => bottomOrigin ? 0 : el.scrollHeight - el.clientHeight;
+  const topOffset = (el: HTMLElement) => bottomOrigin ? el.clientHeight - el.scrollHeight : 0;
+  const positionFromTop = (el: HTMLElement) => el.scrollTop - topOffset(el);
+
   const isPinnedToEnd = (viewport: HTMLElement): boolean => {
     const threshold = options.autoRefetch?.stickToEndThresholdPx ?? 32;
-    return viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= threshold;
+    return bottomOffset(viewport) - viewport.scrollTop <= threshold;
   };
 
   const updateIsAtEnd = () => {
@@ -193,8 +200,7 @@ export function createMessageScroller<T>(options: MessageScrollerOptions<T>): Me
     }
   };
 
-  // Prepend older messages, holding the reader's place by growing scrollTop by
-  // exactly the height the new content added above the viewport.
+  // In a bottom-origin viewport, prepended content is already above the scroll origin.
   const loadBefore = async () => {
     const cursor = beforeCursor();
     const viewport = viewportEl;
@@ -211,7 +217,7 @@ export function createMessageScroller<T>(options: MessageScrollerOptions<T>): Me
       setBeforeCursor(delta.nextCursor);
       raf(() => {
         if (!isCurrentGeneration(generation)) return;
-        viewport.scrollTop += viewport.scrollHeight - scrollHeightBefore;
+        if (!bottomOrigin) viewport.scrollTop += viewport.scrollHeight - scrollHeightBefore;
         setIsLoadingBefore(false);
       });
     } catch (e) {
@@ -221,8 +227,7 @@ export function createMessageScroller<T>(options: MessageScrollerOptions<T>): Me
     }
   };
 
-  // Append newer messages, holding scrollTop steady so the appended content
-  // doesn't yank the viewport.
+  // Preserve the distance from the top when newer messages arrive below the reader.
   const loadAfter = async () => {
     const cursor = afterCursor();
     const viewport = viewportEl;
@@ -234,14 +239,14 @@ export function createMessageScroller<T>(options: MessageScrollerOptions<T>): Me
       const delta = await options.loadAfter(cursor);
       if (!isCurrentGeneration(generation)) return;
       // Capture right before the DOM update to minimize drift from momentum scrolling.
-      const scrollTopBefore = viewport.scrollTop;
+      const positionBefore = positionFromTop(viewport);
       setItems((prev) => [...prev, ...delta.items]);
       setHasAfter(delta.hasMore);
       setAfterCursor(delta.nextCursor);
       raf(() => {
         if (!isCurrentGeneration(generation)) return;
-        viewport.scrollTop = scrollTopBefore;
         setIsLoadingAfter(false);
+        viewport.scrollTop = topOffset(viewport) + positionBefore;
         updateIsAtEnd();
       });
     } catch (e) {
@@ -278,11 +283,11 @@ export function createMessageScroller<T>(options: MessageScrollerOptions<T>): Me
       settleAutoRefetch = resolve;
     });
     const generation = loadGeneration;
-    const wasPinnedToEnd = isPinnedToEnd(viewport);
-    const scrollTopBefore = viewport.scrollTop;
     try {
       const delta = await (autoRefetch.loadAfter ?? options.loadAfter)(cursor);
       if (!isCurrentGeneration(generation)) return;
+      const wasPinnedToEnd = isPinnedToEnd(viewport);
+      const positionBefore = positionFromTop(viewport);
       const receivedItems = delta.items.length > 0;
       if (receivedItems) {
         setItems((prev) => [...prev, ...delta.items]);
@@ -293,9 +298,9 @@ export function createMessageScroller<T>(options: MessageScrollerOptions<T>): Me
         if (!isCurrentGeneration(generation)) return;
         if (receivedItems) {
           if (wasPinnedToEnd) {
-            viewport.scrollTo({ top: viewport.scrollHeight, behavior: "instant" });
+            viewport.scrollTo({ top: bottomOffset(viewport), behavior: "instant" });
           } else {
-            viewport.scrollTop = scrollTopBefore;
+            viewport.scrollTop = topOffset(viewport) + positionBefore;
           }
         }
         endAutoRefetch(null);
@@ -369,10 +374,10 @@ export function createMessageScroller<T>(options: MessageScrollerOptions<T>): Me
   });
 
   const scrollToEnd = (behavior: ScrollBehavior = "instant") => {
-    viewportEl?.scrollTo({ top: viewportEl.scrollHeight, behavior });
+    viewportEl?.scrollTo({ top: bottomOffset(viewportEl), behavior });
   };
   const scrollToStart = (behavior: ScrollBehavior = "instant") => {
-    viewportEl?.scrollTo({ top: 0, behavior });
+    viewportEl?.scrollTo({ top: topOffset(viewportEl), behavior });
   };
   const findMessageElement = (id: string | number): HTMLElement | null => {
     const targetId = messageElementId(id);
