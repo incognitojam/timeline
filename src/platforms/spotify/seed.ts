@@ -18,12 +18,14 @@ const LIVE_SYNC_DAYS = 14;
 
 /**
  * Alex's own playlists, played on shuffle. Sunday Kitchen has no cover, as a
- * playlist cached before the sync stored covers would.
+ * playlist cached before the sync stored covers would. The last has a name long
+ * enough to truncate in the Music list and wrap on its page.
  */
 const PLAYLISTS = [
   { name: "Morning Commute", followers: 140 },
   { name: "Deep Work", followers: 55 },
   { name: "Sunday Kitchen", followers: 9 },
+  { name: "Slow Songs for Long Train Journeys Through the Highlands After Dark", followers: 23 },
 ].map(({ name, followers }) => ({
   name,
   followers,
