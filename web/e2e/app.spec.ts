@@ -2279,7 +2279,7 @@ test("renders a music playlist", async ({ page }) => {
 
   await expect(page).toHaveTitle("Focus Mix · Music · Timeline");
   await expect(page.getByRole("heading", { name: "Focus Mix", level: 1 })).toBeVisible();
-  await expect(page.getByRole("link", { name: "← Music", exact: true })).toBeVisible();
+  await expect(page.getByRole("main").getByRole("link", { name: "Music", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Open in Spotify", exact: true })).toBeVisible();
   await expect(page.getByText("Current saves", { exact: true })).toBeVisible();
   await expect(page.getByText("Past 12 months", { exact: true })).toBeVisible();
