@@ -10,7 +10,7 @@ export const LARGE_TABLES = new Set([
   "contacts", "contact_aliases", "contact_memories", "identities", "places",
   "skipped_aliases", "contact_match_suggestions", "cache", "discord_emojis", "discord_guild_emojis",
   "discord_guilds", "discord_reaction_observations", "discord_attachment_retry_pending",
-  "spotify_playlist_observations", "spotify_playlist_meta", "spotify_resources",
+  "jellyfin_activity_evidence", "spotify_playlist_observations", "spotify_playlist_meta", "spotify_resources",
   "day_summaries", "journal_sessions", "sync_log", "processed_files", "jobs",
   "mcp_sessions", "mcp_tool_calls", "eval_cases", "eval_queries", "eval_expectations",
 ]);

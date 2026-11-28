@@ -231,6 +231,17 @@ function createSchema(db: Database) {
     )
   `);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS jellyfin_activity_evidence (
+      server_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      log_id INTEGER NOT NULL,
+      raw_data TEXT NOT NULL,
+      PRIMARY KEY (server_id, log_id)
+    ) WITHOUT ROWID;
+    CREATE INDEX IF NOT EXISTS jellyfin_activity_user ON jellyfin_activity_evidence(server_id, user_id);
+  `);
+
   // Migration: add conversation_id column. Stable conversation identity from
   // raw_data (e.g. Discord channel snowflake) — survives channel/group renames
   // that otherwise change `title`.

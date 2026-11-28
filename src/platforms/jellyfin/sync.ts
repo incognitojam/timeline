@@ -2,18 +2,8 @@ import { getDb } from "../../db/schema";
 import { getAppStateDb, getSyncState, setSyncState } from "../../db/app-state";
 import type { SyncSource } from "../../sync/types";
 import { columns, saveSession, sessionRow, type Item } from "./parser";
-
-function ids(value: unknown): string[] {
-  if (
-    !Array.isArray(value) ||
-    !value.every(
-      (id) => typeof id === "string" && /^(?:[a-f\d]{32}|[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12})$/i.test(id),
-    )
-  ) {
-    throw new Error("Expected a list of Jellyfin IDs");
-  }
-  return [...new Set<string>(value.map((id) => id.replaceAll("-", "").toLowerCase()))];
-}
+import { ids } from "./ids";
+import { reconcileActivity } from "./activity";
 
 function settings(config: Record<string, unknown> = {}) {
   const users = ids(config.users);
@@ -129,6 +119,7 @@ export const jellyfinSyncSource: SyncSource = {
       }
       const { Id: server } = await request("/System/Info/Public");
       if (typeof server !== "string" || !server) throw new Error("Missing Jellyfin server ID");
+      using db = getDb();
       for (const user of users) {
         const account = server + "/" + user;
         const key = "jellyfin/sessions/" + account;
@@ -159,7 +150,7 @@ export const jellyfinSyncSource: SyncSource = {
           const rows = page.results.map((value: unknown) => sessionRow(value, user)) as ReturnType<typeof sessionRow>[];
           const itemIds = [...new Set(rows.map((row) => row.ItemId))];
           const metadata = await loadItems(request, user, itemIds, libraries);
-          const changes = getDb().transaction(() => {
+          const changes = db.transaction(() => {
             let added = 0;
             let updated = 0;
             for (const row of rows) {
@@ -172,9 +163,14 @@ export const jellyfinSyncSource: SyncSource = {
               if (day > latestDay) latestDay = day;
               const item = metadata.get(row.ItemId);
               if (libraries.length && !item) continue;
-              const saved = saveSession(getDb(), account, row, zone, item);
+              const saved = saveSession(db, account, row, zone, item);
               added += saved.added;
               updated += saved.updated;
+            }
+            if (added || updated) {
+              const activity = reconcileActivity(db, account.toLowerCase(), zone);
+              added += activity.eventsAdded;
+              updated += activity.eventsUpdated;
             }
             return { added, updated };
           })();

@@ -411,7 +411,7 @@ Generated from each platform's `meta.ts` by `bun run docs:sources`; a test fails
 | google | `google-health` | `sleep`, `sleep:nap`, `daily:activity`, `daily:azm`, `daily:breathing`, `daily:heart`, `daily:hrv`, `daily:spo2`, `daily:temperature`, `daily:weight` |
 | google-messages | `google-messages` | `sms:sent`, `sms:received`, `mms:sent`, `mms:received`, `rcs:sent`, `rcs:received` |
 | instagram | `instagram` | `message:dm`, `message:dm:attachment`, `message:dm:audio`, `message:dm:share`, `message:dm:share:reel`, `message:dm:sticker`, `message:dm:unsent`, `message:group`, `message:group:attachment`, `message:group:audio`, `message:group:share`, `message:group:share:reel`, `message:group:sticker`, `message:group:unsent` |
-| jellyfin | `jellyfin` | `jellyfin:movie`, `jellyfin:episode` |
+| jellyfin | `jellyfin` | `jellyfin:movie`, `jellyfin:episode`, `jellyfin:activity` |
 | linkedin | `linkedin` | `message`, `connection`, `job`, `education` |
 | minecraft | `minecraft` | `minecraft:chat`, `minecraft:join`, `minecraft:leave`, `minecraft:advancement`, `minecraft:death` |
 | monzo | `monzo` | `transaction`, `transaction:bills`, `transaction:cash`, `transaction:credit`, `transaction:declined`, `transaction:entertainment`, `transaction:food`, `transaction:groceries`, `transaction:shopping`, `transaction:topup`, `transaction:transport` |

@@ -76,6 +76,10 @@ type ParserFunction = (
 ) => Promise<number | ParserResult>;
 
 const PARSERS: Record<string, { tokenEligible: boolean; leavesWaiting?: true; load: () => Promise<ParserFunction> }> = {
+  "jellyfin-activity": {
+    tokenEligible: false,
+    load: async () => (await import("../platforms/jellyfin/activity-import")).importActivityFile,
+  },
   "sms-backup-restore": {
     tokenEligible: true,
     load: async () => {
