@@ -42,6 +42,7 @@ import {
   getRawDataSchema,
   getRecentEvents,
   hasHiddenContacts,
+  hiddenContactsOfEvent,
   hiddenEventIdsSubquery,
   hydrateEventsById,
   invalidateHiddenClauseCaches,
@@ -397,7 +398,8 @@ async function contactQueryEvents(
   }
 
   const aliases = await getAliasesForContact(db, resolved.contact.id);
-  const filters = { query, source, type, startDate, endDate, excludeSources, excludeHidden: true };
+  // Naming a hidden contact asks for them, so their events are not filtered out.
+  const filters = { query, source, type, startDate, endDate, excludeSources, excludeHidden: !resolved.contact.hidden };
   const fetched = await searchByContact(db, resolved.contact.id, { ...filters, cursor, limit: limit + 1 });
   // The location filter runs after the fetch, so the count would not match it.
   const total = location
@@ -444,7 +446,7 @@ async function groupedQueryEvents(
     const resolved = await resolveContact(db, contact);
     if (resolved.error) return { content: resolved.error, isError: true };
     prefix = `Contact: ${resolved.contact.display_name} (ID: ${resolved.contact.id})\n${prefix}`;
-    groups = await contactEventGroups(db, resolved.contact.id, { ...filters, excludeHidden: true }, limit);
+    groups = await contactEventGroups(db, resolved.contact.id, { ...filters, excludeHidden: !resolved.contact.hidden }, limit);
   } else {
     groups = await searchTimelineGroups(db, filters, limit);
   }
@@ -501,7 +503,7 @@ async function resolveContactByIdentity(
   // Uses the existing composite (platform, platform_id) unique index.
   if (input.includes(":")) {
     const identity = (await resolveIdentities(db, [input]))[input];
-    return identity?.contactId != null && !identity.hidden ? { contactId: identity.contactId } : null;
+    return identity?.contactId != null ? { contactId: identity.contactId } : null;
   }
 
   // Form 2: bare platform_id (e.g. "900000000000000001"). Probes the
@@ -515,7 +517,7 @@ async function resolveContactByIdentity(
     `SELECT i.platform, i.platform_id, i.contact_id, c.display_name AS contact_name
      FROM identities i
      JOIN contacts c ON c.id = i.contact_id
-     WHERE i.platform_id = ? AND c.hidden = 0
+     WHERE i.platform_id = ?
      LIMIT 10`,
     input,
   );
@@ -527,6 +529,22 @@ async function resolveContactByIdentity(
     return { contactId: rows[0].contact_id };
   }
   return { ambiguous: rows.slice(0, 5) };
+}
+
+/**
+ * The contacts a name search finds: the one whose name it is exactly, else the
+ * visible contacts whose names contain it, else the hidden ones. So a hidden
+ * contact is found by name, but a broad or everyday search never lists them
+ * beside visible contacts.
+ */
+async function contactsNamed(db: QueryExecutor, search: string) {
+  const term = search.trim();
+  if (!term) return [];
+  const all = await listContacts(db, { search: term, includeHidden: true });
+  const exact = all.filter((c) => c.display_name.toLowerCase() === term.toLowerCase());
+  if (exact.length === 1) return exact;
+  const visible = all.filter((c) => !c.hidden);
+  return visible.length > 0 ? visible : all;
 }
 
 /**
@@ -547,19 +565,16 @@ export async function resolveContact(
   // Round-tripping through String catches lossy parseInt outcomes (e.g. a
   // Discord snowflake exceeding MAX_SAFE_INTEGER) — those should fall through
   // to identity lookup rather than match a phantom contact.
-  // A hidden contact matches nothing here, so asking for one reads exactly as
-  // asking for someone unknown.
   if (!isNaN(contactId) && String(contactId) === contact) {
-    const byId = await getContact(db, contactId);
-    if (byId && !byId.hidden) contactObj = byId;
+    contactObj = await getContact(db, contactId);
   }
 
   if (!contactObj) {
-    const contacts = await listContacts(db, { search: contact });
+    const contacts = await contactsNamed(db, contact);
     if (contacts.length === 1) {
       contactObj = contacts[0];
     } else if (contacts.length > 1) {
-      const lines = contacts.slice(0, 5).map((c) => `${c.id}. ${c.display_name}`);
+      const lines = contacts.slice(0, 5).map((c) => `${c.id}. ${c.display_name}${c.hidden ? " (hidden)" : ""}`);
       return {
         error: [{
           type: "text" as const,
@@ -1019,17 +1034,20 @@ Examples:
 
       let conversationId = conversation_id;
       let conversationSource: string | undefined;
+      let excludeHidden = true;
       if (event_id !== undefined) {
         const event = await db.get<{ conversation_id: string | null; source: string }>(
           "SELECT conversation_id, source FROM events WHERE id = ?",
           event_id,
         );
-        if (!event || (await withoutHiddenContactEvents(db, [{ id: event_id }])).length === 0) {
+        if (!event) {
           return {
             isError: true,
             content: [{ type: "text" as const, text: `Times in UTC.\nTranscript tokens: 0.\nError: No event found with id ${event_id}.` }],
           };
         }
+        // An event filed under a hidden contact was asked for by id, so the hidden filter is off.
+        if ((await withoutHiddenContactEvents(db, [{ id: event_id }])).length === 0) excludeHidden = false;
         if (!event.conversation_id) {
           return {
             isError: true,
@@ -1055,7 +1073,7 @@ Examples:
       }, {
         limit,
         source: conversationSource,
-        excludeHidden: true,
+        excludeHidden,
         hiddenContactName: HIDDEN_CONTACT_NAME,
         mostRecent: true,
         includeTotal: true,
@@ -1107,6 +1125,9 @@ Examples:
       const limit = params.limit ?? 50;
       const cursorError = invalidCursor(cursor);
       if (cursorError) return cursorError;
+      // Context around an event filed under a hidden contact was asked for by id, so that contact is shown;
+      // other hidden contacts stay out of the window.
+      const shownContactIds = event_id !== undefined && timestamp === undefined ? await hiddenContactsOfEvent(db, event_id) : [];
       let conversation: { source: string; sourceAccount: string; conversationId: string } | undefined;
       if (params.same_conversation) {
         const anchor = event_id === undefined
@@ -1115,8 +1136,7 @@ Examples:
             "SELECT source, source_account, conversation_id FROM events WHERE id = ?",
             event_id,
           );
-        if (!anchor?.conversation_id || !anchor.source_account || event_id === undefined
-          || (await withoutHiddenContactEvents(db, [{ id: event_id }])).length === 0) {
+        if (!anchor?.conversation_id || !anchor.source_account || event_id === undefined) {
           return {
             isError: true,
             content: [{ type: "text" as const, text: "Error: same_conversation needs an event_id of an event in a conversation." }],
@@ -1132,6 +1152,7 @@ Examples:
         excludeSources: splitSources(exclude_source),
         conversation,
         excludeHidden: true,
+        shownContactIds,
         cursor,
         limit: limit + 1,
       });
@@ -1276,7 +1297,8 @@ Tips:
     READS,
     async (params, extra) => instrumentToolCall("list_contacts", params, extra, async () => {
       const { search } = params;
-      let contacts = await listContacts(db, { search });
+      // The full list leaves hidden contacts out; a search finds one by name, as resolveContact does.
+      let contacts = search ? await contactsNamed(db, search) : await listContacts(db);
 
       // Identity-aware fallback: if the name search came up empty, the search
       // term might be a platform identifier (e.g. a Discord snowflake the
@@ -1287,13 +1309,17 @@ Tips:
           const ids = "ambiguous" in identity
             ? identity.ambiguous.map((r) => r.contact_id)
             : [identity.contactId];
-          contacts = await listContacts(db, { ids });
+          contacts = await listContacts(db, { ids, includeHidden: true });
         }
       }
 
+      const hiddenCount = search ? 0 : (await db.get<{ count: number }>("SELECT COUNT(*) as count FROM contacts WHERE hidden = 1"))?.count ?? 0;
+      const notListed = hiddenCount > 0
+        ? `${hiddenCount} hidden contact${hiddenCount === 1 ? "" : "s"} not listed; search by name to include one.`
+        : null;
       if (contacts.length === 0) {
         return {
-          content: [{ type: "text" as const, text: "No contacts found." }],
+          content: [{ type: "text" as const, text: notListed ? `No contacts found. ${notListed}` : "No contacts found." }],
         };
       }
 
@@ -1302,8 +1328,9 @@ Tips:
         const detailsTag = c.date_of_birth ? ` [DOB: ${formatBirthdayForDisplay(c.date_of_birth)}]` : "";
         const platformLabel = c.platformCount === 1 ? "platform" : "platforms";
         const activeIdentityLabel = c.activeIdentityCount === 1 ? "active identity" : "active identities";
-        return `${c.id}. ${c.display_name}${detailsTag} (${c.platformCount} ${platformLabel} · ${c.activeIdentityCount} ${activeIdentityLabel} · ${c.eventCount} events)${notesTag}`;
+        return `${c.id}. ${c.display_name}${c.hidden ? " (hidden)" : ""}${detailsTag} (${c.platformCount} ${platformLabel} · ${c.activeIdentityCount} ${activeIdentityLabel} · ${c.eventCount} events)${notesTag}`;
       });
+      if (notListed) lines.push(notListed);
 
       return {
         content: [{ type: "text" as const, text: lines.join("\n") }],
@@ -1335,6 +1362,7 @@ Tips:
       const lines = [
         `Contact: ${contactObj.display_name} (ID: ${contactObj.id})`,
       ];
+      if (contactObj.hidden) lines.push("Hidden: yes, so left out of catch-ups, searches and lists unless named");
 
       // Profile fields
       const fields: string[] = [];

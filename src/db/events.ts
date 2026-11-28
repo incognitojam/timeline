@@ -69,20 +69,24 @@ export async function hasHiddenContacts(db: QueryExecutor): Promise<boolean> {
   return anyHidden;
 }
 
-export function hiddenEventIdsSubquery(): string {
+/**
+ * The events filed under a hidden contact. With `exceptBound`, other than the
+ * contacts in a JSON array of ids the caller binds in its place.
+ */
+export function hiddenEventIdsSubquery(exceptBound = false): string {
   return `
       SELECT DISTINCT ep.event_id
       FROM event_people ep
       JOIN identities i ON ep.person = (i.platform || ':' || i.platform_id)
       JOIN contacts c ON i.contact_id = c.id
-      WHERE c.hidden = 1
+      WHERE c.hidden = 1${exceptBound ? " AND c.id NOT IN (SELECT value FROM json_each(?))" : ""}
   `;
 }
 
-export function hiddenEventExclusionClause(tableAlias: string = "e"): string {
+export function hiddenEventExclusionClause(tableAlias: string = "e", exceptBound = false): string {
   return `
     AND ${tableAlias}.id NOT IN (
-      ${hiddenEventIdsSubquery()}
+      ${hiddenEventIdsSubquery(exceptBound)}
     )
   `;
 }
@@ -99,6 +103,19 @@ export async function hiddenEventIdsAmong(db: QueryExecutor, ids: readonly numbe
 
 export async function buildHiddenEventClause(db: QueryExecutor, tableAlias: string = "e"): Promise<string> {
   return await hasHiddenContacts(db) ? hiddenEventExclusionClause(tableAlias) : "";
+}
+
+/** The hidden contacts an event is filed under. */
+export async function hiddenContactsOfEvent(db: QueryExecutor, eventId: number): Promise<number[]> {
+  if (!(await hasHiddenContacts(db))) return [];
+  const rows = await db.query<{ id: number }>(`
+    SELECT DISTINCT c.id
+    FROM event_people ep
+    JOIN identities i ON ep.person = (i.platform || ':' || i.platform_id)
+    JOIN contacts c ON i.contact_id = c.id
+    WHERE ep.event_id = ? AND c.hidden = 1
+  `, eventId);
+  return rows.map((row) => row.id);
 }
 
 /**
@@ -585,8 +602,9 @@ export async function getEventContext(
     excludeSources?: string[];
     /** Only this conversation's events. */
     conversation?: { source: string; sourceAccount: string; conversationId: string };
-    /** Leave out events filed under a hidden contact. */
+    /** Leave out events filed under a hidden contact, other than these contacts. */
     excludeHidden?: boolean;
+    shownContactIds?: readonly number[];
   }
 ): Promise<TimelineEvent[]> {
   const { eventId, timestamp, hoursWindow = 2, limit = 50, cursor, sources, excludeSources, conversation } = options;
@@ -595,8 +613,7 @@ export async function getEventContext(
 
   if (eventId && !timestamp) {
     const event = await db.get<{ timestamp: string }>(`SELECT timestamp FROM events WHERE id = ?`, eventId);
-    // A hidden anchor reads as a missing one, or its neighbours would date it.
-    if (!event?.timestamp || (options.excludeHidden && (await hiddenEventIdsAmong(db, [eventId])).size > 0)) return [];
+    if (!event?.timestamp) return [];
     centerTimestamp = event.timestamp;
   }
 
@@ -629,7 +646,11 @@ export async function getEventContext(
     params.push(parsedCursor.timestamp, parsedCursor.timestamp, parsedCursor.id);
   }
 
-  const hiddenClause = options.excludeHidden ? await buildHiddenEventClause(db, "events") : "";
+  const shown = options.shownContactIds ?? [];
+  const hiddenClause = !options.excludeHidden || !(await hasHiddenContacts(db))
+    ? ""
+    : hiddenEventExclusionClause("events", shown.length > 0);
+  if (hiddenClause && shown.length > 0) params.push(JSON.stringify(shown));
   const sql = `
     SELECT * FROM events
     WHERE ${conditions.join(" AND ")} ${hiddenClause}

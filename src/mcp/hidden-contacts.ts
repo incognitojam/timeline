@@ -1,12 +1,12 @@
 /**
- * Contacts the user marks hidden are left out of Timeline's named MCP tools,
- * with the web app's meaning of hidden: an event that event_people files under
- * a hidden contact's identity is left out (buildHiddenEventClause in
- * src/db/events.ts), so a group chat keeps everyone else's messages and a DM
- * with a hidden contact disappears. A tool asked for a hidden contact by name,
- * id or identifier gives the reply it gives for someone unknown, and nothing
- * of theirs. run_sql still reads every row: this filters the named tools, it
- * is not an access control.
+ * Contacts the user marks hidden are hidden from their own day-to-day view,
+ * not from agents. So the named MCP tools leave hidden contacts out of what an
+ * agent is shown unprompted (catch-ups, searches, lists), with the web app's
+ * meaning of hidden: an event that event_people files under a hidden contact's
+ * identity is left out (buildHiddenEventClause in src/db/events.ts), so a group
+ * chat keeps everyone else's messages and a DM with a hidden contact
+ * disappears. Naming one includes them: a tool given a hidden contact by name,
+ * id or identifier, or one of their events by id, answers as for anyone else.
  *
  * Queries that build their own SQL take the clause (or their function's
  * excludeHidden / includeHiddenContacts: false option); a tool holding events
@@ -21,8 +21,8 @@ import { hiddenForwardIds } from "../export/hidden-forwards";
 import { parseDiscordPoll } from "../platforms/discord/shared/forward";
 import { extractUserMentionIds } from "../platforms/discord/shared/mentions";
 
-/** One line for the server instructions, so a model does not read a gap as missing data. */
-export const HIDDEN_CONTACTS_NOTE = "Contacts the user has hidden, and the events filed under them, are left out of these tools.";
+/** For the server instructions: hidden contacts are not missing, and are not for an agent to volunteer. */
+export const HIDDEN_CONTACTS_NOTE = "Contacts the user has hidden are left out of catch-ups, searches and lists; name one and the tools include them. Bring one up only when the conversation is about them.";
 
 /**
  * What a hidden contact is called where a visible event names them (a mention,
