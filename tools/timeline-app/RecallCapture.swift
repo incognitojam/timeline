@@ -138,9 +138,13 @@ enum RecallCapture {
     }
 
     static func isExcluded(_ w: SCWindow, excluded: Set<String>) -> Bool {
+        isExcluded(app: w.owningApplication?.applicationName, bundleID: w.owningApplication?.bundleIdentifier, excluded: excluded)
+    }
+
+    static func isExcluded(app: String?, bundleID: String?, excluded: Set<String>) -> Bool {
         guard !excluded.isEmpty else { return false }
-        if let name = w.owningApplication?.applicationName, excluded.contains(name) { return true }
-        if let bundle = w.owningApplication?.bundleIdentifier, excluded.contains(bundle) { return true }
+        if let app, excluded.contains(app) { return true }
+        if let bundleID, excluded.contains(bundleID) { return true }
         return false
     }
 
@@ -246,16 +250,44 @@ enum RecallCapture {
         WindowPlacement(windowID: w.windowID, pid: w.owningApplication?.processID, frame: w.frame, layer: w.windowLayer)
     }
 
+    // Dedicated video players, which keep the display awake only while playing.
+    // Browsers are left out: they hold the same assertion during calls.
+    static let videoPlayers: Set<String> = [
+        "com.firecore.infuse",
+        "com.colliderli.iina",
+        "org.videolan.vlc",
+        "com.apple.QuickTimePlayerX",
+        "com.apple.TV",
+        "io.mpv",
+        "tv.plex.desktop",
+        "tv.plex.htpc",
+        "com.movist.Movist",
+        "com.movist.MovistPro",
+    ]
+
     // Why a window is recorded without an image, or nil to capture it.
     static func imageOmission(for w: SCWindow, on display: SCDisplay?, insets: [CGDirectDisplayID: CGFloat],
                               among windows: [WindowPlacement], displaySleepBlockers: Set<pid_t>) throws -> String? {
-        guard let display else { return nil }
-        guard let inset = insets[display.displayID] else {
-            throw RecallError("No screen matches display \(display.displayID).")
+        var area: DisplayArea?
+        if let display {
+            guard let inset = insets[display.displayID] else {
+                throw RecallError("No screen matches display \(display.displayID).")
+            }
+            area = DisplayArea(frame: display.frame, topInset: inset)
         }
-        let area = DisplayArea(frame: display.frame, topInset: inset)
-        return isFullscreenVideo(placement(w), on: area, among: windows, displaySleepBlockers: displaySleepBlockers)
-            ? "fullscreen_video" : nil
+        return imageOmission(for: placement(w), bundleID: w.owningApplication?.bundleIdentifier, on: area,
+                             among: windows, displaySleepBlockers: displaySleepBlockers)
+    }
+
+    static func imageOmission(for window: WindowPlacement, bundleID: String?, on display: DisplayArea?,
+                              among windows: [WindowPlacement], displaySleepBlockers: Set<pid_t>) -> String? {
+        if let display, isFullscreenVideo(window, on: display, among: windows, displaySleepBlockers: displaySleepBlockers) {
+            return "fullscreen_video"
+        }
+        if let bundleID, videoPlayers.contains(bundleID), let pid = window.pid, displaySleepBlockers.contains(pid) {
+            return "video_playback"
+        }
+        return nil
     }
 
     // Video players and browsers keep the display awake only while playing,

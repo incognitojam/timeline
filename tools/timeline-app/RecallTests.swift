@@ -13,6 +13,7 @@ struct RecallTests {
         ageTests()
         menuTests()
         fullscreenVideoTests()
+        videoPlaybackTests()
         let fm = FileManager.default
         let root = URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("recall-tests-\(UUID().uuidString)")
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
@@ -369,6 +370,39 @@ struct RecallTests {
         precondition(!check(externalWhole, on: built))
         precondition(!check(W(windowID: next(), pid: nil, frame: built.frame, layer: 0), blockers: []))
         print("OK: Fullscreen video needs a display-sleep assertion and display coverage, or a fullscreen Space below the menu bar.")
+    }
+
+    static func videoPlaybackTests() {
+        typealias W = RecallCapture.WindowPlacement
+        let built = RecallCapture.DisplayArea(frame: CGRect(x: 0, y: 0, width: 1800, height: 1169), topInset: 39)
+        let player: pid_t = 100, other: pid_t = 200
+        let infuse = "com.firecore.infuse", editor = "com.example.editor"
+        let small = W(windowID: 1, pid: player, frame: CGRect(x: 200, y: 200, width: 640, height: 360), layer: 0)
+        let whole = W(windowID: 2, pid: player, frame: built.frame, layer: 0)
+        func reason(_ w: W, _ bundle: String?, blockers: Set<pid_t>, on d: RecallCapture.DisplayArea? = built) -> String? {
+            RecallCapture.imageOmission(for: w, bundleID: bundle, on: d, among: [w], displaySleepBlockers: blockers)
+        }
+        // A listed player keeping the display awake, in a small window or on no known display.
+        precondition(reason(small, infuse, blockers: [player]) == "video_playback")
+        precondition(reason(small, infuse, blockers: [player], on: nil) == "video_playback")
+        precondition(reason(small, "com.apple.TV", blockers: [player]) == "video_playback")
+        precondition(reason(small, "com.apple.TV", blockers: []) == nil)
+        // Paused, or another process holds the assertion: captured.
+        precondition(reason(small, infuse, blockers: []) == nil)
+        precondition(reason(small, infuse, blockers: [other]) == nil)
+        precondition(reason(W(windowID: 3, pid: nil, frame: small.frame, layer: 0), infuse, blockers: [player]) == nil)
+        // An app not on the list keeps the fullscreen-only rule.
+        precondition(reason(small, editor, blockers: [player]) == nil)
+        precondition(reason(small, nil, blockers: [player]) == nil)
+        precondition(reason(whole, editor, blockers: [player]) == "fullscreen_video")
+        // Fullscreen playback in a listed player keeps its reason.
+        precondition(reason(whole, infuse, blockers: [player]) == "fullscreen_video")
+        precondition(reason(whole, infuse, blockers: []) == nil)
+        // The exclusion list drops the window before any omission applies.
+        precondition(RecallCapture.isExcluded(app: "Infuse", bundleID: infuse, excluded: [infuse]))
+        precondition(RecallCapture.isExcluded(app: "Infuse", bundleID: infuse, excluded: ["Infuse"]))
+        precondition(!RecallCapture.isExcluded(app: "Infuse", bundleID: infuse, excluded: [editor]))
+        print("OK: Listed video players are recorded without an image while keeping the display awake, at any size.")
     }
 
     static func ageTests() {
