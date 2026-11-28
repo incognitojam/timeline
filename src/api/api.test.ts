@@ -43,6 +43,7 @@ import {
   setMediaStoreOverride,
   WriteThroughMediaStore,
 } from "../media/storage";
+import { getMusicRankings, getTopListFilter } from "../platforms/spotify/music";
 import { cancelJob, enqueueJob } from "../jobs/store";
 import { getDefaultModel } from "../llm";
 import { parseInterval } from "../config";
@@ -1558,6 +1559,73 @@ describe("API Smoke Tests", () => {
       const { exclusion: fromPlayExclusion } = await fromPlay.json();
       expect(fromPlayExclusion.label).toBe("Cached Name");
       expect((await app.request(`/api/music/exclusions/${fromPlayExclusion.id}`, { method: "DELETE" })).status).toBe(200);
+    });
+
+    test("top tracks offer the playlists their plays in the period came from", async () => {
+      const db = getDb();
+      const insert = db.prepare(`
+        INSERT INTO events (source, source_id, source_account, type, timestamp, title, tags, raw_data)
+        VALUES ('spotify', ?, 'listener', 'listen:track', ?, 'Boundary Mix', ?, ?)
+        RETURNING id
+      `);
+      let n = 0;
+      const play = (timestamp: string, playlist?: string, name?: string) => (insert.get(
+        `spotify:track:boundary-mix@${n++}`,
+        timestamp,
+        JSON.stringify(name ? [`playlist:${name}`] : []),
+        JSON.stringify({
+          track: { uri: "spotify:track:boundary-mix" },
+          ...(playlist && { context: { type: "playlist", uri: `spotify:playlist:${playlist}` } }),
+        }),
+      ) as { id: number }).id;
+      // Before the four-week period that ends on 2095-06-29.
+      for (const day of ["10", "11", "12"]) play(`2095-05-${day}T10:00:00Z`, "boundary-old", "Old Mix");
+      // Ten plays in the period: four from Study, two each from Sleep and Run (a fifth each), two from no playlist.
+      const studyPlay = play("2095-06-10T10:00:00Z", "boundary-study", "Study");
+      for (const day of ["11", "12"]) play(`2095-06-${day}T10:00:00Z`, "boundary-study", "Study");
+      play("2095-06-13T10:00:00Z", "boundary-study");
+      for (const day of ["14", "15"]) play(`2095-06-${day}T10:00:00Z`, "boundary-sleep", "Sleep");
+      // Run is never tagged or cached, so it is named by its id.
+      for (const day of ["16", "17"]) play(`2095-06-${day}T10:00:00Z`, "boundary-run");
+      for (const day of ["18", "19"]) play(`2095-06-${day}T10:00:00Z`);
+      const offered = (period: "4w" | "all") => getMusicRankings(db, period, {
+        now: new Date("2095-06-29T00:00:00Z"),
+        filter: getTopListFilter(getAppStateDb()),
+      }).topTracks.find((track) => track.trackName === "Boundary Mix")?.playlists;
+
+      // Ties at a fifth go to the playlist played from last; the cap keeps two.
+      expect(offered("4w")).toEqual([
+        { playlistUri: "spotify:playlist:boundary-study", playlistName: "Study" },
+        { playlistUri: "spotify:playlist:boundary-run", playlistName: "boundary-run" },
+      ]);
+      // Over all time the older playlist holds three of thirteen plays.
+      expect(offered("all")).toEqual([
+        { playlistUri: "spotify:playlist:boundary-study", playlistName: "Study" },
+        { playlistUri: "spotify:playlist:boundary-old", playlistName: "Old Mix" },
+      ]);
+
+      // The rankings name a playlist as its exclusion will be labelled: the cached name first.
+      setSpotifyResource(getAppStateDb(), "spotify:playlist:boundary-old", "playlist", "Old Mix Renamed");
+      const ranked = await (await app.request("/api/music/rankings?period=all")).json() as MusicRankingsOverview;
+      expect(ranked.topTracks.find((track) => track.trackName === "Boundary Mix")?.playlists).toEqual([
+        { playlistUri: "spotify:playlist:boundary-study", playlistName: "Study" },
+        { playlistUri: "spotify:playlist:boundary-old", playlistName: "Old Mix Renamed" },
+      ]);
+
+      // Excluding from the row stores what excluding from one of its plays would.
+      const exclude = async (body: MusicExclusionRequest) => {
+        const res = await app.request("/api/music/exclusions", { method: "POST", body: JSON.stringify(body) });
+        return (await res.json()).exclusion;
+      };
+      const fromRow = await exclude({ kind: "playlist", playlistUri: "spotify:playlist:boundary-study" });
+      expect(await exclude({ kind: "playlist", eventId: studyPlay })).toEqual(fromRow);
+      expect(fromRow).toMatchObject({ kind: "playlist", label: "Study" });
+      expect(offered("4w")).toEqual([
+        { playlistUri: "spotify:playlist:boundary-run", playlistName: "boundary-run" },
+        { playlistUri: "spotify:playlist:boundary-sleep", playlistName: "Sleep" },
+      ]);
+      expect((await app.request(`/api/music/exclusions/${fromRow.id}`, { method: "DELETE" })).status).toBe(200);
+      db.close();
     });
 
     test("GET /api/music/rankings rejects unknown periods", async () => {

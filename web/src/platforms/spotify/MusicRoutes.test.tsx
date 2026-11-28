@@ -82,9 +82,10 @@ function musicExclusionsApi(initial: { id: number; kind: string; label: string }
         firstPlayedAt: null,
         lastPlayedAt: null,
         // The excluded track leaves the list, as the server's filter would make it.
-        topTracks: exclusions.some((e) => e.kind === "track") ? [] : [{
+        topTracks: exclusions.length > 0 ? [] : [{
           rank: 1, trackName: "Example Track", artistName: "Example Artist", albumName: null, trackUri: "spotify:track:example",
           imageUrl: null, playCount: 8, listeningMs: 0, lastPlayedAt: "2026-03-01T00:00:00Z", eventId: 42,
+          playlists: [{ playlistUri: EXAMPLE_PLAYLIST.playlistUri, playlistName: EXAMPLE_PLAYLIST.name }],
         }],
         topArtists: [],
         filter: filter(),
@@ -181,6 +182,7 @@ describe("music route query cache", () => {
               listeningMs: 3_900_000,
               lastPlayedAt: "2026-03-01T00:00:00Z",
               eventId: 1,
+              playlists: [],
             },
           ],
           topArtists: [
@@ -239,6 +241,21 @@ describe("music route query cache", () => {
     expect(screen.getByRole("link", { name: /Filtered · 1 excluded/ })).toHaveAttribute("href", "/music/excluded");
     expect(screen.getByText("Every track in this range is excluded.")).toBeInTheDocument();
     expect(fetchMock.writes).toEqual(['POST /api/music/exclusions {"kind":"track","eventId":42}']);
+  });
+
+  it("excludes the playlist a top track's plays came from", async () => {
+    const fetchMock = musicExclusionsApi();
+    vi.stubGlobal("fetch", fetchMock.fetch);
+    const screen = renderOverview(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    const [rankedRowButton] = await screen.findAllByRole("button", { name: "Exclude from top lists" });
+    rankedRowButton?.click();
+    expect(screen.queryByText("No playlist recorded for these plays.")).toBeNull();
+    screen.getByRole("button", { name: "Playlist “Example Mix”" }).click();
+    expect(await screen.findByText("Every track in this range is excluded.")).toBeInTheDocument();
+    expect(fetchMock.writes).toEqual([
+      `POST /api/music/exclusions {"kind":"playlist","playlistUri":"${EXAMPLE_PLAYLIST.playlistUri}"}`,
+    ]);
   });
 
   it("includes an exclusion again and toggles private sessions, and Music shows both on return", async () => {

@@ -12,6 +12,14 @@ export interface MusicRankedTrack {
   listeningMs: number;
   lastPlayedAt: string;
   eventId: number;
+  /** Playlists the row offers to exclude, most played first; empty when no play in the period recorded one. */
+  playlists: MusicRankedTrackPlaylist[];
+}
+
+export interface MusicRankedTrackPlaylist {
+  playlistUri: string;
+  /** Named as excluding it would label it: cached name, else the row's latest tag, else its id. */
+  playlistName: string;
 }
 
 export interface MusicRankedArtist {

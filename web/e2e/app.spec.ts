@@ -864,6 +864,7 @@ const apiResponses = {
         listeningMs: 0,
         lastPlayedAt: "2025-01-15T10:00:00.000Z",
         eventId: 201,
+        playlists: [],
       },
       {
         rank: 2,
@@ -876,6 +877,7 @@ const apiResponses = {
         listeningMs: 0,
         lastPlayedAt: "2025-01-14T18:30:00.000Z",
         eventId: 202,
+        playlists: [],
       },
     ],
     topArtists: [
