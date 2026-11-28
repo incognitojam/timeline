@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
+import { mkdtemp } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
+import { processSource } from "../../inbox/process";
+import { upsertSyncSourcePatch } from "../../sync/config";
 import { Database } from "../../db/sqlite";
+import { getAppStateDb } from "../../db/app-state";
 import { getDb } from "../../db/schema";
 import { runSourceOnce } from "../../sync/once";
 
@@ -7,6 +14,7 @@ test("imports only selected users, preserves deleted titles and reconciles chang
   const users = ["1".repeat(32), "2".repeat(32)],
     other = "3".repeat(32),
     item = "a".repeat(32);
+  const serverId = "e".repeat(32);
   const plugin = new Database(":memory:");
   plugin.run(
     "CREATE TABLE PlaybackActivity(DateCreated,UserId,ItemId,ItemType,ItemName,PlaybackMethod,ClientName,DeviceName,PlayDuration)",
@@ -32,7 +40,7 @@ test("imports only selected users, preserves deleted titles and reconciles chang
     async fetch(req) {
       const url = new URL(req.url);
       expect(req.headers.get("Authorization")).toBe('MediaBrowser Token="synthetic"');
-      if (url.pathname === "/System/Info/Public") return Response.json({ Id: "test-server" });
+      if (url.pathname === "/System/Info/Public") return Response.json({ Id: serverId });
       if (url.pathname === "/user_usage_stats/submit_custom_query") {
         const sql = (await req.json()).CustomQueryString;
         const user = /WHERE UserId='([a-f0-9]+)'/.exec(sql)?.[1];
@@ -63,7 +71,39 @@ test("imports only selected users, preserves deleted titles and reconciles chang
   try {
     const config = { users, url: server.url.href, timezone: "America/New_York" };
     const run = () => runSourceOnce("jellyfin", { config });
+    upsertSyncSourcePatch("jellyfin", { settings: config });
+    const dir = await mkdtemp(join(tmpdir(), "jellyfin-inbox-"));
+    const header = {
+      format: "jellyfin-activity",
+      version: 1,
+      serverId,
+      timeZone: "America/New_York",
+      exportedAt: "2026-11-02T10:00:00Z",
+      users,
+    };
+    const start = {
+      Id: 1,
+      Type: "VideoPlayback",
+      DateCreated: "2026-07-10 23:59:55",
+      UserId: users[0],
+      ItemId: item,
+      Name: "Viewer is playing The Paper Harbor on Example Screen",
+      item: null,
+    };
+    const data = JSON.stringify(header) + "\n" + JSON.stringify(start) + "\n";
+    const footer = { count: 1, sha256: createHash("sha256").update(data).digest("hex") };
+    await Bun.write(join(dir, "history.jsonl"), data + JSON.stringify(footer) + "\n");
+    const inbox = { type: "local" as const, local: dir, parser: "jellyfin-activity", patterns: ["*.jsonl"] };
+    const imported = await processSource({ inbox_path: dir, sources: { jellyfin: inbox } }, "jellyfin", inbox, {});
+    expect(imported.errors).toEqual([]);
+    expect(imported.eventsAdded).toBe(1);
+    const history = getAppStateDb()
+      .query<{ metadata: string }, []>("SELECT metadata FROM sync_log WHERE source='jellyfin' ORDER BY id DESC LIMIT 1")
+      .get();
+    expect(JSON.parse(history!.metadata)).toMatchObject({ rowsAccepted: 1, createdUnknown: 1 });
+
     const first = await run();
+    expect(first.events.deleted).toBe(1);
     expect(first.result?.error).toBeUndefined();
     expect(first.events.inserted.count).toBe(2);
     expect(first.events.inserted.samples[0]?.timestamp).toBe("2026-07-11T00:00:00.000Z");
@@ -113,7 +153,7 @@ test("imports only selected users, preserves deleted titles and reconciles chang
     expect(
       getDb()
         .query("SELECT 1 FROM events WHERE source_account=?")
-        .get("test-server/" + other),
+        .get(serverId + "/" + other),
     ).toBeNull();
   } finally {
     if (token === undefined) delete process.env.JELLYFIN_TOKEN;

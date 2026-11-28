@@ -13,7 +13,7 @@
 | Reddit | Posts, comments, messages | File export |
 | Spotify | Listening history | File export + API sync |
 | Spotify Friends | Friends' activity | API sync (unofficial) |
-| Jellyfin | Movie and episode playback sessions | API sync |
+| Jellyfin | Playback Reporting sessions and reconstructed video plays | API sync and activity-log JSON Lines export |
 | Trakt | Watch history | API sync |
 | YouTube | Watch history, likes, searches | Takeout |
 | Steam | Games, playtime, achievements | API sync |
@@ -201,6 +201,30 @@ Google Health replaces the Fitbit Web API sync for current health metrics. Exist
 Install Playback Reporting on Jellyfin and create a dedicated dashboard API key. Add `JELLYFIN_TOKEN` to the Timeline service secrets environment and restart the service. In sync settings, enable Jellyfin, enter the reachable server URL (including its base path), the Jellyfin server’s IANA time zone, and the IDs of the users to import. The key has administrator privileges. Timeline requests sessions only for the selected users.
 
 Optionally restrict imports to library IDs; sessions whose library cannot be established are then skipped. Changing the selection applies to future syncs and retains previously imported history. Played seconds come from the plugin. Missing library items retain their recorded session title. Offsetless local times that fall in a daylight-saving gap or repeated hour are preserved in the raw session with an unknown timeline timestamp.
+
+### Import a Jellyfin activity export
+
+Set the permitted user IDs on the Jellyfin sync settings page. Enable `[inbox].watch_enabled`, create the dedicated directory `jellyfin` under `[inbox].base_path`, and add this source to `config.toml`:
+
+```toml
+[inbox.sources.jellyfin]
+type = "local"
+local = "jellyfin"
+parser = "jellyfin-activity"
+patterns = ["*.jsonl"]
+```
+
+Restart Timeline, then drop a completed version 1 Jellyfin activity export into that directory using a fresh filename. Keep a separate private copy. The importer validates the entire export and commits it atomically. An unlisted account, conflicting log record, or invalid checksum rejects the whole file. The file importer uses the selected user IDs independently of API credentials and live-sync library filters. A unique same-item start and stop up to 12 hours apart show estimated elapsed time, including pauses. Identifiable devices must agree. Each plugin session takes precedence over the latest compatible start in the preceding 90 seconds. A lone start has unknown duration. Stop-only records remain available as raw evidence. Timeline retains the first available item snapshot when a later export overlaps. Set the live sync and export to the same server time zone. Move rejected files out of the inbox before correcting them, since the watcher retries them.
+
+Before moving an export into the watched directory, try the preview first against a copy with the matching app-state database. Use the same importer revision for the preview and installed inbox handler. Use the existing Timeline database (with its sibling app-state database and configured Jellyfin users):
+
+```sh
+TIMELINE_DB_PATH=/path/to/timeline.db bun run src/platforms/jellyfin/scripts/preview-activity.ts /path/to/export.jsonl
+```
+
+The command validates the file and runs the importer in a transaction that it rolls back. It prints counts only. After an import, open Jellyfin on the Sync page and select **show metadata** on the import's history entry to see the same counts. Created counts distinguish estimated and unknown duration. Evidence-only stops have no paired start. Superseded rows count the matching start and any paired stop from this file. New, enriched and already-stored rows account for every accepted row. The report also separates updated viewings by estimated or unknown duration. Unchanged evidence counts only as already stored when reporting stop-only and superseded rows. Invalid input rejects the whole file.
+
+Movie and episode classes become movie and episode events. An unresolved item keeps the generic activity type; an unsupported class rejects the file at its line number. A re-added item has a different Jellyfin ID, so its plays do not pair or deduplicate across that change. The original sentence and every provider ID are retained. If the description starts with the resolved title (optionally prefixed by the series and ` - `) followed by ` on `, the remainder is the device name. Otherwise only a single ` on ` identifies a device; an ambiguous split leaves the device unknown and the full sentence available. An unresolved viewing displays that sentence. Matching uses the account, Jellyfin item ID, timing and available device evidence.
 
 ## Trakt Setup
 

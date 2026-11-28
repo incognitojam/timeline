@@ -8,7 +8,7 @@ export const jellyfinMeta = {
       id: "jellyfin",
       label: "Jellyfin",
       traits: { session: { gapMinutes: 30 } },
-      eventTypes: ["jellyfin:movie", "jellyfin:episode"],
+      eventTypes: ["jellyfin:movie", "jellyfin:episode", "jellyfin:activity"],
     },
   ],
 } as const satisfies PlatformMeta;

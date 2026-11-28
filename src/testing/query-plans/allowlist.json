@@ -2,6 +2,14 @@
   "accepted": [
     {
       "database": "timeline",
+      "sql": "SELECT count ( * ) count FROM \"jellyfin_activity_evidence\"",
+      "reason": "The SQLite compatibility diagnostic counts every row of each table to compare database copies, including all Jellyfin activity evidence.",
+      "findings": [
+        "jellyfin_activity_evidence:index-scan"
+      ]
+    },
+    {
+      "database": "timeline",
       "sql": "SELECT COUNT ( * ) AS count FROM sync_once_snapshot . events was WHERE NOT EXISTS ( SELECT 1 FROM main . events now WHERE now . id = was . id )",
       "reason": "sync:once comparison attaches a per-run snapshot; it is absent from the fresh schema. Keep explicit replay gap until attached-schema replay is supported.",
       "error": "SQLiteError: no such table: sync_once_snapshot.events"

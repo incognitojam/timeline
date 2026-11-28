@@ -33,7 +33,10 @@ export function sessionRow(values: unknown, user: string): Session {
 // Bun exposes Temporal; the project's TypeScript standard library predates its declarations.
 declare const Temporal: {
   ZonedDateTime: {
-    from(value: string, options: { disambiguation: "earlier" | "later" }): { epochMilliseconds: number };
+    from(
+      value: string,
+      options: { disambiguation: "earlier" | "later" },
+    ): { epochMilliseconds: number; toPlainDateTime(): { equals(value: string): boolean } };
   };
 };
 
@@ -48,12 +51,18 @@ export interface Item {
   ProviderIds?: Record<string, string>;
 }
 
-export function saveSession(db: Database, account: string, row: Session, zone: string, item?: Item) {
-  const local = row.DateCreated.replace(" ", "T");
+export function sessionInstants(date: string, zone: string) {
+  const local = date.replace(" ", "T");
   const zoned = local + "[" + zone + "]";
-  const earlier = Temporal.ZonedDateTime.from(zoned, { disambiguation: "earlier" }).epochMilliseconds;
-  const later = Temporal.ZonedDateTime.from(zoned, { disambiguation: "later" }).epochMilliseconds;
-  const timestamp = earlier === later ? new Date(earlier).toISOString() : null;
+  const earlier = Temporal.ZonedDateTime.from(zoned, { disambiguation: "earlier" });
+  const later = Temporal.ZonedDateTime.from(zoned, { disambiguation: "later" });
+  if (earlier.epochMilliseconds === later.epochMilliseconds) return [earlier.epochMilliseconds];
+  return earlier.toPlainDateTime().equals(local) ? [earlier.epochMilliseconds, later.epochMilliseconds] : [];
+}
+
+export function saveSession(db: Database, account: string, row: Session, zone: string, item?: Item) {
+  const instants = sessionInstants(row.DateCreated, zone);
+  const timestamp = instants.length === 1 ? new Date(instants[0]).toISOString() : null;
   const id = ["session", row.DateCreated, row.ItemId].join("/");
   const args = [account, id];
   const old = db
