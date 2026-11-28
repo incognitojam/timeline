@@ -9,7 +9,7 @@ import {
   useMusicExclusions,
 } from "../../lib/queries";
 import { ROUTES } from "../../lib/routes";
-import { IconMoreHoriz } from "../../ui/icons";
+import { IconChevronLeft, IconMoreHoriz } from "../../ui/icons";
 import PlaylistArt from "./PlaylistArt";
 
 const EXCLUSION_KIND_LABELS: Record<MusicExclusionKind, string> = {
@@ -181,10 +181,10 @@ export default function MusicExclusionsView() {
     <div class="h-full overflow-y-auto">
       <div class="max-w-3xl mx-auto p-4 sm:p-6 space-y-6">
         <div>
-          <A href={ROUTES.MUSIC} class="text-xs text-muted-foreground hover:text-foreground">
-            ← Music
+          <A href={ROUTES.MUSIC} class="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+            <IconChevronLeft class="h-4 w-4" aria-hidden /> Music
           </A>
-          <h1 class="font-display text-2xl font-medium mt-1">Excluded from top lists</h1>
+          <h1 class="font-display text-2xl font-medium">Excluded from top lists</h1>
           <p class="mt-1 text-sm text-muted-foreground">
             Excluded plays still count in Plays and stay everywhere else in Timeline.
           </p>
