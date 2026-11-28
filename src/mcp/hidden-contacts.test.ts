@@ -7,6 +7,8 @@ import { initDb } from "../db/schema";
 import { Database } from "../db/sqlite";
 import { registerTools } from "../mcp-tools";
 import { withoutHiddenContactEvents, withoutHiddenWindows } from "./hidden-contacts";
+import { setProjectUsesAccountMemory } from "../db/memory-notes";
+import { memoryInstructions } from "./memory";
 
 type Handler = (args: Record<string, unknown>) => Promise<{ isError?: boolean; content: { text: string }[] }>;
 
@@ -119,13 +121,34 @@ describe("hidden contacts: left out unprompted, included when named", () => {
     expect(group.content[0].text).toContain("hana says picnic at noon");
   });
 
-  test("memory notes linked to a hidden contact stay out of memory", async () => {
+  test("notes linked to a hidden contact are left out of the lists, with a count, and read by name", async () => {
     appDb.prepare(`INSERT INTO memory_notes (project, name, kind, title, summary, details, contact_id, created_at, updated_at)
-      VALUES ('', 'hana', 'person', 'Hana', 'secret picnic friend', '', 1, '2026-07-01', '2026-07-01')`).run();
-    expect(await text("list_memory", {})).not.toContain("secret picnic friend");
-    expect(await text("get_memory_note", { name: "hana" })).toContain('No note named "hana"');
-    expect(await text("save_memory_note", { name: "hana", kind: "person", title: "T", summary: "S" }))
-      .toBe('Error: Note "hana" can\'t be saved: the name is taken.');
+      VALUES ('', 'hana', 'person', 'Hana', 'secret picnic friend', 'likes picnics', 1, '2026-07-01', '2026-07-01')`).run();
+    const listed = await text("list_memory", {});
+    expect(listed).not.toContain("secret picnic friend");
+    expect(listed).toEndWith("1 note about hidden contacts not listed; get_contact_info lists a contact's notes.");
+    expect(memoryInstructions(appDb, { hiddenContactIds: new Set([1]) })).toContain("1 note about hidden contacts not listed");
+    expect(memoryInstructions(appDb, { hiddenContactIds: new Set([1]) })).not.toContain("secret picnic friend");
+    // A project with account memory off counts only its own notes.
+    setProjectUsesAccountMemory(appDb, "solo", false);
+    expect(await text("list_memory", { project: "solo" })).not.toContain("not listed");
+    // An index cut short keeps the count.
+    const insert = appDb.prepare(`INSERT INTO memory_notes (project, name, kind, title, summary, details, created_at, updated_at)
+      VALUES ('', ?, 'topic', 'A topic with a long enough title', 'A summary long enough to fill the index quickly', '', '2026-07-01', '2026-07-01')`);
+    for (let i = 0; i < 160; i++) insert.run(`topic-${i}`);
+    const long = memoryInstructions(appDb, { hiddenContactIds: new Set([1]) });
+    expect(long).toContain("The index is cut short here");
+    expect(long).toContain("1 note about hidden contacts not listed");
+    appDb.prepare("DELETE FROM memory_notes WHERE name LIKE 'topic-%'").run();
+    expect(await text("get_contact_info", { contact: "Hana Hidden" })).toContain("hana: Hana — secret picnic friend");
+    expect(await text("get_memory_note", { name: "hana" })).toContain("likes picnics");
+    expect(await text("save_memory_note", { name: "hana", summary: "picnic friend" })).toBe("Updated memory: Hana (hana, account)");
+    // A second note about them names the first, so an agent that missed it can merge them.
+    expect(await text("save_memory_note", { name: "hana-hidden", kind: "person", title: "Hana Hidden", summary: "Vegetarian", contact: "Hana Hidden" }))
+      .toBe("Created memory: Hana Hidden (hana-hidden, account)\nHana Hidden already has hana; if this repeats it, merge it there and delete this one.");
+    expect(await text("delete_memory_note", { name: "hana-hidden" })).toBe("Deleted memory: Hana Hidden (hana-hidden, account)");
+    expect(await text("delete_memory_note", { name: "hana" })).toBe("Deleted memory: Hana (hana, account)");
+    expect(await text("list_memory", {})).not.toContain("not listed");
   });
 
   test("query_events leaves out a hidden contact's DMs and own group messages, keeping the group", async () => {

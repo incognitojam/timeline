@@ -108,7 +108,7 @@ function EditForm(props: { note: MemoryNote; onDone: () => void }) {
 
 /**
  * The contact a person note is linked to, and the owner's way to change it.
- * A change is chosen, then saved, so whether agents can read the note after it shows first.
+ * A change is chosen, then confirmed before it is saved.
  */
 function NoteContact(props: { note: MemoryNote; disabled: boolean }) {
   const update = useUpdateMemoryNote();
@@ -118,7 +118,7 @@ function NoteContact(props: { note: MemoryNote; disabled: boolean }) {
   const [picking, setPicking] = createSignal(false);
   /** The contact to save: one chosen, null to unlink, undefined while nothing is chosen. */
   const [chosen, setChosen] = createSignal<MemoryImportContact | null | undefined>(undefined);
-  // A contact since deleted is missing from the index; agents treat it as not hidden.
+  // A contact since deleted is missing from the index.
   const current = () => (props.note.contact_id === null ? null : (index.data?.contacts[props.note.contact_id] ?? null));
   let section: HTMLDivElement | undefined;
   const focusFirstButton = () => queueMicrotask(() => section?.querySelector("button")?.focus());
@@ -138,9 +138,7 @@ function NoteContact(props: { note: MemoryNote; disabled: boolean }) {
     focusFirstButton();
   };
   async function save(contact: MemoryImportContact | null) {
-    // What the page says agents can read, before and after; the server refuses the change if either is no longer true.
-    const edit = { contactId: contact?.id ?? null, agentsCouldRead: !current()?.hidden, agentsCanRead: !contact?.hidden };
-    await update.mutateAsync({ project: props.note.project, name: props.note.name, edit });
+    await update.mutateAsync({ project: props.note.project, name: props.note.name, edit: { contactId: contact?.id ?? null } });
     setChosen(undefined);
     focusFirstButton();
   }
@@ -205,9 +203,7 @@ function NoteContact(props: { note: MemoryNote; disabled: boolean }) {
             <Show when={next()} fallback="Remove the link to this contact?">
               {(contact) => <>Link to {contact().name}?</>}
             </Show>
-            <Show when={next()?.hidden}> · hidden contact, so this note will be kept from agents</Show>
-            {/* Agents read a note unless its contact is hidden. */}
-            <Show when={current()?.hidden && !next()?.hidden}> · agents will be able to read this note</Show>
+            <Show when={next()?.hidden}> · hidden contact</Show>
           </p>
           <div class="mt-2 flex flex-wrap items-center justify-end gap-2">
             <Show when={update.error}>
@@ -371,7 +367,7 @@ function NotePage(props: { project: string; name: string }) {
 
               <Dialog open={confirming()} onClose={() => setConfirming(false)} title="Delete this note?">
                 <p class="text-sm text-muted-foreground">
-                  Agents will no longer see “{note().title}”. It stays under Recently deleted on the Memory page, where you can restore it.
+                  “{note().title}” moves to Recently deleted on the Memory page, where you can restore it.
                 </p>
                 <Show when={remove.error}>
                   {(error) => <p role="alert" class="mt-3 text-xs text-destructive">{error().message}</p>}

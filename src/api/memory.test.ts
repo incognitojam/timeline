@@ -137,7 +137,7 @@ describe("memory API", () => {
     expect((await app.request("/api/memory/projects/Not%20A%20Key", json("PUT", { useAccountMemory: false }))).status).toBe(400);
   });
 
-  test("links a person note to a contact, keeping it from agents while the contact is hidden", async () => {
+  test("links a person note to a contact, hidden ones included", async () => {
     const agent = agentTools();
     createContact(timelineDb, "Kit Marsh");
     const rowan = createContact(timelineDb, "Rowan Hale");
@@ -147,49 +147,44 @@ describe("memory API", () => {
     timelineDb.prepare("UPDATE contacts SET hidden = 1 WHERE id = ?").run(hidden);
     saveMemoryNote(appDb, { project: "", name: "dana", kind: "person", title: "Dana", summary: "Old friend" });
     const patch = (body: unknown, name = "dana") => app.request(`/api/memory/notes/${name}`, json("PATCH", body));
-    // A contact change says whether agents could read the note before and can after, as the page showed it.
-    const link = (contactId: unknown, agentsCouldRead: boolean, agentsCanRead: boolean, name = "dana") =>
-      patch({ contactId, agentsCouldRead, agentsCanRead }, name);
-    const readable = async () => !(await agent("get_memory_note", { name: "dana" })).startsWith("Error") && (await agent("list_memory", {})).includes("- dana:");
+    const link = (contactId: unknown, name = "dana") => patch({ contactId }, name);
+    // Agents read a note by name whatever its contact; one linked to a hidden contact is left out of their list.
+    const listed = async () => (await agent("list_memory", {})).includes("- dana:");
+    const readable = async () => !(await agent("get_memory_note", { name: "dana" })).startsWith("Error");
 
     // The index names each linked note's contact.
     expect((await index()).contacts).toEqual({ [rowan]: { id: rowan, name: "Rowan Hale", hidden: false } });
-    expect((await link(sam, true, true)).status).toBe(200);
+    expect((await link(sam)).status).toBe(200);
     expect((await index()).contacts[sam]).toEqual({ id: sam, name: "Sam Quill", hidden: false });
-    expect(await readable()).toBe(true);
+    expect(await listed()).toBe(true);
 
-    // A page that thinks the hidden contact is visible is refused.
-    expect((await link(hidden, true, true)).status).toBe(409);
-    const linked = await link(hidden, true, false);
+    const linked = await link(hidden);
     expect(((await linked.json()) as { note: MemoryNote }).note.contact_id).toBe(hidden);
     expect((await index()).contacts[hidden]).toEqual({ id: hidden, name: "Dana Hidden", hidden: true });
-    expect(await readable()).toBe(false);
+    expect(await listed()).toBe(false);
+    expect(await readable()).toBe(true);
     // Each change is a version, as other edits are; only the owner's page lists them.
     const [unhiddenVersion] = await versions("dana");
     expect((await versions("dana")).map((version) => version.contact_id)).toEqual([sam, null]);
-    // Restoring an earlier version's text keeps the note's contact, so the note stays kept from agents.
+    // Restoring an earlier version's text keeps the note's contact.
     expect((await app.request(`/api/memory/versions/${unhiddenVersion.id}/restore`, { method: "POST" })).status).toBe(200);
     expect(getMemoryNote(appDb, "", "dana")?.contact_id).toBe(hidden);
-    expect(await readable()).toBe(false);
 
-    // Unlinking from a hidden contact is refused unless the page said agents could not read it before.
-    expect((await link(null, true, true)).status).toBe(409);
-    expect((await link(null, false, true)).status).toBe(200);
+    expect((await link(null)).status).toBe(200);
     expect(getMemoryNote(appDb, "", "dana")?.contact_id).toBeNull();
-    expect(await readable()).toBe(true);
+    expect(await listed()).toBe(true);
     // Only the named note changed.
     expect(getMemoryNote(appDb, "", "rowan")?.contact_id).toBe(rowan);
 
-    expect(await (await link(sam, true, true, "tone")).json()).toEqual({ error: "Only a note about a person can be linked to a contact." });
-    expect(await (await patch({ kind: "topic", contactId: sam, agentsCouldRead: true, agentsCanRead: true })).json()).toEqual({ error: "Only a note about a person can be linked to a contact." });
+    expect(await (await link(sam, "tone")).json()).toEqual({ error: "Only a note about a person can be linked to a contact." });
+    expect(await (await patch({ kind: "topic", contactId: sam })).json()).toEqual({ error: "Only a note about a person can be linked to a contact." });
     // A linked person note cannot become another kind while it keeps its contact.
     expect(await (await patch({ kind: "topic" }, "rowan")).json()).toEqual({ error: "Only a note about a person can be linked to a contact." });
-    expect((await patch({ contactId: sam })).status).toBe(400);
     deleteContact(timelineDb, sam);
-    expect(await (await link(sam, true, true)).json()).toEqual({ error: "That contact is no longer in your contacts." });
-    expect((await link("1", true, true)).status).toBe(400);
-    expect((await link(1.5, true, true)).status).toBe(400);
-    expect((await link(rowan, true, true, "missing")).status).toBe(404);
+    expect(await (await link(sam)).json()).toEqual({ error: "That contact is no longer in your contacts." });
+    expect((await link("1")).status).toBe(400);
+    expect((await link(1.5)).status).toBe(400);
+    expect((await link(rowan, "missing")).status).toBe(404);
     expect(getMemoryNote(appDb, "", "dana")).toMatchObject({ kind: "person", contact_id: null });
     expect(getMemoryNote(appDb, "", "tone")?.contact_id).toBeNull();
   });

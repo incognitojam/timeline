@@ -432,18 +432,18 @@ export default function ContactsView() {
   }
 
   // A contact with linked memory notes asks what happens to them, in a dialog.
-  // `changed` when the server found a different count or visibility than shown.
-  const [deletingContact, setDeletingContact] = createSignal<{ contact: Contact; noteCount: number; hidden: boolean; changed: boolean } | null>(null);
+  // `changed` when the server found a different count than shown.
+  const [deletingContact, setDeletingContact] = createSignal<{ contact: Contact; noteCount: number; changed: boolean } | null>(null);
 
   async function handleDeleteContact(contact: Contact, noteCount: number) {
     if (noteCount > 0) {
       deleteContactMutation.reset();
-      setDeletingContact({ contact, noteCount, hidden: contact.hidden === 1, changed: false });
+      setDeletingContact({ contact, noteCount, changed: false });
       return;
     }
     if (!confirm("Delete this contact and all identities?")) return;
     setContactUpdateError(null);
-    let refused: { memoryNoteCount: number; hidden: boolean } | null;
+    let refused: { memoryNoteCount: number } | null;
     try {
       refused = await deleteContactMutation.mutateAsync({ id: contact.id });
     } catch (error) {
@@ -452,7 +452,7 @@ export default function ContactsView() {
     }
     // Refused when notes were linked since the contact loaded.
     if (refused) {
-      setDeletingContact({ contact, noteCount: refused.memoryNoteCount, hidden: refused.hidden, changed: true });
+      setDeletingContact({ contact, noteCount: refused.memoryNoteCount, changed: true });
       return;
     }
     selectContact(null);
@@ -463,10 +463,10 @@ export default function ContactsView() {
     if (!deleting) return;
     const refused = await deleteContactMutation.mutateAsync({
       id: deleting.contact.id,
-      choice: { notes, count: deleting.noteCount, hidden: deleting.hidden },
+      choice: { notes, count: deleting.noteCount },
     });
     if (refused) {
-      setDeletingContact({ ...deleting, noteCount: refused.memoryNoteCount, hidden: refused.hidden, changed: true });
+      setDeletingContact({ ...deleting, noteCount: refused.memoryNoteCount, changed: true });
       return;
     }
     setDeletingContact(null);
@@ -1693,7 +1693,6 @@ export default function ContactsView() {
           <DeleteContactDialog
             name={deleting().contact.display_name}
             noteCount={deleting().noteCount}
-            hidden={deleting().hidden}
             changed={deleting().changed}
             pending={deleteContactMutation.isPending}
             error={deleteContactMutation.error?.message}
@@ -1894,8 +1893,7 @@ const DESTRUCTIVE_BUTTON = "rounded-sm bg-destructive px-3.5 py-1.5 text-sm font
 function DeleteContactDialog(props: {
   name: string;
   noteCount: number;
-  hidden: boolean;
-  /** The count or visibility changed since the owner last saw them. */
+  /** The count changed since the owner last saw it. */
   changed: boolean;
   pending: boolean;
   error: string | undefined;
@@ -1907,7 +1905,7 @@ function DeleteContactDialog(props: {
   return (
     <Dialog open onClose={props.onCancel} title={`Delete ${props.name}?`} class="max-w-[440px]">
       <Show when={props.changed}>
-        <p role="status" class="mb-3 text-sm text-foreground">The linked notes or the contact changed since this opened. Check and confirm again.</p>
+        <p role="status" class="mb-3 text-sm text-foreground">The linked notes changed since this opened. Check and confirm again.</p>
       </Show>
       <p class="text-sm text-muted-foreground">
         The contact is deleted and its identities are unlinked. {props.noteCount} memory {one() ? "note is" : "notes are"} linked to this contact.
@@ -1918,11 +1916,6 @@ function DeleteContactDialog(props: {
           <input type="radio" name="contact-notes" class="mt-1" checked={notes() === "keep"} onChange={() => setNotes("keep")} />
           <span>
             Keep the {one() ? "note" : "notes"}, unlinked
-            <Show when={props.hidden}>
-              <span class="block text-xs text-muted-foreground">
-                This contact is hidden, so {one() ? "its note is" : "its notes are"} kept from agents. Once unlinked, agents will be able to read {one() ? "this note" : "these notes"}.
-              </span>
-            </Show>
           </span>
         </label>
         <label class="flex items-start gap-2">
@@ -1930,12 +1923,7 @@ function DeleteContactDialog(props: {
           <span>
             Delete the {one() ? "note" : "notes"} too
             <span class="block text-xs text-muted-foreground">
-              <Show
-                when={props.hidden}
-                fallback={<>Agents will no longer see {one() ? "it" : "them"}. {one() ? "It stays" : "They stay"} under Recently deleted on the Memory page, where you can restore {one() ? "it" : "them"}, unlinked.</>}
-              >
-                {one() ? "It stays" : "They stay"} under Recently deleted on the Memory page. Restored, {one() ? "it comes" : "they come"} back unlinked, where agents can read {one() ? "it" : "them"}.
-              </Show>
+              {one() ? "It stays" : "They stay"} under Recently deleted on the Memory page, where you can restore {one() ? "it" : "them"}, unlinked.
             </span>
           </span>
         </label>

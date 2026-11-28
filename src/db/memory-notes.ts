@@ -119,13 +119,6 @@ function checkFields(input: SaveMemoryNoteInput, current: MemoryNote | null) {
   return { kind, title, summary, details };
 }
 
-/** Check the input as saveMemoryNote would for a note that does not exist yet, without saving. */
-export function checkNewMemoryNote(db: Database, input: SaveMemoryNoteInput): void {
-  checkName(input.name);
-  checkFields(input, null);
-  checkRoomForNote(db);
-}
-
 function checkRoomForNote(db: Database): void {
   const { count } = db
     .prepare("SELECT COUNT(*) AS count FROM memory_notes WHERE replaced_at IS NULL")
@@ -323,8 +316,8 @@ export function listMemoryVersions(db: Database, project: string, name: string):
 /**
  * Make a kept version the live note again, through saveMemoryNote: the note it
  * replaces is kept as a version, and a deleted note comes back. A live note
- * keeps its contact, so restoring text never changes whether agents can read
- * it; a deleted note comes back with the contact it had. Null when no version
+ * keeps its contact, so restoring text never changes its link; a deleted note
+ * comes back with the contact it had. Null when no version
  * has this id.
  */
 export function restoreMemoryVersion(db: Database, id: number): { note: MemoryNote; created: boolean } | null {

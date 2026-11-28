@@ -172,26 +172,25 @@ describe("Deleting a contact with linked memory notes", () => {
     appDb().prepare("DELETE FROM memory_notes WHERE name LIKE 'delete-contact-%'").run();
   });
 
-  test("asks for a choice, with the current count and visibility, before deleting a contact with linked notes", async () => {
+  test("asks for a choice, with the current count, before deleting a contact with linked notes", async () => {
     const id = await contactWithNote("delete-contact-ask", true);
     const refused = async (query: string) => {
       const res = await app.request(`/api/contacts/${id}${query}`, { method: "DELETE" });
       expect(res.status).toBe(409);
-      expect(await res.json()).toMatchObject({ memoryNoteCount: 1, hidden: true });
+      expect(await res.json()).toEqual({ error: "Choose again what happens to the memory notes linked to this contact.", memoryNoteCount: 1 });
     };
     await refused("");
-    // A choice made for another count or visibility is not acted on.
-    await refused("?notes=keep&count=2&hidden=true");
-    await refused("?notes=keep&count=1&hidden=false");
+    // A choice made for another count is not acted on.
+    await refused("?notes=keep&count=2");
     expect((await app.request(`/api/contacts/${id}?notes=maybe`, { method: "DELETE" })).status).toBe(400);
     expect(((await (await app.request(`/api/contacts/${id}`)).json()) as { memoryNoteCount: number }).memoryNoteCount).toBe(1);
     expect(noteRows("delete-contact-ask").every((row) => row.contact_id === id)).toBe(true);
-    expect((await app.request(`/api/contacts/${id}?notes=keep&count=1&hidden=true`, { method: "DELETE" })).status).toBe(200);
+    expect((await app.request(`/api/contacts/${id}?notes=keep&count=1`, { method: "DELETE" })).status).toBe(200);
   });
 
   test("keeping the notes unlinks the live note and its previous versions", async () => {
     const id = await contactWithNote("delete-contact-keep", true);
-    const res = await app.request(`/api/contacts/${id}?notes=keep&count=1&hidden=true`, { method: "DELETE" });
+    const res = await app.request(`/api/contacts/${id}?notes=keep&count=1`, { method: "DELETE" });
     expect(res.status).toBe(200);
     expect((await app.request(`/api/contacts/${id}`)).status).toBe(404);
     const rows = noteRows("delete-contact-keep");
@@ -204,7 +203,7 @@ describe("Deleting a contact with linked memory notes", () => {
 
   test("deleting the notes keeps them restorable, and a restored note comes back unlinked", async () => {
     const id = await contactWithNote("delete-contact-drop", false);
-    expect((await app.request(`/api/contacts/${id}?notes=delete&count=1&hidden=false`, { method: "DELETE" })).status).toBe(200);
+    expect((await app.request(`/api/contacts/${id}?notes=delete&count=1`, { method: "DELETE" })).status).toBe(200);
     expect(noteRows("delete-contact-drop").every((row) => row.replaced_at !== null && row.contact_id === null)).toBe(true);
     const deleted = memoryIndex(appDb()).deleted.find((note) => note.name === "delete-contact-drop");
     expect(deleted).toBeDefined();
@@ -214,7 +213,7 @@ describe("Deleting a contact with linked memory notes", () => {
 
   test("an older version of a note deleted with its contact also restores unlinked", async () => {
     const id = await contactWithNote("delete-contact-old", true);
-    expect((await app.request(`/api/contacts/${id}?notes=delete&count=1&hidden=true`, { method: "DELETE" })).status).toBe(200);
+    expect((await app.request(`/api/contacts/${id}?notes=delete&count=1`, { method: "DELETE" })).status).toBe(200);
     const oldest = listMemoryVersions(appDb(), "", "delete-contact-old").at(-1);
     expect(restoreMemoryVersion(appDb(), oldest?.id ?? -1)?.note).toMatchObject({ summary: "First", contact_id: null });
   });
@@ -225,17 +224,17 @@ describe("Deleting a contact with linked memory notes", () => {
     getDb().exec(`CREATE TRIGGER fail_contact_delete BEFORE DELETE ON contacts WHEN old.id IN (${keepId}, ${dropId})
       BEGIN SELECT RAISE(ABORT, 'contact delete failed'); END`);
     try {
-      expect((await app.request(`/api/contacts/${keepId}?notes=keep&count=1&hidden=true`, { method: "DELETE" })).status).toBe(500);
-      // Still linked to the hidden contact, so still kept from agents.
+      expect((await app.request(`/api/contacts/${keepId}?notes=keep&count=1`, { method: "DELETE" })).status).toBe(500);
+      // Still linked, since the contact is still there.
       expect(noteRows("delete-contact-fail-keep").every((row) => row.contact_id === keepId)).toBe(true);
 
-      expect((await app.request(`/api/contacts/${dropId}?notes=delete&count=1&hidden=true`, { method: "DELETE" })).status).toBe(500);
+      expect((await app.request(`/api/contacts/${dropId}?notes=delete&count=1`, { method: "DELETE" })).status).toBe(500);
       expect(noteRows("delete-contact-fail-drop").every((row) => row.replaced_at !== null)).toBe(true);
     } finally {
       getDb().exec("DROP TRIGGER fail_contact_delete");
     }
     expect((await app.request(`/api/contacts/${keepId}`)).status).toBe(200);
-    expect((await app.request(`/api/contacts/${keepId}?notes=keep&count=1&hidden=true`, { method: "DELETE" })).status).toBe(200);
+    expect((await app.request(`/api/contacts/${keepId}?notes=keep&count=1`, { method: "DELETE" })).status).toBe(200);
     // No live notes are left, so this deletes without a choice and unlinks the deleted ones.
     expect((await app.request(`/api/contacts/${dropId}`, { method: "DELETE" })).status).toBe(200);
     expect(noteRows("delete-contact-fail-drop").every((row) => row.contact_id === null)).toBe(true);
