@@ -4,8 +4,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as ElementTree
 
-from edge_build import Refusal, check_appcast, edge_version, feed_build, offered_build, prune_plan, publish_action
+from edge_build import Refusal, add_notes, check_appcast, edge_version, feed_build, offered_build, prune_plan, publish_action
 
 
 SCRIPT = Path(__file__).with_name("edge_build.py")
@@ -244,6 +245,24 @@ class AppcastTests(unittest.TestCase):
         with self.assertRaises(Refusal):
             check_appcast(APPCAST, "example/timeline", TAG, VERSION, 2)
 
+    def test_embeds_notes_that_check_appcast_accepts(self):
+        notes = "<style>li { color: red }</style><ul><li><p>Fix <code>a]]>b</code> &amp; more</p></li></ul>"
+        xml = add_notes(APPCAST, notes)
+        check_appcast(xml, "example/timeline", TAG, VERSION, 1)
+        self.assertEqual(ElementTree.fromstring(xml).findtext("./channel/item/description"), notes)
+        self.assertEqual(feed_build(xml), 1347)
+        with self.assertRaises(Refusal):
+            add_notes(xml, notes)
+        for bad in ("", "  \n"):
+            with self.subTest(notes=bad), self.assertRaises(Refusal):
+                add_notes(APPCAST, bad)
+
+    def test_refuses_more_than_one_or_an_empty_description(self):
+        for description in ("<description>a</description><description>b</description>", "<description> </description>",
+                            '<description sparkle:format="markdown">a</description>'):
+            with self.subTest(description=description), self.assertRaises(Refusal):
+                check_appcast(APPCAST.replace("</item>", description + "</item>"), "example/timeline", TAG, VERSION, 1)
+
     def test_feed_build_refuses_a_feed_without_one(self):
         for xml in (APPCAST.replace("<sparkle:version>1347</sparkle:version>", ""), APPCAST.replace(">1347</sparkle:version>", ">abc</sparkle:version>"), "<rss/>"):
             with self.subTest(xml=xml[-40:]), self.assertRaises(Refusal):
@@ -270,6 +289,19 @@ class CommandLineTests(unittest.TestCase):
             path.write_text(json.dumps(release(["appcast.xml", *build_assets(*range(1340, 1346))])))
             result = self.run_script("prune-plan", str(path), "--tag", TAG, "--current", "1345")
             self.assertEqual((result.returncode, result.stdout), (0, f"{dmg(1340)}\n{dmg(1340)}.sha256\n"))
+
+    def test_add_notes_changes_no_feed_unless_every_feed_takes_them(self):
+        with tempfile.TemporaryDirectory() as directory:
+            good, bad, notes = Path(directory, "appcast.xml"), Path(directory, "full-appcast.xml"), Path(directory, "notes.html")
+            good.write_text(APPCAST)
+            bad.write_text("<rss")
+            notes.write_text("<p>Notes</p>")
+            result = self.run_script("add-notes", str(good), str(bad), "--notes", str(notes))
+            self.assertEqual((result.returncode, good.read_text()), (1, APPCAST))
+            bad.write_text(APPCAST)
+            self.assertEqual(self.run_script("add-notes", str(good), str(bad), "--notes", str(notes)).returncode, 0)
+            for feed in (good, bad):
+                self.assertIn("<description><![CDATA[<p>Notes</p>]]></description>", feed.read_text())
 
     def test_version_command(self):
         self.assertEqual(self.run_script("version", "0.21.0", "1347").stdout, "0.21.1-edge.1347\n")
