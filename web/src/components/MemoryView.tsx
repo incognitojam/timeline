@@ -1,7 +1,7 @@
 import type { MemoryNote, MemoryProject } from "@shared/memory";
 import { A } from "@solidjs/router";
-import { createSignal, For, Show } from "solid-js";
-import { ACCOUNT_GROUPS, formatMemoryDate, scopeLabel } from "../lib/memory";
+import { createMemo, createSignal, For, Show } from "solid-js";
+import { ACCOUNT_GROUPS, formatMemoryDate, hiddenContactIdsOf, scopeLabel, splitHiddenNotes } from "../lib/memory";
 import { useMemoryIndex, useRestoreMemoryVersion } from "../lib/queries";
 import { buildMemoryNoteUrl, buildMemoryProjectUrl } from "../lib/routes";
 import { IconChevronRight, IconPsychology } from "../ui/icons";
@@ -11,15 +11,19 @@ export const HEADING = "font-mono text-[0.625rem] uppercase tracking-[0.16em] te
 export const LIST = "divide-y divide-border overflow-hidden rounded-lg border border-border bg-card";
 const SECONDARY_BUTTON = "shrink-0 rounded-sm border border-border px-3 py-1.5 text-sm text-foreground transition-colors enabled:hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
 
-export function NoteRow(props: { note: MemoryNote }) {
+/** `withProject` names a project note's project, for a list that mixes scopes. */
+export function NoteRow(props: { note: MemoryNote; withProject?: boolean }) {
   const index = useMemoryIndex();
   // A person's note says it is not linked, so those stand out, or names its contact when the title does not.
   const contact = () => {
     const linked = props.note.contact_id === null ? undefined : index.data?.contacts[props.note.contact_id];
-    if (!linked) return null;
-    const name = linked.name.toLowerCase() === props.note.title.toLowerCase() ? [] : [linked.name];
-    return [...name, ...(linked.hidden ? ["hidden contact"] : [])].join(" · ");
+    if (!linked || linked.name.toLowerCase() === props.note.title.toLowerCase()) return null;
+    return linked.name;
   };
+  const marker = () => [
+    ...(props.withProject && props.note.project ? [scopeLabel(props.note.project)] : []),
+    ...(props.note.kind === "person" ? [props.note.contact_id === null ? "Not linked" : contact()] : []),
+  ].filter((part) => part).join(" · ");
   return (
     <li>
       <A
@@ -29,7 +33,7 @@ export function NoteRow(props: { note: MemoryNote }) {
         <div class="min-w-0 flex-1">
           <div class="flex flex-wrap items-baseline gap-x-2">
             <span class="text-sm font-medium text-foreground">{props.note.title}</span>
-            <Show when={props.note.kind === "person" && (props.note.contact_id === null ? "Not linked" : contact())}>
+            <Show when={marker()}>
               {(marker) => <span class="text-xs text-muted-foreground">{marker()}</span>}
             </Show>
           </div>
@@ -41,8 +45,29 @@ export function NoteRow(props: { note: MemoryNote }) {
   );
 }
 
-function ProjectRow(props: { project: MemoryProject }) {
-  const count = () => props.project.notes.length;
+/** Leaves out notes under Hidden notes. */
+/** Notes linked to a hidden contact, collapsed at the end of the page as hidden contacts are elsewhere. */
+export function HiddenNotes(props: { notes: MemoryNote[]; withProject?: boolean }) {
+  return (
+    <Show when={props.notes.length > 0}>
+      <details class="group">
+        <summary class="mb-2 block cursor-pointer list-none rounded-sm px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+          <span class={`${HEADING} flex items-center gap-1`}>
+            <IconChevronRight class="-ml-1 h-4 w-4 shrink-0 transition-transform group-open:rotate-90" aria-hidden />
+            Hidden notes
+          </span>
+          <span class="mt-0.5 block text-sm text-muted-foreground">Notes about contacts you have hidden.</span>
+        </summary>
+        <ul class={LIST}>
+          <For each={props.notes}>{(note) => <NoteRow note={note} withProject={props.withProject} />}</For>
+        </ul>
+      </details>
+    </Show>
+  );
+}
+
+function ProjectRow(props: { project: MemoryProject; count: number }) {
+  const count = () => props.count;
   return (
     <li>
       <A
@@ -102,9 +127,20 @@ export default function MemoryView() {
         </Show>
 
         <Show when={query.data}>
-          {(data) => (
+          {(data) => {
+            const split = createMemo(() => {
+              const hiddenIds = hiddenContactIdsOf(data());
+              return {
+                account: splitHiddenNotes(data().account, hiddenIds),
+                projects: data().projects.map((project) => ({ project, ...splitHiddenNotes(project.notes, hiddenIds) })),
+              };
+            });
+            const account = () => split().account;
+            // Every scope's hidden notes, the account's first, so none is left only on a project's page.
+            const hidden = () => [...account().hidden, ...split().projects.flatMap((project) => project.hidden)];
+            return (
             <div class="space-y-8">
-              <For each={ACCOUNT_GROUPS.map((group) => ({ ...group, notes: data().account.filter((note) => note.kind === group.kind) }))}>
+              <For each={ACCOUNT_GROUPS.map((group) => ({ ...group, notes: account().shown.filter((note) => note.kind === group.kind) }))}>
                 {(group) => (
                   <Show when={group.notes.length > 0}>
                     <section>
@@ -121,7 +157,7 @@ export default function MemoryView() {
                 <section>
                   <h2 class={`${HEADING} mb-2 px-1`}>Projects</h2>
                   <ul class={LIST}>
-                    <For each={data().projects}>{(project) => <ProjectRow project={project} />}</For>
+                    <For each={split().projects}>{(entry) => <ProjectRow project={entry.project} count={entry.shown.length} />}</For>
                   </ul>
                 </section>
               </Show>
@@ -156,8 +192,11 @@ export default function MemoryView() {
                   </Show>
                 </section>
               </Show>
+
+              <HiddenNotes notes={hidden()} withProject />
             </div>
-          )}
+            );
+          }}
         </Show>
       </div>
     </div>

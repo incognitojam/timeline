@@ -69,13 +69,13 @@ describe("Import from Claude preview", () => {
 
   it("says why each person is linked or not, and imports the links the owner chose", () => {
     const panel = choose();
-    expect(panel.textContent).toContain("Contacts · 2 of 3 people will be linked, 1 to a hidden contact");
+    expect(panel.textContent).toContain("Contacts · 2 of 3 people will be linked; 1 will be listed under Hidden notes");
     const row = (index: number) => panel.querySelectorAll<HTMLElement>("li.py-2")[index];
     const rows = () => [0, 1, 2].map((index) => row(index).textContent);
     expect(rows()).toEqual([
       expect.stringContaining("Linked to Alice Brown · by the alias “Alice Brown”"),
-      expect.stringContaining("Not linked · 2 contacts have this name, 1 hidden · agents will be able to read this note"),
-      expect.stringContaining("Linked to Carol · same name · hidden contact, so this note will be kept from agents"),
+      expect.stringContaining("Not linked · 2 contacts have this name, 1 hidden · will be listed with your other notes"),
+      expect.stringContaining("Linked to Carol · same name · will be listed under Hidden notes"),
     ]);
 
     // The search offers hidden contacts only once asked to, marked as hidden.
@@ -98,9 +98,9 @@ describe("Import from Claude preview", () => {
     // Carol: don't link.
     within(row(2)).getByRole("button", { name: "Don't link" }).click();
     expect(rows()[1]).toContain("Linked to Bobby Tables · your choice");
-    expect(rows()[2]).toContain("Not linked · your choice · agents will be able to read this note");
+    expect(rows()[2]).toContain("Not linked · your choice · will be listed with your other notes");
     expect(panel.textContent).toContain("2 of 3 people will be linked");
-    expect(panel.textContent).not.toContain("hidden contact,");
+    expect(panel.textContent).not.toContain("will be listed under Hidden notes");
 
     within(panel).getByRole("button", { name: "Import" }).click();
     expect(runMutate).toHaveBeenCalledWith({
@@ -110,7 +110,7 @@ describe("Import from Claude preview", () => {
     });
   });
 
-  it("after an import, shows the contact each note was saved with and whether agents can read it", () => {
+  it("after an import, shows the contact each note was saved with and where it is listed", () => {
     imported = {
       ...PREVIEW,
       imported: true,
@@ -122,12 +122,12 @@ describe("Import from Claude preview", () => {
     };
     const panel = choose();
     imported = undefined;
-    expect(panel.textContent).toContain("Contacts · 2 of 3 people linked, 1 to a hidden contact");
+    expect(panel.textContent).toContain("Contacts · 2 of 3 people linked; 1 listed under Hidden notes");
     const rows = [...panel.querySelectorAll<HTMLElement>("li.py-2")].map((row) => row.textContent);
     expect(rows).toEqual([
       expect.stringContaining("Linked to Alice Brown · by the alias “Alice Brown”"),
-      expect.stringContaining("Linked to Bob Hidden · your choice · hidden contact, so this note is kept from agents"),
-      expect.stringContaining("Not linked · your choice · agents can read this note"),
+      expect.stringContaining("Linked to Bob Hidden · your choice · listed under Hidden notes"),
+      expect.stringContaining("Not linked · your choice · listed with your other notes"),
     ]);
     expect(within(panel).queryByRole("button", { name: "Import" })).toBeNull();
   });

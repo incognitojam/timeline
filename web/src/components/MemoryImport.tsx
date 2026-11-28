@@ -143,12 +143,12 @@ function PersonRow(props: {
           {(contact) => (
             <>
               Linked to <span class="text-foreground">{contact().name}</span> · {props.changed ? "your choice" : matchReason(props.person)}
-              <Show when={contact().hidden}> · hidden contact, so this note {props.imported ? "is" : "will be"} kept from agents</Show>
+              <Show when={contact().hidden}> · {props.imported ? "listed" : "will be listed"} under Hidden notes</Show>
             </>
           )}
         </Show>
-        {/* A note that matched a hidden contact, or could be about one, but is not kept from agents. */}
-        <Show when={!props.contact?.hidden && (props.person.contact?.hidden || (props.person.match.by === "several" && props.person.match.hidden > 0))}> · agents {props.imported ? "can" : "will be able to"} read this note</Show>
+        {/* A note that matched a hidden contact, or could be about one, but is not linked to one. */}
+        <Show when={!props.contact?.hidden && (props.person.contact?.hidden || (props.person.match.by === "several" && props.person.match.hidden > 0))}> · {props.imported ? "listed" : "will be listed"} with your other notes</Show>
       </p>
       <Show when={props.onChange}>
         {(onChange) => (
@@ -211,13 +211,13 @@ function People(props: { result: MemoryImportResult; changes: LinkChanges; onCha
           <span class="font-medium text-foreground">Contacts</span>
           <span class="text-muted-foreground">
             {" "}· {linked()} of {plural(total(), "person", "people")} {props.result.imported ? "linked" : "will be linked"}
-            <Show when={linkedHidden() > 0}>, {linkedHidden()} to {linkedHidden() === 1 ? "a hidden contact" : "hidden contacts"}</Show>
+            <Show when={linkedHidden() > 0}>; {linkedHidden()} {props.result.imported ? "listed" : "will be listed"} under Hidden notes</Show>
           </span>
         </>
       }
     >
       <p class="text-muted-foreground">
-        A person's note linked to a contact is found from that contact, and kept from agents while the contact is hidden. Notes are matched to contacts by name, ignoring case.
+        A person's note linked to a contact is found from that contact, and listed under Hidden notes while the contact is hidden. Notes are matched to contacts by name, ignoring case.
         <Show when={props.onChange}> Change any you disagree with.</Show>
       </p>
       <Show when={props.onChange}>

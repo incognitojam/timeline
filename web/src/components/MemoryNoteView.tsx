@@ -157,8 +157,7 @@ function NoteContact(props: { note: MemoryNote; disabled: boolean }) {
           <A href={buildContactsUrl({ id: props.note.contact_id ?? undefined })} class="text-foreground underline underline-offset-2 hover:text-primary">
             {index.data ? (current()?.name ?? "a contact no longer in your contacts") : "a contact"}
           </A>
-          <Show when={current()?.hidden}> · hidden contact, so this note is kept from agents</Show>
-          <Show when={index.data && !current()}> · agents can read this note</Show>
+          <Show when={current()?.hidden}>, who is hidden in Contacts</Show>
         </Show>
       </p>
       <Show

@@ -1,7 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { once } from "node:events";
 import { createServer, type ServerResponse } from "node:http";
-import type { MemoryIndex, MemoryNote } from "@shared/memory";
+import type { MemoryIndexWithContacts, MemoryNote } from "@shared/memory";
 import type { TimelineEvent } from "../src/lib/types";
 
 const TEST_DATE = "2025-01-15";
@@ -873,10 +873,11 @@ function memoryNote(project: string, index: number): MemoryNote {
 }
 
 test("Memory scrolls the window and returns to where it was left", async ({ page }) => {
-  const memory: MemoryIndex = {
+  const memory: MemoryIndexWithContacts = {
     account: Array.from({ length: 40 }, (_, index) => memoryNote("", index + 1)),
     projects: [{ key: "example-project", useAccountMemory: true, notes: [memoryNote("example-project", 1)] }],
     deleted: [],
+    contacts: {},
   };
   const unexpectedRequests = await installApiMock(page, async (route, url) => {
     if (await fulfillTimelineReads(route, url, [])) return true;

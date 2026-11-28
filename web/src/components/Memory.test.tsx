@@ -53,7 +53,11 @@ const INDEX: MemoryIndexWithContacts = {
     {
       key: "garden-app",
       useAccountMemory: false,
-      notes: [note({ project: "garden-app", name: "watering", kind: "topic", title: "Watering" }), overview],
+      notes: [
+        note({ project: "garden-app", name: "watering", kind: "topic", title: "Watering" }),
+        overview,
+        note({ project: "garden-app", name: "erin", kind: "person", title: "Erin", contact_id: 7 }),
+      ],
     },
   ],
   deleted: [{ ...note({ name: "old-laptop", kind: "topic", title: "Old laptop" }), replaced_at: "2026-11-24T10:00:00.000Z" }],
@@ -98,13 +102,33 @@ describe("Memory page", () => {
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
     expect(headings).toEqual(["You", "Topics", "People", "Projects", "Recently deleted"]);
 
-    const project = screen.getByRole("link", { name: /garden-app/ });
+    const project = screen.getByRole("link", { name: /^garden-app/ });
     expect(project.getAttribute("href")).toBe("/memory/project/garden-app");
+    // Its note linked to a hidden contact is counted under Hidden notes instead.
     expect(project.textContent).toContain("2 notes · account memory off");
     expect(screen.queryByRole("link", { name: /Watering/ })).toBeNull();
 
     expect(screen.getByRole("link", { name: /Tone \[draft\]/ }).getAttribute("href")).toBe("/memory/note/tone");
     expect(screen.getByRole("button", { name: "Restore" })).toBeTruthy();
+  });
+
+  it("collapses every note linked to a hidden contact under Hidden notes at the end, and lists them on expanding it", () => {
+    render(() => <MemoryView />);
+    const people = screen.getByRole("heading", { name: "People" }).parentElement;
+    expect(people?.textContent).toContain("Bob");
+    expect(people?.textContent).not.toContain("Dana");
+
+    const group = screen.getByText(/^Hidden notes/).closest("details");
+    if (!group) throw new Error("no Hidden notes group");
+    expect(group.parentElement?.lastElementChild).toBe(group);
+    expect(group.open).toBe(false);
+    expect(group.querySelector("summary")?.textContent).toBe("Hidden notesNotes about contacts you have hidden.");
+    fireEvent.click(group.querySelector("summary") as HTMLElement);
+    expect(group.open).toBe(true);
+    expect(within(group).getAllByRole("link").map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
+      [expect.stringMatching(/^DanaDana Hidden/), "/memory/note/dana"],
+      [expect.stringMatching(/^ErinProject garden-app · Dana Hidden/), "/memory/note/erin?project=garden-app"],
+    ]);
   });
 
   it("shows a project's account-memory setting and its notes, overview first, under a way back to Memory", () => {
@@ -113,9 +137,13 @@ describe("Memory page", () => {
     expect(document.title).toBe("garden-app · Memory · Timeline");
     expect(screen.getByRole("link", { name: "Memory" }).getAttribute("href")).toBe("/memory");
     expect((screen.getByRole("checkbox", { name: /Use account memory/ }) as HTMLInputElement).checked).toBe(false);
-    const rows = within(screen.getByRole("list")).getAllByRole("link").map((link) => link.textContent);
+    const rows = within(screen.getAllByRole("list")[0]).getAllByRole("link").map((link) => link.textContent);
+    expect(rows).toHaveLength(2);
     expect(rows[0]).toContain("Garden app");
     expect(rows[1]).toContain("Watering");
+    const hidden = screen.getByText(/^Hidden notes/).closest("details");
+    expect(hidden?.querySelector("summary")?.textContent).toBe("Hidden notesNotes about contacts you have hidden.");
+    expect(hidden?.textContent).toContain("Erin");
   });
 
   it("leads a project's note back through its project", () => {
@@ -153,7 +181,8 @@ describe("Memory page", () => {
   it("marks each person's note with its contact, or as not linked", () => {
     render(() => <MemoryView />);
     expect(screen.getByRole("link", { name: /^Bob/ }).textContent).toContain("Not linked");
-    expect(screen.getByRole("link", { name: /^Dana/ }).textContent).toContain("Dana Hidden · hidden contact");
+    expect(screen.getByRole("link", { name: /^Dana/ }).textContent).toContain("Dana Hidden");
+    expect(screen.getByRole("link", { name: /^Dana/ }).textContent).not.toContain("hidden contact");
     expect(screen.getByRole("link", { name: /^Cooking/ }).textContent).not.toContain("linked");
   });
 
@@ -172,11 +201,11 @@ describe("Memory page", () => {
     await waitFor(() => expect(idle.mutateAsync).toHaveBeenCalledWith({ project: "", name: "bob", edit: { contactId: 5, agentsCouldRead: true, agentsCanRead: true } }));
   });
 
-  it("says a note linked to a hidden contact is kept from agents, and that unlinking lets them read it", async () => {
+  it("says once that a note's contact is hidden, and what unlinking it means", async () => {
     shown.note = dana;
     render(() => <MemoryNoteView />);
     expect(screen.getByRole("link", { name: "Dana Hidden" }).getAttribute("href")).toContain("7");
-    expect(screen.getByText(/hidden contact, so this note is kept from agents/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Dana Hidden" }).parentElement?.textContent).toBe("Linked to Dana Hidden, who is hidden in Contacts");
 
     screen.getByRole("button", { name: "Remove link" }).click();
     expect(screen.getByText(/Remove the link to this contact\?/).textContent).toContain("agents will be able to read this note");
