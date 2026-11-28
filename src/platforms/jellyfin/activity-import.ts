@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { initJellyfinActivityEvidence } from "../../db/schema";
 import type { Database } from "../../db/sqlite";
 import { getSyncSourceRow, parseSyncSourceSettings } from "../../sync/config";
 import { activityRow, guid, reconcileActivity, utc, type ActivityRow } from "./activity";
@@ -17,19 +18,30 @@ const footer = z.strictObject({ count: z.int().nonnegative(), sha256: z.string()
 function parseLine<T>(schema: z.ZodType<T>, line: string, number: number): T {
   try {
     return schema.parse(JSON.parse(line));
-  } catch {
+  } catch (error) {
+    if (error instanceof z.ZodError && error.issues.some((issue) => issue.path.join(".") === "item.Type")) {
+      throw new Error("Unsupported Jellyfin item.Type at line " + number);
+    }
     throw new Error("Invalid Jellyfin export at line " + number);
   }
 }
 
-export async function importActivityFile(db: Database, path: string) {
+export function importActivityFile(db: Database, path: string) {
+  return processActivityFile(db, path, false);
+}
+
+export function previewActivityFile(db: Database, path: string, settingsDb?: Database) {
+  return processActivityFile(db, path, true, settingsDb);
+}
+
+async function processActivityFile(db: Database, path: string, preview: boolean, settingsDb?: Database) {
   const bytes = await Bun.file(path).arrayBuffer();
   const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   if (!text.endsWith("\n") || text.includes("\r")) throw new Error("Expected LF-terminated Jellyfin JSON Lines");
   const lines = text.slice(0, -1).split("\n");
   const manifest = parseLine(header, lines[0], 1);
   const zone = new Intl.DateTimeFormat("en", { timeZone: manifest.timeZone }).resolvedOptions().timeZone;
-  const config = getSyncSourceRow("jellyfin");
+  const config = getSyncSourceRow("jellyfin", settingsDb);
   if (!config) throw new Error("Configure Jellyfin user IDs before importing activity");
   const settings = parseSyncSourceSettings(config);
   const allowed = ids(settings.users);
@@ -47,10 +59,26 @@ export async function importActivityFile(db: Database, path: string) {
     .digest("hex");
   if (end.count !== lines.length - 2 || end.sha256 !== digest)
     throw new Error("Incomplete Jellyfin export: count or SHA-256 mismatch");
-  return db
-    .transaction(() => {
+  const metadata = {
+    rowsAccepted: end.count,
+    createdEstimated: 0,
+    createdUnknown: 0,
+    updatedEstimated: 0,
+    updatedUnknown: 0,
+    rowsNew: 0,
+    rowsEnriched: 0,
+    evidenceOnlyStops: 0,
+    supersededRows: 0,
+    skippedAlreadyStored: 0,
+  };
+  const result = { eventsAdded: 0, eventsUpdated: 0, metadata };
+  const rollback = Symbol("preview complete");
+  try {
+    db.transaction(() => {
+      if (preview) initJellyfinActivityEvidence(db);
       const seen = new Set<number>();
-      const touched = new Set<string>();
+      const changed = new Set<number>();
+      const accounts = new Set<string>();
       const server = manifest.serverId.toLowerCase();
       const find = db.query<{ raw_data: string; user_id: string }, [string, number]>(
         "SELECT raw_data,user_id FROM jellyfin_activity_evidence WHERE server_id=? AND log_id=?",
@@ -63,6 +91,7 @@ export async function importActivityFile(db: Database, path: string) {
           throw new Error("Unexpected account, duplicate ID or invalid item at line " + (i + 1));
         seen.add(row.Id);
         const account = server + "/" + user;
+        accounts.add(account);
         const prior = find.get(server, row.Id);
         if (prior) {
           const old: ActivityRow = JSON.parse(prior.raw_data);
@@ -74,25 +103,37 @@ export async function importActivityFile(db: Database, path: string) {
             compact(old.ItemId ?? "") !== compact(row.ItemId ?? "")
           )
             throw new Error("Conflicting activity row at line " + (i + 1));
-          if (old.item || !row.item) continue;
+          if (old.item || !row.item) {
+            metadata.skippedAlreadyStored++;
+            continue;
+          }
           // Enrich the first observation without rewriting its original spellings.
           Object.assign(row, { UserId: old.UserId, ItemId: old.ItemId, DateCreated: old.DateCreated });
         }
+        if (prior) metadata.rowsEnriched++;
+        else metadata.rowsNew++;
+        changed.add(row.Id);
         db.run(
           `INSERT INTO jellyfin_activity_evidence(server_id,user_id,log_id,raw_data) VALUES (?,?,?,?)
         ON CONFLICT(server_id,log_id) DO UPDATE SET raw_data=excluded.raw_data`,
           [server, user, row.Id, JSON.stringify(row)],
         );
-        touched.add(account);
       }
-      let eventsAdded = 0,
-        eventsUpdated = 0;
-      for (const account of touched) {
-        const counts = reconcileActivity(db, account, zone);
-        eventsAdded += counts.eventsAdded;
-        eventsUpdated += counts.eventsUpdated;
+      for (const account of accounts) {
+        const counts = reconcileActivity(db, account, zone, changed);
+        result.eventsAdded += counts.eventsAdded;
+        result.eventsUpdated += counts.eventsUpdated;
+        metadata.updatedEstimated += counts.updatedEstimated;
+        metadata.updatedUnknown += counts.updatedUnknown;
+        metadata.createdEstimated += counts.createdEstimated;
+        metadata.createdUnknown += counts.createdUnknown;
+        metadata.evidenceOnlyStops += counts.evidenceOnlyStops;
+        metadata.supersededRows += counts.supersededRows;
       }
-      return { eventsAdded, eventsUpdated };
-    })
-    .immediate();
+      if (preview) throw rollback;
+    }).immediate();
+  } catch (error) {
+    if (error !== rollback) throw error;
+  }
+  return result;
 }

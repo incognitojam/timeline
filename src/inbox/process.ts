@@ -52,6 +52,7 @@ export interface ParserContext {
  * Parser result - can be just a count or include detected type
  */
 export interface ParserResult {
+  metadata?: Record<string, number>;
   eventsAdded: number;
   eventsUpdated?: number;
   detectedType?: string;
@@ -78,7 +79,10 @@ type ParserFunction = (
 const PARSERS: Record<string, { tokenEligible: boolean; leavesWaiting?: true; load: () => Promise<ParserFunction> }> = {
   "jellyfin-activity": {
     tokenEligible: false,
-    load: async () => (await import("../platforms/jellyfin/activity-import")).importActivityFile,
+    load: async () => {
+      const { importActivityFile } = await import("../platforms/jellyfin/activity-import");
+      return async (db, path) => ({ ...(await importActivityFile(db, path)), detectedType: "jellyfin" });
+    },
   },
   "sms-backup-restore": {
     tokenEligible: true,
@@ -331,7 +335,7 @@ export async function processSource(
         source: detectedType,
         success: true,
         skipped: !!skipReason,
-        metadata: skipReason ? { skipReason } : undefined,
+        metadata: skipReason ? { skipReason } : typeof parserResult === "object" ? parserResult.metadata : undefined,
         eventsAdded,
         eventsUpdated,
         durationMs: Date.now() - startTime,

@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { processSource } from "../../inbox/process";
 import { upsertSyncSourcePatch } from "../../sync/config";
 import { Database } from "../../db/sqlite";
+import { getAppStateDb } from "../../db/app-state";
 import { getDb } from "../../db/schema";
 import { runSourceOnce } from "../../sync/once";
 
@@ -96,6 +97,11 @@ test("imports only selected users, preserves deleted titles and reconciles chang
     const imported = await processSource({ inbox_path: dir, sources: { jellyfin: inbox } }, "jellyfin", inbox, {});
     expect(imported.errors).toEqual([]);
     expect(imported.eventsAdded).toBe(1);
+    const history = getAppStateDb()
+      .query<{ metadata: string }, []>("SELECT metadata FROM sync_log WHERE source='jellyfin' ORDER BY id DESC LIMIT 1")
+      .get();
+    expect(JSON.parse(history!.metadata)).toMatchObject({ rowsAccepted: 1, createdUnknown: 1 });
+
     const first = await run();
     expect(first.events.deleted).toBe(1);
     expect(first.result?.error).toBeUndefined();

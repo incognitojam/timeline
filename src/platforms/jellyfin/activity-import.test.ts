@@ -44,7 +44,7 @@ function row(Id: number, stop: boolean, time: string, device = "Screen", user = 
     },
   };
 }
-function encode(rows: ActivityRow[], users = manifest.users) {
+function encode(rows: unknown[], users = manifest.users) {
   const bytes = [{ ...manifest, users }, ...rows].map((v) => JSON.stringify(v) + "\n").join("");
   return (
     bytes + JSON.stringify({ count: rows.length, sha256: createHash("sha256").update(bytes).digest("hex") }) + "\n"
@@ -82,14 +82,19 @@ test("activity exports preserve evidence and reconcile overlapping selections at
     const orphan = { ...row(2, true, "01:35:00", "Screen", second), item: null };
     const lone = { ...row(3, false, "01:40:00", "Phone", second), ItemId: null, item: null };
     expect((await load(encode([start, lone]))).eventsAdded).toBe(2);
-    expect((await load(encode([orphan, stop]))).eventsUpdated).toBe(1);
-    expect(await load(encode([start, orphan, lone, stop]))).toEqual({ eventsAdded: 0, eventsUpdated: 0 });
+    const completed = await load(encode([orphan, stop]));
+    expect(completed).toMatchObject({
+      eventsUpdated: 1,
+      metadata: { rowsNew: 2, updatedEstimated: 1, evidenceOnlyStops: 1 },
+    });
+
+    expect(await load(encode([start, orphan, lone, stop]))).toMatchObject({ eventsAdded: 0, eventsUpdated: 0 });
     const equivalent = {
       ...start,
       UserId: "11111111-1111-1111-1111-111111111111",
       DateCreated: start.DateCreated.replace(" ", "T") + "Z",
     };
-    expect(await load(encode([equivalent]))).toEqual({ eventsAdded: 0, eventsUpdated: 0 });
+    expect(await load(encode([equivalent]))).toMatchObject({ eventsAdded: 0, eventsUpdated: 0 });
     expect(evidence()).toEqual({ n: 4 });
     expect(plays()[0]).toMatchObject({
       timestamp: "2026-11-01T01:30:00.123Z",
@@ -98,6 +103,10 @@ test("activity exports preserve evidence and reconcile overlapping selections at
       duration_ms: null,
     });
     expect(plays()[1]).toMatchObject({ title: lone.Name, end_timestamp: null });
+    await expect(
+      load(encode([row(30, false, "12:00:00"), { ...start, item: { ...start.item, Type: "Example.Unknown" } }])),
+    ).rejects.toThrow("Unsupported Jellyfin item.Type at line 3");
+    expect(evidence()).toEqual({ n: 4 });
     for (const invalid of [
       encode([row(5, false, "02:00:00"), row(6, false, "02:01:00", "Screen", other)]),
       encode([], [other]),

@@ -216,6 +216,16 @@ patterns = ["*.jsonl"]
 
 Restart Timeline, then drop a completed version 1 Jellyfin activity export into that directory using a fresh filename. Keep a separate private copy. The importer validates the entire export and commits it atomically. An unlisted account, conflicting log record, or invalid checksum rejects the whole file. The file importer uses the selected user IDs independently of API credentials and live-sync library filters. A unique same-item start and stop up to 12 hours apart show estimated elapsed time, including pauses. Identifiable devices must agree. Each plugin session takes precedence over the latest compatible start in the preceding 90 seconds. A lone start has unknown duration. Stop-only records remain available as raw evidence. Timeline retains the first available item snapshot when a later export overlaps. Set the live sync and export to the same server time zone. Move rejected files out of the inbox before correcting them, since the watcher retries them.
 
+Before moving an export into the watched directory, try the preview first against a copy with the matching app-state database. Use the same importer revision for the preview and installed inbox handler. Use the existing Timeline database (with its sibling app-state database and configured Jellyfin users):
+
+```sh
+TIMELINE_DB_PATH=/path/to/timeline.db bun run src/platforms/jellyfin/scripts/preview-activity.ts /path/to/export.jsonl
+```
+
+The command validates the file and runs the importer in a transaction that it rolls back. It prints counts only. After an import, open Jellyfin on the Sync page and select **show metadata** on the import's history entry to see the same counts. Created counts distinguish estimated and unknown duration. Evidence-only stops have no paired start. Superseded rows count the matching start and any paired stop from this file. New, enriched and already-stored rows account for every accepted row. The report also separates updated viewings by estimated or unknown duration. Unchanged evidence counts only as already stored when reporting stop-only and superseded rows. Invalid input rejects the whole file.
+
+Movie and episode classes become movie and episode events. An unresolved item keeps the generic activity type; an unsupported class rejects the file at its line number. A re-added item has a different Jellyfin ID, so its plays do not pair or deduplicate across that change. The original sentence and every provider ID are retained. If the description starts with the resolved title (optionally prefixed by the series and ` - `) followed by ` on `, the remainder is the device name. Otherwise only a single ` on ` identifies a device; an ambiguous split leaves the device unknown and the full sentence available. An unresolved viewing displays that sentence. Matching uses the account, Jellyfin item ID, timing and available device evidence.
+
 ## Trakt Setup
 
 Trakt uses OAuth2 to sync watch history (movies and TV episodes).

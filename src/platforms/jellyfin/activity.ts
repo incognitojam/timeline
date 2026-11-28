@@ -6,8 +6,15 @@ import { compact, guidPattern } from "./ids";
 
 export const guid = z.string().regex(guidPattern);
 
+const mediaType = {
+  Movie: "jellyfin:movie",
+  Episode: "jellyfin:episode",
+  "MediaBrowser.Controller.Entities.Movies.Movie": "jellyfin:movie",
+  "MediaBrowser.Controller.Entities.TV.Episode": "jellyfin:episode",
+} as const;
+
 const item = z.strictObject({
-  Type: z.string().min(1),
+  Type: z.enum(Object.keys(mediaType) as [keyof typeof mediaType, ...(keyof typeof mediaType)[]]),
   Name: z.string().nullable(),
   ProductionYear: z.int().nullable(),
   SeriesName: z.string().nullable(),
@@ -45,13 +52,13 @@ function observation(row: ActivityRow) {
   const parts = row.Name.split(verb);
   const description = parts.length === 2 ? parts[1] : null;
   const details = description?.split(" on ");
-  const prefix = row.item?.Name && row.item.Name + " on ";
-  const device =
-    prefix && description?.startsWith(prefix)
-      ? description.slice(prefix.length)
-      : details?.length === 2
-        ? details[1]
-        : null;
+  const title = row.item?.Name;
+  const series = row.item?.SeriesName;
+  const prefix = (series && title ? [series + " - " + title, title] : [title])
+    .filter(Boolean)
+    .map((name) => name + " on ")
+    .find((candidate) => description?.startsWith(candidate));
+  const device = prefix && description ? description.slice(prefix.length) : details?.length === 2 ? details[1] : null;
   return { row, ...time, device, description };
 }
 type Observation = ReturnType<typeof observation>;
@@ -88,14 +95,24 @@ function pair(observations: Observation[]) {
   return stops;
 }
 
-export function reconcileActivity(db: Database, account: string, zone: string) {
+export function reconcileActivity(db: Database, account: string, zone: string, fileRows?: ReadonlySet<number>) {
   const [server, user] = account.split("/");
   const evidence = db
     .query<{ raw_data: string }, [string, string]>(
       "SELECT raw_data FROM jellyfin_activity_evidence WHERE server_id=? AND user_id=?",
     )
     .all(server, user);
-  if (!evidence.length) return { eventsAdded: 0, eventsUpdated: 0 };
+  const counts = {
+    eventsAdded: 0,
+    eventsUpdated: 0,
+    createdEstimated: 0,
+    createdUnknown: 0,
+    updatedEstimated: 0,
+    updatedUnknown: 0,
+    evidenceOnlyStops: 0,
+    supersededRows: 0,
+  };
+  if (!evidence.length) return counts;
   const observations = evidence
     .map((e) => observation(JSON.parse(e.raw_data)))
     .sort((a, b) => a.iso.localeCompare(b.iso) || a.row.Id - b.row.Id);
@@ -153,34 +170,58 @@ export function reconcileActivity(db: Database, account: string, zone: string) {
     }
     if (choices.size === 1) for (const id of choices) matched.add(id);
   }
-  let eventsAdded = 0,
-    eventsUpdated = 0;
+  const pairedStops = new Set([...stops.values()].map((obs) => obs.row.Id));
+  for (const obs of observations) {
+    if (fileRows?.has(obs.row.Id) && obs.row.Type === "VideoPlaybackStopped" && !pairedStops.has(obs.row.Id))
+      counts.evidenceOnlyStops++;
+  }
   for (const s of starts) {
     const id = "activity/" + s.row.Id;
+    const stop = stops.get(s.row.Id);
     if (matched.has(s.row.Id)) {
+      if (fileRows?.has(s.row.Id)) counts.supersededRows++;
+      if (stop && fileRows?.has(stop.row.Id)) counts.supersededRows++;
       db.run("DELETE FROM events WHERE source='jellyfin' AND source_account=? AND source_id=?", [account, id]);
       continue;
     }
-    const stop = stops.get(s.row.Id);
     const elapsed = stop ? stop.ms - s.ms : null;
     const raw = JSON.stringify({ start: s.row, stop: stop?.row ?? null, estimatedElapsedMs: elapsed });
+    if (s.row.item && !Object.hasOwn(mediaType, s.row.item.Type))
+      throw new Error("Unsupported Jellyfin item.Type in stored activity evidence");
+    const type = s.row.item ? mediaType[s.row.item.Type] : "jellyfin:activity";
     const old = db
-      .query<{ raw_data: string }, [string, string]>(
-        "SELECT raw_data FROM events WHERE source='jellyfin' AND source_account=? AND source_id=?",
+      .query<{ raw_data: string; type: string }, [string, string]>(
+        "SELECT raw_data,type FROM events WHERE source='jellyfin' AND source_account=? AND source_id=?",
       )
       .get(account, id);
-    if (old?.raw_data === raw) continue;
+    if (old?.raw_data === raw && old.type === type) continue;
     const title = [s.row.item?.SeriesName, s.row.item?.Name].filter(Boolean).join(" — ") || s.row.Name;
     const label =
       elapsed === null ? "Playback started" : "Estimated elapsed time: " + Math.round(elapsed / 1000) + " seconds";
     db.run(
       `INSERT INTO events(source,source_account,source_id,type,timestamp,end_timestamp,title,content,raw_data)
-      VALUES ('jellyfin',?,?,'jellyfin:activity',?,?,?,?,?) ON CONFLICT(source,source_id,source_account)
-      DO UPDATE SET end_timestamp=excluded.end_timestamp,title=excluded.title,content=excluded.content,raw_data=excluded.raw_data`,
-      [account, id, new Date(s.ms).toISOString(), stop ? new Date(stop.ms).toISOString() : null, title, label, raw],
+      VALUES ('jellyfin',?,?,?,?,?,?,?,?) ON CONFLICT(source,source_id,source_account)
+      DO UPDATE SET type=excluded.type,end_timestamp=excluded.end_timestamp,title=excluded.title,content=excluded.content,raw_data=excluded.raw_data`,
+      [
+        account,
+        id,
+        type,
+        new Date(s.ms).toISOString(),
+        stop ? new Date(stop.ms).toISOString() : null,
+        title,
+        label,
+        raw,
+      ],
     );
-    if (old) eventsUpdated++;
-    else eventsAdded++;
+    if (old) {
+      counts.eventsUpdated++;
+      if (stop) counts.updatedEstimated++;
+      else counts.updatedUnknown++;
+    } else {
+      counts.eventsAdded++;
+      if (stop) counts.createdEstimated++;
+      else counts.createdUnknown++;
+    }
   }
-  return { eventsAdded, eventsUpdated };
+  return counts;
 }
