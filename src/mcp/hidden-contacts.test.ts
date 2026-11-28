@@ -61,63 +61,71 @@ afterEach(() => {
   invalidateHiddenClauseCaches();
 });
 
-describe("hidden contacts in the named MCP tools", () => {
-  test("asking for a hidden contact or their note reads exactly as asking for one that does not exist", async () => {
-    appDb.prepare(`INSERT INTO memory_notes (project, name, kind, title, summary, details, contact_id, created_at, updated_at)
-      VALUES ('', 'hana', 'person', 'Hana', 'secret picnic friend', '', 1, '2026-07-01', '2026-07-01')`).run();
-    const reply = async (name: string, args: Record<string, unknown>) => {
-      const result = await tools.get(name)!(args);
-      return { isError: result.isError ?? false, text: result.content.map((c) => c.text).join("\n") };
-    };
-    // [tool, arguments with the hidden contact or note, the same with someone unknown]
-    const pairs: [string, (who: string) => Record<string, unknown>, string, string][] = [];
-    for (const [hidden, unknown] of [["Hana Hidden", "Zara Nobody"], ["Hid", "Zar"], ["1", "999"], ["discord:900", "discord:999"], ["900", "999"]]) {
-      pairs.push(["get_contact_info", (who) => ({ contact: who }), hidden, unknown]);
-      pairs.push(["query_events", (who) => ({ contact: who }), hidden, unknown]);
-      pairs.push(["query_events", (who) => ({ contact: who, group_by_conversation: true }), hidden, unknown]);
-      pairs.push(["list_contacts", (who) => ({ search: who }), hidden, unknown]);
-      pairs.push(["save_memory_note", (who) => ({ name: "someone-new", kind: "person", title: "T", summary: "S", contact: who }), hidden, unknown]);
+describe("hidden contacts: left out unprompted, included when named", () => {
+  test("naming a hidden contact, by name, id or identifier, includes them", async () => {
+    for (const who of ["Hana Hidden", "Hid", "1", "discord:900", "900"]) {
+      const info = await text("get_contact_info", { contact: who });
+      expect(info).toContain("Contact: Hana Hidden (ID: 1)");
+      expect(info).toContain("Hidden: yes");
+      const events = await text("query_events", { contact: who });
+      expect(events).toContain("secret picnic plans");
+      expect(events).toContain("hana says picnic at noon");
+      expect(await text("query_events", { contact: who, group_by_conversation: true })).toContain("Hana Hidden: 1 hit");
     }
-    pairs.push(["get_memory_note", (who) => ({ name: who }), "hana", "zara"]);
-    pairs.push(["delete_memory_note", (who) => ({ name: who }), "hana", "zara"]);
-    pairs.push(["save_memory_note", (who) => ({ name: who, summary: "changed" }), "hana", "zara"]);
-    // Calls that could not create a note anyway fail as they would for a free name.
-    pairs.push(["save_memory_note", (who) => ({ name: who, summary: "x", contact: "Zara Nobody" }), "hana", "zara"]);
-    pairs.push(["save_memory_note", (who) => ({ name: who, kind: "person", title: "T", summary: "S", contact: "Zara Nobody" }), "hana", "zara"]);
-    const compare = async () => {
-      for (const [name, args, hidden, unknown] of pairs) {
-        const forHidden = await reply(name, args(hidden));
-        const forUnknown = await reply(name, args(unknown));
-        expect({ name, ...forHidden, text: forHidden.text.replaceAll(hidden, unknown) }).toEqual({ name, ...forUnknown });
-      expect(forHidden.text.replaceAll(hidden, "").toLowerCase()).not.toContain("hidden");
-      }
-    };
-    await compare();
-    // The one reply that differs: creating a note under the hidden one's name must not overwrite it.
-    const taken = await reply("save_memory_note", { name: "hana", kind: "person", title: "T", summary: "S" });
-    expect(taken).toEqual({ isError: true, text: 'Error: Note "hana" can\'t be saved: the name is taken.' });
-
-    // At the note limit, that call could not create a note either.
-    const insert = appDb.prepare(`INSERT INTO memory_notes (project, name, kind, title, summary, details, created_at, updated_at)
-      VALUES ('', ?, 'topic', 'T', 'S', '', '2026-07-01', '2026-07-01')`);
-    for (let i = 1; i < 500; i++) insert.run(`filler-${i}`);
-    pairs.length = 0;
-    pairs.push(["save_memory_note", (who) => ({ name: who, kind: "person", title: "T", summary: "S" }), "hana", "zara"]);
-    await compare();
+    for (const search of ["Hid", "discord:900", "900"]) {
+      expect(await text("list_contacts", { search })).toStartWith("1. Hana Hidden (hidden) (");
+    }
+    // Saving a note with a hidden contact links it.
+    expect(await text("save_memory_note", { name: "hana", kind: "person", title: "Hana", summary: "S", contact: "Hana Hidden" }))
+      .toBe("Created memory: Hana (hana, account)");
+    expect(appDb.prepare("SELECT contact_id FROM memory_notes WHERE name = 'hana'").get()).toEqual({ contact_id: 1 });
   });
 
-  test("contact and memory tools list nothing of a hidden contact's", async () => {
-    db.prepare("INSERT INTO contacts (display_name) VALUES ('Hana Smith')").run();
-    // One visible match resolves to it, so a one-name "multiple" list cannot betray a hidden one.
-    expect(await text("get_contact_info", { contact: "Hana" })).toContain("Contact: Hana Smith");
-    expect(await text("get_contact_info", { contact: "Hana" })).not.toContain("Hana Hidden");
+  test("a visible contact keeps an everyday name, and a broad search never lists a hidden one", async () => {
+    const smith = db.prepare("INSERT INTO contacts (display_name) VALUES ('Hana Smith')").run().lastInsertRowid;
+    db.prepare("INSERT INTO identities (platform, platform_id, display_name, contact_id) VALUES ('discord', '902', 'Hana Smith', ?)").run(smith);
+    expect(await text("get_contact_info", { contact: "Hana" })).toStartWith("Contact: Hana Smith");
+    expect(await text("query_events", { contact: "Hana" })).not.toContain("secret picnic plans");
+    for (const search of ["Hana", "a", "%", " "]) expect(await text("list_contacts", { search })).not.toContain("Hana Hidden");
+    expect(await text("get_contact_info", { contact: " " })).toBe('Contact " " not found.');
+    // Their exact name finds them, even beside a visible name that contains it.
+    db.prepare("UPDATE contacts SET display_name = 'Hana Hidden Smith' WHERE id = ?").run(smith);
+    expect(await text("get_contact_info", { contact: "hana hidden" })).toStartWith("Contact: Hana Hidden (ID: 1)");
+    expect(await text("list_contacts", { search: "Hana Hidden" })).toStartWith("1. Hana Hidden (hidden) (");
+  });
+
+  test("list_contacts leaves hidden contacts out and says how many", async () => {
+    const listed = await text("list_contacts", {});
+    expect(listed).not.toContain("Hana Hidden");
+    expect(listed).toContain("Vic Visible");
+    expect(listed).toEndWith("1 hidden contact not listed; search by name to include one.");
+    db.prepare("UPDATE contacts SET hidden = 0").run();
+    expect(await text("list_contacts", {})).not.toContain("not listed");
+  });
+
+  test("an event of a hidden contact opened by id comes with its conversation and context", async () => {
+    expect(await text("export_conversation", { event_id: ids.hiddenDm })).toContain("secret picnic plans");
+    expect(await text("get_context", { event_id: ids.hiddenDm, hours_window: 1 })).toContain("secret picnic plans");
+    // Another hidden contact's events stay out of that window.
+    db.prepare("UPDATE contacts SET hidden = 1 WHERE display_name = 'Vic Visible'").run();
+    invalidateHiddenClauseCaches();
+    const window = await text("get_context", { event_id: ids.hiddenDm, hours_window: 1 });
+    expect(window).toContain("secret picnic plans");
+    expect(window).not.toContain("vic says");
+    db.prepare("UPDATE contacts SET hidden = 0 WHERE display_name = 'Vic Visible'").run();
+    invalidateHiddenClauseCaches();
+    const group = await tools.get("get_context")!({ event_id: ids.hiddenGroup, same_conversation: true });
+    expect(group.isError).toBeUndefined();
+    expect(group.content[0].text).toContain("hana says picnic at noon");
+  });
+
+  test("memory notes linked to a hidden contact stay out of memory", async () => {
     appDb.prepare(`INSERT INTO memory_notes (project, name, kind, title, summary, details, contact_id, created_at, updated_at)
       VALUES ('', 'hana', 'person', 'Hana', 'secret picnic friend', '', 1, '2026-07-01', '2026-07-01')`).run();
     expect(await text("list_memory", {})).not.toContain("secret picnic friend");
     expect(await text("get_memory_note", { name: "hana" })).toContain('No note named "hana"');
-
-    expect(await text("list_contacts", {})).not.toContain("Hana Hidden");
-    expect(await text("list_contacts", { search: "900" })).toBe("No contacts found.");
+    expect(await text("save_memory_note", { name: "hana", kind: "person", title: "T", summary: "S" }))
+      .toBe('Error: Note "hana" can\'t be saved: the name is taken.');
   });
 
   test("query_events leaves out a hidden contact's DMs and own group messages, keeping the group", async () => {
@@ -138,7 +146,6 @@ describe("hidden contacts in the named MCP tools", () => {
     expect(context).toContain("vic says");
     expect(context).not.toContain("@Hana Hidden");
     expect(context).not.toContain("hidden_handle");
-    expect((await tools.get("get_context")!({ event_id: ids.hiddenGroup, same_conversation: true })).isError).toBe(true);
     expect(context).not.toContain("secret picnic plans");
     expect(context).not.toContain("hana says");
 
@@ -157,7 +164,6 @@ describe("hidden contacts in the named MCP tools", () => {
     expect(group).not.toContain("hana says");
     expect(group).not.toContain("@Hana Hidden");
     expect(group).not.toContain("hidden_handle");
-    expect(await text("export_conversation", { event_id: ids.hiddenDm })).toContain(`No event found with id ${ids.hiddenDm}`);
     expect(await text("export_conversation", { conversation_id: "dm-hana" })).not.toContain("secret picnic plans");
   });
 
@@ -207,11 +213,6 @@ describe("hidden contacts in the named MCP tools", () => {
       },
     })).lastInsertRowid);
     expect(await withoutHiddenWindows(wrapDatabase(db), [{ eventIds: [poll] }])).toEqual([]);
-  });
-
-  test("get_context around a hidden event reads as around a missing one", async () => {
-    const missing = await text("get_context", { event_id: 999_999, hours_window: 1 });
-    expect(await text("get_context", { event_id: ids.hiddenDm, hours_window: 1 })).toBe(missing);
   });
 
   test("get_updates treats a hidden contact's conversation id as unknown", async () => {
