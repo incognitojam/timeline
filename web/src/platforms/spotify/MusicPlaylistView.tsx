@@ -6,9 +6,9 @@ import type { PlaylistObservationPoint } from "../../lib/api";
 import { useChartTheme } from "../../lib/echarts-theme";
 import { avgPerYear, creationAnchor, pastYearSaves } from "./playlist-stats";
 import { useMusicPlaylist } from "../../lib/queries";
-import { IconHistory, IconOpenInNew } from "../../ui/icons";
+import { IconChevronLeft, IconHistory, IconOpenInNew } from "../../ui/icons";
 import PlaylistArt from "./PlaylistArt";
-import { APP_NAME } from "../../lib/routes";
+import { APP_NAME, ROUTES } from "../../lib/routes";
 import { sharedElementName, sharedTextStyle, useSharedElementLink } from "../../lib/view-transition";
 
 function formatDate(dateStr: string): string {
@@ -182,8 +182,27 @@ export default function MusicPlaylistView() {
   return (
     <div class="h-full overflow-y-auto">
       <div class="max-w-3xl mx-auto p-4 sm:p-6 space-y-6">
-        <div class="flex items-start justify-between gap-4">
-          <div class="flex items-start gap-3 min-w-0">
+        <div>
+          <div class="mb-4 flex items-center justify-between gap-4 text-sm">
+            <A
+              href={ROUTES.MUSIC}
+              onClick={sharedLink(playlistId())}
+              class="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
+            >
+              <IconChevronLeft class="h-4 w-4" aria-hidden /> Music
+            </A>
+            <a
+              href={`https://open.spotify.com/playlist/${params.id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-flex items-center gap-1 text-primary hover:underline"
+            >
+              Open in Spotify
+              <IconOpenInNew class="h-4 w-4" aria-hidden />
+            </a>
+          </div>
+          {/* Cover beside the title, as in the Music list row, so the two keep their places as they fly. */}
+          <div class="flex items-center gap-3">
             <PlaylistArt
               src={imageUrl()}
               name={playlist()?.name}
@@ -191,27 +210,13 @@ export default function MusicPlaylistView() {
               transitionName={sharedElementName(playlistId(), "playlist-art")}
               eager
             />
-            <div class="min-w-0">
-              <A href="/music" onClick={sharedLink(playlistId())} class="text-xs text-muted-foreground hover:text-foreground">
-                ← Music
-              </A>
-              <h1
-                class="font-display text-2xl font-medium break-words mt-1"
-                style={sharedTextStyle(playlistId(), "playlist-title")}
-              >
-                {title()}
-              </h1>
-            </div>
+            <h1
+              class="min-w-0 font-display text-2xl font-medium break-words"
+              style={sharedTextStyle(playlistId(), "playlist-title")}
+            >
+              {title()}
+            </h1>
           </div>
-          <a
-            href={`https://open.spotify.com/playlist/${params.id}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            class="inline-flex items-center gap-1 text-sm text-primary hover:underline shrink-0 mt-1"
-          >
-            Open in Spotify
-            <IconOpenInNew class="h-4 w-4" aria-hidden />
-          </a>
         </div>
 
         <Switch>

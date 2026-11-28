@@ -11,7 +11,9 @@ import { createSignal, startTransition } from "solid-js";
  *
  * A named element is treated as one object flying between its two boxes (see
  * app.css). Text takes `sharedTextStyle(key, part)` instead: it moves at its
- * natural size and crossfades between the two type sizes.
+ * natural size and crossfades between the two type sizes, or, where it wraps
+ * onto a different number of lines at each end, between the two shapes as it
+ * lands.
  */
 
 /** Longest the old page stays frozen waiting for the new one to commit. */
@@ -39,17 +41,20 @@ export function sharedTextStyle(key: string, part: string) {
   return { "view-transition-name": sharedElementName(key, part), "view-transition-class": "shared-text" };
 }
 
-type Box = { width: number; height: number; radius: string };
+type Box = { width: number; height: number; radius: string; lines?: number };
 
-/** Size and corner radius of every element named for the transition. */
+/** Size and corner radius of every element named for the transition, and how many lines each text runs to. */
 function measureShared(): Map<string, Box> {
   const boxes = new Map<string, Box>();
   for (const element of document.querySelectorAll<HTMLElement>('[style*="view-transition-name"]')) {
     const style = getComputedStyle(element);
     const name = style.getPropertyValue("view-transition-name");
-    if (name === "none" || style.getPropertyValue("view-transition-class") === "shared-text") continue;
+    if (name === "none") continue;
     const rect = element.getBoundingClientRect();
-    boxes.set(name, { width: rect.width, height: rect.height, radius: style.borderRadius });
+    const text = style.getPropertyValue("view-transition-class") === "shared-text";
+    // A line height of "normal" has no length; count that text as one line.
+    const lines = text ? Math.max(1, Math.round(rect.height / Number.parseFloat(style.lineHeight)) || 1) : undefined;
+    boxes.set(name, { width: rect.width, height: rect.height, radius: style.borderRadius, lines });
   }
   return boxes;
 }
@@ -65,6 +70,10 @@ function flyAsOne(before: Map<string, Box>, after: Map<string, Box>): Animation[
   for (const [name, a] of before) {
     const b = after.get(name);
     if (!b) continue;
+    if (a.lines !== undefined) {
+      if (a.lines !== b.lines) flights.push(...reflow(name));
+      continue;
+    }
     const group = getComputedStyle(root, `::view-transition-group(${name})`);
     const timing = {
       duration: Number.parseFloat(group.animationDuration) * 1000,
@@ -80,6 +89,28 @@ function flyAsOne(before: Map<string, Box>, after: Map<string, Box>): Animation[
     );
   }
   return flights;
+}
+
+/**
+ * Text that wraps differently at the two ends (a one-line row title, a header
+ * that wraps) keeps its starting shape for the flight and hands over once it
+ * has nearly landed, instead of showing one shape inside the other's box.
+ */
+function reflow(name: string): Animation[] {
+  const root = document.documentElement;
+  const group = getComputedStyle(root, `::view-transition-group(${name})`);
+  const duration = Number.parseFloat(group.animationDuration) * 1000;
+  const timing = { duration, fill: "forwards" as const };
+  return [
+    root.animate(
+      [{ opacity: 1 }, { opacity: 1, offset: 0.45 }, { opacity: 0, offset: 0.75 }],
+      { ...timing, pseudoElement: `::view-transition-old(${name})` },
+    ),
+    root.animate(
+      [{ opacity: 0 }, { opacity: 0, offset: 0.45 }, { opacity: 1, offset: 0.8 }],
+      { ...timing, pseudoElement: `::view-transition-new(${name})` },
+    ),
+  ];
 }
 
 function canAnimate(): boolean {
