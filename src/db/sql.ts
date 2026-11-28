@@ -1,4 +1,3 @@
-import { buildHiddenEventClause } from "./events";
 import { QueryTimeoutError, type QueryExecutor } from "./pool";
 
 export interface RunSqlResult {
@@ -110,8 +109,6 @@ export async function getRawDataSchema(db: QueryExecutor, options: {
   source: string;
   type?: string;
   sampleSize?: number;
-  /** Leave out samples filed under a hidden contact. */
-  excludeHidden?: boolean;
 }): Promise<RawDataSchema> {
   const { source, type, sampleSize = 5 } = options;
 
@@ -122,7 +119,6 @@ export async function getRawDataSchema(db: QueryExecutor, options: {
     sql += " AND type LIKE ?";
     params.push(type + "%");
   }
-  if (options.excludeHidden) sql += await buildHiddenEventClause(db, "events");
   sql += " ORDER BY timestamp DESC LIMIT ?";
   params.push(sampleSize);
 

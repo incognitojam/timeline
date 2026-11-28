@@ -216,76 +216,10 @@
     },
     {
       "database": "timeline",
-      "sql": "SELECT event_id FROM ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) WHERE event_id IN ( ? )",
-      "reason": "MCP named tools leave hidden contacts out with the web app's hiddenEventIdsSubquery. Its join from event_people.person to identities is on an expression, so SQLite scans identities or builds an automatic index on contacts.hidden, the same cost the web surfaces pay (see underReview).",
-      "findings": [
-        "identities:table-scan"
-      ]
-    },
-    {
-      "database": "timeline",
-      "sql": "SELECT event_id FROM ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) WHERE event_id IN ( ? , ? )",
-      "reason": "MCP named tools leave hidden contacts out with the web app's hiddenEventIdsSubquery. Its join from event_people.person to identities is on an expression, so SQLite scans identities or builds an automatic index on contacts.hidden, the same cost the web surfaces pay (see underReview).",
-      "findings": [
-        "identities:table-scan"
-      ]
-    },
-    {
-      "database": "timeline",
       "sql": "SELECT event_id FROM ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) WHERE event_id IN ( ? , ? , ? , ? , ? )",
       "reason": "MCP named tools leave hidden contacts out with the web app's hiddenEventIdsSubquery. Its join from event_people.person to identities is on an expression, so SQLite scans identities or builds an automatic index on contacts.hidden, the same cost the web surfaces pay (see underReview).",
       "findings": [
         "contacts:automatic-index"
-      ]
-    },
-    {
-      "database": "timeline",
-      "sql": "SELECT COUNT ( * ) AS count FROM events WHERE conversation_id = ? AND source = ? AND id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 )",
-      "reason": "MCP named tools leave hidden contacts out with the web app's hiddenEventIdsSubquery. Its join from event_people.person to identities is on an expression, so SQLite scans identities or builds an automatic index on contacts.hidden, the same cost the web surfaces pay (see underReview).",
-      "findings": [
-        "contacts:automatic-index"
-      ]
-    },
-    {
-      "database": "timeline",
-      "sql": "SELECT * FROM events WHERE conversation_id = ? AND source = ? AND id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) AND id = ?",
-      "reason": "MCP named tools leave hidden contacts out with the web app's hiddenEventIdsSubquery. Its join from event_people.person to identities is on an expression, so SQLite scans identities or builds an automatic index on contacts.hidden, the same cost the web surfaces pay (see underReview).",
-      "findings": [
-        "identities:table-scan"
-      ]
-    },
-    {
-      "database": "timeline",
-      "sql": "SELECT * FROM events WHERE conversation_id = ? AND source = ? AND id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) AND ( timestamp IS NULL OR timestamp < ? OR ( timestamp = ? AND id < ? ) ) ORDER BY timestamp DESC , id DESC LIMIT ?",
-      "reason": "MCP named tools leave hidden contacts out with the web app's hiddenEventIdsSubquery. Its join from event_people.person to identities is on an expression, so SQLite scans identities or builds an automatic index on contacts.hidden, the same cost the web surfaces pay (see underReview).",
-      "findings": [
-        "identities:table-scan"
-      ]
-    },
-    {
-      "database": "timeline",
-      "sql": "SELECT * FROM events WHERE conversation_id = ? AND source = ? AND id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) AND ( timestamp > ? OR ( timestamp = ? AND id > ? ) ) ORDER BY timestamp ASC , id ASC LIMIT ?",
-      "reason": "MCP named tools leave hidden contacts out with the web app's hiddenEventIdsSubquery. Its join from event_people.person to identities is on an expression, so SQLite scans identities or builds an automatic index on contacts.hidden, the same cost the web surfaces pay (see underReview).",
-      "findings": [
-        "identities:table-scan"
-      ]
-    },
-    {
-      "database": "timeline",
-      "sql": "SELECT COUNT ( * ) AS count FROM events WHERE conversation_id = ? AND id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 )",
-      "reason": "As above for the hidden-contact exclusion; export_conversation by conversation_id alone has no source to lead an index with, as before this exclusion (see underReview).",
-      "findings": [
-        "contacts:automatic-index",
-        "events:table-scan"
-      ]
-    },
-    {
-      "database": "timeline",
-      "sql": "SELECT * FROM events WHERE conversation_id = ? AND id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) ORDER BY timestamp DESC LIMIT ?",
-      "reason": "As above for the hidden-contact exclusion; export_conversation by conversation_id alone has no source to lead an index with, as before this exclusion (see underReview).",
-      "findings": [
-        "contacts:automatic-index",
-        "events:index-scan"
       ]
     },
     {
@@ -302,46 +236,6 @@
       "reason": "contacts holds one row per person (hundreds), with no index on hidden; hasHiddenContacts counts it the same way.",
       "findings": [
         "contacts:table-scan"
-      ]
-    },
-    {
-      "database": "timeline",
-      "sql": "SELECT raw_data FROM events WHERE source = ? AND type LIKE ? AND events . id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) ORDER BY timestamp DESC LIMIT ?",
-      "reason": "MCP named tools leave hidden contacts out with the web app's hiddenEventIdsSubquery. Its join from event_people.person to identities is on an expression, so SQLite scans identities or builds an automatic index on contacts.hidden, the same cost the web surfaces pay (see underReview).",
-      "findings": [
-        "identities:table-scan"
-      ]
-    },
-    {
-      "database": "timeline",
-      "sql": "SELECT type , count ( * ) AS n FROM events WHERE source = ? AND id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) GROUP BY type ORDER BY n DESC",
-      "reason": "MCP named tools leave hidden contacts out with the web app's hiddenEventIdsSubquery. Its join from event_people.person to identities is on an expression, so SQLite scans identities or builds an automatic index on contacts.hidden, the same cost the web surfaces pay (see underReview).",
-      "findings": [
-        "contacts:automatic-index"
-      ]
-    },
-    {
-      "database": "timeline",
-      "sql": "SELECT source , source_account , CASE WHEN ( type LIKE '%message%' OR type LIKE 'sms:%' OR type LIKE 'mms:%' OR type LIKE 'rcs:%' OR type LIKE 'call:%' ) THEN conversation_id END AS conversation_id , CASE WHEN ( type LIKE '%message%' OR type LIKE 'sms:%' OR type LIKE 'mms:%' OR type LIKE 'rcs:%' OR type LIKE 'call:%' ) THEN 0 ELSE ( source IN ( ? , ? , ? , ? ) OR type IN ( ? ) ) END AS listed , MAX ( title ) AS title , COUNT ( * ) AS count , MIN ( timestamp ) AS first_ts , MAX ( timestamp ) AS last_ts , MAX ( json_extract ( people , '$[0]' ) IN ( SELECT value FROM json_each ( ? ) ) OR type LIKE 'message:dm%' OR ( json_array_length ( people ) <= 2 AND EXISTS ( SELECT 1 FROM json_each ( people ) WHERE value IN ( SELECT value FROM json_each ( ? ) ) ) ) ) AS mine FROM events WHERE id > ? AND id <= ? AND ( + timestamp IS NULL OR + timestamp >= ? ) AND source NOT IN ( ? , ? ) AND conversation_id = ? AND id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) GROUP BY 1 , 2 , 3 , 4",
-      "reason": "get_updates leaves out hidden contacts' events with the shared hiddenEventIdsSubquery (src/db/events.ts), as the API does; it runs once per query, only while a contact is hidden, and walks identities and contacts, not events, which stay on a primary key, (source, id) or conversation index range.",
-      "findings": [
-        "contacts:automatic-index"
-      ]
-    },
-    {
-      "database": "timeline",
-      "sql": "SELECT 1 FROM events WHERE source = ? AND source_account IS ? AND conversation_id = ? AND conversation_id IS NOT NULL AND ( type LIKE '%message%' OR type LIKE 'sms:%' OR type LIKE 'mms:%' OR type LIKE 'rcs:%' OR type LIKE 'call:%' ) AND id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) LIMIT 1",
-      "reason": "get_updates' conversation-id check, asked only when a conversation_id matches no new events, leaves hidden contacts' events out so their conversation reads as unknown, as in export_conversation. Each per-source probe stays on idx_events_conversation_id; the shared hiddenEventIdsSubquery (src/db/events.ts) walks identities, as the API's does.",
-      "findings": [
-        "identities:table-scan"
-      ]
-    },
-    {
-      "database": "timeline",
-      "sql": "SELECT raw_data FROM events WHERE source = ? AND events . id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) ORDER BY timestamp DESC LIMIT ?",
-      "reason": "MCP named tools leave hidden contacts out with the web app's hiddenEventIdsSubquery. Its join from event_people.person to identities is on an expression, so SQLite scans identities or builds an automatic index on contacts.hidden, the same cost the web surfaces pay (see underReview).",
-      "findings": [
-        "contacts:automatic-index"
       ]
     },
     {
@@ -370,8 +264,8 @@
     },
     {
       "database": "timeline",
-      "sql": "SELECT * FROM events WHERE timestamp >= ? AND timestamp < ? AND source = ? AND source_account = ? AND conversation_id = ? AND ( type LIKE '%message%' OR type LIKE 'sms:%' OR type LIKE 'mms:%' OR type LIKE 'rcs:%' OR type LIKE 'call:%' ) AND events . id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 AND c . id NOT IN ( SELECT value FROM json_each ( ? ) ) ) ORDER BY timestamp , id LIMIT ?",
-      "reason": "get_context around an event filed under a hidden contact leaves out other hidden contacts' events with the web app's hiddenEventIdsSubquery, whose join from event_people.person to identities is on an expression, so SQLite scans identities, the same cost the other hidden-filtered MCP queries pay.",
+      "sql": "SELECT source , type , timestamp , end_timestamp , title FROM events WHERE source IN ( ? , ? ) AND timestamp >= ? AND + id <= ? AND ( type = 'sleep' OR type LIKE 'daily:%' ) AND id NOT IN ( SELECT DISTINCT ep . event_id FROM event_people ep JOIN identities i ON ep . person = ( i . platform || ':' || i . platform_id ) JOIN contacts c ON i . contact_id = c . id WHERE c . hidden = 1 ) ORDER BY timestamp",
+      "reason": "A catch-up leaves hidden contacts' sleep and daily health events out with the web app's hiddenEventIdsSubquery, whose join from event_people.person to identities is on an expression, so SQLite scans identities; the same cost the other hidden-filtered MCP queries pay.",
       "findings": [
         "identities:table-scan"
       ]

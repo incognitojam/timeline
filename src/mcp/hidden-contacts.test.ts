@@ -151,52 +151,43 @@ describe("hidden contacts: left out unprompted, included when named", () => {
     expect(await text("list_memory", {})).not.toContain("not listed");
   });
 
-  test("query_events leaves out a hidden contact's DMs and own group messages, keeping the group", async () => {
+  test("broad searches leave out a hidden contact's DMs and own group messages, and name them where a visible one does", async () => {
     for (const args of [{ query: "picnic" }, { date: "2026-07-03" }, { source: "discord" }]) {
       const out = await text("query_events", args);
-      expect(out).toContain("vic says picnic sounds good");
+      expect(out).toContain("vic says picnic sounds good, ask @Hana Hidden");
       expect(out).not.toContain("secret picnic plans");
-      expect(out).not.toContain("hana says");
+      expect(out).not.toContain(`#${ids.hiddenGroup} `);
     }
     const grouped = await text("query_events", { query: "picnic", group_by_conversation: true });
     expect(grouped).toContain("[discord] picnic crew: 2 hits"); // the visible reply and the forward
-    expect(grouped).not.toContain("Hana");
-    expect(await text("query_events", { contact: "Vic Visible" })).not.toContain("hana says");
-  });
-
-  test("get_context and export_conversation leave out the hidden contact's events", async () => {
+    expect(await text("query_events", { contact: "Vic Visible" })).not.toContain(`#${ids.hiddenGroup} `);
     const context = await text("get_context", { event_id: ids.visibleGroup });
-    expect(context).toContain("vic says");
-    expect(context).not.toContain("@Hana Hidden");
-    expect(context).not.toContain("hidden_handle");
+    expect(context).toContain("vic says picnic sounds good, ask @Hana Hidden");
     expect(context).not.toContain("secret picnic plans");
-    expect(context).not.toContain("hana says");
-
-    // A reply to the forward would quote its text, and an image described under the forward would show it.
-    db.prepare(`INSERT INTO events (source, source_id, source_account, type, timestamp, title, content, people, raw_data, conversation_id)
-      VALUES ('discord', '1004', 'me', 'message:group', '2026-07-03T10:20:00.000Z', 'picnic crew', 'vic replies to the forward', '["discord:901"]', ?, 'group-1')`)
-      .run(JSON.stringify({ message_reference: { message_id: "1003" } }));
-    db.prepare("INSERT INTO attachment_descriptions (content_hash, model, description, created_at) VALUES ('h1', 'm', 'a picnic map in hana''s hand', '2026-07-03')").run();
-    db.prepare(`INSERT INTO attachments (event_id, source, source_id, content_hash, mime_type, storage_path, status)
-      VALUES (?, 'discord', 'a1', 'h1', 'image/png', 'discord/a1.png', 'stored')`).run(ids.visibleForward);
-
-    const group = await text("export_conversation", { event_id: ids.visibleGroup });
-    expect(group).toContain("vic replies to the forward");
-    expect(group).not.toContain("picnic map");
-    expect(group).toContain("vic says picnic sounds good");
-    expect(group).not.toContain("hana says");
-    expect(group).not.toContain("@Hana Hidden");
-    expect(group).not.toContain("hidden_handle");
-    expect(await text("export_conversation", { conversation_id: "dm-hana" })).not.toContain("secret picnic plans");
+    expect(context).not.toContain(`#${ids.hiddenGroup} `);
   });
 
-  test("get_schema's samples leave out a hidden contact's events", async () => {
-    expect(await text("get_schema", { source: "discord", type: "message:dm" })).toBe('No events found for source="discord" type="message:dm"');
-    // A visible reply's raw_data embeds the hidden message it answers.
-    const sample = await text("get_schema", { source: "discord", type: "message:group" });
-    expect(sample).toContain("$.referenced_message.content");
-    expect(sample).not.toContain("hana says");
-    expect(sample).not.toContain("hidden_handle");
+  test("a conversation opened by id shows everyone's messages, with real names", async () => {
+    const group = await text("export_conversation", { event_id: ids.visibleGroup });
+    expect(group).toContain("<Hana Hidden> hana says picnic at noon");
+    expect(group).toContain('"hana says picnic at noon") vic says picnic sounds good, ask @Hana Hidden');
+    expect(await text("export_conversation", { conversation_id: "group-1" })).toContain("<Hana Hidden> hana says picnic at noon");
+    expect(await text("export_conversation", { conversation_id: "dm-hana" })).toContain("secret picnic plans");
+    const context = await text("get_context", { event_id: ids.visibleGroup, same_conversation: true });
+    expect(context).toContain("hana says picnic at noon");
+    const updates = await text("get_updates", { since: "id:0", conversation_id: "group-1" });
+    expect(updates).toContain("<Hana Hidden> hana says picnic at noon");
+    expect(await text("get_updates", { since: "id:0", conversation_id: "dm-hana" })).toContain("secret picnic plans");
+    // A catch-up across everything still leaves them out.
+    const catchUp = await text("get_updates", { since: "id:0" });
+    expect(catchUp).toContain("vic says picnic sounds good");
+    expect(catchUp).not.toContain("secret picnic plans");
+    expect(catchUp).not.toContain("<Hana Hidden>");
+  });
+
+  test("get_schema reads every event", async () => {
+    expect(await text("get_schema", { source: "discord" })).toContain("message:dm 1");
+    expect(await text("get_schema", { source: "discord", type: "message:group" })).toContain("hana says picnic at noon");
   });
 
   test("a contact hidden after a call is left out of the next one", async () => {
@@ -212,37 +203,17 @@ describe("hidden contacts: left out unprompted, included when named", () => {
     expect(kept).toEqual([{ id: ids.visibleGroup }]);
   });
 
-  test("semantic_search drops a conversation window whose snippet could show a hidden contact", async () => {
-    const plain = Number(db.prepare(`INSERT INTO events (source, source_id, source_account, type, timestamp, content, people, raw_data, conversation_id)
-      VALUES ('discord', '1005', 'me', 'message:group', '2026-07-03T10:25:00.000Z', 'vic brings snacks', '["discord:901"]', '{}', 'group-1')`).run().lastInsertRowid);
+  test("semantic_search drops a conversation window holding a hidden contact's own message", async () => {
     const windows = [
-      [plain],
-      [plain, ids.hiddenGroup], // their own message
-      [plain, ids.visibleForward], // a forward of it
-      [plain, ids.visibleGroup], // a mention of them
-      [plain, 999_999], // a message since deleted
+      [ids.visibleGroup], // mentions them
+      [ids.visibleGroup, ids.hiddenGroup], // their own message
+      [ids.visibleForward], // a forward of it, by someone visible
+      [ids.visibleGroup, 999_999], // a message since deleted
+      [ids.hiddenDm],
     ].map((eventIds) => ({ eventIds }));
-    expect(await withoutHiddenWindows(wrapDatabase(db), windows)).toEqual([{ eventIds: [plain] }]);
-  });
-
-  test("semantic_search drops a conversation window with a poll a hidden contact voted in", async () => {
-    const poll = Number(db.prepare(`INSERT INTO events (source, source_id, source_account, type, timestamp, content, people, raw_data, conversation_id)
-      VALUES ('discord', '1006', 'me', 'message:group:poll', '2026-07-03T10:30:00.000Z', '', '["discord:901"]', ?, 'group-1')`).run(JSON.stringify({
-      poll: {
-        question: { text: "Where?" },
-        answers: [{ answer_id: 1, poll_media: { text: "Park" } }],
-        allow_multiselect: false,
-        voters: { answers: { 1: [{ id: "900", name: "Hana Hidden", username: "hidden_handle", avatar: null }] } },
-      },
-    })).lastInsertRowid);
-    expect(await withoutHiddenWindows(wrapDatabase(db), [{ eventIds: [poll] }])).toEqual([]);
-  });
-
-  test("get_updates treats a hidden contact's conversation id as unknown", async () => {
-    expect(await text("get_updates", { since: "id:0", conversation_id: "dm-hana" })).toContain('No conversation has conversation_id "dm-hana"');
-  });
-
-  test("get_schema(source) does not count a hidden contact's events", async () => {
-    expect(await text("get_schema", { source: "discord" })).not.toContain("message:dm");
+    expect(await withoutHiddenWindows(wrapDatabase(db), windows)).toEqual([
+      { eventIds: [ids.visibleGroup] },
+      { eventIds: [ids.visibleForward] },
+    ]);
   });
 });

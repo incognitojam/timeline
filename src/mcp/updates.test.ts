@@ -218,7 +218,7 @@ test("noisy sources are left out unless asked for, and other sources are counted
   expect(asked).not.toContain("hello");
 });
 
-test("a hidden contact's new messages are left out, while the rest of their group stays", async () => {
+test("a hidden contact's new messages are left out, while the rest of their group stays, quoting them as the web app does", async () => {
   const hidden = Number(db.prepare("INSERT INTO contacts (display_name, hidden) VALUES ('Hidden Person', 1)").run().lastInsertRowid);
   db.prepare("INSERT INTO identities (platform, platform_id, display_name, contact_id) VALUES ('discord', '900000000000000009', 'Hidden Person', ?)").run(hidden);
   invalidateHiddenClauseCaches();
@@ -242,11 +242,11 @@ test("a hidden contact's new messages are left out, while the rest of their grou
   });
 
   const text = await updates("id:0");
-  expect(text).not.toContain("secret");
+  expect(text).not.toContain("secret in");
   expect(text).not.toContain("reply to the hidden person");
+  expect(text).not.toContain("<Hidden Person>");
   expect(text).toContain("visible group message");
-  expect(text).toContain("agreed with that");
-  expect(text).not.toContain("Hidden Person");
+  expect(text).toContain('↪ (to Hidden Person: "secret being replied to") agreed with that');
 });
 
 test("a conversation too long for the cap on its own is pointed to, and paging moves past it", async () => {
