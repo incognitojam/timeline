@@ -133,6 +133,7 @@ export { default as IconSimpleSkype } from "~icons/simple-icons/skype";
 export { default as IconSpotify } from "~icons/simple-icons/spotify";
 export { default as IconSteam } from "~icons/simple-icons/steam";
 export { default as IconSwarm } from "~icons/simple-icons/swarm";
+export { default as IconJellyfin } from "~icons/simple-icons/jellyfin";
 export { default as IconTrakt } from "~icons/simple-icons/trakt";
 export { default as IconWakaTime } from "~icons/simple-icons/wakatime";
 export { default as IconYouTube } from "~icons/simple-icons/youtube";

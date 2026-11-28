@@ -26,6 +26,7 @@ import { swarmMeta } from "./swarm/meta";
 import { t3codeMeta } from "./t3code/meta";
 import { thrivaMeta } from "./thriva/meta";
 import { traktMeta } from "./trakt/meta";
+import { jellyfinMeta } from "./jellyfin/meta";
 import { wakatimeMeta } from "./wakatime/meta";
 import type { PlatformMeta } from "./types";
 
@@ -38,6 +39,7 @@ export const PLATFORM_METAS = [
   googleMessagesMeta,
   monzoMeta,
   traktMeta,
+  jellyfinMeta,
   swarmMeta,
   wakatimeMeta,
   githubMeta,
