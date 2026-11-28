@@ -1,12 +1,11 @@
 import type { ContactWithStats } from "../db/contacts";
 import { conversationTypeClause } from "../db/conversation-types";
 import type { QueryExecutor } from "../db/pool";
-import { getAliasesForContact, hasHiddenContacts, hiddenEventIdsSubquery, listContacts } from "../db/queries";
+import { getAliasesForContact, listContacts } from "../db/queries";
 import type { ContactAlias, TimelineEvent } from "../db/schema";
 import { loadAttachmentDescriptionsForEvents } from "./attachment-descriptions";
 import { resolveRenderIdentities } from "./display-names";
 import { renderEvents } from "./render";
-import { maskForwardsOfHiddenEvents } from "./hidden-forwards";
 import { loadReplyQuotesForEvents } from "./reply-quotes";
 import { countTokens } from "./tokens";
 
@@ -17,11 +16,6 @@ export interface ExportRenderOptions {
   noSummaries: boolean;
   fullTimestamps: boolean;
   preferredDescriptionModels?: readonly string[];
-  /**
-   * Set to leave out hidden contacts' messages where a visible event quotes or
-   * forwards them, and to call them this where one mentions them.
-   */
-  hiddenContactName?: string;
 }
 
 export interface ContactExportParams {
@@ -53,8 +47,6 @@ export interface ConversationExportOptions extends ExportRenderOptions {
   includeTotal?: boolean;
   /** Center the limited result around this event, unless date bounds are set. */
   aroundEventId?: number;
-  /** Leave out events filed under a hidden contact. */
-  excludeHidden?: boolean;
 }
 
 export interface SourceTokenBreakdown {
@@ -98,22 +90,13 @@ export type ContactExportResult =
 /** Render events as an export transcript, loading the attachment descriptions, names and reply quotes it shows. */
 export async function renderExportText(
   db: QueryExecutor,
-  shown: TimelineEvent[],
+  events: TimelineEvent[],
   options: ExportRenderOptions,
 ): Promise<string> {
-  const hiddenName = options.hiddenContactName;
-  const { events, masked } = hiddenName === undefined
-    ? { events: shown, masked: new Set<number>() }
-    : await maskForwardsOfHiddenEvents(db, shown);
-  const attachmentDescriptions = await loadAttachmentDescriptionsForEvents(
-    db,
-    events.filter((event) => !masked.has(event.id)),
-    options.preferredDescriptionModels,
-  );
-  const renderIdentities = await resolveRenderIdentities(db, events, { hiddenName });
+  const attachmentDescriptions = await loadAttachmentDescriptionsForEvents(db, events, options.preferredDescriptionModels);
+  const renderIdentities = await resolveRenderIdentities(db, events);
   const replyQuotes = await loadReplyQuotesForEvents(db, events, {
     discordUserResolver: renderIdentities.discordUserResolver,
-    hiddenName,
   });
   return renderEvents(events, {
     compactAuthors: options.compactAuthors,
@@ -445,9 +428,6 @@ export async function exportConversation(
   if (endDate) {
     whereConditions.push("timestamp <= ?");
     params.push(endDate);
-  }
-  if (options.excludeHidden && await hasHiddenContacts(db)) {
-    whereConditions.push(`id NOT IN (${hiddenEventIdsSubquery()})`);
   }
 
   const whereClause = whereConditions.join(" AND ");

@@ -5,8 +5,10 @@
  * meaning of hidden: an event that event_people files under a hidden contact's
  * identity is left out (buildHiddenEventClause in src/db/events.ts), so a group
  * chat keeps everyone else's messages and a DM with a hidden contact
- * disappears. Naming one includes them: a tool given a hidden contact by name,
- * id or identifier, or one of their events by id, answers as for anyone else.
+ * disappears. What a visible message says, quotes or forwards is shown as it
+ * is, with real names. Naming a hidden contact includes them: a tool given one
+ * by name, id or identifier, one conversation by id, or one of their events by
+ * id answers as for anyone else.
  *
  * Queries that build their own SQL take the clause (or their function's
  * excludeHidden / includeHiddenContacts: false option); a tool holding events
@@ -14,22 +16,11 @@
  */
 
 import type { QueryExecutor } from "../db/pool";
-import { resolveIdentities } from "../db/identities";
-import { hasHiddenContacts, hiddenEventIdsAmong } from "../db/queries";
+import { hiddenEventIdsAmong } from "../db/queries";
 import type { TimelineEvent } from "../db/schema";
-import { hiddenForwardIds } from "../export/hidden-forwards";
-import { parseDiscordPoll } from "../platforms/discord/shared/forward";
-import { extractUserMentionIds } from "../platforms/discord/shared/mentions";
 
 /** For the server instructions: hidden contacts are not missing, and are not for an agent to volunteer. */
 export const HIDDEN_CONTACTS_NOTE = "Contacts the user has hidden are left out of catch-ups, searches and lists; name one and the tools include them. Bring one up only when the conversation is about them.";
-
-/**
- * What a hidden contact is called where a visible event names them (a mention,
- * a poll voter, a reaction): a name of some kind, so the renderer does not fall
- * back to the handle the event recorded.
- */
-export const HIDDEN_CONTACT_NAME = "someone";
 
 /** The events, in order, without those filed under a hidden contact. */
 export async function withoutHiddenContactEvents<E extends Pick<TimelineEvent, "id">>(
@@ -41,10 +32,8 @@ export async function withoutHiddenContactEvents<E extends Pick<TimelineEvent, "
 }
 
 /**
- * The windows, in order, without any whose snippet could show a hidden
- * contact: it quotes every message in the window as indexed, forwards
- * included, and names those it mentions and poll voters. A window whose messages are gone is
- * dropped too, since nothing then says whose they were.
+ * The windows, in order, without any that holds a hidden contact's own
+ * message, or a message since deleted, since nothing then says whose it was.
  */
 export async function withoutHiddenWindows<W extends { eventIds: number[] }>(
   db: QueryExecutor,
@@ -52,20 +41,9 @@ export async function withoutHiddenWindows<W extends { eventIds: number[] }>(
 ): Promise<W[]> {
   const ids = [...new Set(windows.flatMap((w) => w.eventIds))];
   if (ids.length === 0) return windows;
-  const rows = await db.query<Pick<TimelineEvent, "id" | "source" | "source_account" | "raw_data" | "content">>(
-    `SELECT id, source, source_account, raw_data, content FROM events WHERE id IN (${ids.map(() => "?").join(", ")})`,
-    ...ids,
-  );
+  const rows = await db.query<{ id: number }>(`SELECT id FROM events WHERE id IN (${ids.map(() => "?").join(", ")})`, ...ids);
   const present = new Set(rows.map((row) => row.id));
-  if (!(await hasHiddenContacts(db))) return windows.filter((w) => w.eventIds.every((id) => present.has(id)));
   const hidden = await hiddenEventIdsAmong(db, ids);
-  for (const id of await hiddenForwardIds(db, rows)) hidden.add(id);
-  const named = new Map(rows.map((row) => [row.id, [
-    ...extractUserMentionIds(row.content ?? ""),
-    ...[...parseDiscordPoll(row.raw_data)?.votersByAnswerId.values() ?? []].flat().map((voter) => voter.id),
-  ].map((id) => `discord:${id}`)]));
-  const identities = await resolveIdentities(db, [...new Set([...named.values()].flat())]);
-  for (const [id, people] of named) if (people.some((person) => identities[person]?.hidden)) hidden.add(id);
   return windows.filter((w) => w.eventIds.every((id) => present.has(id) && !hidden.has(id)));
 }
 

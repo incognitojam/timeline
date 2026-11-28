@@ -40,9 +40,7 @@ import {
   getIdentitiesForContact,
   getRawDataSchema,
   getRecentEvents,
-  hasHiddenContacts,
   hiddenContactsOfEvent,
-  hiddenEventIdsSubquery,
   hydrateEventsById,
   invalidateHiddenClauseCaches,
   listContacts,
@@ -59,7 +57,6 @@ import type { TimelineEvent } from "./db/schema";
 import { notConfiguredMessage } from "./embeddings/config";
 import { formatWindowHit, type SemanticSearch, searchEmbeddingsWithWindows } from "./embeddings/search";
 import { exportConversation } from "./export/export";
-import { maskForwardsOfHiddenEvents } from "./export/hidden-forwards";
 import {
   getAttachmentDescription,
   getMessageMarkers,
@@ -82,7 +79,6 @@ import {
 import { listedNotes, memoryInstructions, renderMemoryIndex, renderMemoryNote } from "./mcp/memory";
 import { renderSchemaOverview } from "./mcp/schema";
 import {
-  HIDDEN_CONTACT_NAME,
   HIDDEN_CONTACTS_NOTE,
   hiddenContactIds,
   withoutHiddenContactEvents,
@@ -230,13 +226,12 @@ function preview(text: string, max: number, full: boolean): string {
  */
 export async function formatEvents(
   db: QueryExecutor,
-  listed: TimelineEvent[],
+  events: TimelineEvent[],
   fullContent = false
 ): Promise<string> {
-  if (listed.length === 0) {
+  if (events.length === 0) {
     return "No events found.";
   }
-  const { events } = await maskForwardsOfHiddenEvents(db, listed);
 
   // Collect every identifier we may need to resolve.
   const identifiers = new Set<string>();
@@ -259,9 +254,7 @@ export async function formatEvents(
     ? await resolveIdentities(db, [...identifiers])
     : {};
 
-  // A hidden contact's name is not shown, even where a visible message mentions them.
-  const discordUserResolver = (id: string): string | null =>
-    resolved[`discord:${id}`]?.hidden ? HIDDEN_CONTACT_NAME : resolved[`discord:${id}`]?.name ?? null;
+  const discordUserResolver = (id: string): string | null => resolved[`discord:${id}`]?.name ?? null;
 
   const lines = ["Times in UTC."];
   let day: string | undefined;
@@ -670,15 +663,6 @@ function excludedSources(
   };
 }
 
-/** The same JSON with each leaf replaced by its type name. */
-function valueTypes(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(valueTypes);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, valueTypes(inner)]));
-  }
-  return value === null ? null : typeof value;
-}
-
 /** Date-bounded queries list oldest first; the rest newest first. */
 function rangeOrder(...bounds: (string | undefined)[]): PageOrder {
   return bounds.some(Boolean) ? "oldest first" : "newest first";
@@ -1033,7 +1017,6 @@ Examples:
 
       let conversationId = conversation_id;
       let conversationSource: string | undefined;
-      let excludeHidden = true;
       if (event_id !== undefined) {
         const event = await db.get<{ conversation_id: string | null; source: string }>(
           "SELECT conversation_id, source FROM events WHERE id = ?",
@@ -1045,8 +1028,6 @@ Examples:
             content: [{ type: "text" as const, text: `Times in UTC.\nTranscript tokens: 0.\nError: No event found with id ${event_id}.` }],
           };
         }
-        // An event filed under a hidden contact was asked for by id, so the hidden filter is off.
-        if ((await withoutHiddenContactEvents(db, [{ id: event_id }])).length === 0) excludeHidden = false;
         if (!event.conversation_id) {
           return {
             isError: true,
@@ -1072,8 +1053,6 @@ Examples:
       }, {
         limit,
         source: conversationSource,
-        excludeHidden,
-        hiddenContactName: HIDDEN_CONTACT_NAME,
         mostRecent: true,
         includeTotal: true,
         aroundEventId: event_id !== undefined && start_date === undefined && end_date === undefined
@@ -1124,8 +1103,8 @@ Examples:
       const limit = params.limit ?? 50;
       const cursorError = invalidCursor(cursor);
       if (cursorError) return cursorError;
-      // Context around an event filed under a hidden contact was asked for by id, so that contact is shown;
-      // other hidden contacts stay out of the window.
+      // One conversation was asked for, so everyone in it is shown. Context around an event filed under a
+      // hidden contact was asked for by id, so that contact is shown; other hidden contacts stay out of the window.
       const shownContactIds = event_id !== undefined && timestamp === undefined ? await hiddenContactsOfEvent(db, event_id) : [];
       let conversation: { source: string; sourceAccount: string; conversationId: string } | undefined;
       if (params.same_conversation) {
@@ -1150,7 +1129,7 @@ Examples:
         sources: splitSources(source),
         excludeSources: splitSources(exclude_source),
         conversation,
-        excludeHidden: true,
+        excludeHidden: !params.same_conversation,
         shownContactIds,
         cursor,
         limit: limit + 1,
@@ -1181,7 +1160,7 @@ Examples:
       const { source, type } = params;
       // Source specified → raw_data JSON schema
       if (source) {
-        const schema = await getRawDataSchema(db, { source, type, excludeHidden: true });
+        const schema = await getRawDataSchema(db, { source, type });
 
         if (schema.sampleCount === 0) {
           return {
@@ -1192,9 +1171,8 @@ Examples:
           };
         }
 
-        const anyHidden = await hasHiddenContacts(db);
         const types = await db.query<{ type: string; n: number }>(
-          `SELECT type, count(*) AS n FROM events WHERE source = ?${anyHidden ? ` AND id NOT IN (${hiddenEventIdsSubquery()})` : ""} GROUP BY type ORDER BY n DESC`,
+          "SELECT type, count(*) AS n FROM events WHERE source = ? GROUP BY type ORDER BY n DESC",
           source,
         );
         const lines = [
@@ -1205,11 +1183,8 @@ Examples:
           "JSON paths (use with json_extract):",
           ...schema.paths.map(p => `  ${p}`),
           "",
-          // A visible event's raw_data can embed a hidden contact's message
-          // (a Discord reply's referenced_message), so with any hidden, the
-          // sample shows each value's type, not the value.
-          anyHidden ? "Sample (value types):" : "Sample (truncated):",
-          JSON.stringify(anyHidden ? valueTypes(schema.sample) : schema.sample, null, 2),
+          "Sample (truncated):",
+          JSON.stringify(schema.sample, null, 2),
         ];
 
         return {
@@ -1218,7 +1193,6 @@ Examples:
       }
 
       // No params → what a model needs to write SQL, and the sources.
-      // Counts, no content: hidden contacts' events count, which spares a NOT IN over every event.
       const sources = await listSources(db, { includeHiddenContacts: true });
       // One index seek per source (idx_events_source_timestamp), not a scan.
       const latest = new Map<string, string | null>();
