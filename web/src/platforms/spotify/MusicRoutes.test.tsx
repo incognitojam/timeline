@@ -271,7 +271,7 @@ describe("music route query cache", () => {
       expect(toggle).toHaveAttribute("aria-checked", "true");
     });
 
-    screen.getByRole("link", { name: "← Music" }).click();
+    screen.getByRole("link", { name: "Music" }).click();
     expect(await screen.findByRole("link", { name: "Filtered · no private sessions" })).toBeInTheDocument();
     expect(screen.getAllByText("Example Track").length).toBeGreaterThan(0);
     expect(screen.queryByText("Every track in this range is excluded.")).toBeNull();
