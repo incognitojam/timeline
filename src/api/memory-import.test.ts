@@ -417,7 +417,7 @@ describe("import from claude.ai's memory export", () => {
     expect(getMemoryNote(appDb, "", "climbing")?.contact_id).toBeNull();
   });
 
-  test("matches a hidden contact by name, and refuses the import if it is hidden or shown again after the preview", async () => {
+  test("matches a hidden contact by name, and imports whether it is hidden or shown after the preview", async () => {
     const carolId = createContact(timelineDb, "Carol");
     timelineDb.prepare("UPDATE contacts SET hidden = 1 WHERE id = ?").run(carolId);
     const preview = await upload(JSON.stringify(EXPORT));
@@ -426,18 +426,12 @@ describe("import from claude.ai's memory export", () => {
       contact: { id: carolId, name: "Carol", hidden: true },
     });
 
+    // Hiding or showing a contact changes nothing the import writes.
     timelineDb.prepare("UPDATE contacts SET hidden = 0 WHERE id = ?").run(carolId);
-    expect(await upload(JSON.stringify(EXPORT), preview.body.planId, {}, shownLinks(preview.body))).toEqual({ status: 400, body: { error: CHANGED } as never });
-    timelineDb.prepare("UPDATE contacts SET hidden = 1 WHERE id = ?").run(carolId);
+    timelineDb.prepare("UPDATE contacts SET hidden = 1 WHERE id = ?").run(aliceId);
     const imported = await upload(JSON.stringify(EXPORT), preview.body.planId, {}, shownLinks(preview.body));
     expect(imported.status).toBe(200);
     expect(getMemoryNote(appDb, "garden-planner", "carol")?.contact_id).toBe(carolId);
-
-    // A visible contact hidden after its preview refuses too.
-    appDb.exec("DELETE FROM memory_notes");
-    const again = await upload(JSON.stringify(EXPORT));
-    timelineDb.prepare("UPDATE contacts SET hidden = 1 WHERE id = ?").run(aliceId);
-    expect(await upload(JSON.stringify(EXPORT), again.body.planId, {}, shownLinks(again.body))).toEqual({ status: 400, body: { error: CHANGED } as never });
   });
 
   test("says why a person was not linked, and refuses an import whose matches changed since the preview", async () => {

@@ -1986,20 +1986,16 @@ app.delete("/api/contacts/:id", async (c) => {
     return c.json({ error: "Contact not found" }, 404);
   }
   // What happens to the memory notes linked to the contact: kept, unlinked, or
-  // deleted. When there are any, the choice must name the count and visibility
-  // the owner was shown; otherwise the current ones come back to choose again.
+  // deleted. When there are any, the choice must name the count the owner was
+  // shown; otherwise the current one comes back to choose again.
   const notes = c.req.query("notes");
   if (notes !== undefined && notes !== "keep" && notes !== "delete") return c.json({ error: 'notes must be "keep" or "delete"' }, 400);
   const memoryNoteCount = listContactMemoryNotes(getAppStateDb(), id).length;
   const hidden = existing.hidden === 1;
-  if (memoryNoteCount > 0 && (notes === undefined
-    || c.req.query("count") !== String(memoryNoteCount) || c.req.query("hidden") !== String(hidden))) {
-    return c.json({ error: "Choose again what happens to the memory notes linked to this contact.", memoryNoteCount, hidden }, 409);
+  if (memoryNoteCount > 0 && (notes === undefined || c.req.query("count") !== String(memoryNoteCount))) {
+    return c.json({ error: "Choose again what happens to the memory notes linked to this contact.", memoryNoteCount }, 409);
   }
   const deleteNotes = notes === "delete";
-  // Deleted notes go first, so a failed contact delete leaves them deleted, not
-  // readable. Kept notes are unlinked after, so a failed contact delete leaves
-  // a hidden contact's notes still hidden.
   if (deleteNotes) releaseContactMemoryNotes(getAppStateDb(), id, true);
   deleteContact(db, id);
   invalidateContactMappingCaches();

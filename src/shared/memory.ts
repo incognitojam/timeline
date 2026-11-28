@@ -66,7 +66,7 @@ export interface MemoryImportPerson extends MemoryImportNote {
   /** Other names the export gives the person that were matched like the title. */
   aliases: string[];
   match: MemoryContactMatch;
-  /** The contact matched by name. A note linked to a hidden contact is kept from agents. */
+  /** The contact matched by name. */
   contact: MemoryImportContact | null;
   /** After an import, the contact the note was saved with, as it was then. */
   saved?: MemoryImportContact | null;

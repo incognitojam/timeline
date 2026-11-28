@@ -16,7 +16,6 @@ import type { CallToolResult, RequestId, ServerNotification, ServerRequest } fro
 import { z } from "zod";
 import { getAppStateDb } from "./db/app-state";
 import {
-  checkNewMemoryNote,
   deleteMemoryNote,
   getMemoryNote,
   listContactMemoryNotes,
@@ -80,7 +79,7 @@ import {
   normalizeMcpToolCallSince,
   searchMcpToolCalls,
 } from "./mcp/recording";
-import { memoryInstructions, renderMemoryIndex, renderMemoryNote } from "./mcp/memory";
+import { listedNotes, memoryInstructions, renderMemoryIndex, renderMemoryNote } from "./mcp/memory";
 import { renderSchemaOverview } from "./mcp/schema";
 import {
   HIDDEN_CONTACT_NAME,
@@ -1536,11 +1535,6 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
     isError: true,
     content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
   });
-  /** A note linked to a hidden contact reads here as no note at all. */
-  const isHiddenLinkedNote = async (project: string, name: string): Promise<boolean> => {
-    const note = getMemoryNote(getMcpHistoryDb(), project, name);
-    return note?.contact_id != null && (await hiddenContactIds(db)).has(note.contact_id);
-  };
   const noNote = (project: string, name: string) =>
     memoryError(`No note named "${name}" in ${project ? `project ${project}` : "the account"}.`);
   const projectParam = z.string().optional().describe("Repository name; omit for account notes");
@@ -1555,10 +1549,11 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
       try {
         const project = projectScope(params.project);
         const appDb = getMcpHistoryDb();
-        const hidden = await hiddenContactIds(db);
-        const notes = listMemoryNotes(appDb, project).filter((note) => note.contact_id === null || !hidden.has(note.contact_id));
-        const index = renderMemoryIndex(notes, project, projectUsesAccountMemory(appDb, project));
-        return { content: [{ type: "text" as const, text: index }] };
+        const withAccount = projectUsesAccountMemory(appDb, project);
+        const inScope = listMemoryNotes(appDb, project).filter((note) => withAccount || note.project === project);
+        const { notes, leftOut } = listedNotes(inScope, await hiddenContactIds(db));
+        const index = renderMemoryIndex(notes, project, withAccount);
+        return { content: [{ type: "text" as const, text: leftOut ? `${index}\n${leftOut}` : index }] };
       } catch (error) {
         return memoryError(error);
       }
@@ -1574,9 +1569,7 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
       try {
         const project = projectScope(params.project);
         const note = getMemoryNote(getMcpHistoryDb(), project, params.name);
-        if (!note || (note.contact_id !== null && (await hiddenContactIds(db)).has(note.contact_id))) {
-          return noNote(project, params.name);
-        }
+        if (!note) return noNote(project, params.name);
         return { content: [{ type: "text" as const, text: renderMemoryNote(note) }] };
       } catch (error) {
         return memoryError(error);
@@ -1600,20 +1593,16 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
     async (params, extra) => instrumentToolCall("save_memory_note", params, extra, async () => {
       try {
         let contactId: number | null | undefined;
+        let contactName: string | undefined;
         if (params.contact === "") {
           contactId = null;
         } else if (params.contact !== undefined) {
           const resolved = await resolveContact(db, params.contact);
           if (resolved.error) return { content: resolved.error, isError: true };
           contactId = resolved.contact.id;
+          contactName = resolved.contact.display_name;
         }
         const project = projectScope(params.project);
-        // Checked as a new note would be, so a call that could not create one
-        // fails the same way; one that could is refused, since the name is taken.
-        if (await isHiddenLinkedNote(project, params.name)) {
-          checkNewMemoryNote(getMcpHistoryDb(), { ...params, project });
-          return memoryError(`Note "${params.name}" can't be saved: the name is taken.`);
-        }
         const { note, created } = saveMemoryNote(getMcpHistoryDb(), {
           project,
           name: params.name,
@@ -1624,10 +1613,17 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
           contactId,
         });
         const scope = project ? `project ${project}` : "account";
+        // A new note about a contact who already has one is likely a near-copy of it.
+        const others = created && contactId != null
+          ? listContactMemoryNotes(getMcpHistoryDb(), contactId).filter((n) => n.name !== note.name || n.project !== note.project)
+          : [];
+        const nearCopy = others.length > 0
+          ? `\n${contactName} already has ${others.map((n) => `${n.name}${n.project ? ` (project ${n.project})` : ""}`).join(", ")}; if this repeats it, merge it there and delete this one.`
+          : "";
         return {
           content: [{
             type: "text" as const,
-            text: `${created ? "Created" : "Updated"} memory: ${note.title} (${note.name}, ${scope})`,
+            text: `${created ? "Created" : "Updated"} memory: ${note.title} (${note.name}, ${scope})${nearCopy}`,
           }],
         };
       } catch (error) {
@@ -1644,7 +1640,6 @@ Requires embeddings to be configured and an index to be built (see docs/user/emb
     async (params, extra) => instrumentToolCall("delete_memory_note", params, extra, async () => {
       try {
         const project = projectScope(params.project);
-        if (await isHiddenLinkedNote(project, params.name)) return noNote(project, params.name);
         const note = deleteMemoryNote(getMcpHistoryDb(), project, params.name);
         if (!note) return noNote(project, params.name);
         const scope = project ? `project ${project}` : "account";

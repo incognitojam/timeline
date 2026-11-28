@@ -198,17 +198,17 @@ describe("Memory page", () => {
     expect(screen.getByText(/Link to Bob Tanner\?/).textContent).toBe("Link to Bob Tanner?");
     expect(idle.mutateAsync).not.toHaveBeenCalled();
     screen.getByRole("button", { name: "Save" }).click();
-    await waitFor(() => expect(idle.mutateAsync).toHaveBeenCalledWith({ project: "", name: "bob", edit: { contactId: 5, agentsCouldRead: true, agentsCanRead: true } }));
+    await waitFor(() => expect(idle.mutateAsync).toHaveBeenCalledWith({ project: "", name: "bob", edit: { contactId: 5 } }));
   });
 
-  it("says once that a note's contact is hidden, and what unlinking it means", async () => {
+  it("says once that a note's contact is hidden, and offers to unlink it or choose another", async () => {
     shown.note = dana;
     render(() => <MemoryNoteView />);
     expect(screen.getByRole("link", { name: "Dana Hidden" }).getAttribute("href")).toContain("7");
     expect(screen.getByRole("link", { name: "Dana Hidden" }).parentElement?.textContent).toBe("Linked to Dana Hidden, who is hidden in Contacts");
 
     screen.getByRole("button", { name: "Remove link" }).click();
-    expect(screen.getByText(/Remove the link to this contact\?/).textContent).toContain("agents will be able to read this note");
+    expect(screen.getByText(/Remove the link to this contact\?/).textContent).toBe("Remove the link to this contact?");
     screen.getByRole("button", { name: "Cancel" }).click();
 
     // The search leaves out the contact the note is linked to.
@@ -218,7 +218,7 @@ describe("Memory page", () => {
     fireEvent.focus(search);
     expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["Bob Tanner"]);
     screen.getByRole("option", { name: "Bob Tanner" }).click();
-    expect(screen.getByText(/Link to Bob Tanner\?/).textContent).toBe("Link to Bob Tanner? · agents will be able to read this note");
+    expect(screen.getByText(/Link to Bob Tanner\?/).textContent).toBe("Link to Bob Tanner?");
   });
 
   it("offers no contact control on a note that is not about a person", () => {

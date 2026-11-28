@@ -635,26 +635,23 @@ export async function updateContact(
   return data.contact;
 }
 
-/** What the owner chose for a contact's linked memory notes, with the count and visibility they were shown. */
+/** What the owner chose for a contact's linked memory notes, with the count they were shown. */
 export interface ContactNotesChoice {
   notes: "keep" | "delete";
   count: number;
-  hidden: boolean;
 }
 
 /**
  * Delete a contact; null when deleted. A contact with linked memory notes is
- * deleted only with a choice whose count and visibility are still current;
- * otherwise the current ones come back, to choose again.
+ * deleted only with a choice whose count is still current; otherwise the
+ * current count comes back, to choose again.
  */
-export async function deleteContact(id: number, choice?: ContactNotesChoice): Promise<{ memoryNoteCount: number; hidden: boolean } | null> {
-  const params = choice ? `?${new URLSearchParams({ notes: choice.notes, count: String(choice.count), hidden: String(choice.hidden) })}` : "";
+export async function deleteContact(id: number, choice?: ContactNotesChoice): Promise<{ memoryNoteCount: number } | null> {
+  const params = choice ? `?${new URLSearchParams({ notes: choice.notes, count: String(choice.count) })}` : "";
   const res = await apiFetch(`${API_BASE}/api/contacts/${id}${params}`, { method: "DELETE" });
   if (res.status === 409) {
-    const data = await res.json() as { memoryNoteCount?: unknown; hidden?: unknown };
-    if (typeof data.memoryNoteCount === "number" && typeof data.hidden === "boolean") {
-      return { memoryNoteCount: data.memoryNoteCount, hidden: data.hidden };
-    }
+    const data = await res.json() as { memoryNoteCount?: unknown };
+    if (typeof data.memoryNoteCount === "number") return { memoryNoteCount: data.memoryNoteCount };
   }
   await parseApiJson(res, "Failed to delete contact");
   return null;
@@ -2493,14 +2490,10 @@ function memoryNotePath(project: string, name: string, suffix = ""): string {
   return `${API_BASE}/api/memory/notes/${encodeURIComponent(name)}${suffix}${query}`;
 }
 
-/**
- * The fields a save changes. `contactId` null unlinks the contact; it comes
- * with whether agents could read the note before and can after, as the page
- * said, which the server checks.
- */
+/** The fields a save changes. `contactId` null unlinks the contact. */
 export type MemoryNoteEdit =
   | Partial<Pick<MemoryNote, "kind" | "title" | "summary" | "details">>
-  | { contactId: number | null; agentsCouldRead: boolean; agentsCanRead: boolean };
+  | { contactId: number | null };
 
 export async function fetchMemoryIndex(signal: AbortSignal): Promise<MemoryIndexWithContacts> {
   const res = await apiFetch(`${API_BASE}/api/memory`, { signal });

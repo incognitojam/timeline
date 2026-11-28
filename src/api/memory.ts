@@ -45,7 +45,7 @@ function refused(c: Context, error: unknown) {
 
 type Contact = MemoryImportContact;
 
-/** Contacts by id, hidden ones included: the owner's session may link a note to one, which keeps the note from agents. */
+/** Contacts by id, hidden ones included: the owner may link a note to one. */
 const CONTACT_COLUMNS = "id, display_name AS name, hidden";
 const contactRow = (row: { id: number; name: string; hidden: number }): Contact => ({ id: row.id, name: row.name, hidden: row.hidden === 1 });
 type PersonMatch = { aliases: string[]; match: MemoryContactMatch; contact: Contact | null };
@@ -105,16 +105,20 @@ async function chosenLinks(contacts: QueryExecutor, raw: string | undefined): Pr
 }
 
 /**
- * What a plan adds, in order, with each note's content and how it matched
- * contacts by name, hidden ones included, for Import to check that none of it
- * has changed since the preview.
+ * What a plan adds, in order, with each note's content and the contacts it
+ * matched by name, for Import to check that none of it has changed since the
+ * preview. Whether a matched contact is hidden is left out: hiding or showing
+ * one changes nothing the import writes.
  */
 const planId = (plan: MemoryImportPlan, matches: Map<ClaudeMemoryNote, PersonMatch>) =>
   new Bun.CryptoHasher("sha256")
-    .update(JSON.stringify(plan.add.map((note) => [
-      note.project, note.name, note.kind, note.title, note.summary, note.details, note.updatedAt,
-      note.contactId, matches.get(note as ClaudeMemoryNote)?.contact?.hidden ?? null, matches.get(note as ClaudeMemoryNote)?.match ?? null,
-    ])))
+    .update(JSON.stringify(plan.add.map((note) => {
+      const match = matches.get(note as ClaudeMemoryNote)?.match ?? null;
+      return [
+        note.project, note.name, note.kind, note.title, note.summary, note.details, note.updatedAt,
+        note.contactId, match?.by === "several" ? { by: match.by, count: match.count } : match,
+      ];
+    })))
     .digest("hex")
     .slice(0, 16);
 
@@ -153,33 +157,21 @@ function importResult(
 }
 
 /**
- * A PATCH's change to a person note's contact: `contactId`, a contact (hidden ones included, since linking to
- * one keeps the note from agents) or null to unlink, with whether agents could read the note before and can
- * after, as the page told the owner. Refused if either is no longer true, or if the note's contact changes
- * before the save (`check`).
+ * A PATCH's change to a person note's contact: `contactId`, a contact (hidden ones included) or null to
+ * unlink. Refused if the note's contact changes before the save (`check`).
  */
 async function contactChange(
   contacts: QueryExecutor,
   current: MemoryNote | null,
   body: Record<string, unknown>,
-): Promise<{ contactId?: number | null; check?: (latest: MemoryNote) => void } | { error: string; status: 400 | 409 }> {
-  const { contactId, agentsCouldRead, agentsCanRead } = body;
+): Promise<{ contactId?: number | null; check?: (latest: MemoryNote) => void } | { error: string; status: 400 }> {
+  const { contactId } = body;
   if (contactId === undefined) return {};
   if (contactId !== null && !Number.isSafeInteger(contactId)) return { error: "contactId must be a contact id or null", status: 400 };
-  if (typeof agentsCouldRead !== "boolean" || typeof agentsCanRead !== "boolean") {
-    return { error: "agentsCouldRead and agentsCanRead must be booleans alongside contactId", status: 400 };
-  }
   const next = contactId as number | null;
   const before = current?.contact_id ?? null;
-  const rows = await contacts.query<{ id: number; hidden: number }>(
-    "SELECT id, hidden FROM contacts WHERE id IN (SELECT value FROM json_each(?))",
-    JSON.stringify([before, next].filter((id) => id !== null)),
-  );
-  if (next !== null && !rows.some((row) => row.id === next)) return { error: "That contact is no longer in your contacts.", status: 400 };
-  // As agents see it: a note is readable unless its contact exists and is hidden.
-  const readable = (id: number | null) => !rows.some((row) => row.id === id && row.hidden === 1);
-  if (current && (readable(before) !== agentsCouldRead || readable(next) !== agentsCanRead)) {
-    return { error: "Whether agents can read this note has changed since the page loaded. Check the contact and choose again.", status: 409 };
+  if (next !== null && !(await contacts.get("SELECT id FROM contacts WHERE id = ?", next))) {
+    return { error: "That contact is no longer in your contacts.", status: 400 };
   }
   return {
     contactId: next,

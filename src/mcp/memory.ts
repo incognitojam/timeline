@@ -38,6 +38,19 @@ export function renderMemoryIndex(notes: MemoryNote[], project = "", withAccount
   return [...own, "", ...account].join("\n");
 }
 
+/**
+ * The notes to list, leaving out those linked to a hidden contact, with a line
+ * saying how many were left out (null when none). They stay readable by name.
+ */
+export function listedNotes(notes: MemoryNote[], hiddenContactIds: ReadonlySet<number>): { notes: MemoryNote[]; leftOut: string | null } {
+  const listed = notes.filter((note) => note.contact_id === null || !hiddenContactIds.has(note.contact_id));
+  const n = notes.length - listed.length;
+  return {
+    notes: listed,
+    leftOut: n === 0 ? null : `${n} note${n === 1 ? "" : "s"} about hidden contacts not listed; get_contact_info lists a contact's notes.`,
+  };
+}
+
 export function renderMemoryNote(note: MemoryNote): string {
   return [
     `# ${note.title}`,
@@ -65,8 +78,7 @@ export function memoryInstructions(
 ): string {
   // A note cannot close the block early.
   const escape = (text: string) => text.replace(/<(\/?memory)/gi, "&lt;$1");
-  const hidden = opts.hiddenContactIds;
-  const notes = listMemoryNotes(db).filter((note) => note.contact_id === null || !hidden?.has(note.contact_id));
+  const { notes, leftOut } = listedNotes(listMemoryNotes(db), opts.hiddenContactIds ?? new Set());
   const index = escape(renderMemoryIndex(notes));
   // The `you` notes, most recently updated first, while they fit beside the index.
   const you: string[] = [];
@@ -84,8 +96,9 @@ export function memoryInstructions(
   const omitted = left.length > 0 ? `\n\n(Not included here to save space; read with get_memory_note: ${left.join(", ")}.)` : "";
   let body = [...you, index].join("\n\n") + omitted;
   if (body.length > MEMORY_INSTRUCTIONS_CAP) {
-    const cut = index.lastIndexOf("\n", MEMORY_INSTRUCTIONS_CAP - 100);
+    const cut = index.lastIndexOf("\n", MEMORY_INSTRUCTIONS_CAP - 200);
     body = `${index.slice(0, cut)}\n(The index is cut short here; call list_memory for all of it.)`;
   }
+  if (leftOut) body += `\n${leftOut}`;
   return `${passage(!!opts.readOnly)}\n\n<memory>\n${body}\n</memory>`;
 }

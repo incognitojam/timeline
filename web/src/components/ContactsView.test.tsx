@@ -175,7 +175,7 @@ describe("ContactsView", () => {
     });
   });
 
-  it("asks what happens to a hidden contact's linked notes, keeping them by default", async () => {
+  it("asks what happens to a contact's linked notes, keeping them by default", async () => {
     testState.contactQuery = loadedQuery(contactDetail({ ...makeContact(1, "Alice Example"), hidden: 1 }, 2));
     const { getByRole } = render(() => <ContactsView />);
 
@@ -183,14 +183,14 @@ describe("ContactsView", () => {
 
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("2 memory notes are linked to this contact.");
-    expect(dialog).toHaveTextContent("agents will be able to read these notes");
+    expect(dialog).not.toHaveTextContent("agents");
     expect(screen.getByRole("radio", { name: /Keep the notes, unlinked/ })).toBeChecked();
     expect(confirm).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText("Delete contact"));
-    await waitFor(() => expect(testState.deleteContact).toHaveBeenCalledWith({ id: 1, choice: { notes: "keep", count: 2, hidden: true } }));
+    await waitFor(() => expect(testState.deleteContact).toHaveBeenCalledWith({ id: 1, choice: { notes: "keep", count: 2 } }));
   });
 
-  it("deletes the linked notes when chosen, without the hidden warning for a visible contact", async () => {
+  it("deletes the linked notes when chosen", async () => {
     testState.contactQuery = loadedQuery(contactDetail(makeContact(1, "Alice Example"), 1));
     const { getByRole } = render(() => <ContactsView />);
 
@@ -198,14 +198,13 @@ describe("ContactsView", () => {
 
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("1 memory note is linked to this contact.");
-    expect(dialog).not.toHaveTextContent("agents will be able to read");
     fireEvent.click(screen.getByRole("radio", { name: /Delete the note too/ }));
     fireEvent.click(screen.getByText("Delete contact"));
-    await waitFor(() => expect(testState.deleteContact).toHaveBeenCalledWith({ id: 1, choice: { notes: "delete", count: 1, hidden: false } }));
+    await waitFor(() => expect(testState.deleteContact).toHaveBeenCalledWith({ id: 1, choice: { notes: "delete", count: 1 } }));
   });
 
   it("asks about notes linked since the contact loaded, when the delete is refused for them", async () => {
-    testState.deleteContact.mockResolvedValueOnce({ memoryNoteCount: 1, hidden: false });
+    testState.deleteContact.mockResolvedValueOnce({ memoryNoteCount: 1 });
     const { getByRole } = render(() => <ContactsView />);
 
     fireEvent.click(getByRole("button", { name: "Delete" }));
@@ -214,20 +213,19 @@ describe("ContactsView", () => {
     expect(testState.deleteContact).toHaveBeenCalledWith({ id: 1 });
   });
 
-  it("asks again, with the warning, when the contact was hidden since the dialog opened", async () => {
+  it("asks again, with the new count, when notes were linked since the dialog opened", async () => {
     testState.contactQuery = loadedQuery(contactDetail(makeContact(1, "Alice Example"), 1));
-    testState.deleteContact.mockResolvedValueOnce({ memoryNoteCount: 1, hidden: true });
+    testState.deleteContact.mockResolvedValueOnce({ memoryNoteCount: 2 });
     const { getByRole } = render(() => <ContactsView />);
 
     fireEvent.click(getByRole("button", { name: "Delete" }));
     const dialog = await screen.findByRole("dialog");
-    expect(dialog).not.toHaveTextContent("agents will be able to read");
     fireEvent.click(screen.getByText("Delete contact"));
 
-    await waitFor(() => expect(dialog).toHaveTextContent("agents will be able to read this note"));
+    await waitFor(() => expect(dialog).toHaveTextContent("2 memory notes are linked to this contact."));
     expect(dialog).toHaveTextContent("changed since this opened");
     fireEvent.click(screen.getByText("Delete contact"));
-    await waitFor(() => expect(testState.deleteContact).toHaveBeenLastCalledWith({ id: 1, choice: { notes: "keep", count: 1, hidden: true } }));
+    await waitFor(() => expect(testState.deleteContact).toHaveBeenLastCalledWith({ id: 1, choice: { notes: "keep", count: 2 } }));
   });
 
   it("marks a contact as self via the This is me action", async () => {
