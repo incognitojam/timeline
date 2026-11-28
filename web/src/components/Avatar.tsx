@@ -6,6 +6,8 @@ interface AvatarProps {
   name: string;
   size?: "sm" | "md" | "lg";
   class?: string;
+  /** Names it for a shared-element view transition (see lib/view-transition.ts). */
+  transitionName?: string;
 }
 
 const SIZE_CLASSES = {
@@ -24,17 +26,18 @@ function hashColor(name: string): string {
 }
 
 export default function Avatar(props: AvatarProps) {
-  const [imgError, setImgError] = createSignal(false);
+  // The URL that failed, so a reused avatar shows the next contact's photo.
+  const [failedUrl, setFailedUrl] = createSignal<string>();
 
   const sizeClass = () => SIZE_CLASSES[props.size ?? "md"];
 
   return (
     <Show
-      when={!imgError() && props.url}
+      when={props.url !== failedUrl() && props.url}
       fallback={
         <div
           class={`rounded-full flex items-center justify-center text-white font-medium flex-shrink-0 ${sizeClass()} ${props.class ?? ""}`}
-          style={{ "background-color": hashColor(props.name) }}
+          style={{ "background-color": hashColor(props.name), "view-transition-name": props.transitionName }}
         >
           {getInitials(props.name)}
         </div>
@@ -45,7 +48,8 @@ export default function Avatar(props: AvatarProps) {
           src={url()}
           alt={props.name}
           class={`rounded-full object-cover flex-shrink-0 ${sizeClass()} ${props.class ?? ""}`}
-          onError={() => setImgError(true)}
+          style={{ "view-transition-name": props.transitionName }}
+          onError={() => setFailedUrl(url())}
           loading="lazy"
           referrerpolicy="no-referrer"
         />

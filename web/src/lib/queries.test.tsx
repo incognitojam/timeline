@@ -8,6 +8,7 @@ import type { Contact, ContactWithStats } from "./types";
 import {
   queryKeys,
   useBatchLinkIdentities,
+  useContact,
   useConversationStats,
   useDeleteContact,
   useLinkIdentity,
@@ -294,5 +295,71 @@ describe("memory note query", () => {
     respond(Response.json({ note: { ...listed, summary: "Saved summary" } }));
     await waitFor(() => expect(note?.isPlaceholderData).toBe(false));
     expect(note?.data?.summary).toBe("Saved summary");
+  });
+});
+
+describe("contact detail placeholder", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  const listed = (id: number, name: string, hidden = 0): ContactWithStats => ({
+    id, display_name: name, notes: "row notes", date_of_birth: null, hidden, is_self: 0,
+    created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+    identityCount: 3, eventCount: 120, avatarUrl: "https://example.com/a.png",
+  });
+
+  function renderContact(client: QueryClient, id: number, includeHidden: boolean) {
+    let query: ReturnType<typeof useContact> | undefined;
+    render(() => (
+      <QueryClientProvider client={client}>
+        {(() => {
+          query = useContact(() => id, () => ({ includeHidden }));
+          return null;
+        })()}
+      </QueryClientProvider>
+    ));
+    if (!query) throw new Error("hook did not run");
+    return query;
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+  });
+
+  it("stands in the shown list's row, without identities, memories or counts", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(queryKeys.contacts({ includeHidden: false }), [listed(2, "Bob Example")]);
+
+    const query = renderContact(client, 2, false);
+    expect(query.isPlaceholderData).toBe(true);
+    expect(query.data).toEqual({
+      contact: expect.objectContaining({ id: 2, display_name: "Bob Example" }),
+      avatarUrl: "https://example.com/a.png",
+      identities: [],
+      memories: [],
+      memoryNoteCount: 0,
+    });
+    expect(query.data?.contact).not.toHaveProperty("eventCount");
+    expect(client.getQueryData(queryKeys.contact(2))).toBeUndefined();
+  });
+
+  it("uses only the list the page shows, so a hidden contact needs hidden contacts listed", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(queryKeys.contacts({ includeHidden: true }), [listed(3, "Hidden Example", 1)]);
+
+    expect(renderContact(client, 3, false).data).toBeUndefined();
+    cleanup();
+    expect(renderContact(client, 3, true).data?.contact.display_name).toBe("Hidden Example");
+  });
+
+  it("skips a list invalidated since it loaded", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(queryKeys.contacts({ includeHidden: false }), [listed(2, "Bob Example")]);
+    // Hiding a contact invalidates every query.
+    await client.invalidateQueries();
+
+    expect(renderContact(client, 2, false).data).toBeUndefined();
   });
 });

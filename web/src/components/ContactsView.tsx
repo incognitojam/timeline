@@ -16,6 +16,7 @@ import {
   useIdentityEvents,
   useLinkIdentity,
   useLinkSuggestions,
+  usePrefetchContact,
   useRefreshCache,
   useSkipIdentity,
   useSkippedIdentities,
@@ -25,10 +26,11 @@ import {
   useUnskipIdentity,
   useUpdateContact,
 } from "../lib/queries";
-import { buildConversationUrl } from "../lib/routes";
+import { APP_NAME, buildConversationUrl } from "../lib/routes";
 import { normalizeRouteParam } from "../lib/route-params";
 import { getSourceColorStyle } from "../lib/source-styles";
 import { staleContentClass } from "../lib/stale-content";
+import { sharedElementName, sharedTextStyle, useSharedElementTransition } from "../lib/view-transition";
 import type { Contact, ContactIdentity, ContactMemory as ContactMemoryType, ContactWithStats, UnlinkedIdentity } from "../lib/types";
 import Avatar from "./Avatar";
 import ContactConversations from "./ContactConversations";
@@ -183,7 +185,7 @@ export default function ContactsView() {
   }));
   const unlinkedQuery = useUnlinkedIdentities();
   const skippedQuery = useSkippedIdentities();
-  const selectedContactQuery = useContact(() => selectedContactId());
+  const selectedContactQuery = useContact(() => selectedContactId(), () => ({ includeHidden: showHidden() }));
   const contactEventsQuery = useContactEvents(() => selectedContactId(), () => ({ limit: 20 }));
   const contactSuggestionsQuery = useContactSuggestions(() => selectedContactId());
 
@@ -240,8 +242,9 @@ export default function ContactsView() {
     contactEventsQuery.isPending || contactEventsQuery.isLoadingError
       ? []
       : contactEventsQuery.data?.events ?? [];
+  // Placeholder suggestions are another contact's: never offer them for linking.
   const contactSuggestions = () =>
-    contactSuggestionsQuery.isPending || contactSuggestionsQuery.isLoadingError
+    contactSuggestionsQuery.isPending || contactSuggestionsQuery.isLoadingError || contactSuggestionsQuery.isPlaceholderData
       ? []
       : contactSuggestionsQuery.data?.suggestions ?? [];
   const identityEvents = () =>
@@ -256,9 +259,14 @@ export default function ContactsView() {
     linkSuggestionsQuery.isPending || linkSuggestionsQuery.isLoadingError
       ? []
       : linkSuggestionsQuery.data?.suggestions ?? [];
-  const selectedContactIsStale = () => selectedContactQuery.isPlaceholderData;
-  const contactEventsAreStale = () => contactEventsQuery.isPlaceholderData;
-  const contactSuggestionsAreStale = () => contactSuggestionsQuery.isPlaceholderData;
+  // The selected contact's row from the list, standing in until its detail
+  // loads: the header is right, the rest is not loaded yet.
+  const showsListedRow = () =>
+    selectedContactQuery.isPlaceholderData && selectedContact()?.contact.id === selectedContactId();
+  // Another contact's detail, kept while the selected one loads.
+  const selectedContactIsStale = () => selectedContactQuery.isPlaceholderData && !showsListedRow();
+  // Placeholder events are another contact's.
+  const contactEventsLoading = () => contactEventsQuery.isPending || contactEventsQuery.isPlaceholderData;
   const identityEventsAreStale = () => identityEventsQuery.isPlaceholderData;
 
 
@@ -297,6 +305,46 @@ export default function ContactsView() {
       source: undefined,
     }, { replace: true });
   }
+
+  const contactKey = (id: number) => `contact-${id}`;
+  const sharedTransition = useSharedElementTransition();
+  const prefetchContact = usePrefetchContact();
+
+  createEffect(() => {
+    const shown = selectedContact()?.contact;
+    document.title = shown && shown.id === selectedContactId() && !selectedUnlinked()
+      ? `${shown.display_name} · Contacts · ${APP_NAME}`
+      : `Contacts · ${APP_NAME}`;
+  });
+
+  // Arriving with a contact selected (Back from one of its conversations, a
+  // link from elsewhere) mounts the list at the top: scroll its row into view.
+  // The router puts the list in the document a little later, and a background
+  // refetch can replace the row meanwhile, so reveal the latest row once it is
+  // in the document, giving up after a second.
+  let pendingRow: HTMLElement | undefined;
+  let revealFrame: number | undefined;
+  let rowRevealed = false;
+  onCleanup(() => { if (revealFrame !== undefined) cancelAnimationFrame(revealFrame); });
+  const revealSelectedRow = (row: HTMLElement) => {
+    if (rowRevealed) return;
+    pendingRow = row;
+    if (revealFrame !== undefined) return;
+    let frames = 0;
+    const reveal = () => {
+      revealFrame = undefined;
+      const target = pendingRow;
+      if (target?.isConnected) {
+        rowRevealed = true;
+        const rect = target.getBoundingClientRect();
+        const offscreen = rect.top < 0 || rect.bottom > window.innerHeight;
+        target.scrollIntoView({ block: offscreen ? "center" : "nearest" });
+      } else if (++frames < 60) {
+        revealFrame = requestAnimationFrame(reveal);
+      }
+    };
+    revealFrame = requestAnimationFrame(reveal);
+  };
 
   // Handle keyboard shortcuts for link modal at document level
   createEffect(() => {
@@ -781,16 +829,31 @@ export default function ContactsView() {
                   <For each={filteredContacts()} fallback={<div class="p-4 text-muted-foreground">No contacts found</div>}>
                     {(contact) => (
                       <button
+                        ref={(row) => { if (selectedContactId() === contact.id) revealSelectedRow(row); }}
                         class={`w-full px-4 py-3 text-left border-b border-border hover:bg-accent transition-colors ${
                           selectedContactId() === contact.id ? "bg-accent" : ""
                         } ${contact.hidden ? "opacity-50" : ""}`}
-                        onClick={() => selectContact(contact.id)}
+                        onPointerEnter={() => prefetchContact(contact.id)}
+                        // Every click goes through the transition, so it supersedes
+                        // a selection still waiting for its transition.
+                        onClick={(event) => sharedTransition(contactKey(contact.id), () => selectContact(contact.id), event.currentTarget)}
                       >
                         <div class="flex items-center gap-3">
-                          <Avatar url={contact.avatarUrl} name={contact.display_name} size="md" />
+                          <Avatar
+                            url={contact.avatarUrl}
+                            name={contact.display_name}
+                            size="md"
+                            // Once selected, the header carries the name.
+                            transitionName={selectedContactId() === contact.id ? undefined : sharedElementName(contactKey(contact.id), "contact-avatar")}
+                          />
                           <div class="flex-1 min-w-0">
                             <div class="flex items-center justify-between gap-2">
-                              <span class="font-medium truncate">{contact.display_name}</span>
+                              <span
+                                class="font-medium truncate"
+                                style={selectedContactId() === contact.id ? undefined : sharedTextStyle(contactKey(contact.id), "contact-name")}
+                              >
+                                {contact.display_name}
+                              </span>
                               <Show when={contact.is_self || contact.hidden}>
                                 <span class="flex items-center gap-2 shrink-0">
                                   <Show when={contact.is_self}>
@@ -1151,17 +1214,32 @@ export default function ContactsView() {
         {/* Contact Detail */}
         <Show when={!selectedUnlinked() && selectedContactId() !== undefined && selectedContact()}>
           {(selected) => (
-            <div class={`p-6 max-w-3xl mx-auto ${staleContentClass(selectedContactIsStale())}`} aria-busy={selectedContactIsStale()}>
+            <div
+              class={`p-6 max-w-3xl mx-auto ${staleContentClass(selectedContactIsStale())}`}
+              aria-busy={selectedContactIsStale()}
+              // The kept contact's controls must not be reachable by keyboard either.
+              inert={selectedContactIsStale()}
+            >
               {/* Header */}
               <div class="flex items-start justify-between mb-6">
                 <div class="flex items-center gap-4">
-                  <Avatar url={selected().avatarUrl} name={selected().contact.display_name} size="lg" />
+                  <Avatar
+                    url={selected().avatarUrl}
+                    name={selected().contact.display_name}
+                    size="lg"
+                    // Not while another contact's detail is kept: that contact's row is unselected and named.
+                    transitionName={selected().contact.id === selectedContactId() ? sharedElementName(contactKey(selected().contact.id), "contact-avatar") : undefined}
+                  />
                   <div>
                     <Show
                       when={editingContact()?.id === selected().contact.id}
                       fallback={
                         <h1 class="font-display text-2xl font-medium flex items-center gap-2">
-                          {selected().contact.display_name}
+                          <span
+                            style={selected().contact.id === selectedContactId() ? sharedTextStyle(contactKey(selected().contact.id), "contact-name") : undefined}
+                          >
+                            {selected().contact.display_name}
+                          </span>
                           <Show when={selected().contact.is_self}>
                             <YouBadge ariaHidden />
                           </Show>
@@ -1193,7 +1271,8 @@ export default function ContactsView() {
                     when={editingContact()?.id === selected().contact.id}
                     fallback={
                       <button
-                        class="px-3 py-1 text-sm border border-border rounded hover:bg-accent"
+                        class="px-3 py-1 text-sm border border-border rounded enabled:hover:bg-accent disabled:opacity-50"
+                        disabled={selectedContactQuery.isPlaceholderData}
                         onClick={() => setEditingContact(selected().contact)}
                       >
                         Edit
@@ -1215,7 +1294,7 @@ export default function ContactsView() {
                   </Show>
                   <button
                     class="px-3 py-1 text-sm border border-border rounded enabled:hover:bg-accent disabled:opacity-50"
-                    disabled={updateContactMutation.isPending}
+                    disabled={updateContactMutation.isPending || selectedContactQuery.isPlaceholderData}
                     aria-busy={updateContactMutation.isPending}
                     onClick={() => {
                       void handleUpdateContact(selected().contact.id, { isSelf: !selected().contact.is_self });
@@ -1228,8 +1307,8 @@ export default function ContactsView() {
                       selected().contact.hidden
                         ? "border-green-500 text-green-500 hover:bg-green-500/10"
                         : "border-yellow-500 text-yellow-500 hover:bg-yellow-500/10"
-                    }`}
-                    disabled={updateContactMutation.isPending}
+                    } disabled:opacity-50`}
+                    disabled={updateContactMutation.isPending || selectedContactQuery.isPlaceholderData}
                     onClick={() => {
                       void handleUpdateContact(selected().contact.id, { hidden: !selected().contact.hidden });
                     }}
@@ -1237,8 +1316,13 @@ export default function ContactsView() {
                     {selected().contact.hidden ? "Unhide" : "Hide"}
                   </button>
                   <button
-                    class="px-3 py-1 text-sm border border-red-500 text-red-500 rounded hover:bg-red-500/10"
-                    onClick={() => void handleDeleteContact(selected().contact, selected().memoryNoteCount)}
+                    class="px-3 py-1 text-sm border border-red-500 text-red-500 rounded enabled:hover:bg-red-500/10 disabled:opacity-50"
+                    disabled={selectedContactQuery.isPlaceholderData}
+                    onClick={() => {
+                      // A placeholder has no note count, so it must never open the delete flow.
+                      if (selectedContactQuery.isPlaceholderData) return;
+                      void handleDeleteContact(selected().contact, selected().memoryNoteCount);
+                    }}
                   >
                     Delete
                   </button>
@@ -1248,6 +1332,7 @@ export default function ContactsView() {
                 {(error) => <p role="alert" class="-mt-4 mb-4 text-sm text-red-400">{error()}</p>}
               </Show>
 
+              <Show when={!showsListedRow()} fallback={<ContactDetailSkeleton />}>
               {/* Profile Fields */}
               <ContactProfileFields
                 contact={selected().contact}
@@ -1309,7 +1394,7 @@ export default function ContactsView() {
 
               {/* Suggested Identities */}
               <Show when={contactSuggestions().length > 0}>
-                <div class={`mb-6 ${staleContentClass(contactSuggestionsAreStale())}`} aria-busy={contactSuggestionsAreStale()}>
+                <div class="mb-6">
                   <h2 class="text-lg font-semibold mb-3">
                     Suggested Identities
                     <span class="ml-2 text-sm font-normal text-muted-foreground">
@@ -1378,7 +1463,7 @@ export default function ContactsView() {
               </div>
 
               {/* Recent Events */}
-              <div class={staleContentClass(contactEventsAreStale())} aria-busy={contactEventsAreStale()}>
+              <div>
                 <div class="flex items-center gap-2 mb-3">
                   <h2 class="text-xs font-medium text-muted-foreground uppercase tracking-wider">Recent Events</h2>
                   <span class="h-px flex-1 bg-border" />
@@ -1390,6 +1475,7 @@ export default function ContactsView() {
                   </button>
                 </div>
                 <div class="space-y-2">
+                  <Show when={!contactEventsLoading()} fallback={<RecentEventsSkeleton />}>
                   <For each={recentEvents()} fallback={<div class="text-muted-foreground">No events found</div>}>
                     {(event) => (
                       <button
@@ -1418,8 +1504,10 @@ export default function ContactsView() {
                       </button>
                     )}
                   </For>
+                  </Show>
                 </div>
               </div>
+              </Show>
             </div>
           )}
         </Show>
@@ -1767,6 +1855,32 @@ export default function ContactsView() {
 }
 
 // --- Helper components for contact detail ---
+
+/** Holds the detail's space while the selected contact's row stands in for it. */
+function ContactDetailSkeleton() {
+  return (
+    <div class="space-y-6" role="status" aria-label="Loading contact">
+      <span class="sr-only">Loading contact...</span>
+      <For each={["h-24", "h-20", "h-32"]}>
+        {(height) => (
+          <div class="space-y-3">
+            <div class="h-3 w-24 rounded bg-accent animate-pulse" />
+            <div class={`${height} rounded bg-card animate-pulse`} />
+          </div>
+        )}
+      </For>
+      <RecentEventsSkeleton />
+    </div>
+  );
+}
+
+function RecentEventsSkeleton() {
+  return (
+    <div class="space-y-2" aria-busy="true">
+      <For each={[0, 1, 2]}>{() => <div class="h-[4.25rem] rounded bg-card animate-pulse" />}</For>
+    </div>
+  );
+}
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",

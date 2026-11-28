@@ -35,6 +35,8 @@ vi.mock("@solidjs/router", async () => {
 
   return {
     useNavigate: () => testState.navigate,
+    useLocation: () => ({ pathname: "/contacts", search: "" }),
+    useIsRouting: () => () => false,
     useSearchParams: () => {
       const [params, setParams] = createStore<Record<string, string | undefined>>({
         ...testState.searchParams,
@@ -75,6 +77,7 @@ vi.mock("../lib/queries", () => ({
   useIdentityEvents: () => testState.identityEventsQuery,
   useSuggestedContactsForIdentity: () => testState.suggestedContactsQuery,
   useLinkSuggestions: () => testState.linkSuggestionsQuery,
+  usePrefetchContact: () => () => {},
   useCreateContact: () => ({ mutateAsync: testState.createContact, isPending: false }),
   useUpdateContact: () => ({ mutateAsync: testState.updateContact, isPending: testState.updateContactPending }),
   useDeleteContact: () => ({ mutateAsync: testState.deleteContact, reset: vi.fn(), error: null, isPending: false }),
@@ -278,6 +281,30 @@ describe("ContactsView", () => {
 
     expect(stalePanel).not.toBeNull();
     expect(stalePanel).toContainElement(getByRole("button", { name: "Delete" }));
+    // Inert keeps keyboard users off every control of the previous contact, not just the header's.
+    expect((stalePanel as HTMLElement).inert).toBe(true);
+    expect(getByRole("button", { name: "Delete" })).toBeDisabled();
+  });
+
+  it("shows a listed contact's header at once and holds the rest as loading", () => {
+    testState.searchParams = { id: "2" };
+    const bob = makeContact(2, "Bob Example");
+    testState.contactsQuery = loadedQuery([makeContactListItem(makeContact(1, "Alice Example")), makeContactListItem(bob)]);
+    testState.contactQuery = loadedQuery(contactDetail(bob), true);
+    testState.contactEventsQuery = { ...loadedQuery(undefined), isPending: true };
+
+    const { getByRole, queryByText } = render(() => <ContactsView />);
+
+    expect(getByRole("heading", { name: "Bob Example", level: 1 })).toBeInTheDocument();
+    expect(document.title).toBe("Bob Example · Contacts · Timeline");
+    expect(getByRole("status", { name: "Loading contact" })).toBeInTheDocument();
+    // The row's fields beyond the header are not the detail: no notes, no "none".
+    expect(queryByText("panel-only notes")).not.toBeInTheDocument();
+    expect(queryByText("No identities yet")).not.toBeInTheDocument();
+    expect(queryByText("No events found")).not.toBeInTheDocument();
+    for (const name of ["Edit", "This is me", "Hide", "Delete"]) {
+      expect(getByRole("button", { name })).toBeDisabled();
+    }
   });
 
   it("shows platform labels while retaining stable selector values", () => {
