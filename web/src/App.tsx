@@ -28,12 +28,12 @@ import SyncView from "./components/SyncView";
 import TimelineView from "./components/TimelineView";
 import WakaTimeOverview from "./platforms/wakatime/WakaTimeOverview";
 import WakaTimeProjectView from "./platforms/wakatime/WakaTimeProjectView";
-import { queryOptions } from "./lib/queries";
+import { newestConversationPage, queryOptions } from "./lib/queries";
 import { queryClient } from "./lib/query-client";
 import { ATTACHMENTS_PAGE_SIZE, CONVERSATIONS_PAGE_SIZE, MCP_CALL_LIMIT, MCP_SESSION_LIMIT, SYNC_HISTORY_LIMIT, SYNC_SOURCE_HISTORY_LIMIT } from "./lib/query-params";
 import { parseQuery } from "./lib/query-parser";
 import { normalizeRouteParam, routePageOffset } from "./lib/route-params";
-import { ROUTES, safeDecode } from "./lib/routes";
+import { parseEventIdFromHash, ROUTES, safeDecode } from "./lib/routes";
 import { resolveTimelineDate } from "./lib/timelineDate";
 
 function RouteFallback(props: { label: string }) {
@@ -178,6 +178,14 @@ const preloadMemoryNote: RoutePreloadFunc = ({ params, location }) => {
   ]);
 };
 
+const preloadConversation: RoutePreloadFunc = ({ params, location }) => {
+  // A link to one message opens a window around it, not the newest page.
+  if (parseEventIdFromHash(location.hash) !== undefined) return;
+  return queryClient.prefetchQuery(queryOptions.conversationPage(
+    newestConversationPage(safeDecode(params.source ?? ""), safeDecode(params.conversationId ?? "")),
+  ));
+};
+
 const preloadMcpSessions: RoutePreloadFunc = () => {
   return queryClient.prefetchQuery(queryOptions.mcpSessions({ limit: MCP_SESSION_LIMIT, offset: 0 }));
 };
@@ -214,7 +222,7 @@ export default function App() {
       <Route path={ROUTES.MEMORY_PROJECT} component={suspenseRoute(MemoryProjectView, "project")} preload={preloadMemoryIndex} />
       <Route path={ROUTES.MEMORY_NOTE} component={suspenseRoute(MemoryNoteView, "note")} preload={preloadMemoryNote} />
       <Route path="/mcp-sessions/:id" component={suspenseRoute(McpSessionDetailView, "MCP session")} preload={preloadMcpSession} />
-      <Route path="/conversation/:source/:conversationId" component={suspenseRoute(ConversationView, "conversation")} />
+      <Route path="/conversation/:source/:conversationId" component={suspenseRoute(ConversationView, "conversation")} preload={preloadConversation} />
       <Route path="/event/:id" component={suspenseRoute(EventRedirect, "event")} />
     </Router>
   );

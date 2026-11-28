@@ -31,6 +31,7 @@ import {
   type AttachmentsListParams,
   batchLinkIdentities,
   type ConversationAroundParams,
+  type ConversationListItem,
   type ConversationListParams,
   type ConversationListScope,
   type ConversationMediaParams,
@@ -199,6 +200,7 @@ export const queryKeys = {
   conversationsRoot: () => ["conversations"] as const,
   conversations: (params: ConversationListParams) => ["conversations", params] as const,
   conversationSources: (scope: ConversationListScope) => ["conversationSources", scope] as const,
+  codingAgentConversationsRoot: () => ["codingAgentConversations"] as const,
   codingAgentConversations: (params: CodingAgentConversationListParams) => ["codingAgentConversations", params] as const,
   codingAgentConversationFilters: () => ["codingAgentConversationFilters"] as const,
   conversationPage: (params: ConversationPageParams) =>
@@ -1148,6 +1150,36 @@ export function useCodingAgentConversations(params: () => CodingAgentConversatio
 
 export function useCodingAgentConversationFilters() {
   return createQuery(() => queryOptions.codingAgentConversationFilters());
+}
+
+/** The page a conversation opens on without a message anchor: its newest messages. */
+export function newestConversationPage(source: string, conversationId: string): ConversationPageParams {
+  return { conversationId, source, limit: 100, order: "desc" };
+}
+
+/**
+ * A conversation's row from any conversation list in the cache (Messages, AI
+ * chats, coding sessions, a contact's conversations), to stand in for its
+ * header while the messages load. The most recently fetched list wins, so a
+ * rename seen in the list just clicked beats an older cached page. Lists
+ * invalidated since they loaded are skipped.
+ */
+export function cachedConversationRow(
+  queryClient: ReturnType<typeof useQueryClient>,
+  source: string,
+  conversationId: string,
+): ConversationListItem | undefined {
+  const roots = [queryKeys.conversationsRoot(), queryKeys.codingAgentConversationsRoot(), queryKeys.contactConversationsRoot()];
+  let latest: { row: ConversationListItem; updatedAt: number } | undefined;
+  for (const queryKey of roots) {
+    for (const [key, data] of queryClient.getQueriesData<{ conversations: ConversationListItem[] }>({ queryKey })) {
+      const state = queryClient.getQueryState(key);
+      if (!state || state.isInvalidated) continue;
+      const row = data?.conversations.find((c) => c.source === source && c.conversationId === conversationId);
+      if (row && (!latest || state.dataUpdatedAt > latest.updatedAt)) latest = { row, updatedAt: state.dataUpdatedAt };
+    }
+  }
+  return latest?.row;
 }
 
 export function useConversationStats(

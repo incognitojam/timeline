@@ -90,6 +90,20 @@ function canAnimate(): boolean {
 }
 
 /**
+ * Brings the shared item's named element into view. A remounted list starts at
+ * the top, so without this the morph, or a return by browser Back, lands where
+ * the eye can't follow it. "nearest" also scrolls any clipping list container,
+ * and is a no-op when the element is already in view.
+ */
+export function revealSharedElement(
+  shared = document.querySelector<HTMLElement>('[style*="view-transition-name"]'),
+): void {
+  const rect = shared?.getBoundingClientRect();
+  const offscreen = rect !== undefined && (rect.top < 0 || rect.bottom > window.innerHeight);
+  shared?.scrollIntoView({ block: offscreen ? "center" : "nearest" });
+}
+
+/**
  * Runs `update`, a navigation that shows `key`'s shared elements, inside a view
  * transition, or plainly where there is no API or reduced motion is on. For
  * controls that navigate without a link, such as a master-detail list that
@@ -135,14 +149,7 @@ export function useSharedElementTransition() {
         transition.skipTransition();
         return;
       }
-      // A remounted list starts at the top; bring the shared element into view
-      // so the morph lands where the eye can follow it.
-      // "nearest" also scrolls any clipping list container, and is a no-op
-      // when the element is already in view.
-      const shared = document.querySelector<HTMLElement>('[style*="view-transition-name"]');
-      const rect = shared?.getBoundingClientRect();
-      const offscreen = rect !== undefined && (rect.top < 0 || rect.bottom > window.innerHeight);
-      shared?.scrollIntoView({ block: offscreen ? "center" : "nearest" });
+      revealSharedElement();
       after = measureShared();
     });
     // A newer transition or navigation skips this one; that is not an error.
@@ -172,9 +179,14 @@ export function useSharedElementLink() {
       event.metaKey ||
       event.ctrlKey ||
       event.shiftKey ||
-      event.altKey ||
-      !canAnimate()
+      event.altKey
     ) {
+      return;
+    }
+    if (!canAnimate()) {
+      // Navigate as an ordinary link, but still mark the item, so the list
+      // can bring its row back into view on return.
+      setActiveKey(key);
       return;
     }
     // Runs before the router's document listener, which skips prevented clicks.
